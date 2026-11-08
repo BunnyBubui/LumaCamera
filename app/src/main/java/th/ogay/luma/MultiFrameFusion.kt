@@ -56,7 +56,9 @@ class MultiFrameFusion(private val context: Context) {
         val folder = File(context.filesDir, "bursts/${shot.id}")
         val frames = folder.listFiles { file -> file.name.matches(Regex("[0-9]{4}\\.jpg")) }
             ?.sortedBy { it.name }.orEmpty()
+            .filter { file -> runCatching { PhotoMedia.dimensions(file) }.isSuccess }
         if (frames.isEmpty()) throw IOException("ไม่พบเฟรมต้นทางสำหรับรวมภาพ")
+        context.luma.shots.captureProgress(shot.id, frames.size, shot.captureNote)
         val source = PhotoMedia.dimensions(frames.first())
         val output = if (source.pixels > TARGET_PIXELS) scaledSize(source, TARGET_PIXELS) else source
         val small = scaledSize(source, 256L * 192)
