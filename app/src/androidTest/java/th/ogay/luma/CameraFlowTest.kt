@@ -28,9 +28,12 @@ class CameraFlowTest {
         while(SystemClock.elapsedRealtime()<end){if(check())return;SystemClock.sleep(250)}
         assertTrue("Timed out after $ms ms",check())
     }
-    @Test fun multiFrameAiCapturesFourRealImages() {
+    @Test fun multiFrameAiCapturesFourRealImages() = multiFrameFlow(4)
+    @Test fun multiFrameAiCapturesThirtyTwoRealImages() = multiFrameFlow(32)
+
+    private fun multiFrameFlow(count: Int) {
         context.getSharedPreferences("camera", Context.MODE_PRIVATE).edit()
-            .putString("output", "AI").putInt("frames", 4).putBoolean("software", true).commit()
+            .putString("output", "AI").putInt("frames", count).putBoolean("software", true).commit()
         val old = context.luma.shots.all().map { it.id }.toSet()
         ActivityScenario.launch(CameraActivity::class.java).use {
             until(35000) { device.findObject(By.desc("ถ่ายภาพ"))?.isEnabled == true }
@@ -43,14 +46,14 @@ class CameraFlowTest {
                 shot = context.luma.shots.latest()
                 shot != null && shot!!.id !in old && shot!!.stage != Stage.CAPTURING
             }
-            assertEquals(4, shot!!.frames)
+            assertEquals(count, shot!!.frames)
             assertEquals(CaptureOutput.AI, shot!!.output)
             until(180000) {
                 shot = context.luma.shots.get(shot!!.id)
                 shot!!.stage in setOf(Stage.DONE, Stage.FAILED)
             }
             assertEquals(shot!!.error, Stage.DONE, shot!!.stage)
-            assertTrue(shot!!.fusedFrames in 1..4)
+            assertTrue(shot!!.fusedFrames in 1..count)
             assertNotNull(shot!!.ai)
             assertNull(shot!!.raw)
             device.findObject(By.desc("เปิดรูปถ่ายล่าสุด")).click()

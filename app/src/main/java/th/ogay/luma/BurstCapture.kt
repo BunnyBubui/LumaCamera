@@ -114,7 +114,7 @@ class BurstCapture(
 
                 override fun onError(exception: ImageCaptureException) {
                     // A partially saved DNG remains accessible in the system gallery.
-                    finish("ถ่าย RAW ไม่สำเร็จ · ${exception.localizedMessage}")
+                    if (!done && generation == ticket) finish("ถ่าย RAW ไม่สำเร็จ · ${exception.localizedMessage}")
                 }
             }
         )
@@ -155,7 +155,7 @@ class BurstCapture(
             }
 
             override fun onError(exception: ImageCaptureException) {
-                finish("เก็บเฟรมได้บางส่วน · ${exception.localizedMessage}")
+                if (!done && generation == ticket) finish("เก็บเฟรมได้บางส่วน · ${exception.localizedMessage}")
             }
         })
     }
