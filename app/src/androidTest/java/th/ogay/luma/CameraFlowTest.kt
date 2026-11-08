@@ -37,7 +37,9 @@ class CameraFlowTest {
         val old = context.luma.shots.all().map { it.id }.toSet()
         ActivityScenario.launch(CameraActivity::class.java).use {
             until(35000) { device.findObject(By.desc("ถ่ายภาพ"))?.isEnabled == true }
-            device.takeScreenshot(java.io.File(context.filesDir, "camera-ui.png"))
+            if (android.os.Build.FINGERPRINT.startsWith("generic") || android.os.Build.MODEL.contains("sdk")) {
+                device.executeShellCommand("screencap -p /sdcard/Download/luma-qa.png")
+            }
             device.findObject(By.desc("ซูม 2×")).click()
             until(10000) { device.findObject(By.desc("ถ่ายภาพ"))?.isEnabled == true }
             device.findObject(By.desc("ถ่ายภาพ")).click()

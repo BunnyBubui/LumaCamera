@@ -48,7 +48,8 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back emulated -camera-front emulated
           script: |
             bash gradlew --no-daemon -Pkotlin.compiler.execution.strategy=in-process :app:connectedDebugAndroidTest
-            adb exec-out run-as th.ogay.luma.dev cat files/camera-ui.png > app/build/reports/camera-screen.png
+            adb pull /sdcard/Download/luma-qa.png app/build/reports/camera-screen.png
+            test "$(file --mime-type -b app/build/reports/camera-screen.png)" = image/png
       - uses: actions/upload-artifact@v4
         if: always()
         with:
