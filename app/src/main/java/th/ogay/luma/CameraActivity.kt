@@ -446,6 +446,7 @@ class CameraActivity : ComponentActivity() {
             return
         }
         busy = true
+        hintVersion++
         refresh()
         burst = BurstCapture(
             applicationContext, useCase, output,

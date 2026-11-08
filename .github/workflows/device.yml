@@ -21,7 +21,7 @@ jobs:
       - name: Install Android SDK components
         run: sdkmanager 'platforms;android-36' 'build-tools;34.0.0' 'build-tools;35.0.0'
       - name: Prepare app and test APKs
-        run: bash gradlew :app:assembleDebug :app:assembleDebugAndroidTest
+        run: bash gradlew --no-daemon -Pkotlin.compiler.execution.strategy=in-process :app:assembleDebug :app:assembleDebugAndroidTest
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -34,9 +34,13 @@ jobs:
           target: default
           arch: x86_64
           disable-animations: true
+          disk-size: 2048M
+          ram-size: 2048M
+          heap-size: 384M
+          emulator-boot-timeout: 300
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back emulated -camera-front emulated
           script: |
-            bash gradlew :app:connectedDebugAndroidTest
+            bash gradlew --no-daemon -Pkotlin.compiler.execution.strategy=in-process :app:connectedDebugAndroidTest
             adb exec-out run-as th.ogay.luma.dev cat files/camera-ui.png > app/build/reports/camera-screen.png
       - uses: actions/upload-artifact@v4
         if: always()
