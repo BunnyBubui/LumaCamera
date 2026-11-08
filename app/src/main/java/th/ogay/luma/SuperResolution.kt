@@ -96,6 +96,6 @@ class SuperResolution(private val context: Context) {
             if (stopped()) throw CancellationException()
             file.outputStream().buffered().use { check(image.compress(Bitmap.CompressFormat.JPEG, 95, it)) }
         } finally { image.recycle() }
-        PhotoMedia.tag(file, rotation, taken, ai = true)
+        PhotoMedia.tag(file, rotation, taken, ai = true, version = shot.aiVersion)
     }
 }

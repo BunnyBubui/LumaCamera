@@ -1,12 +1,15 @@
 package th.ogay.luma
 
 import android.Manifest
+import android.animation.ValueAnimator
+import android.media.MediaActionSound
 import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.ImageFormat
 import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CaptureRequest
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -17,6 +20,8 @@ import android.widget.*
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.camera.camera2.interop.Camera2CameraInfo
+import androidx.camera.camera2.interop.Camera2CameraControl
+import androidx.camera.camera2.interop.CaptureRequestOptions
 import androidx.camera.camera2.interop.Camera2Interop
 import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.*
@@ -46,6 +51,14 @@ class CameraActivity : ComponentActivity() {
     private var software = false
     private var ratio = 1f
     private var auto = true
+    private var output = CaptureOutput.AI
+    private var rawAvailable = false
+    private var burst: BurstCapture? = null
+    private var zoomAnimation: ValueAnimator? = null
+    private val shutterSound = MediaActionSound()
+    private lateinit var outputButtons: LinearLayout
+    private lateinit var overlay: CompositionOverlay
+    private lateinit var zoomSlider: SeekBar
     private var flash = ImageCapture.FLASH_MODE_OFF
     private var busy = false
     private var zoomSettling = false
@@ -76,6 +89,8 @@ class CameraActivity : ComponentActivity() {
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
+        output = runCatching { CaptureOutput.valueOf(prefs.getString("output", CaptureOutput.AI.name)!!) }.getOrDefault(CaptureOutput.AI)
+        shutterSound.load(MediaActionSound.SHUTTER_CLICK)
         auto = prefs.getBoolean("auto", true); software = prefs.getBoolean("software", false)
         rear = state?.getBoolean("rear",true) ?: true
         ratio = state?.getFloat("zoom",1f) ?: 1f
@@ -91,7 +106,7 @@ class CameraActivity : ComponentActivity() {
                     in 225..314 -> Surface.ROTATION_90
                     else -> Surface.ROTATION_0
                 }
-                capture?.targetRotation = targetRotation
+                if (!busy) capture?.targetRotation = targetRotation
             }
         }
         luma.shots.changes.observe(this) { loadThumb() }
@@ -109,7 +124,16 @@ class CameraActivity : ComponentActivity() {
         if (granted() && provider != null && capture == null) bind()
         if (!granted()) showPermission()
     }
-    override fun onPause() { orientation.disable(); super.onPause() }
+    override fun onPause() {
+        orientation.disable()
+        zoomAnimation?.cancel()
+        burst?.cancel()
+        super.onPause()
+    }
+    override fun onDestroy() {
+        shutterSound.release()
+        super.onDestroy()
+    }
     override fun onSaveInstanceState(out: Bundle) { super.onSaveInstanceState(out); out.putBoolean("rear",rear); out.putFloat("zoom",ratio) }
     override fun onConfigurationChanged(config: Configuration) {
         super.onConfigurationChanged(config)
@@ -133,6 +157,26 @@ class CameraActivity : ComponentActivity() {
         flashButton = pill("",::toggleFlash)
         head.addView(flashButton,-2,dp(44))
         head.addView(Glyph(this,"menu","การตั้งค่ากล้อง",::showOptions),dp(48),dp(48))
+        outputButtons = LinearLayout(this).apply { gravity = Gravity.CENTER }
+        val outputScroll = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            isFillViewport = true
+            addView(outputButtons)
+        }
+        root.addView(outputScroll, -1, dp(52))
+        for (choice in CaptureOutput.entries) {
+            val button = pill(choice.label) {
+                if (!busy) {
+                    if (choice.needsRaw && !rawAvailable) notice("กล้องนี้ยังไม่เปิด RAW + JPEG ให้แอป")
+                    else if (choice != output) {
+                        output = choice
+                        prefs.edit().putString("output", choice.name).apply()
+                        bind()
+                    }
+                }
+            }.apply { contentDescription = "รูปแบบ ${choice.label}" }
+            outputButtons.addView(button, LinearLayout.LayoutParams(-2, dp(44)).apply { setMargins(dp(3), 0, dp(3), 0) })
+        }
         val body = LinearLayout(this).apply { orientation = if (landscape) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL }
         root.addView(body,LinearLayout.LayoutParams(-1,0,1f))
         val stage = FrameLayout(this).apply { setBackgroundColor(0xff080a08.toInt()) }
@@ -149,14 +193,38 @@ class CameraActivity : ComponentActivity() {
             implementationMode = PreviewView.ImplementationMode.COMPATIBLE; scaleType = PreviewView.ScaleType.FIT_CENTER
         }
         mask.addView(preview,-1,-1)
+        overlay = CompositionOverlay(this).apply { grid = prefs.getBoolean("grid", false) }
+        mask.addView(overlay, -1, -1)
         currentZoom = label("",14f,WHITE).apply {
             gravity=Gravity.CENTER; setPadding(dp(9),0,dp(9),0)
             background=shape(0xbb1c231c.toInt(),dp(12).toFloat())
         }
         stage.addView(currentZoom,FrameLayout.LayoutParams(-2,dp(32),Gravity.TOP or Gravity.START).apply { setMargins(dp(14),dp(14),0,0) })
         zooms=LinearLayout(this).apply { gravity=Gravity.CENTER; background=shape(0xcc1c231c.toInt(),dp(24).toFloat()) }
+        zoomSlider = SeekBar(this).apply {
+            max = 1000
+            visibility = View.GONE
+            contentDescription = "เลื่อนซูม"
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onStartTrackingTouch(bar: SeekBar) { zoomAnimation?.cancel() }
+                override fun onStopTrackingTouch(bar: SeekBar) {}
+                override fun onProgressChanged(bar: SeekBar, value: Int, user: Boolean) {
+                    if (user) {
+                        val (lo, hi) = range()
+                        applyZoom((lo * kotlin.math.exp(kotlin.math.ln((hi / lo).toDouble()) * value / 1000)).toFloat())
+                    }
+                }
+            })
+        }
+        stage.addView(zoomSlider, FrameLayout.LayoutParams(-1, dp(48), Gravity.BOTTOM).apply {
+            bottomMargin = dp(62)
+            leftMargin = dp(26)
+            rightMargin = dp(26)
+        })
+        currentZoom.setOnLongClickListener { zoomSlider.visibility = if (zoomSlider.visibility == View.VISIBLE) View.GONE else View.VISIBLE; true }
         stage.addView(zooms,FrameLayout.LayoutParams(-2,dp(44),Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin=dp(12) })
         viewfinderNotice = label("",14f).apply { gravity=Gravity.CENTER; visibility=View.GONE; setPadding(dp(12),dp(8),dp(12),dp(8)); background=shape(PANEL) }
+        viewfinderNotice.setOnClickListener { burst?.cancel() }
         stage.addView(viewfinderNotice,FrameLayout.LayoutParams(-2,-2,Gravity.CENTER))
         permissionPanel = LinearLayout(this).apply {
             gravity=Gravity.CENTER; orientation=LinearLayout.VERTICAL; setPadding(dp(18),dp(14),dp(18),dp(14)); background=shape(BG)
@@ -213,6 +281,7 @@ class CameraActivity : ComponentActivity() {
             val selected=selector()
             val info=provider.availableCameraInfos.firstOrNull { it in selected.filter(provider.availableCameraInfos) }
                 ?: throw IOException("ไม่พบกล้องที่เปิดใช้งานได้")
+            rawAvailable = ImageCapture.getImageCaptureCapabilities(info).supportedOutputFormats.contains(ImageCapture.OUTPUT_FORMAT_RAW_JPEG)
             val cc=Camera2CameraInfo.from(info)
             val caps=cc.getCameraCharacteristic(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)
             val single=Build.VERSION.SDK_INT>=28 && caps!=null && !caps.contains(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_LOGICAL_MULTI_CAMERA)
@@ -222,6 +291,7 @@ class CameraActivity : ComponentActivity() {
             val builder=ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
                 .setResolutionSelector(framing.setResolutionStrategy(ResolutionStrategy(Size(4000,3000),ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER)).build())
                 .setTargetRotation(targetRotation)
+            if (output.needsRaw && rawAvailable) builder.setOutputFormat(ImageCapture.OUTPUT_FORMAT_RAW_JPEG)
             Camera2Interop.Extender(builder).setSessionCaptureCallback(frames)
             val useCase=builder.build()
             camera?.cameraInfo?.zoomState?.removeObservers(this)
@@ -263,12 +333,34 @@ class CameraActivity : ComponentActivity() {
         },main)
         refresh()
     }
+    private fun animateZoom(target: Float) {
+        zoomAnimation?.cancel()
+        if (prefs.getBoolean("reduce_motion", false)) {
+            applyZoom(target)
+            return
+        }
+        val start = kotlin.math.ln(ratio.toDouble()).toFloat()
+        val end = kotlin.math.ln(target.toDouble()).toFloat()
+        zoomAnimation = ValueAnimator.ofFloat(start, end).apply {
+            duration = 220
+            addUpdateListener { applyZoom(kotlin.math.exp((it.animatedValue as Float).toDouble()).toFloat()) }
+            start()
+        }
+    }
     private var renderedZooms: List<Float> = emptyList()
     private fun refresh() {
+        for (i in 0 until outputButtons.childCount) {
+            val choice = CaptureOutput.entries[i]
+            val button = outputButtons.getChildAt(i) as TextView
+            button.setTextColor(if (choice == output) LIME else WHITE)
+            button.alpha = if (choice.needsRaw && !rawAvailable) 0.4f else 1f
+            button.isEnabled = !busy
+        }
+        aiButton.visibility = if (output == CaptureOutput.JPEG) View.VISIBLE else View.GONE
         aiButton.text=if(auto) "AI ออโต้" else "AI ปิด"; aiButton.setTextColor(if(auto) LIME else MUTED)
         flashButton.text=if(flash==ImageCapture.FLASH_MODE_ON) "แฟลช เปิด" else "แฟลช ปิด"
         flashButton.visibility=if(camera?.cameraInfo?.hasFlashUnit()==true) View.VISIBLE else View.GONE
-        shutter.isEnabled=capture!=null && granted() && !busy && !zoomSettling
+        shutter.isEnabled=capture!=null && granted() && !busy && !zoomSettling && (!output.needsRaw || rawAvailable)
         shutter.alpha=if(shutter.isEnabled) 1f else 0.45f
         flip.isEnabled=!busy; flashButton.isEnabled=!busy
         currentZoom.text=(if(rear) "หลัง" else "หน้า")+"  "+zoomText(ratio)+(if(software && rear) "  ·  ครอป" else "")
@@ -277,11 +369,17 @@ class CameraActivity : ComponentActivity() {
         if(stops!=renderedZooms || zooms.childCount!=stops.size) {
             zooms.removeAllViews();renderedZooms=stops
             stops.forEach { v ->
-                val button=label(zoomText(v),14f).apply {gravity=Gravity.CENTER;isFocusable=true;contentDescription="ซูม ${zoomText(v)}";setOnClickListener {applyZoom(v)}}
+                val button=label(zoomText(v),14f).apply {gravity=Gravity.CENTER;isFocusable=true;contentDescription="ซูม ${zoomText(v)}";setOnClickListener {animateZoom(v)}; pressFeedback(); setOnLongClickListener { zoomSlider.visibility = View.VISIBLE; true }}
                 zooms.addView(button,dp(49),-1)
             }
         }
         for(i in stops.indices) (zooms.getChildAt(i) as TextView).setTextColor(if(abs(stops[i]-ratio)<0.08f) LIME else WHITE)
+        val zoomRange = range()
+        if (zoomRange.second > zoomRange.first) {
+            zoomSlider.progress = (1000 * kotlin.math.ln((ratio / zoomRange.first).toDouble()) /
+                kotlin.math.ln((zoomRange.second / zoomRange.first).toDouble())).roundToInt().coerceIn(0, 1000)
+        }
+        zoomSlider.isEnabled = !busy
         zooms.visibility=if(capture!=null && stops.size>1) View.VISIBLE else View.GONE
     }
     private fun installGestures() {
@@ -314,10 +412,16 @@ class CameraActivity : ComponentActivity() {
         capture?.flashMode=flash;refresh()
     }
     private fun showOptions() {
-        val modes=arrayOf("ซูมด้วยระบบกล้อง", "ครอปจากกล้องหลัก 1×", "ข้อมูลเครื่องและกล้อง")
+        val modes=arrayOf("ซูมด้วยระบบกล้อง", "ครอปจากกล้องหลัก 1×", "ข้อมูลเครื่องและกล้อง", "ตั้งค่าเสียง / AI / การตอบสนอง")
         AlertDialog.Builder(this).setTitle("โหมดซูมกล้องหลัง").setSingleChoiceItems(modes,if(software) 1 else 0) { dialog,index ->
             dialog.dismiss()
-            if(index==2) {
+            if (index == 3) {
+                showCaptureSettings(rawAvailable) {
+                    auto = prefs.getBoolean("auto", true)
+                    overlay.grid = prefs.getBoolean("grid", false)
+                    refresh()
+                }
+            } else if(index==2) {
                 val (lo,hi)=range()
                 val logical=camera?.cameraInfo?.let { Camera2CameraInfo.from(it).cameraId }
                 AlertDialog.Builder(this).setTitle("ข้อมูลเครื่อง").setMessage("${Build.MANUFACTURER} ${Build.MODEL}\nAndroid ${Build.VERSION.RELEASE} · API ${Build.VERSION.SDK_INT}\nCamera ID ${logical ?: "—"}\nช่วงซูมในโหมดนี้ ${zoomText(lo)} – ${zoomText(hi)}\nAI $MODEL_VERSION · CPU ออฟไลน์").setPositiveButton("ปิด",null).show()
@@ -328,14 +432,71 @@ class CameraActivity : ComponentActivity() {
         }.setNegativeButton("ปิด",null).show()
     }
 
+    private fun captureFeedback() {
+        if (isDestroyed) return
+        if (prefs.getBoolean("sound", true) || CameraInfo.mustPlayShutterSound()) {
+            shutterSound.play(MediaActionSound.SHUTTER_CLICK)
+        }
+    }
+
+    private fun takeBurst() {
+        val useCase = capture ?: return
+        if (output.needsRaw && !rawAvailable) {
+            notice("กล้องนี้ไม่เปิด RAW + JPEG ให้แอป")
+            return
+        }
+        busy = true
+        refresh()
+        burst = BurstCapture(
+            applicationContext, useCase, output,
+            if (output.enhance) burstCount(prefs.getInt("frames", 8)) else 1,
+            rear, ratio, software && rear, targetRotation,
+            started = { captureFeedback() },
+            progress = { done, total ->
+                if (!isDestroyed) {
+                    viewfinderNotice.text = "ถ่าย $done/$total เฟรม · แตะเพื่อหยุด"
+                    viewfinderNotice.visibility = View.VISIBLE
+                }
+            },
+            finished = { message ->
+                camera?.let { Camera2CameraControl.from(it.cameraControl).clearCaptureRequestOptions() }
+                burst = null
+                complete(message)
+            }
+        )
+        val active = camera
+        if (active == null) {
+            burst?.start()
+            return
+        }
+        val info = Camera2CameraInfo.from(active.cameraInfo)
+        val options = CaptureRequestOptions.Builder()
+        if (info.getCameraCharacteristic(CameraCharacteristics.CONTROL_AE_LOCK_AVAILABLE) == true) {
+            options.setCaptureRequestOption(CaptureRequest.CONTROL_AE_LOCK, true)
+        }
+        if (info.getCameraCharacteristic(CameraCharacteristics.CONTROL_AWB_LOCK_AVAILABLE) == true) {
+            options.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_LOCK, true)
+        }
+        val locked = Camera2CameraControl.from(active.cameraControl).setCaptureRequestOptions(options.build())
+        locked.addListener({
+            runCatching { locked.get() }
+            burst?.start()
+        }, main)
+    }
+
     private fun takePhoto() {
         val useCase=capture ?: return
         if(busy || zoomSettling) return
+        if (output != CaptureOutput.JPEG) {
+            takeBurst()
+            return
+        }
         busy=true;refresh()
         val isRear=rear;val useSoftware=software && isRear;val zoom=ratio;val allowAuto=auto;val frames=metadata
         val time=System.currentTimeMillis();val id=UUID.randomUUID().toString()
         useCase.targetRotation=targetRotation
         useCase.takePicture(luma.fileIo,object:ImageCapture.OnImageCapturedCallback(){
+            override fun onCaptureStarted() { runOnUiThread { captureFeedback() } }
             override fun onCaptureSuccess(image:ImageProxy) {
                 val full=File(cacheDir,"capture-$id.jpg")
                 val cut=File(cacheDir,"crop-$id.jpg")

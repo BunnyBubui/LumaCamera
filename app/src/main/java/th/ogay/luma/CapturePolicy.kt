@@ -14,6 +14,7 @@ fun scaledSize(size: Dimensions, pixels: Long): Dimensions {
     return Dimensions((size.w * scale).roundToInt().coerceAtLeast(1), (size.h * scale).roundToInt().coerceAtLeast(1))
 }
 enum class Decision(val description: String) {
+    MANUAL_AI("ผู้ใช้เลือก AI รวมหลายเฟรม"), RAW_CAPTURE("เก็บข้อมูล RAW จากเซนเซอร์"),
     OFF("ปิด AI อัตโนมัติ"), STANDARD("ระยะมาตรฐานหรือกล้องหน้า"),
     SMALL("ภาพที่ได้รับต่ำกว่า 12 MP"), CROP("พื้นที่หลังครอปต่ำกว่า 12 MP"),
     ENOUGH("ขนาดภาพและพื้นที่ครอปถึงเกณฑ์"), UNKNOWN("ประเมินพื้นที่ต้นทางไม่ได้")

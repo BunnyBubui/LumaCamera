@@ -46,13 +46,13 @@ object PhotoMedia {
     @Suppress("DEPRECATION")
     private fun legacyFile(name: String) = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "Luma/$name")
 
-    fun publish(context: Context, file: File, name: String, taken: Long): Uri {
+    fun publish(context: Context, file: File, name: String, taken: Long, mime: String = "image/jpeg"): Uri {
         val resolver = context.contentResolver
         val existing = lookup(context, name)
         if (existing != null && !existing.pending) return existing.uri
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, name)
-            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+            put(MediaStore.Images.Media.MIME_TYPE, mime)
             put(MediaStore.Images.Media.DATE_TAKEN, taken)
         }
         if (Build.VERSION.SDK_INT >= 29) {
@@ -85,7 +85,7 @@ object PhotoMedia {
         return resolver.insert(collection, values) ?: throw IOException("เพิ่มรูปในแกลเลอรีไม่ได้")
     }
 
-    fun tag(file: File, degrees: Int, originalTime: String? = null, ai: Boolean = false) {
+    fun tag(file: File, degrees: Int, originalTime: String? = null, ai: Boolean = false, version: String = MODEL_VERSION) {
         ExifInterface(file).apply {
             val orientation = when ((degrees + 360) % 360) {
                 90 -> ExifInterface.ORIENTATION_ROTATE_90
@@ -95,7 +95,7 @@ object PhotoMedia {
             }
             setAttribute(ExifInterface.TAG_ORIENTATION, orientation.toString())
             if (originalTime != null) setAttribute(ExifInterface.TAG_DATETIME_ORIGINAL, originalTime)
-            if (ai) setAttribute(ExifInterface.TAG_SOFTWARE, "Luma Camera • AI $MODEL_VERSION")
+            if (ai) setAttribute(ExifInterface.TAG_SOFTWARE, "Luma Camera • AI $version")
             saveAttributes()
         }
     }
@@ -115,7 +115,7 @@ object PhotoMedia {
     }
 
     fun thumbnail(context: Context, uri: Uri, edge: Int): Bitmap? = try {
-        if (Build.VERSION.SDK_INT >= 29) context.contentResolver.loadThumbnail(uri, Size(edge, edge), null)
+        if (Build.VERSION.SDK_INT >= 29 && uri.scheme == "content") context.contentResolver.loadThumbnail(uri, Size(edge, edge), null)
         else {
             val resolver = context.contentResolver
             val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }

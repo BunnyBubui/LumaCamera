@@ -28,9 +28,69 @@ class CameraFlowTest {
         while(SystemClock.elapsedRealtime()<end){if(check())return;SystemClock.sleep(250)}
         assertTrue("Timed out after $ms ms",check())
     }
+    @Test fun multiFrameAiCapturesFourRealImages() {
+        context.getSharedPreferences("camera", Context.MODE_PRIVATE).edit()
+            .putString("output", "AI").putInt("frames", 4).putBoolean("software", true).commit()
+        val old = context.luma.shots.all().map { it.id }.toSet()
+        ActivityScenario.launch(CameraActivity::class.java).use {
+            until(35000) { device.findObject(By.desc("ถ่ายภาพ"))?.isEnabled == true }
+            device.takeScreenshot(java.io.File(context.filesDir, "camera-ui.png"))
+            device.findObject(By.desc("ซูม 2×")).click()
+            until(10000) { device.findObject(By.desc("ถ่ายภาพ"))?.isEnabled == true }
+            device.findObject(By.desc("ถ่ายภาพ")).click()
+            var shot: Shot? = null
+            until(120000) {
+                shot = context.luma.shots.latest()
+                shot != null && shot!!.id !in old && shot!!.stage != Stage.CAPTURING
+            }
+            assertEquals(4, shot!!.frames)
+            assertEquals(CaptureOutput.AI, shot!!.output)
+            until(180000) {
+                shot = context.luma.shots.get(shot!!.id)
+                shot!!.stage in setOf(Stage.DONE, Stage.FAILED)
+            }
+            assertEquals(shot!!.error, Stage.DONE, shot!!.stage)
+            assertTrue(shot!!.fusedFrames in 1..4)
+            assertNotNull(shot!!.ai)
+            assertNull(shot!!.raw)
+            device.findObject(By.desc("เปิดรูปถ่ายล่าสุด")).click()
+            device.wait(Until.findObject(By.text("ภาพ AI")), 15000).click()
+            assertNotNull(device.wait(Until.findObject(By.textContains("MF1_SR1")), 10000))
+        }
+    }
+
+    @Test fun rawSelectionReportsHardwareSupport() {
+        context.getSharedPreferences("camera", Context.MODE_PRIVATE).edit().putString("output", "JPEG").commit()
+        val provider = androidx.camera.lifecycle.ProcessCameraProvider.getInstance(context).get()
+        val info = androidx.camera.core.CameraSelector.DEFAULT_BACK_CAMERA.filter(provider.availableCameraInfos).first()
+        val supportsRaw = androidx.camera.core.ImageCapture.getImageCaptureCapabilities(info).supportedOutputFormats
+            .contains(androidx.camera.core.ImageCapture.OUTPUT_FORMAT_RAW_JPEG)
+        ActivityScenario.launch(CameraActivity::class.java).use {
+            until(35000) { device.findObject(By.desc("ถ่ายภาพ"))?.isEnabled == true }
+            device.findObject(By.desc("รูปแบบ RAW")).click()
+            if (supportsRaw) {
+                until(25000) { device.findObject(By.desc("ถ่ายภาพ"))?.isEnabled == true }
+                device.findObject(By.desc("ถ่ายภาพ")).click()
+                var shot: Shot? = null
+                until(60000) {
+                    shot = context.luma.shots.latest()
+                    shot?.output == CaptureOutput.RAW && shot!!.stage == Stage.ORIGINAL
+                }
+                assertNotNull(shot!!.raw)
+                context.contentResolver.openInputStream(shot!!.raw!!)!!.use { stream ->
+                    val header = ByteArray(4)
+                    assertEquals(4, stream.read(header))
+                    assertTrue(header[0] == 'I'.code.toByte() || header[0] == 'M'.code.toByte())
+                }
+            } else {
+                assertEquals("JPEG", context.getSharedPreferences("camera", Context.MODE_PRIVATE).getString("output", ""))
+            }
+        }
+    }
+
     @Test fun cropCapturePublishesOriginalAndOneAiCopy() {
         val before=context.luma.shots.all().map{it.id}.toSet()
-        context.getSharedPreferences("camera",Context.MODE_PRIVATE).edit().putBoolean("auto",true).putBoolean("software",false).commit()
+        context.getSharedPreferences("camera",Context.MODE_PRIVATE).edit().putString("output","JPEG").putBoolean("auto",true).putBoolean("software",false).commit()
         ActivityScenario.launch(CameraActivity::class.java).use {
             val menu=device.wait(Until.findObject(By.desc("การตั้งค่ากล้อง")),30000)
             assertNotNull("Camera screen did not open",menu);menu.click()

@@ -5,14 +5,14 @@ plugins {
 
 android {
     namespace = "th.ogay.luma"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "th.ogay.luma"
         minSdk = 23
         targetSdk = 35
-        versionCode = providers.environmentVariable("LUMA_BUILD_NUMBER").orNull?.toIntOrNull() ?: 1
-        versionName = "0.1.0"
+        versionCode = providers.environmentVariable("LUMA_BUILD_NUMBER").orNull?.toIntOrNull() ?: 100
+        versionName = "0.2.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     val keyFile = providers.environmentVariable("LUMA_KEYSTORE").orNull
@@ -46,9 +46,9 @@ android {
 
 dependencies {
     implementation("androidx.activity:activity-ktx:1.9.3")
-    implementation("androidx.camera:camera-camera2:1.4.2")
-    implementation("androidx.camera:camera-lifecycle:1.4.2")
-    implementation("androidx.camera:camera-view:1.4.2")
+    implementation("androidx.camera:camera-camera2:1.6.2")
+    implementation("androidx.camera:camera-lifecycle:1.6.2")
+    implementation("androidx.camera:camera-view:1.6.2")
     implementation("androidx.exifinterface:exifinterface:1.3.7")
     implementation("androidx.work:work-runtime:2.9.1")
     testImplementation("junit:junit:4.13.2")
