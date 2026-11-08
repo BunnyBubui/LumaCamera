@@ -125,7 +125,7 @@ class CameraActivity : ComponentActivity() {
             gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16),0,dp(10),0)
         }
         root.addView(head,-1,dp(60))
-        head.addView(label("Luma",26f).apply { typeface=android.graphics.Typeface.create("sans-serif-medium",0); letterSpacing=-0.035f })
+        head.addView(label("Luma",26f).apply { typeface=android.graphics.Typeface.create("sans-serif-medium",android.graphics.Typeface.NORMAL); letterSpacing=-0.035f })
         head.space()
         aiButton = pill("", ::toggleAi)
         head.addView(aiButton,-2,dp(44))

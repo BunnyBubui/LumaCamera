@@ -40,9 +40,9 @@ class EnhanceWorker(context: Context, params: WorkerParameters) : Worker(context
     }
 
     companion object {
-        fun enqueue(context: Context, id: String) {
+        fun enqueue(context: Context, id: String, replace: Boolean = false) {
             val work = OneTimeWorkRequestBuilder<EnhanceWorker>().setInputData(workDataOf("id" to id)).build()
-            WorkManager.getInstance(context).enqueueUniqueWork("ai-$MODEL_VERSION-$id", ExistingWorkPolicy.KEEP, work)
+            WorkManager.getInstance(context).enqueueUniqueWork("ai-$MODEL_VERSION-$id", if (replace) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP, work)
         }
     }
 }

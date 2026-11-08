@@ -114,7 +114,7 @@ class GalleryActivity : ComponentActivity() {
                     val current=luma.shots.get(s.id)
                     if(current!=null && current.stage in setOf(Stage.ORIGINAL,Stage.FAILED)) {
                         luma.shots.update(s.id,Stage.QUEUED)
-                        EnhanceWorker.enqueue(applicationContext,s.id)
+                        EnhanceWorker.enqueue(applicationContext,s.id,replace=true)
                     }
                 }
             }
