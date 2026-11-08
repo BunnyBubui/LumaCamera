@@ -87,8 +87,6 @@ class BurstCapture(
     private fun firstRaw(ticket: Int) {
         val rawFile = File(folder, "sensor.dng")
         val jpegFile = File(folder, "incoming.jpg")
-        var rawSaved = false
-        var jpegSaved = false
         capture.takePicture(
             ImageCapture.OutputFileOptions.Builder(rawFile).build(),
             ImageCapture.OutputFileOptions.Builder(jpegFile).build(),
@@ -99,14 +97,11 @@ class BurstCapture(
                 override fun onImageSaved(result: ImageCapture.OutputFileResults) {
                     if (done || generation != ticket) return
                     try {
-                        when (result.imageFormat) {
-                            ImageFormat.RAW_SENSOR -> {
-                                rawUri = PhotoMedia.publish(context, rawFile, "LUMA_${time}_${id}.dng", time, "image/x-adobe-dng")
-                                rawSaved = true
-                            }
-                            ImageFormat.JPEG -> jpegSaved = true
-                        }
-                        if (rawSaved && jpegSaved) accept(jpegFile)
+                        // CameraX may report only the last completed format for a dual-file
+                        // capture. Both files are finished when this callback is delivered.
+                        check(rawFile.length() > 0 && jpegFile.length() > 0) { "กล้องส่งไฟล์ RAW / JPEG ไม่ครบ" }
+                        rawUri = PhotoMedia.publish(context, rawFile, "LUMA_${time}_${id}.dng", time, "image/x-adobe-dng")
+                        accept(jpegFile)
                     } catch (e: Exception) {
                         finish(e.localizedMessage ?: "บันทึก RAW ไม่สำเร็จ")
                     }

@@ -31,9 +31,17 @@ class CameraFlowTest {
     @Test fun multiFrameAiCapturesFourRealImages() = multiFrameFlow(4)
     @Test fun multiFrameAiCapturesThirtyTwoRealImages() = multiFrameFlow(32)
 
-    private fun multiFrameFlow(count: Int) {
+    @Test fun rawAndAiCapturesDngAndFourFrames() {
+        val provider = androidx.camera.lifecycle.ProcessCameraProvider.getInstance(context).get()
+        val info = androidx.camera.core.CameraSelector.DEFAULT_BACK_CAMERA.filter(provider.availableCameraInfos).first()
+        org.junit.Assume.assumeTrue(androidx.camera.core.ImageCapture.getImageCaptureCapabilities(info).supportedOutputFormats
+            .contains(androidx.camera.core.ImageCapture.OUTPUT_FORMAT_RAW_JPEG))
+        multiFrameFlow(4, CaptureOutput.BOTH)
+    }
+
+    private fun multiFrameFlow(count: Int, output: CaptureOutput = CaptureOutput.AI) {
         context.getSharedPreferences("camera", Context.MODE_PRIVATE).edit()
-            .putString("output", "AI").putInt("frames", count).putBoolean("software", true).commit()
+            .putString("output", output.name).putInt("frames", count).putBoolean("software", true).commit()
         val old = context.luma.shots.all().map { it.id }.toSet()
         ActivityScenario.launch(CameraActivity::class.java).use {
             until(35000) { device.findObject(By.desc("ถ่ายภาพ"))?.isEnabled == true }
@@ -46,7 +54,7 @@ class CameraFlowTest {
                 shot != null && shot!!.id !in old && shot!!.stage != Stage.CAPTURING
             }
             assertEquals(count, shot!!.frames)
-            assertEquals(CaptureOutput.AI, shot!!.output)
+            assertEquals(output, shot!!.output)
             until(180000) {
                 shot = context.luma.shots.get(shot!!.id)
                 shot!!.stage in setOf(Stage.DONE, Stage.FAILED)
@@ -54,7 +62,7 @@ class CameraFlowTest {
             assertEquals(shot!!.error, Stage.DONE, shot!!.stage)
             assertTrue(shot!!.fusedFrames in 1..count)
             assertNotNull(shot!!.ai)
-            assertNull(shot!!.raw)
+            if (output.needsRaw) assertNotNull(shot!!.raw) else assertNull(shot!!.raw)
             device.findObject(By.desc("เปิดรูปถ่ายล่าสุด")).click()
             device.wait(Until.findObject(By.text("ภาพ AI")), 15000).click()
             assertNotNull(device.wait(Until.findObject(By.textContains("MF1_SR1")), 10000))
@@ -63,6 +71,7 @@ class CameraFlowTest {
 
     @Test fun rawSelectionReportsHardwareSupport() {
         context.getSharedPreferences("camera", Context.MODE_PRIVATE).edit().putString("output", "JPEG").commit()
+        val before = context.luma.shots.all().map { it.id }.toSet()
         val provider = androidx.camera.lifecycle.ProcessCameraProvider.getInstance(context).get()
         val info = androidx.camera.core.CameraSelector.DEFAULT_BACK_CAMERA.filter(provider.availableCameraInfos).first()
         val supportsRaw = androidx.camera.core.ImageCapture.getImageCaptureCapabilities(info).supportedOutputFormats
@@ -76,7 +85,7 @@ class CameraFlowTest {
                 var shot: Shot? = null
                 until(60000) {
                     shot = context.luma.shots.latest()
-                    shot?.output == CaptureOutput.RAW && shot!!.stage == Stage.ORIGINAL
+                    shot != null && shot!!.id !in before && shot!!.output == CaptureOutput.RAW && shot!!.stage == Stage.ORIGINAL
                 }
                 assertNotNull(shot!!.raw)
                 context.contentResolver.openInputStream(shot!!.raw!!)!!.use { stream ->

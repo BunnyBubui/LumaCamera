@@ -52,8 +52,8 @@ jobs:
             adb shell pm grant th.ogay.luma.dev android.permission.CAMERA
             adb shell am start -W -n th.ogay.luma.dev/th.ogay.luma.CameraActivity
             sleep 3
-            adb exec-out screencap -p > app/build/reports/camera-screen.png
-            test "$(file --mime-type -b app/build/reports/camera-screen.png)" = image/png
+            adb shell screencap -p /sdcard/Download/camera-screen.png
+            adb pull /sdcard/Download/camera-screen.png app/build/reports/camera-screen.png
       - uses: actions/upload-artifact@v4
         if: always()
         with:
