@@ -97,9 +97,9 @@ class BurstCapture(
                 override fun onImageSaved(result: ImageCapture.OutputFileResults) {
                     if (done || generation != ticket) return
                     try {
-                        // CameraX may report only the last completed format for a dual-file
-                        // capture. Both files are finished when this callback is delivered.
-                        check(rawFile.length() > 0 && jpegFile.length() > 0) { "กล้องส่งไฟล์ RAW / JPEG ไม่ครบ" }
+                        // CameraX can emit one final callback or one per format. An early
+                        // callback may precede the other file; the final one sees both.
+                        if (rawFile.length() == 0L || jpegFile.length() == 0L) return
                         rawUri = PhotoMedia.publish(context, rawFile, "LUMA_${time}_${id}.dng", time, "image/x-adobe-dng")
                         accept(jpegFile)
                     } catch (e: Exception) {
@@ -194,6 +194,7 @@ class BurstCapture(
 
     private fun finish(note: String?) {
         if (done) return
+        if (!inserted && note != null) android.util.Log.w("LumaCapture", "${output.name}: $note")
         done = true
         generation++
         if (inserted) {
