@@ -1,0 +1,109 @@
+name: Android APK
+on:
+  pull_request:
+  push:
+    branches: [main]
+    paths-ignore: ['**.md', '.github/workflows/android.yml']
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      LUMA_BUILD_NUMBER: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Install Android SDK components
+        run: sdkmanager 'platforms;android-35' 'build-tools;34.0.0' 'build-tools;35.0.0'
+      - name: Verify bundled SR weights
+        run: sha256sum -c model/SHA256SUMS
+      - name: Test, lint and build
+        run: bash gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+      - name: Package installable APK
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/debug/app-debug.apk dist/Luma-Camera-0.1.0-debug.apk
+          (cd dist && sha256sum *.apk > SHA256SUMS.txt)
+          git rev-parse HEAD > dist/commit.txt
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose dist/*.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Luma-Camera-Android-APK
+          path: dist/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Android-test-reports
+          path: |
+            app/build/reports/
+            app/build/test-results/
+
+  signed:
+    needs: verify
+    if: github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      LUMA_BUILD_NUMBER: ${{ github.run_number }}
+    steps:
+      - name: Select testing or release key
+        id: select
+        shell: bash
+        env:
+          TEST_KEY: ${{ secrets.LUMA_TEST_KEYSTORE_B64 }}
+          RELEASE_KEY: ${{ secrets.LUMA_RELEASE_KEYSTORE_B64 }}
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            test -n "$RELEASE_KEY" || { echo "Configure the release signing secrets first"; exit 1; }
+            printf '%s' "$RELEASE_KEY" | base64 --decode > "$RUNNER_TEMP/luma.jks"
+            echo "variant=Release" >> "$GITHUB_OUTPUT"
+          elif [[ -n "$TEST_KEY" ]]; then
+            printf '%s' "$TEST_KEY" | base64 --decode > "$RUNNER_TEMP/luma.jks"
+            echo "variant=Beta" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.select.outputs.variant != ''
+      - uses: actions/setup-java@v4
+        if: steps.select.outputs.variant != ''
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        if: steps.select.outputs.variant != ''
+      - name: Build with stable signing key
+        if: steps.select.outputs.variant != ''
+        env:
+          VARIANT: ${{ steps.select.outputs.variant }}
+          LUMA_KEYSTORE: ${{ runner.temp }}/luma.jks
+          LUMA_STORE_PASSWORD: ${{ startsWith(github.ref, 'refs/tags/v') && secrets.LUMA_RELEASE_STORE_PASSWORD || secrets.LUMA_TEST_STORE_PASSWORD }}
+          LUMA_KEY_ALIAS: ${{ startsWith(github.ref, 'refs/tags/v') && secrets.LUMA_RELEASE_KEY_ALIAS || secrets.LUMA_TEST_KEY_ALIAS }}
+          LUMA_KEY_PASSWORD: ${{ startsWith(github.ref, 'refs/tags/v') && secrets.LUMA_RELEASE_KEY_PASSWORD || secrets.LUMA_TEST_KEY_PASSWORD }}
+        run: |
+          sdkmanager 'platforms;android-35' 'build-tools;34.0.0' 'build-tools;35.0.0'
+          bash gradlew --no-daemon ":app:assemble$VARIANT"
+          mkdir -p dist
+          cp app/build/outputs/apk/${VARIANT,,}/*.apk "dist/Luma-Camera-$VARIANT.apk"
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose dist/*.apk
+          (cd dist && sha256sum *.apk > SHA256SUMS.txt)
+          git rev-parse HEAD > dist/commit.txt
+      - uses: actions/upload-artifact@v4
+        if: steps.select.outputs.variant != ''
+        with:
+          name: Luma-Camera-${{ steps.select.outputs.variant }}-APK
+          path: dist/
+      - if: always()
+        run: rm -f "$RUNNER_TEMP/luma.jks"
