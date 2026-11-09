@@ -53,4 +53,18 @@ class VideoSessionDeviceTest {
             assertNull(device.findObject(By.textContains("Allow Luma")))
         }
     }
+    @Test fun softwareNightAfterHdrKeepsAiBurstWhenReusingSession() {
+        val provider = androidx.camera.lifecycle.ProcessCameraProvider.getInstance(context).get()
+        val extensions = androidx.camera.extensions.ExtensionsManager.getInstanceAsync(context, provider).get()
+        val selector = androidx.camera.core.CameraSelector.DEFAULT_BACK_CAMERA
+        val nativeNight = extensions.isExtensionAvailable(selector, androidx.camera.extensions.ExtensionMode.NIGHT)
+        val prefs = context.getSharedPreferences("camera", 0)
+        prefs.edit().putString("photo_mode", "HDR").putString("output", "JPEG").putString("timer", "0").commit()
+        ActivityScenario.launch<CameraActivity>(Intent(context, CameraActivity::class.java)).use {
+            waitFor { device.findObject(By.desc("ถ่ายภาพ"))?.isEnabled == true }
+            device.findObject(By.text("กลางคืน")).click()
+            waitFor { device.findObject(By.desc("ถ่ายภาพ"))?.isEnabled == true && device.findObject(By.textStartsWith("กลางคืน  ·")) != null }
+            if (!nativeNight) assertTrue("Software Night must route through AI after a compatible HDR bind", device.findObject(By.desc("รูปแบบ AI")).isSelected)
+        }
+    }
 }

@@ -342,6 +342,7 @@ class CameraActivity : ComponentActivity() {
             val formats=captureCaps.getOrPut(info){ImageCapture.getImageCaptureCapabilities(info).supportedOutputFormats.toSet()}
             rawAvailable = formats.contains(ImageCapture.OUTPUT_FORMAT_RAW_JPEG)
             if(output.needsRaw&&!rawAvailable){output=CaptureOutput.JPEG;prefs.edit().putString("output",output.name).apply();notice("กล้องนี้ไม่รองรับ RAW · เปลี่ยนเป็น JPEG แล้ว")}
+            if(mode==PhotoMode.NIGHT&&!activeExtension&&output==CaptureOutput.JPEG)output=CaptureOutput.AI
             val key=listOf(rear,activeExtension,if(activeExtension)extension else ExtensionMode.NONE,output.needsRaw,
                 mode==PhotoMode.HIRES,mode==PhotoMode.ULTRA_HDR,mode in listOf(PhotoMode.PRO,PhotoMode.HDR,PhotoMode.HIRES,PhotoMode.NIGHT),prefs.getString("aspect","4:3"),prefs.getString("jpeg_quality","95"))
             if(key==boundKey&&capture?.let{provider.isBound(it)}==true){
