@@ -37,7 +37,7 @@ EF2 ไม่มีการปฏิเสธการเคลื่อนไ�
 | `app/src/main/cpp/CMakeLists.txt` | ลิงก์ `libopencv_java4.so` จาก AAR ผ่าน Prefab, ใช้ `c++_shared`, จัดแนว 16 KB |
 | `app/src/main/java/th/ogay/luma/hdr/HdrNative.kt` | API ฝั่ง Kotlin: `HdrNative.fuse(...)` |
 | `app/src/main/java/th/ogay/luma/HdrCapture.kt` | เลือก EF1/EF2 ตามค่าตั้ง `hdr_native` และถอยไป EF1 เมื่อ EF2 โหลดไม่ได้หรือล้ม |
-| `app/src/test/cpp/` | เทสต์บนเดสก์ท็อป 25 ข้อ |
+| `app/src/test/cpp/` | เทสต์บนเดสก์ท็อป 22 ข้อ |
 | `app/src/androidTest/.../HdrNativeDeviceTest.kt` | เทสต์บน emulator: library โหลดได้, สีไม่สลับช่อง, ทิศการเลื่อนตรงกับ EF1, การยกเลิกและ error |
 
 ## วิธีทดสอบบน Reno15
@@ -50,7 +50,7 @@ EF2 ไม่มีการปฏิเสธการเคลื่อนไ�
 
 | รายการ | ผล |
 |---|---|
-| เทสต์เดสก์ท็อป (OpenCV 4.12 build เอง, g++ -O2) | ผ่าน 25/25 |
+| เทสต์เดสก์ท็อป (OpenCV 4.12 build เอง, g++ -O2) | ผ่าน 22/22 |
 | เวลา 3 MP × 3 เฟรม บนเดสก์ท็อป 2 CPU | fuse ≈ 340 ms, tone ≈ 100 ms |
 | เวลา EF1 ภาพ 12 MP × 3 บน JVM เดสก์ท็อป (อ้างอิงจาก HDR_INTEGRATION.md) | 7.8 วินาที |
 
