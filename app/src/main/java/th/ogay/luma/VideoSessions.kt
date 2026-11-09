@@ -1,6 +1,8 @@
 package th.ogay.luma
 
 import android.util.Range
+import org.json.JSONArray
+import org.json.JSONObject
 import androidx.camera.core.CameraInfo
 import androidx.camera.core.DynamicRange
 import androidx.camera.core.Preview
@@ -16,6 +18,7 @@ class VideoSessions {
     private data class Key(val camera: CameraInfo, val quality: Quality, val dynamic: DynamicRange, val eis: Boolean, val slow: Boolean)
     data class Mode(val range: Range<Int>, val source: Int) { val lower get() = range.lower; val upper get() = range.upper }
     private val cache = mutableMapOf<Key, List<Mode>>()
+    private val errors = mutableMapOf<Key, MutableList<String>>()
     fun rates(info: CameraInfo, quality: Quality, dynamic: DynamicRange, eis: Boolean, slow: Boolean = false): List<Mode> =
         cache.getOrPut(Key(info, quality, dynamic, eis, slow)) {
             val sources = if (slow) listOf(Recorder.VIDEO_CAPABILITIES_SOURCE_CAMCORDER_PROFILE) else listOf(Recorder.VIDEO_CAPABILITIES_SOURCE_CAMCORDER_PROFILE, Recorder.VIDEO_CAPABILITIES_SOURCE_CODEC_CAPABILITIES)
@@ -29,10 +32,16 @@ class VideoSessions {
                     val probe = if (slow) HighSpeedVideoSessionConfig.Builder(capture).setPreview(preview).setSlowMotionEnabled(true).build() else SessionConfig.Builder(preview, capture).build()
                     val ranges = info.getSupportedFrameRateRanges(probe).map { VideoSessionPolicy.Rate(it.lower, it.upper) }
                     (if (slow) ranges.filter { it.lower == it.upper && it.upper > 60 }.distinct() else VideoSessionPolicy.normal(ranges)).map { Mode(Range(it.lower, it.upper), source) }
-                }.getOrDefault(emptyList())
+                }.onFailure { error -> errors.getOrPut(Key(info, quality, dynamic, eis, slow)) { mutableListOf() }.add("source=$source ${error.javaClass.simpleName}: ${error.message}") }.getOrDefault(emptyList())
             }
             // Prefer fixed timing, then the manufacturer's profile over codec-derived profiles.
             modes.groupBy { it.upper }.values.map { group -> group.sortedWith(compareByDescending<Mode> { it.lower }.thenBy { it.source }).first() }.sortedBy { it.upper }
         }
+    fun report(info: CameraInfo, quality: Quality, dynamic: DynamicRange, eis: Boolean, slow: Boolean): JSONObject {
+        val modes = rates(info, quality, dynamic, eis, slow)
+        return JSONObject().put("status", "queried_not_recording_verified").put("modes", JSONArray(modes.map {
+            JSONObject().put("range", it.range.toString()).put("capabilitySource", it.source)
+        })).put("queryErrors", JSONArray(errors[Key(info, quality, dynamic, eis, slow)].orEmpty()))
+    }
     fun label(mode: Mode): String { val range = mode.range; return (if (range.lower == range.upper) "${range.upper} fps" else "สูงสุด ${range.upper} fps (${range.lower}–${range.upper})") + if (mode.source == Recorder.VIDEO_CAPABILITIES_SOURCE_CODEC_CAPABILITIES) " · ตรวจไฟล์จริง" else "" }
 }

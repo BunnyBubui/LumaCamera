@@ -87,6 +87,9 @@ class CameraActivity : ComponentActivity() {
     private var boundKey:List<Any?>?=null
     private var boundPreview:Preview?=null
     private val captureCaps=mutableMapOf<CameraInfo,Set<Int>>()
+    private val modeHandler=Handler(Looper.getMainLooper())
+    private var modePending=false
+    private val switchMode=Runnable{modePending=false;if(!isDestroyed&&!isFinishing){buildScreen();bind();loadThumb()}}
     private var targetRotation = Surface.ROTATION_0
     private var lastThumbUri: Uri? = null
     private lateinit var preview: PreviewView
@@ -149,12 +152,13 @@ class CameraActivity : ComponentActivity() {
     }
     private fun granted() = permissions.all { ContextCompat.checkSelfPermission(this,it) == PackageManager.PERMISSION_GRANTED }
     override fun onResume() {
-        super.onResume(); orientation.enable(); loadThumb()
+        super.onResume(); orientation.enable(); loadThumb();if(modePending){modeHandler.removeCallbacks(switchMode);modeHandler.post(switchMode)}
         if (granted() && provider != null && capture == null) bind()
         if (!granted()) showPermission()
     }
     override fun onPause() {
         orientation.disable()
+        modeHandler.removeCallbacks(switchMode)
         zoomAnimation?.cancel()
         burst?.cancel()
         hdr?.cancel()
@@ -438,7 +442,7 @@ class CameraActivity : ComponentActivity() {
         flashButton.text=when(flash){ImageCapture.FLASH_MODE_AUTO->"⚡ A";ImageCapture.FLASH_MODE_ON->"⚡ ON";else->"⚡ OFF"}
         flashButton.contentDescription=when(flash){ImageCapture.FLASH_MODE_AUTO->"แฟลช อัตโนมัติ";ImageCapture.FLASH_MODE_ON->"แฟลช เปิด";else->"แฟลช ปิด"}
         flashButton.visibility=if(camera?.cameraInfo?.hasFlashUnit()==true) View.VISIBLE else View.GONE
-        shutter.isEnabled=capture!=null && granted() && !busy && !zoomSettling && (!output.needsRaw || rawAvailable)
+        shutter.isEnabled=capture!=null && granted() && !modePending && !busy && !zoomSettling && (!output.needsRaw || rawAvailable)
         shutter.alpha=if(shutter.isEnabled) 1f else 0.45f
         flip.isEnabled=!busy; flashButton.isEnabled=!busy
         currentZoom.text="${mode.title}  ·  ${zoomText(ratio)}"+(if(software && rear) " · ครอป" else "")+(if(activeExtension)" · OEM" else "")
@@ -591,6 +595,7 @@ class CameraActivity : ComponentActivity() {
     }
 
     private fun takePhoto() {
+        if(modePending)return
         if(busy||timerRunning||illuminating||zoomSettling)return
         val seconds=prefs.getString("timer","0")?.toIntOrNull()?:0
         if(seconds<=0){captureWithLight();return}
@@ -673,23 +678,24 @@ class CameraActivity : ComponentActivity() {
             refresh();hint(msg,5000)
         }
     }
+    private fun cancelModeSwitch(){modeHandler.removeCallbacks(switchMode);modePending=false}
     private fun selectMode(next:PhotoMode){
         if(busy||timerRunning||next==mode)return
         if(next==PhotoMode.MORE){showMore();return}
-        if(next==PhotoMode.VIDEO){provider?.unbindAll();capture=null;startActivity(Intent(this,VideoActivity::class.java));return}
+        if(next==PhotoMode.VIDEO){cancelModeSwitch();provider?.unbindAll();capture=null;startActivity(Intent(this,VideoActivity::class.java));return}
         if(panoFiles.isNotEmpty()&&next!=PhotoMode.PANORAMA){notice("ต่อภาพพาโนรามาหรือกลับมาถ่ายต่อได้ในโหมดพาโนรามา")}
         mode=next
         if(next!=PhotoMode.PHOTO&&next!=PhotoMode.PRO){output=CaptureOutput.JPEG;prefs.edit().putString("output",output.name).apply()}
         prefs.edit().putString("photo_mode",next.name).apply()
-        buildScreen();bind()
+        modePending=true;shutter.isEnabled=false;modeHandler.removeCallbacks(switchMode);modeHandler.postDelayed(switchMode,70)
     }
     private fun showMore(){studioSheet("เพิ่มเติม"){box,d->
         val options=listOf("HDR" to {selectMode(PhotoMode.HDR)},"Ultra HDR" to {selectMode(PhotoMode.ULTRA_HDR)},"ความละเอียดสูง" to {selectMode(PhotoMode.HIRES)},"เอกสาร / PDF / OCR" to {selectMode(PhotoMode.DOCUMENT)},"พาโนรามา" to {selectMode(PhotoMode.PANORAMA)},"Time-lapse" to {openSpecial("TIMELAPSE")},"Slow-motion" to {openSpecial("SLOW")},"Dual-view" to {openVideo("DUAL")},"Movie / PRO Video" to {openVideo("MOVIE")},"RAW Video / RAW AI ทดลอง" to {provider?.unbindAll();capture=null;startActivity(Intent(this,RawLabActivity::class.java))},"คลัง / แต่งคลิป / AI Video" to {startActivity(Intent(this,StudioLibraryActivity::class.java))})
         options.chunked(2).forEach{pair->val row=LinearLayout(this);pair.forEach{(name,action)->row.addView(pill(name){d.dismiss();action()},LinearLayout.LayoutParams(0,dp(72),1f).apply{setMargins(dp(3),dp(3),dp(3),dp(3))})};box.addView(row)}
         box.addView(pill("ตั้งค่าทั้งหมด"){d.dismiss();showAllSettings()},-1,-2)
     }}
-    private fun openVideo(kind:String){provider?.unbindAll();capture=null;startActivity(Intent(this,VideoActivity::class.java).putExtra("mode",kind))}
-    private fun openSpecial(kind:String){provider?.unbindAll();capture=null;startActivity(Intent(this,SpecialVideoActivity::class.java).putExtra("mode",kind))}
+    private fun openVideo(kind:String){cancelModeSwitch();provider?.unbindAll();capture=null;startActivity(Intent(this,VideoActivity::class.java).putExtra("mode",kind))}
+    private fun openSpecial(kind:String){cancelModeSwitch();provider?.unbindAll();capture=null;startActivity(Intent(this,SpecialVideoActivity::class.java).putExtra("mode",kind))}
     private fun showAllSettings(){showStudioSettings(rawAvailable){auto=prefs.getBoolean("auto",true);overlay.grid=prefs.getBoolean("grid",false)
         if(prefs.getBoolean("gps",false)&&ContextCompat.checkSelfPermission(this,Manifest.permission.ACCESS_COARSE_LOCATION)!=PackageManager.PERMISSION_GRANTED)locationRequest.launch(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION,Manifest.permission.ACCESS_FINE_LOCATION))
         if(!busy)bind()

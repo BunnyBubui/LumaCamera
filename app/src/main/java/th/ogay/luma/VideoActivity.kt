@@ -56,6 +56,7 @@ class VideoActivity:ComponentActivity(){
     private var targetRotation=android.view.Surface.ROTATION_0
     private lateinit var orientation:OrientationEventListener
     private var rateLabel="30 fps"
+    private var selectedCameraId:String?=null
     private val sounds=MediaActionSound()
     private val kind get()=intent.getStringExtra("mode")?:"VIDEO"
     private val dual get()=kind=="DUAL"
@@ -69,6 +70,7 @@ class VideoActivity:ComponentActivity(){
         fps=prefs.getInt("video_fps",30);bitrate=prefs.getInt("video_bitrate",20_000_000);stabilization=prefs.getBoolean("video_eis",false)
         dynamic=when(prefs.getString("video_dynamic","SDR")){"HLG"->DynamicRange.HLG_10_BIT;"HDR10"->DynamicRange.HDR10_10_BIT;else->DynamicRange.SDR}
         if(slow){mic=false;dynamic=DynamicRange.SDR;stabilization=false;fps=prefs.getInt("slow_fps",120);quality=when(prefs.getString("slow_quality","FHD")){"UHD"->Quality.UHD;"HD"->Quality.HD;"SD"->Quality.SD;else->Quality.FHD}}
+        selectedCameraId=prefs.getString(if(slow)"slow_camera"else "video_camera",null)
         targetRotation=windowManager.defaultDisplay.rotation
         orientation=object:OrientationEventListener(this){override fun onOrientationChanged(degrees:Int){
             VideoSessionPolicy.rotation(degrees)?.let{rotation->targetRotation=rotation;if(recording==null&&!starting&&!finalizing)useCase?.targetRotation=rotation}
@@ -105,15 +107,22 @@ class VideoActivity:ComponentActivity(){
         pause=pill("พัก"){val r=recording?:return@pill;if(paused)r.resume()else r.pause()}.apply{contentDescription="พักหรือต่อวิดีโอ";isEnabled=false};pause.minWidth=dp(70);actions.addView(pause,-2,-2);actions.space()
         shutter=Glyph(this,"shutter","เริ่มบันทึกวิดีโอ"){if(recording!=null)stopRecording()else if(!starting&&!finalizing){if(mic&&ContextCompat.checkSelfPermission(this,Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED)audioPermission.launch(Manifest.permission.RECORD_AUDIO)else startRecording()}}.apply{video=true;isEnabled=false}
         actions.addView(shutter,dp(82),dp(82));actions.space()
-        actions.addView(Glyph(this,"flip","สลับกล้องวิดีโอ"){if(recording==null&&!starting&&!finalizing&&!dual){rear=!rear;bind()}},dp(56),dp(56));actions.space();panel.addView(actions,-1,dp(112))
+        actions.addView(Glyph(this,"flip","สลับกล้องวิดีโอ"){if(recording==null&&!starting&&!finalizing&&!dual){rear=!rear;selectedCameraId=null;bind()}},dp(56),dp(56));actions.space();panel.addView(actions,-1,dp(112))
         panel.addView(pill("คลังวิดีโอ / แต่งคลิป"){if(recording==null&&!starting)startActivity(Intent(this,StudioLibraryActivity::class.java))},-1,-2)
         if(landscape)root.addView(ScrollView(this).apply{isFillViewport=true;addView(panel)},LinearLayout.LayoutParams(dp(300),-1))
         val pinch=android.view.ScaleGestureDetector(this,object:android.view.ScaleGestureDetector.SimpleOnScaleGestureListener(){override fun onScale(d:android.view.ScaleGestureDetector):Boolean{val s=camera?.cameraInfo?.zoomState?.value?:return false;animator?.cancel();camera?.cameraControl?.setZoomRatio((s.zoomRatio*d.scaleFactor).coerceIn(s.minZoomRatio,s.maxZoomRatio));return true}})
         preview.setOnTouchListener{_,e->pinch.onTouchEvent(e);if(e.actionMasked==MotionEvent.ACTION_UP)preview.performClick();true}
         ProcessCameraProvider.getInstance(this).also{f->f.addListener({runCatching{provider=f.get();if(ContextCompat.checkSelfPermission(this,Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED)bind()else permission.launch(arrayOf(Manifest.permission.CAMERA))}.onFailure{status.text=it.localizedMessage}},main)}
     }
-    private fun selector()=if(rear)CameraSelector.DEFAULT_BACK_CAMERA else CameraSelector.DEFAULT_FRONT_CAMERA
-    private fun info()=provider?.availableCameraInfos?.let{selector().filter(it).firstOrNull()}
+    private fun selector():CameraSelector{val selected=info()?:return if(rear)CameraSelector.DEFAULT_BACK_CAMERA else CameraSelector.DEFAULT_FRONT_CAMERA;return CameraSelector.Builder().addCameraFilter{items->items.filter{it==selected}}.build()}
+    private fun info():CameraInfo?{
+        val infos=provider?.availableCameraInfos?:return null
+        val selected=infos.firstOrNull{Camera2CameraInfo.from(it).cameraId==selectedCameraId}
+        if(selected!=null)return selected
+        val facing=if(rear)CameraSelector.LENS_FACING_BACK else CameraSelector.LENS_FACING_FRONT
+        if(slow)return infos.sortedBy{if(it.lensFacing==facing)0 else 1}.firstOrNull{runCatching{Recorder.getHighSpeedVideoCapabilities(it)?.getSupportedQualities(DynamicRange.SDR)?.isNotEmpty()==true}.getOrDefault(false)}?:infos.firstOrNull{it.lensFacing==facing}
+        return infos.firstOrNull{it.lensFacing==facing}
+    }
     @Suppress("DEPRECATION")
     private fun bind(){
         if(recording!=null||starting||finalizing)return
@@ -126,10 +135,11 @@ class VideoActivity:ComponentActivity(){
             val supported=caps.getSupportedQualities(dynamic)
             if(quality !in supported){quality=supported.firstOrNull{it==Quality.FHD}?:supported.firstOrNull()?:error("ไม่พบโปรไฟล์วิดีโอ")}
             val modes=sessions.rates(info,quality,dynamic,stabilization,slow)
+            boundConfig.put("sessionQuery",sessions.report(info,quality,dynamic,stabilization,slow))
             if(slow&&modes.isNotEmpty()&&modes.none{it.upper==fps}){val before=fps;fps=modes.minBy{it.upper}.upper;notice("ชุด $before fps ไม่รองรับ · เลือก $fps fps แล้ว")}
             val mode=modes.firstOrNull{it.upper==fps}?:error("${qualityName(quality)} ไม่รองรับ $fps fps ร่วมกับ HDR/กันสั่นที่เลือก · เลือกชุดใหม่")
             rateLabel=sessions.label(mode)
-            boundConfig=JSONObject().put("cameraId",Camera2CameraInfo.from(info).cameraId).put("quality",qualityName(quality)).put("requestedFps",fps)
+            boundConfig.put("requestedFps",fps)
                 .put("advertisedRange",mode.range.toString()).put("source",mode.source).put("dynamicRange",dynamic.toString()).put("eis",stabilization)
             val rb=Recorder.Builder().setVideoCapabilitiesSource(mode.source).setQualitySelector(QualitySelector.from(quality)).setTargetVideoEncodingBitRate(bitrate)
             val r=rb.build();val b=VideoCapture.Builder(r).setDynamicRange(dynamic).setTargetRotation(targetRotation)
@@ -157,6 +167,7 @@ class VideoActivity:ComponentActivity(){
                 }
                 camera=p.bindToLifecycle(this,selector(),session)
             }
+            selectedCameraId=Camera2CameraInfo.from(info).cameraId;rear=info.lensFacing==CameraSelector.LENS_FACING_BACK
             recorder=r;useCase=v;manual=if(slow)null else ManualControls(this,camera!!,true,true,fps)
             camera!!.cameraInfo.zoomState.observe(this){ruler.update(it.minZoomRatio,it.maxZoomRatio,it.zoomRatio)}
             saveSettings()
@@ -170,6 +181,8 @@ class VideoActivity:ComponentActivity(){
         if(slow&&Recorder.getHighSpeedVideoCapabilities(i)==null){Capabilities.show(this);return}
         studioSheet("วิดีโอ"){box,d->
             fun choose(title:String,items:List<String>,action:(Int)->Unit){box.addView(pill(title){AlertDialog.Builder(this).setTitle(title).setItems(items.toTypedArray()){_,n->action(n);d.dismiss();bind()}.setNegativeButton("ปิด",null).show()},-1,-2)}
+            val candidates=provider?.availableCameraInfos.orEmpty().filter{cam->runCatching{if(slow)Recorder.getHighSpeedVideoCapabilities(cam)?.getSupportedQualities(DynamicRange.SDR)?.isNotEmpty()==true else Recorder.getVideoCapabilities(cam).getSupportedQualities(DynamicRange.SDR).isNotEmpty()}.getOrDefault(false)}
+            choose("กล้อง / เลนส์ · ${Camera2CameraInfo.from(i).cameraId}",candidates.map{"กล้อง ${Camera2CameraInfo.from(it).cameraId} · ${if(it.lensFacing==CameraSelector.LENS_FACING_BACK)"หลัง"else "หน้า"}"}){selectedCameraId=Camera2CameraInfo.from(candidates[it]).cameraId}
             val caps=capabilities(i);val qualities=caps.getSupportedQualities(dynamic)
             choose("ความละเอียด · ${qualityName(quality)}",qualities.map{qualityName(it)}){quality=qualities[it]}
             val frames=sessions.rates(i,quality,dynamic,stabilization,slow)
@@ -227,7 +240,7 @@ class VideoActivity:ComponentActivity(){
         box.addView(Switch(this).apply{text="เริ่มและจบแบบนุ่ม";setTextColor(WHITE);isChecked=smooth;setOnCheckedChangeListener{_,v->smooth=v}},-1,-2)
         box.addView(pill("เล่น ${zoomText(zoomA)} → ${zoomText(zoomB)}"){d.dismiss();val cam=camera?:return@pill;val z=cam.cameraInfo.zoomState.value?:return@pill;animator?.cancel();animator=ValueAnimator.ofFloat(ln(zoomA.coerceIn(z.minZoomRatio,z.maxZoomRatio)),ln(zoomB.coerceIn(z.minZoomRatio,z.maxZoomRatio))).apply{duration=zoomDuration*1000;interpolator=if(smooth)android.view.animation.AccelerateDecelerateInterpolator()else android.view.animation.LinearInterpolator();addUpdateListener{cam.cameraControl.setZoomRatio(exp(it.animatedValue as Float))};start()}},-1,-2)
     }}
-    private fun saveSettings(){if(slow){prefs.edit().putInt("slow_fps",fps).putString("slow_quality",when(quality){Quality.UHD->"UHD";Quality.HD->"HD";Quality.SD->"SD";else->"FHD"}).apply();return};prefs.edit().putString("video_quality",when(quality){Quality.UHD->"UHD";Quality.HD->"HD";Quality.SD->"SD";else->"FHD"}).putInt("video_fps",fps).putInt("video_bitrate",bitrate).putBoolean("video_eis",stabilization).putString("video_dynamic",when(dynamic){DynamicRange.HLG_10_BIT->"HLG";DynamicRange.HDR10_10_BIT->"HDR10";else->"SDR"}).apply()}
+    private fun saveSettings(){prefs.edit().putString(if(slow)"slow_camera"else "video_camera",selectedCameraId).apply();if(slow){prefs.edit().putInt("slow_fps",fps).putString("slow_quality",when(quality){Quality.UHD->"UHD";Quality.HD->"HD";Quality.SD->"SD";else->"FHD"}).apply();return};prefs.edit().putString("video_quality",when(quality){Quality.UHD->"UHD";Quality.HD->"HD";Quality.SD->"SD";else->"FHD"}).putInt("video_fps",fps).putInt("video_bitrate",bitrate).putBoolean("video_eis",stabilization).putString("video_dynamic",when(dynamic){DynamicRange.HLG_10_BIT->"HLG";DynamicRange.HDR10_10_BIT->"HDR10";else->"SDR"}).apply()}
     override fun onResume(){super.onResume();orientation.enable();if(recording==null&&!starting&&!finalizing&&useCase!=null){shutter.isEnabled=true;config.isEnabled=true}}
     override fun onPause(){orientation.disable();if(starting&&recording==null){requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED};starting=false;animator?.cancel();handler.removeCallbacksAndMessages(null);recording?.stop();super.onPause()}
     override fun onDestroy(){sounds.release();super.onDestroy()}
