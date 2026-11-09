@@ -74,15 +74,20 @@ class ThaiOcrDeviceTest {
     @Test fun pooledCharacterErrorRate() {
         var errors = 0
         var chars = 0
+        val report = StringBuilder("OCR REPORT ${android.os.Build.MODEL} API ${android.os.Build.VERSION.SDK_INT}\n")
         for (name in truth.keys()) {
             val expected = truth.getString(name)
+            val start = SystemClock.elapsedRealtime()
             val text = read(name)
+            report.append("%s CER %.3f WER %.3f %d ms | %s\n".format(name, OcrMetrics.cer(expected, text), OcrMetrics.wer(expected, text), SystemClock.elapsedRealtime() - start, text.replace("\n", " / ")))
             errors += OcrMetrics.characterErrors(expected, text)
             chars += OcrMetrics.characterCount(expected)
         }
         val pooled = errors.toDouble() / chars
         Log.i(TAG, "pooled CER %.4f (%d errors / %d characters)".format(pooled, errors, chars))
         assertTrue("pooled CER %.4f".format(pooled), pooled <= 0.025)
+        // Temporary: fail with the report so the CI log carries the emulator numbers.
+        fail(report.append("pooled CER %.4f (%d/%d)".format(pooled, errors, chars)).toString())
     }
 
     @Test fun timeoutStopsBeforeTheNextLine() {
