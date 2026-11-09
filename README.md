@@ -1,11 +1,39 @@
-# Luma Camera 0.2.0
+# Luma Camera 0.3.0 — Studio (กำลังตรวจรับ)
+
+สถานะ: โค้ดชุด Studio คอมไพล์ผ่านแล้ว กำลังตรวจ lint, unit tests และ Android flow รุ่นนี้ยังไม่ใช่การรับรองว่าทุกโหมดทำงานหรือได้คุณภาพตามเป้าบน Reno15 จริง
+
+แผนส่งต่องานให้ Claude พร้อมขอบเขตไฟล์และ API อยู่ที่ [docs/CLAUDE_HANDOFF.md](docs/CLAUDE_HANDOFF.md) เริ่มงานโมดูลแยกบน branch ของตนเองและเปิด PR เข้าสู่ `v0.3-studio`
+
+## Studio UI และโหมดใหม่
+
+- หน้ากล้องสีดำ/ขาว/เหลือง แถบ Night / Portrait / Photo / Video / Pro / More แตะหรือปัดเปลี่ยนโหมด แผงตั้งค่าด่วนและไม้บรรทัดซูมด้วยนิ้วเดียว
+- HDR เลือก OEM เมื่อรองรับ ไม่เช่นนั้นถ่าย bracket และ exposure fusion เป็น SDR; Night ใช้ OEM หรือ AI 32 เฟรม; Portrait ใช้ OEM หรือ ML Kit selfie segmentation beta; Ultra HDR เปิดเมื่อกล้องรองรับ JPEG gain map และเก็บไฟล์ตรง; HI-RES ร้องขอความละเอียดสูงสุดที่ Android เปิดให้
+- PRO เปิด ISO/shutter เฉพาะ manual sensor, WB ตามโหมดที่กล้องรายงาน, manual focus ตามระยะเลนส์ และ EV พร้อม histogram/peaking/zebra จากพรีวิว
+- Video มีไมค์/เงียบ พัก/ต่อ คุณภาพและ fps เป้าหมาย SDR/HLG/HDR10 กันสั่น EIS ตามที่รองรับ Zoom A→B และคันโยกซูม Dual-view ใช้ concurrent composition เมื่อระบบเปิดให้ Movie ใช้ viewport 2.39:1 การสลับเลนส์ระหว่างอัดยังขึ้นกับระบบกล้อง
+- หลังจบคลิปอ่าน track และ sample timestamps เพื่อรายงานขนาด fps และการมีเสียงจริง ค่าเป้าหมายอาจต่างจากไฟล์เมื่อกล้อง/encoder ปรับชุด
+- Slow-motion ใช้ constrained high-speed Camera2 และ MediaRecorder ไม่เก็บเสียง; Time-lapse เลือกช่วงเฟรมและส่งออก 30 fps ต้องตรวจผลบนเครื่องจริง
+- Document ปรับมุม 4 จุด ตรวจขอบ แก้ perspective เก็บหลายหน้าเป็น PDF และ OCR Latin; **OCR ไทยยังอยู่ในงาน Claude**
+- Panorama ใช้ ORB/homography และ feather blend ต้องถ่ายภาพซ้อนกัน 40–60% ผลไม่ผ่านจะเก็บอินพุตไว้
+- RAW Lab ทดลอง DNG sequence 10 วินาที เก็บ JSONL timestamps/ISO/shutter จำนวนเฟรมที่เขียน/ทิ้ง และ WAV แยกเมื่อเปิดไมค์ ส่งออก ZIP ได้ ขนาด RAW รุ่นทดลองจำกัด ≤16 MP การซิงก์เสียงต้องตรวจ sensor timestamp source และ hardware audio timestamp
+- RAW AI ทดลองรวม linear RGB หลัง Bayer 2×2/WB ก่อน gamma แล้วเข้าคิว SR1 แยกจาก RAW+AI รุ่น 0.2 **ยังไม่มี lens-shading/hot-pixel calibration** DNG ต้นฉบับเก็บไว้
+- แต่งคลิปส่งออกไฟล์ใหม่: SR1 2× บน GPU จากน้ำหนักเดียวกับภาพนิ่ง (SDR ต้นฉบับ ≤1080p), Movie LUT, นำเข้า .cube 3D 2–33, ครอป 2.39, เปลี่ยนความเร็วและ codec H.264/HEVC ตาม encoder **SR1 video ยังไม่มี temporal consistency**
+- Luma Log เป็น transfer curve ที่แปลงจาก SDR หลังถ่าย พร้อม JSON sidecar **ไม่ใช่ Log จากเซนเซอร์หรือ RAW video** เปิดหน้าแต่งคลิปไว้ขณะส่งออก หากออกจากหน้าจะยกเลิกโดยเก็บต้นฉบับไว้
+- ตั้งเวลา 3/10 วินาที อัตราส่วน 4:3/1:1/16:9 ถ่าย JPEG ต่อเนื่อง 10 ภาพ ปุ่มเสียง เส้นระดับ ลายน้ำ กลับเซลฟี่ แสงหน้าจอ และโฟลเดอร์ภาพ GPS ใช้ตำแหน่งล่าสุดไม่เกิน 15 นาทีเมื่อผู้ใช้เลือกเปิดและอนุญาตเท่านั้น
+
+## ข้อจำกัดการตรวจรับ
+
+โหมด HDR/สี, RAW, high-speed, dual-camera, fps, thermal และคุณภาพเทียบกล้อง OPPO ต้องใช้ผลจากเครื่องจริง การมี capability flag หรือ build ผ่านยังไม่ใช่ผลการทดสอบ session ข้อความในแอปและรายงานต้องระบุสิ่งที่ร้องขอเทียบกับสิ่งที่บันทึกได้จริง
+
+OpenCV 4.12 และ ML Kit native ARM64 ที่บรรจุมี ELF PT_LOAD alignment 16 KB ตามที่ตรวจจาก dependency แต่ยังต้องทดสอบบนเครื่องที่ใช้ page size 16 KB จริง
+
+---
 
 แอปกล้อง Android ภาษาไทยสำหรับถ่ายภาพและสร้างสำเนา AI 12 MP บนเครื่อง เครื่องเป้าหมายแรกคือ OPPO Reno15 5G (CPH2825) รองรับการติดตั้งตั้งแต่ Android 6.0 (API 23) ขึ้นไปบนอุปกรณ์ที่มีกล้อง รองรับ 32/64 บิตตามไลบรารี CameraX ที่บรรจุใน APK การมีกล้องเทเลและมุมกว้างพิเศษให้ใช้ขึ้นกับข้อมูลที่มือถือเปิดให้แอป
 
 ## ติดตั้งจาก GitHub บน Reno15
 
 1. ลงชื่อเข้า GitHub ด้วยบัญชีที่เข้าถึง repo นี้ เปิดหน้า **Actions → Android APK** แล้วเลือก run ที่ผ่าน หรือกด **Run workflow → main**
-2. เลื่อนลงไปที่ **Artifacts → Luma-Camera-Android-APK** ดาวน์โหลด แตก ZIP แล้วแตะ **Luma-Camera-0.2.0-debug.apk**
+2. เลื่อนลงไปที่ **Artifacts → Luma-Camera-Android-APK** ดาวน์โหลด แตก ZIP แล้วแตะ **Luma-Camera-0.3.0-debug.apk**
 3. หาก ColorOS ขออนุญาตติดตั้งจากแอปที่ใช้เปิดไฟล์ ให้เปิดสิทธิ์ให้แอปนั้นชั่วคราว ติดตั้งแล้วเปิด **Luma Camera** และอนุญาตใช้กล้อง
 4. กดชัตเตอร์ ภาพต้นฉบับจะอยู่ใน **รูปภาพ → Luma** แตะภาพย่อข้างชัตเตอร์เพื่อดูรูป เปิด/ปิด AI ด้วยปุ่มด้านบน
 

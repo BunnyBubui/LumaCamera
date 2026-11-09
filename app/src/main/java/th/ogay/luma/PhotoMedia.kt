@@ -19,7 +19,7 @@ import java.io.IOException
 import kotlin.math.roundToInt
 
 object PhotoMedia {
-    private const val FOLDER = "Pictures/Luma/"
+    private fun folder(context:Context) = "Pictures/${context.getSharedPreferences("camera",0).getString("folder","Luma")}/"
     private val collection get() = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
 
     fun dimensions(file: File): Dimensions {
@@ -34,8 +34,8 @@ object PhotoMedia {
     private fun lookup(context: Context, name: String): Entry? {
         val modern = Build.VERSION.SDK_INT >= 29
         val columns = if (modern) arrayOf("_id", "is_pending") else arrayOf("_id")
-        val selection = if (modern) "_display_name=? AND relative_path=?" else "_data=?"
-        val args = if (modern) arrayOf(name, FOLDER) else arrayOf(legacyFile(name).absolutePath)
+        val selection = "_display_name=?"
+        val args = arrayOf(name)
         val target = if (modern) MediaStore.setIncludePending(collection) else collection
         return context.contentResolver.query(target, columns, selection, args, null)?.use {
             if (!it.moveToFirst()) null else Entry(ContentUris.withAppendedId(collection, it.getLong(0)), modern && it.getInt(1) == 1)
@@ -44,7 +44,7 @@ object PhotoMedia {
     fun published(context: Context, name: String): Uri? = lookup(context, name)?.takeUnless { it.pending }?.uri
 
     @Suppress("DEPRECATION")
-    private fun legacyFile(name: String) = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "Luma/$name")
+    private fun legacyFile(context:Context,name: String) = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "${context.getSharedPreferences("camera",0).getString("folder","Luma")}/$name")
 
     fun publish(context: Context, file: File, name: String, taken: Long, mime: String = "image/jpeg"): Uri {
         val resolver = context.contentResolver
@@ -56,7 +56,7 @@ object PhotoMedia {
             put(MediaStore.Images.Media.DATE_TAKEN, taken)
         }
         if (Build.VERSION.SDK_INT >= 29) {
-            values.put(MediaStore.Images.Media.RELATIVE_PATH, FOLDER)
+            values.put(MediaStore.Images.Media.RELATIVE_PATH, folder(context))
             values.put(MediaStore.Images.Media.IS_PENDING, 1)
             val uri = existing?.uri ?: resolver.insert(collection, values) ?: throw IOException("สร้างรายการภาพไม่ได้")
             try {
@@ -69,7 +69,7 @@ object PhotoMedia {
                 throw e
             }
         }
-        val target = legacyFile(name)
+        val target = legacyFile(context,name)
         val dir = target.parentFile ?: throw IOException("ไม่พบโฟลเดอร์รูป")
         if (!dir.exists() && !dir.mkdirs()) throw IOException("เปิดโฟลเดอร์รูปไม่ได้")
         // A process can stop after rename and before indexing. Re-index the complete file on retry.

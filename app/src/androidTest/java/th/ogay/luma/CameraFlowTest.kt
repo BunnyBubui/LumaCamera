@@ -28,6 +28,9 @@ class CameraFlowTest {
         while(SystemClock.elapsedRealtime()<end){if(check())return;SystemClock.sleep(250)}
         assertTrue("Timed out after $ms ms",check())
     }
+    @org.junit.Before fun resetStudioMode(){
+        context.getSharedPreferences("camera",Context.MODE_PRIVATE).edit().putString("photo_mode","PHOTO").putString("timer","0").putString("aspect","4:3").putBoolean("watermark",false).putBoolean("gps",false).commit()
+    }
     @Test fun multiFrameAiCapturesFourRealImages() = multiFrameFlow(4)
     @Test fun multiFrameAiCapturesThirtyTwoRealImages() = multiFrameFlow(32)
 
