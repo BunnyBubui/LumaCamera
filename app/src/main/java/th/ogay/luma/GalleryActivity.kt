@@ -117,7 +117,7 @@ class GalleryActivity : ComponentActivity() {
     // ---------- Grid ----------
     private fun topBar(title: String, back: () -> Unit): LinearLayout {
         val bar = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(12), dp(14), dp(6)) }
-        bar.addView(roundButton(Icons.CHEVRON_LEFT, "ย้อนกลับ", back), dp(44), dp(44))
+        bar.addView(roundButton(Icons.CHEVRON_LEFT, "ย้อนกลับ", back), dp(48), dp(48))
         bar.addView(text(title, 20f, Color.WHITE, true).apply { setPadding(dp(12), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
         root.addView(bar, -1, -2); return bar
     }
@@ -137,11 +137,11 @@ class GalleryActivity : ComponentActivity() {
         val searchIcon = IconView(this, Icons.SEARCH, 2f)
         val field = EditText(this).apply { hint = "ค้นหา"; setHintTextColor(Glass.TEXT3); setTextColor(Color.WHITE); textSize = 15f; background = null; setSingleLine(); visibility = View.GONE; setText(queryText); setPadding(dp(6), 0, 0, 0) }
         val close = IconView(this, Icons.CLOSE, 2f).apply { tint = Glass.TEXT2; visibility = View.GONE; contentDescription = "ปิดการค้นหา"; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES; isClickable = true }
-        searchBox.addView(searchIcon, dp(20), dp(20)); searchBox.addView(field, LinearLayout.LayoutParams(0, -1, 1f)); searchBox.addView(close, dp(32), dp(32))
+        searchBox.addView(searchIcon, dp(20), dp(20)); searchBox.addView(field, LinearLayout.LayoutParams(0, -1, 1f)); searchBox.addView(close, dp(40), dp(40))
         searchBox.contentDescription = "ค้นหา"
-        bar.addView(searchBox, LinearLayout.LayoutParams(dp(44), dp(44)))
+        bar.addView(searchBox, LinearLayout.LayoutParams(dp(48), dp(48)))
         fun morph(open: Boolean) {
-            val from = searchBox.width; val to = if (open) bar.width - dp(28) - dp(56) else dp(44)
+            val from = searchBox.width; val to = if (open) bar.width - bar.paddingLeft - bar.paddingRight - dp(60) else dp(48)
             field.visibility = if (open) View.VISIBLE else View.GONE; close.visibility = field.visibility
             android.animation.ValueAnimator.ofInt(from, to).apply {
                 duration = if (Glass.reduced(this@GalleryActivity)) 0 else 420; interpolator = Glass.EASE
@@ -162,13 +162,14 @@ class GalleryActivity : ComponentActivity() {
         val tabRow = LinearLayout(this)
         listOf("ถ่ายด้วย Luma", "ทั้งเครื่อง").forEachIndexed { i, t ->
             tabRow.addView(text(t, 14f, if ((i == 1) == device) Color.WHITE else Glass.TEXT2, true).apply {
-                gravity = Gravity.CENTER; isClickable = true; contentDescription = t
+                gravity = Gravity.CENTER; isClickable = true; contentDescription = t; isSelected = (i == 1) == device
+                androidx.core.view.ViewCompat.setStateDescription(this, if ((i == 1) == device) "เลือกอยู่" else null)
                 setOnClickListener { if ((i == 1) != device) { device = i == 1; category = 0; prefs.edit().putBoolean("gallery_device", device).apply(); slideKnob(knob, tabs, i); reload() } }
             }, LinearLayout.LayoutParams(0, -1, 1f))
         }
         tabs.addView(tabRow, -1, -1)
         tabs.post { slideKnob(knob, tabs, if (device) 1 else 0, false) }
-        root.addView(tabs, LinearLayout.LayoutParams(-1, dp(40)).apply { setMargins(dp(16), dp(4), dp(16), dp(8)) })
+        root.addView(tabs, LinearLayout.LayoutParams(-1, dp(48)).apply { setMargins(dp(16), dp(4), dp(16), dp(8)) })
 
         if (device && !mediaGranted()) {
             root.addView(LinearLayout(this).apply {
@@ -182,7 +183,7 @@ class GalleryActivity : ComponentActivity() {
             return
         }
         val cats = categories(all); if (category >= cats.size) category = 0
-        val strip = CenterStrip(this).apply { capsuleHeightDp = 36 }
+        val strip = CenterStrip(this).apply { capsuleHeightDp = 40; contentDescription = "หมวด" }
         val labels = mutableListOf<TextView>()
         strip.setItems(cats.mapIndexed { i, (name, _) ->
             val t = text(name, 13.5f, if (i == category) Color.WHITE else Glass.TEXT2, i == category).apply { gravity = Gravity.CENTER; isClickable = true; maxLines = 1; contentDescription = "หมวด$name" }
@@ -190,7 +191,7 @@ class GalleryActivity : ComponentActivity() {
             CenterStrip.Item(name, (t.paint.measureText(name) / resources.displayMetrics.density + 28).roundToInt().coerceAtLeast(64), t)
         }, category)
         strip.onLive = { live -> labels.forEachIndexed { i, t -> t.setTextColor(if (i == live) Color.WHITE else Glass.TEXT2) } }
-        root.addView(strip, -1, dp(44))
+        root.addView(strip, -1, dp(48))
 
         val grid = GridView(this).apply { numColumns = 3; horizontalSpacing = dp(3); verticalSpacing = dp(3); setPadding(dp(3), dp(6), dp(3), dp(3)); clipToPadding = false; selector = android.graphics.drawable.ColorDrawable(0) }
         val empty = text("", 15f, Glass.TEXT2).apply { gravity = Gravity.CENTER; visibility = View.GONE }
@@ -302,13 +303,13 @@ class GalleryActivity : ComponentActivity() {
             if (icon.isNotEmpty()) addView(IconView(this@GalleryActivity, icon, 2f).apply { tint = if (active) Glass.ACCENT else Color.WHITE }, dp(18), dp(18))
             addView(text(label, 14f, if (active) Glass.ACCENT else Color.WHITE, active).apply { setPadding(if (icon.isEmpty()) 0 else dp(6), 0, 0, 0) })
         }
-        toggle.addView(c, LinearLayout.LayoutParams(-2, dp(44)).apply { setMargins(dp(4), 0, dp(4), 0) })
+        toggle.addView(c, LinearLayout.LayoutParams(-2, dp(48)).apply { setMargins(dp(4), 0, dp(4), 0) })
     }
     private fun formatTime(t: Long) = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(t))
     private fun showDetail(s: Shot) {
         if (showingId != s.id) {
             showingId = s.id; root.removeAllViews()
-            topBar("ภาพถ่าย") { selected = null; useAi = false; reload() }.addView(roundButton(Icons.INFO, "ข้อมูลภาพ") { details(s) }, dp(44), dp(44))
+            topBar("ภาพถ่าย") { selected = null; useAi = false; reload() }.addView(roundButton(Icons.INFO, "ข้อมูลภาพ") { details(s) }, dp(48), dp(48))
             inspect = InspectView(this); root.addView(inspect, LinearLayout.LayoutParams(-1, 0, 1f))
             status = text("", 13f, Glass.TEXT2).apply { gravity = Gravity.CENTER; setPadding(dp(12), dp(6), dp(12), dp(6)) }
             root.addView(status, -1, -2)

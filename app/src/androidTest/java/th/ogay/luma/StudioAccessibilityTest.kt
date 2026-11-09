@@ -71,7 +71,8 @@ class StudioAccessibilityTest {
     private fun insideScroll(v: View): Boolean {
         var p = v.parent
         while (p is View) {
-            if (p is ScrollView || p is HorizontalScrollView) return true
+            // CenterStrip is a horizontal scroller too: items away from the centre are reached by scrolling it.
+            if (p is ScrollView || p is HorizontalScrollView || p is CenterStrip) return true
             p = p.parent
         }
         return false
@@ -158,27 +159,27 @@ class StudioAccessibilityTest {
         assertTrue("accessibility findings ‖ " + findings.joinToString(" ‖ "), findings.isEmpty())
     }
 
-    /** Opens the "เพิ่มเติม" bottom sheet at font 2.0 and checks that its last action can be scrolled to. */
+    /** Opens the glass options panel at font 2.0 and checks that its last action can be scrolled to. */
     private fun moreSheetAtLargeFont(): List<String> {
         fontScale(2.0f)
         device.setOrientationNatural()
         val out = mutableListOf<String>()
         ActivityScenario.launch<CameraActivity>(Intent(context, CameraActivity::class.java)).use {
             SystemClock.sleep(3500)
-            // The mode strip scrolls horizontally and "เพิ่มเติม" can start off screen; press it directly.
+            // The panel opens from the handle above the mode bar (swipe up or tap).
             var opened = false
             it.onActivity { activity ->
                 val found = ArrayList<View>()
-                activity.window.decorView.findViewsWithText(found, "โหมด เพิ่มเติม", View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION)
+                activity.window.decorView.findViewsWithText(found, "ตัวเลือกกล้อง", View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION)
                 opened = found.firstOrNull()?.performClick() == true
             }
-            if (!opened) { out += "MoreSheet | font 2.0 | portrait | missing | mode strip has no \"โหมด เพิ่มเติม\""; return out }
+            if (!opened) { out += "MoreSheet | font 2.0 | portrait | missing | no \"ตัวเลือกกล้อง\" handle"; return out }
             SystemClock.sleep(1500)
-            val reached = runCatching { UiScrollable(UiSelector().scrollable(true)).scrollTextIntoView("ตั้งค่าทั้งหมด") }.getOrDefault(false) ||
+            val reached = runCatching { UiScrollable(UiSelector().className("android.widget.ScrollView").scrollable(true)).scrollTextIntoView("ตั้งค่าทั้งหมด") }.getOrDefault(false) ||
                 device.hasObject(By.text("ตั้งค่าทั้งหมด"))
             out += "MoreSheet | font 2.0 | portrait | ${if (reached) "reachable" else "unreachable"} | last action \"ตั้งค่าทั้งหมด\""
             // Items cut by the sheet's scroll edge report only their visible part, so they are skipped.
-            val viewport = device.findObject(By.scrollable(true))?.visibleBounds
+            val viewport = device.findObject(By.clazz("android.widget.ScrollView").scrollable(true))?.visibleBounds
             device.findObjects(By.clickable(true)).forEach { o ->
                 val b = o.visibleBounds
                 val clipped = viewport != null && (b.top <= viewport.top + 1 || b.bottom >= viewport.bottom - 1)

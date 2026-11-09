@@ -31,9 +31,9 @@ fun Activity.showStudioSettings(rawAvailable: Boolean, changed: () -> Unit) {
         addView(IconView(this@showStudioSettings, Icons.CHEVRON_LEFT, 2.2f), FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER))
         setOnClickListener { dialog.dismiss() }
     }
-    top.addView(back, dp(44), dp(44))
+    top.addView(back, dp(48), dp(48))
     top.addView(text("ตั้งค่า", 17f, Color.WHITE, true).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(0, -2, 1f))
-    top.addView(View(this), dp(44), dp(44))
+    top.addView(View(this), dp(48), dp(48))
     column.addView(top, -1, -2)
 
     val search = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; background = glass(14, 0x1fffffff); setPadding(dp(12), 0, dp(12), 0) }
@@ -43,7 +43,7 @@ fun Activity.showStudioSettings(rawAvailable: Boolean, changed: () -> Unit) {
         setSingleLine(); imeOptions = EditorInfo.IME_ACTION_SEARCH; setPadding(dp(8), 0, 0, 0)
     }
     search.addView(query, LinearLayout.LayoutParams(0, -1, 1f))
-    column.addView(search, LinearLayout.LayoutParams(-1, dp(42)).apply { setMargins(dp(16), dp(4), dp(16), dp(10)) })
+    column.addView(search, LinearLayout.LayoutParams(-1, dp(48)).apply { setMargins(dp(16), dp(4), dp(16), dp(10)) })
 
     val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), 0, dp(16), dp(40)) }
     column.addView(ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(body) }, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -115,6 +115,7 @@ fun Activity.showStudioSettings(rawAvailable: Boolean, changed: () -> Unit) {
     choose("คุณภาพ JPEG", Icons.FILE, "jpeg_quality", listOf("ประหยัด 85%", "มาตรฐาน 95%", "สูงสุด 100%"), listOf("85", "95", "100"), "95")
     row("จำนวนเฟรม AI", Icons.STACK, "${prefs.getInt("frames", 8)} เฟรม · แตะเพื่อตั้งค่าการรวมภาพ") { showCaptureSettings(rawAvailable, changed) }
     toggle("AI อัตโนมัติใน JPEG", Icons.AI, "auto", true, "เลือกเพิ่มรายละเอียดเมื่อซูมหรือแสงน้อย")
+    toggle("ครอปจากกล้องหลัก 1×", Icons.SEARCH, "software", note = "ซูมด้วยการครอปภาพจากเลนส์หลักแทนการสลับเลนส์ ใช้คู่กับ AI SR1")
     section("การควบคุม")
     choose("ปุ่มเสียง", Icons.SOUND, "volume_action", listOf("ถ่ายภาพ", "ซูม", "ปรับเสียงระบบ"), listOf("shutter", "zoom", "system"), "shutter")
     choose("ความเร็วซูม", Icons.SEARCH, "zoom_speed", listOf("ช้า", "ปกติ", "เร็ว"), listOf("slow", "normal", "fast"), "normal")

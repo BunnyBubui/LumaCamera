@@ -35,10 +35,11 @@ class StudioFlowTest{
         ActivityScenario.launch<VideoActivity>(Intent(context,VideoActivity::class.java)).use{
             until(40000){device.findObject(By.desc("เริ่มบันทึกวิดีโอ"))?.isEnabled==true}
             device.findObject(By.desc("เริ่มบันทึกวิดีโอ")).click()
-            until(15000){device.findObject(By.desc("พักหรือต่อวิดีโอ"))?.isEnabled==true}
-            SystemClock.sleep(2500);device.findObject(By.desc("พักหรือต่อวิดีโอ")).click()
-            assertNotNull(device.wait(Until.findObject(By.text("ต่อ")),10000));SystemClock.sleep(500)
-            device.findObject(By.desc("พักหรือต่อวิดีโอ")).click();assertNotNull(device.wait(Until.findObject(By.text("พัก")),10000))
+            // The glass pause button changes its description when CameraX reports Pause and Resume.
+            until(15000){device.findObject(By.desc("พักการบันทึก"))?.isEnabled==true}
+            SystemClock.sleep(2500);device.findObject(By.desc("พักการบันทึก")).click()
+            assertNotNull(device.wait(Until.findObject(By.desc("ต่อการบันทึก")),10000));SystemClock.sleep(500)
+            device.findObject(By.desc("ต่อการบันทึก")).click();assertNotNull(device.wait(Until.findObject(By.desc("พักการบันทึก")),10000))
             SystemClock.sleep(1500);device.findObject(By.desc("หยุดบันทึกวิดีโอ")).click()
             until(25000){MediaLedger.all(context).any{it.mime=="video/mp4"&&it.uri !in old}}
             val clip=MediaLedger.all(context).first{it.mime=="video/mp4"&&it.uri !in old};val report=ClipInspector.inspect(context,clip.uri)
@@ -87,11 +88,17 @@ class StudioFlowTest{
         context.getSharedPreferences("camera",0).edit().putString("photo_mode","PHOTO").putString("output","AI").putString("timer","0").commit()
         ActivityScenario.launch<CameraActivity>(Intent(context,CameraActivity::class.java)).use{
             until(35000){device.findObject(By.desc("ถ่ายภาพ"))?.isEnabled==true}
-            assertTrue(device.findObject(By.desc("รูปแบบ AI")).isSelected)
             assertEquals("android.widget.Button",device.findObject(By.desc("ถ่ายภาพ")).className)
-            device.findObject(By.desc("รูปแบบ JPEG")).click()
-            until(10000){device.findObject(By.desc("รูปแบบ JPEG"))?.isSelected==true}
-            assertFalse(device.findObject(By.desc("รูปแบบ AI")).isSelected)
+            GlassNav.openPanel(device)
+            GlassNav.inPanel(device,By.descStartsWith("รูปแบบไฟล์"))!!.click()
+            assertTrue(device.wait(Until.findObject(GlassNav.menuRow("AI")),5000).isSelected)
+            device.findObject(GlassNav.menuRow("JPEG")).click()
+            until(10000){context.getSharedPreferences("camera",0).getString("output","")=="JPEG"}
+            SystemClock.sleep(600)
+            GlassNav.inPanel(device,By.descStartsWith("รูปแบบไฟล์"))!!.click()
+            until(5000){device.findObject(GlassNav.menuRow("JPEG"))?.isSelected==true}
+            assertFalse(device.findObject(GlassNav.menuRow("AI")).isSelected)
+            GlassNav.closeLayers(device)
         }
     }
     @Test fun softwareHdrBracketPublishesEf1AndFrameCounts(){
