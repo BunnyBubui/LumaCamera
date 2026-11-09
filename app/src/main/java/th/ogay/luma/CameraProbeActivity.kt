@@ -83,7 +83,7 @@ class CameraProbeActivity : ComponentActivity() {
             override fun onSurfaceTextureUpdated(s:SurfaceTexture){}
             override fun onSurfaceTextureDestroyed(s:SurfaceTexture):Boolean{textureSurface=null;handler.post{if(busy)abort("surface-destroyed",null)};return true}
         }
-        reportButton=pill("บันทึกและส่งรายงาน"){if(!busy)handler.post{saveReport(true)}}.apply{contentDescription="ส่งรายงานทดสอบกล้อง";isEnabled=false};body.addView(reportButton,-1,-2)
+        reportButton=pill("บันทึกและส่งรายงาน"){if(!busy){startButton.isEnabled=false;choiceButton.isEnabled=false;reportButton.isEnabled=false;handler.post{saveReport(true);ui{startButton.isEnabled=choice!=null;choiceButton.isEnabled=choices.isNotEmpty();reportButton.isEnabled=true}}}}.apply{contentDescription="ส่งรายงานทดสอบกล้อง";isEnabled=false};body.addView(reportButton,-1,-2)
         clipButton=pill("เปิดคลิปทดสอบ"){clipUri?.let{MediaLedger.view(this,it,"video/mp4")}}.apply{isEnabled=false};body.addView(clipButton,-1,-2)
         targetRotation=windowManager.defaultDisplay.rotation
         orientation=object:OrientationEventListener(this){override fun onOrientationChanged(degrees:Int){VideoSessionPolicy.rotation(degrees)?.let{targetRotation=it}}}
@@ -113,18 +113,22 @@ class CameraProbeActivity : ComponentActivity() {
         choiceButton.isEnabled=false;reportButton.isEnabled=false;startButton.isEnabled=false;clipButton.isEnabled=false;clipUri=null
         val rotation=targetRotation
         // Let the preceding CameraX screen finish releasing its hardware before Camera2 opens it.
-        handler.post{val pending=++generation;handler.postDelayed({if(pending==generation&&busy){if(foreground)begin(selected,rotation)else abort("cancelled-before-open",null)}},400)}
+        handler.post{newReport(selected);val pending=++generation;handler.postDelayed({if(pending==generation&&busy){if(foreground)begin(selected,rotation)else abort("cancelled-before-open",null)}},400)}
+    }
+    private fun newReport(selected:Choice){
+        events=JSONArray();reportFile=null;sensor=VideoDiagnostics()
+        report=JSONObject().put("schema",1).put("timeMs",System.currentTimeMillis()).put("model",Build.MODEL).put("sdk",Build.VERSION.SDK_INT)
+            .put("cameraId",selected.id).put("size",selected.size.toString()).put("requestedCaptureFps",selected.fps)
+            .put("expectedPlaybackFps",if(selected.highSpeed)30 else selected.fps).put("sessionType",if(selected.highSpeed)"constrained_high_speed"else "normal")
+            .put("inventory",inventory).put("events",events)
+        startedNs=0L
+        report.put("requestedCodec","video/avc").put("targetBitrate",if(selected.highSpeed)20_000_000 else 8_000_000)
     }
     @SuppressLint("MissingPermission")
     @Suppress("DEPRECATION")
     private fun begin(selected:Choice,rotation:Int){
         if(!foreground){abort("cancelled-before-open",null);return}
         val ticket=++generation
-        events=JSONArray();reportFile=null;sensor=VideoDiagnostics()
-        report=JSONObject().put("schema",1).put("timeMs",System.currentTimeMillis()).put("model",Build.MODEL).put("sdk",Build.VERSION.SDK_INT)
-            .put("cameraId",selected.id).put("size",selected.size.toString()).put("requestedCaptureFps",selected.fps)
-            .put("expectedPlaybackFps",if(selected.highSpeed)30 else selected.fps).put("sessionType",if(selected.highSpeed)"constrained_high_speed"else "normal")
-            .put("inventory",inventory).put("events",events)
         try{
             stage("prepare")
             val st=textureSurface?:error("ไม่มี surface")
@@ -201,7 +205,7 @@ class CameraProbeActivity : ComponentActivity() {
     }
     private fun abort(where:String,error:Throwable?){
         if(!busy&&stage!="idle"&&where!="inventory")return
-        recording=false;sensor.active(false);report.put("stage",where).put("errorType",error?.javaClass?.name?:JSONObject.NULL).put("error",error?.message?:"ยกเลิกหรือกล้องถูกตัดการเชื่อมต่อ")
+        recording=false;sensor.active(false);report.put("sensorTiming",sensor.snapshot()).put("failureElapsedNs",SystemClock.elapsedRealtimeNanos()).put("stage",where).put("errorType",error?.javaClass?.name?:JSONObject.NULL).put("error",error?.message?:"ยกเลิกหรือกล้องถูกตัดการเชื่อมต่อ")
         release();output?.delete();output=null;saveReport(false);ready()
         ui{status.text="ทดสอบไม่สำเร็จที่ $where\n${error?.message?:"การทดสอบถูกยกเลิก"}\nกดบันทึกและส่งรายงานได้"}
     }
