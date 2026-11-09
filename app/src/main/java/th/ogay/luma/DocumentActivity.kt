@@ -35,7 +35,7 @@ class DocumentActivity:ComponentActivity(){
         val top=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(dp(14),dp(10),dp(14),dp(6))}
         top.addView(FrameLayout(this).apply{background=glass(22,0x40ffffff);contentDescription="ย้อนกลับ";isClickable=true;glassTouch();setOnClickListener{finish()}
             addView(IconView(this@DocumentActivity,Icons.CHEVRON_LEFT,2.1f),FrameLayout.LayoutParams(dp(20),dp(20),Gravity.CENTER))},dp(48),dp(48))
-        top.addView(text("สแกนเอกสาร",20f,Color.WHITE,true).apply{setPadding(dp(12),0,0,0)},LinearLayout.LayoutParams(0,-2,1f))
+        top.addView(text("สแกนเอกสาร",20f,Color.WHITE,true).apply{setPadding(dp(12),0,dp(6),0);maxLines=3;ellipsize=null},LinearLayout.LayoutParams(0,-2,1f))
         pageCount=text("0 หน้า",13f,Glass.ACCENT,true).apply{gravity=Gravity.CENTER;background=glass(18,Glass.ACCENT_SOFT);setPadding(dp(14),0,dp(14),0);minHeight=dp(40)}
         top.addView(pageCount,-2,-2);root.addView(top,-1,-2)
         status=text("ลากจุดมุมทั้ง 4 เพื่อแก้ perspective",13f,Glass.TEXT2).apply{gravity=Gravity.CENTER;maxLines=3;setPadding(dp(16),dp(4),dp(16),dp(8))};root.addView(status,-1,-2)
@@ -44,7 +44,7 @@ class DocumentActivity:ComponentActivity(){
         fun tool(icon:String,label:String,desc:String=label,act:()->Unit)=LinearLayout(this).apply{
             orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER_HORIZONTAL;isClickable=true;contentDescription=desc;setOnClickListener{act()}
             addView(FrameLayout(this@DocumentActivity).apply{background=glass(26);addView(IconView(this@DocumentActivity,icon,2f),FrameLayout.LayoutParams(dp(22),dp(22),Gravity.CENTER))},dp(52),dp(52))
-            addView(text(label,12f,Glass.TEXT2).apply{gravity=Gravity.CENTER;setPadding(0,dp(6),0,0)},-2,-2);glassTouch()
+            addView(text(label,12f,Glass.TEXT2).apply{gravity=Gravity.CENTER;setPadding(dp(2),dp(6),dp(2),0);maxLines=3;ellipsize=null},-1,-2);glassTouch()
         }.also{tools.addView(it,LinearLayout.LayoutParams(0,-2,1f))}
         tool(Icons.FRAME,"ตรวจขอบ"){detect()}
         val colorTool=tool(Icons.SUN,"สี","สลับสีและขาวดำ"){bw=!bw;colorLabel?.text=if(bw)"ขาวดำ" else "สี";status.text=if(bw)"ส่งออกแบบขาวดำ" else "ส่งออกแบบสี"}

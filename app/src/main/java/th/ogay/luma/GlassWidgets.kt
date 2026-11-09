@@ -666,12 +666,13 @@ class SheetFrame(context: Context) : LayerFrame(context) {
     var onPull: (Float) -> Unit = {}
     var onLetGo: (Float, Float) -> Unit = { _, _ -> }
     private val slop = ViewConfiguration.get(context).scaledTouchSlop
-    private var y0 = 0f; private var x0 = 0f; private var pulling = false
+    private var y0 = 0f; private var x0 = 0f; private var pulling = false; private var fromTop = false
     private var tracker: android.view.VelocityTracker? = null
     override fun onInterceptTouchEvent(e: MotionEvent): Boolean {
         when (e.actionMasked) {
-            MotionEvent.ACTION_DOWN -> { y0 = e.rawY; x0 = e.rawX; pulling = false }
-            MotionEvent.ACTION_MOVE -> { val dy = e.rawY - y0; if (!scrub && (scroll?.scrollY ?: 0) == 0 && dy > slop && dy > abs(e.rawX - x0) * 1.3f) { pulling = true; return true } }
+            MotionEvent.ACTION_DOWN -> { y0 = e.rawY; x0 = e.rawX; pulling = false; fromTop = e.y < context.px(140f) }
+            // Only a drag that starts on the top part of the sheet pulls it; lower down a downward drag scrolls the list.
+            MotionEvent.ACTION_MOVE -> { val dy = e.rawY - y0; if (!scrub && fromTop && (scroll?.scrollY ?: 0) == 0 && dy > slop && dy > abs(e.rawX - x0) * 1.3f) { pulling = true; return true } }
         }
         return super.onInterceptTouchEvent(e)
     }
@@ -699,12 +700,14 @@ class GlassSheet(private val host: FrameLayout, private val pivotYFromBottom: ()
     var onClosed: () -> Unit = {}
     val showing get() = card != null
     private var dragged = 0f
+    private var pendingRelease: Pair<Boolean, Float>? = null
     /** Follows a finger that is opening the sheet from the dock (see [open] with interactive = true). */
     fun follow(dy: Float) { val sheet = card ?: return; dragged = dy; if (sheet.height == 0) return; sheet.translationY = (sheet.height - dy).coerceIn(0f, sheet.height.toFloat()); pushBack(progress(sheet)) }
     private fun progress(sheet: View) = if (sheet.height == 0) 1f else (1 - sheet.translationY / sheet.height).coerceIn(0f, 1f)
     /** Ends a finger-driven open or pull: past about a third (or a quick flick) it finishes, otherwise it returns. */
     fun release(opening: Boolean, velocity: Float) {
         val sheet = card ?: return
+        if (sheet.height == 0) { pendingRelease = opening to velocity; return }
         val p = progress(sheet)
         val keep = if (opening) p > 0.3f || velocity > 900 else p > 0.7f && velocity < 1200
         if (keep) settle(sheet) else close()
@@ -753,7 +756,8 @@ class GlassSheet(private val host: FrameLayout, private val pivotYFromBottom: ()
         if (interactive) {
             // Opened by a finger on the dock: the sheet rises with it instead of popping in.
             dragged = 0f; sheet.visibility = View.INVISIBLE; pushBack(0.01f)
-            sheet.post { sheet.translationY = (sheet.height - dragged).coerceIn(0f, sheet.height.toFloat()); sheet.visibility = View.VISIBLE; pushBack(progress(sheet)) }
+            pendingRelease = null
+            sheet.post { sheet.translationY = (sheet.height - dragged).coerceIn(0f, sheet.height.toFloat()); sheet.visibility = View.VISIBLE; pushBack(progress(sheet)); pendingRelease?.let { (o, v) -> pendingRelease = null; release(o, v) } }
         } else {
             pushBack(1f)
             sheet.alpha = 0f
