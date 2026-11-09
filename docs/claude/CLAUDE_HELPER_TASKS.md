@@ -25,17 +25,22 @@
 
 ทำตาม `docs/CLAUDE_NEXT_TASKS.md` หัวข้อ E ทุกข้อ สรุปสั้น ๆ ได้ดังนี้
 
-- สร้าง branch `claude/panorama-quality` จาก `v0.3-studio` ล่าสุด เปิด PR กลับ `v0.3-studio` และ **ไม่ merge เอง**
+- สร้าง branch `claude/panorama-quality` จาก `v0.3-studio` ล่าสุด push ครั้งแรกแล้ว **เปิด draft PR เข้า `v0.3-studio` ทันที** เพราะ CI ไม่รันจากการ push เข้า branch อย่างเดียว (ดูหัวข้อ "Build ในเครื่องไม่ได้") และ **ไม่ merge เอง**
 - ไฟล์ที่เป็นเจ้าของ: `app/src/androidTest/java/th/ogay/luma/PanoramaQualityTest.kt`, `app/src/androidTest/assets/panorama/**` (หรือ generator ใน test) และ `docs/claude/PANORAMA_QUALITY.md`
 - API ที่ทดสอบ: `PanoramaEngine.stitch(context: Context, files: List<File>): File` รับ JPEG 2–12 ภาพ ใช้ ORB + homography + feather blend ผ่าน OpenCV 4.12
+- สิ่งที่ต้องรู้ก่อนตั้งเกณฑ์ (อ่านจากโค้ดใน `v0.3-studio`):
+  - engine ย่อแต่ละภาพเหลือราว 1.2 MP ก่อนประมวลผล (`PhotoEffects.read(file, 1_200_000)`) และจำกัดภาพผลลัพธ์ไม่เกิน 6 MP ถ้าเทียบกับ ground truth ต้องปรับสเกลให้ตรงกันก่อน ขอบที่เกลี่ยต่อภาพ (feather) กว้าง 50 พิกเซลในภาพที่ย่อแล้ว ใช้เป็นเกณฑ์ตรวจรอยต่อได้
+  - engine จับคู่เฉพาะภาพที่อยู่ติดกันตามลำดับ (ภาพที่ i กับ i-1) ภาพที่สลับลำดับจึงเป็นอีกกรณีที่ควรทดสอบ
+  - จำนวนภาพผิดได้ `IllegalArgumentException` จาก `require` ส่วนภาพแบน ภาพซ้อนกันไม่พอ และไฟล์เสีย ได้ `IllegalStateException` จาก `check` พร้อมข้อความภาษาไทย ให้ assert ชนิด exception ด้วย ไม่ใช่แค่ว่ามี exception
 - สร้างฉาก texture ด้วย seed คงที่ที่มีลายไม่สมมาตรและจุดอ้างอิงชัด ตัดเป็นภาพที่ซ้อนกัน 40–60% แล้วตรวจความกว้าง รูปทรง รอยต่อ และส่วนซ้ำ เทียบกับ ground truth ด้วย tolerance ที่อธิบายได้ อย่าตรวจแค่ว่ามีไฟล์ JPEG
 - กรณีล้มเหลวที่ต้องมี: ภาพแบนไม่มี feature, overlap ไม่พอ, ไฟล์เสีย, จำนวนภาพผิด (1 และ 13), ภาพที่มีวัตถุเคลื่อนที่ ระบุว่ากรณีไหนควรคืนผลและกรณีไหนควรปฏิเสธ และตรวจว่าไฟล์อินพุตไม่ถูกลบเมื่อ stitching ล้มเหลว
+- ข้อจำกัดของเทสต์ข้อสุดท้าย: `PanoramaEngine.stitch` ไม่ลบไฟล์เลย การลบอินพุตอยู่ใน `CameraActivity` (บรรทัดราว 690 ใน `v0.3-studio` เป็นไฟล์ของ Codex) ซึ่งลบเมื่อสำเร็จและเก็บไว้เมื่อล้มเหลว เทสต์ระดับ engine จึงยืนยันได้แค่ว่า engine ไม่ลบไฟล์ ให้เขียนข้อจำกัดนี้ใน `PANORAMA_QUALITY.md` และรายงานใน PR ว่าถ้า `publishSpecial` ล้มหลังต่อภาพสำเร็จ ไฟล์ `panorama-*.jpg` ใน cache จะไม่ถูกลบ เพราะ `result.delete()` อยู่ในเส้นทางที่สำเร็จเท่านั้น
 - แยกเทสต์ performance/memory ของชุดใหญ่ (เช่น 12 ภาพ) ออกจาก smoke test ขนาดเล็ก
 - ถ้าพบ bug ใน engine ห้ามแก้ `PanoramaEngine.kt` ให้เขียน fixture และวิธีทำซ้ำใน PR แล้ว Codex จะแก้ **ห้ามลบ assertion หรือใส่ skip เพื่อให้ CI เขียว**
 
 ## สิ่งที่ session หลักเรียนรู้แล้ว ใช้ได้เลย
 
-**Build ในเครื่องไม่ได้:** เครื่องทำงานของ Claude ไม่มี Android SDK และเข้า Maven/Google ไม่ได้ วิธีที่ใช้ได้คือ push แล้วให้ GitHub Actions รัน (`Android APK` = build/lint/JVM, `Camera device test` = emulator API 30 x86_64 ใช้เวลาราว 20–30 นาที)
+**Build ในเครื่องไม่ได้:** เครื่องทำงานของ Claude ไม่มี Android SDK และเข้า Maven/Google ไม่ได้ วิธีที่ใช้ได้คือให้ GitHub Actions รัน (`Android APK` = build/lint/JVM, `Camera device test` = emulator API 30 x86_64 ใช้เวลาราว 20–30 นาที) ทั้งสอง workflow รันอัตโนมัติเมื่อมี pull request ส่วนการ push อย่างเดียวจะรันอัตโนมัติเฉพาะ `main` ดังนั้น push เข้า `claude/panorama-quality` โดยยังไม่มี PR จะไม่มี CI รัน (สั่งรันเองด้วย `workflow_dispatch` ได้ แต่ต้องมีสิทธิ์ actions และไม่ผูกกับ PR) ให้เปิด draft PR ตั้งแต่ push แรก หลังจากนั้นทุก push จะรัน CI ให้เอง emulator มี RAM 2 GB และ heap 384 MB ให้คำนึงถึงตอนออกแบบเทสต์ชุด 12 ภาพ
 
 **อ่านผล CI:** `gh api repos/BunnyBubui/luma-camera/actions/runs?branch=<branch>` เพื่อหา run id แล้ว `gh api repos/BunnyBubui/luma-camera/actions/jobs/<job id>/logs` อ่าน log ได้ แต่ดาวน์โหลด artifact ไม่ได้ (blob storage ถูกบล็อก) logcat ของ test จึงอ่านไม่ได้ ถ้าต้องการตัวเลขจาก emulator ให้ใส่ตัวเลขไว้ในข้อความ assertion หรือทำ commit ชั่วคราวที่จงใจ fail พร้อมรายงาน แล้วลบออกใน commit ถัดไป และบอกใน PR ตรง ๆ
 
@@ -54,4 +59,4 @@
 
 ## พรอมป์ต์สำหรับส่งให้ session ผู้ช่วย
 
-> เปิด repo BunnyBubui/luma-camera ดึง branch v0.3-studio ล่าสุด อ่าน docs/CLAUDE_NEXT_TASKS.md, docs/CLAUDE_HANDOFF.md และ docs/claude/CLAUDE_HELPER_TASKS.md (อยู่ใน branch claude/coordination) คุณรับงาน E: Panorama quality และ failure cases ใน branch claude/panorama-quality ห้ามแก้ไฟล์ของงาน A/D และของ Codex ตามรายการในเอกสาร ส่ง PanoramaQualityTest.kt, fixtures/generator และ docs/claude/PANORAMA_QUALITY.md พร้อมผลที่รันจริงบน CI เปิด PR เข้า v0.3-studio โดยไม่ merge เอง ถ้าพบ bug ใน PanoramaEngine ให้รายงานพร้อม fixture ไม่แก้ engine และไม่ใส่ skip ถ้าไม่มีผลจริงให้บอกตามจริง ไม่สร้างตัวเลขสมมติ
+> เปิด repo BunnyBubui/luma-camera ดึง branch v0.3-studio ล่าสุด อ่าน docs/CLAUDE_NEXT_TASKS.md, docs/CLAUDE_HANDOFF.md และ docs/claude/CLAUDE_HELPER_TASKS.md (อยู่ใน branch claude/coordination) คุณรับงาน E: Panorama quality และ failure cases ใน branch claude/panorama-quality ห้ามแก้ไฟล์ของงาน A/D และของ Codex ตามรายการในเอกสาร ส่ง PanoramaQualityTest.kt, fixtures/generator และ docs/claude/PANORAMA_QUALITY.md พร้อมผลที่รันจริงบน CI หลัง push ครั้งแรกให้เปิด draft PR เข้า v0.3-studio ทันที เพราะ CI รันเฉพาะเมื่อมี PR และห้าม merge เอง อ่านหัวข้อ "สิ่งที่ต้องรู้ก่อนตั้งเกณฑ์" และข้อจำกัดเรื่องการลบไฟล์อินพุตในเอกสารก่อนเขียนเทสต์ ถ้าพบ bug ใน PanoramaEngine ให้รายงานพร้อม fixture ไม่แก้ engine และไม่ใส่ skip ถ้าไม่มีผลจริงให้บอกตามจริง ไม่สร้างตัวเลขสมมติ
