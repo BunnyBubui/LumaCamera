@@ -952,9 +952,9 @@ class CameraActivity : ComponentActivity() {
             val seg = LinearLayout(this).apply { background = glass(16, 0x14ffffff); setPadding(dp(3), dp(3), dp(3), dp(3)) }
             listOf("basic" to "ปรับแต่งทั่วไป", "film" to "ฟิล์ม").forEach { (k, t) ->
                 seg.addView(text(t, 13f, if (kind == k) Color.BLACK else Glass.TEXT2, kind == k).apply { gravity = Gravity.CENTER; isClickable = true; background = if (kind == k) glass(14, 0xebffffff.toInt()) else null
-                    setOnClickListener { prefs.edit().putString("look_kind", k).apply(); applyLook(); buildLookSection(host) } }, LinearLayout.LayoutParams(0, dp(38), 1f))
+                    setOnClickListener { prefs.edit().putString("look_kind", k).apply(); applyLook(); buildLookSection(host) } }, LinearLayout.LayoutParams(0, dp(48), 1f))
             }
-            host.addView(seg, LinearLayout.LayoutParams(-1, dp(44)).apply { bottomMargin = dp(8) })
+            host.addView(seg, LinearLayout.LayoutParams(-1, dp(54)).apply { bottomMargin = dp(8) })
         }
         val row = LinearLayout(this).apply { gravity = Gravity.CENTER_HORIZONTAL; setPadding(dp(4), dp(4), dp(4), dp(4)); clipChildren = false; clipToPadding = false }
         val scroll = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; clipChildren = false; clipToPadding = false; addView(row) }
@@ -971,9 +971,9 @@ class CameraActivity : ComponentActivity() {
             }
             Films.groups.forEach { g ->
                 groups.addView(text(g, 12.5f, if (g == group) Color.BLACK else Glass.TEXT2).apply { gravity = Gravity.CENTER; setPadding(dp(14), 0, dp(14), 0); isClickable = true; background = glass(16, if (g == group) 0xebffffff.toInt() else 0x14ffffff)
-                    setOnClickListener { group = g; for (i in 0 until groups.childCount) { val t = groups.getChildAt(i) as TextView; val on = t.text == g; t.setTextColor(if (on) Color.BLACK else Glass.TEXT2); t.background = glass(16, if (on) 0xebffffff.toInt() else 0x14ffffff) }; fillFilms() } }, LinearLayout.LayoutParams(-2, dp(34)).apply { rightMargin = dp(6) })
+                    setOnClickListener { group = g; for (i in 0 until groups.childCount) { val t = groups.getChildAt(i) as TextView; val on = t.text == g; t.setTextColor(if (on) Color.BLACK else Glass.TEXT2); t.background = glass(16, if (on) 0xebffffff.toInt() else 0x14ffffff) }; fillFilms() } }, LinearLayout.LayoutParams(-2, dp(48)).apply { rightMargin = dp(6) })
             }
-            host.addView(gs, -1, dp(40))
+            host.addView(gs, -1, dp(52))
             fillFilms()
         } else {
             LOOKS.forEachIndexed { i, name -> row.addView(lookThumb(sample, lookMatrix(i, 0, 0), name, prefs.getInt("look", 0) == i) { prefs.edit().putInt("look", i).apply(); applyLook(); buildLookSection(host) }, LinearLayout.LayoutParams(dp(80), -2).apply { rightMargin = dp(6) }) }
