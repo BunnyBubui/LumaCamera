@@ -34,6 +34,7 @@ class VideoPlayerActivity : ComponentActivity() {
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
+        requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
         val uri = intent.data ?: run { finish(); return }
         val host = FrameLayout(this).apply { setBackgroundColor(Glass.NAVY_DEEP) }
         installRoot(host)

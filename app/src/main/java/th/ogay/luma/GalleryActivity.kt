@@ -71,6 +71,7 @@ class GalleryActivity : ComponentActivity() {
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
+        requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
         selected = state?.getString("id"); useAi = state?.getBoolean("ai") ?: false
         device = state?.getBoolean("device") ?: when (intent.getStringExtra("tab")) { "luma" -> false; "device" -> true; else -> prefs.getBoolean("gallery_device", false) }
         album = state?.getString("album")
@@ -160,7 +161,7 @@ class GalleryActivity : ComponentActivity() {
     private fun topBar(title: String, back: () -> Unit): LinearLayout {
         val bar = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(12), dp(14), dp(6)) }
         bar.addView(roundButton(Icons.CHEVRON_LEFT, "ย้อนกลับ", back), dp(48), dp(48))
-        bar.addView(text(title, 20f, Color.WHITE, true).apply { setPadding(dp(12), 0, dp(4), 0); maxLines = 3; ellipsize = null }, LinearLayout.LayoutParams(0, -2, 1f))
+        bar.addView(text(title, 20f, Color.WHITE, true).apply { setPadding(dp(12), 0, dp(4), 0); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END; tag = "title" }, LinearLayout.LayoutParams(0, -2, 1f))
         root.addView(bar, -1, -2); return bar
     }
     // A brighter fill than the default glass so the top controls read clearly on the dark page.
@@ -195,6 +196,7 @@ class GalleryActivity : ComponentActivity() {
         fun morph(open: Boolean) {
             val from = searchBox.width; val to = if (open) bar.width - bar.paddingLeft - bar.paddingRight - dp(60) else dp(48)
             field.visibility = if (open) View.VISIBLE else View.GONE; close.visibility = field.visibility
+            bar.findViewWithTag<View>("title")?.let { t -> t.animate().alpha(if (open) 0f else 1f).setDuration(180).start() }
             android.animation.ValueAnimator.ofInt(from, to).apply {
                 duration = if (Glass.reduced(this@GalleryActivity)) 0 else 420; interpolator = Glass.EASE
                 addUpdateListener { searchBox.layoutParams = (searchBox.layoutParams as LinearLayout.LayoutParams).apply { width = it.animatedValue as Int } }
@@ -208,8 +210,31 @@ class GalleryActivity : ComponentActivity() {
         if (queryText.isNotEmpty()) searchBox.post { morph(true) }
 
         // Tabs: sliding glass highlight between Luma and the whole device.
-        val tabs = FrameLayout(this).apply { background = glass(20, 0x24ffffff) }
-        val knob = View(this).apply { background = glass(17, Glass.ACCENT_SOFT) }
+        var tabsDrag = false
+        lateinit var knobRef: View
+        val tabs = object : FrameLayout(this) {
+            var downX = 0f
+            private fun pos(x: Float) = ((x - dp(3) - (width - dp(6)) / 4f) / ((width - dp(6)) / 2f)).coerceIn(0f, 1f) * ((width - dp(6)) / 2f)
+            override fun onInterceptTouchEvent(e: android.view.MotionEvent): Boolean {
+                when (e.actionMasked) { android.view.MotionEvent.ACTION_DOWN -> downX = e.x
+                    android.view.MotionEvent.ACTION_MOVE -> if (!tabsDrag && Math.abs(e.x - downX) > dp(8)) { tabsDrag = true; parent.requestDisallowInterceptTouchEvent(true); knobRef.animate().cancel() } }
+                return tabsDrag
+            }
+            override fun onTouchEvent(e: android.view.MotionEvent): Boolean {
+                if (!tabsDrag && e.actionMasked != android.view.MotionEvent.ACTION_DOWN) return false
+                when (e.actionMasked) {
+                    android.view.MotionEvent.ACTION_MOVE -> knobRef.translationX = pos(e.x)
+                    android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                        tabsDrag = false
+                        val i = if (pos(e.x) > (width - dp(6)) / 4f) 1 else 0
+                        slideKnob(knobRef, this, i)
+                        if ((i == 1) != device) { device = i == 1; category = 0; album = null; prefs.edit().putBoolean("gallery_device", device).apply(); reload() }
+                    }
+                }
+                return true
+            }
+        }.apply { background = glass(20, 0x24ffffff) }
+        val knob = View(this).apply { background = glass(17, Glass.ACCENT_SOFT) }; knobRef = knob
         tabs.addView(knob, FrameLayout.LayoutParams(0, -1).apply { setMargins(dp(3), dp(3), dp(3), dp(3)) })
         val tabRow = LinearLayout(this)
         listOf("ถ่ายด้วย Luma", "ทั้งเครื่อง").forEachIndexed { i, t ->
@@ -337,7 +362,7 @@ class GalleryActivity : ComponentActivity() {
         val caption = cell.getChildAt(5) as TextView; caption.text = if (item.file) item.name else ""; caption.visibility = if (item.file) View.VISIBLE else View.GONE
         placeholder.path = if (item.file) Icons.DOC else if (item.video) Icons.VIDEO else Icons.ALBUM; placeholder.visibility = View.VISIBLE
         image.tag = item.key; image.setImageDrawable(null); image.animate().cancel(); image.alpha = 1f
-        cell.layoutParams = AbsListView.LayoutParams(-1, ((gridWidth - dp(26)) / 3).coerceAtLeast(dp(92)))
+        cell.layoutParams = AbsListView.LayoutParams(-1, ((gridWidth - dp(26)) / 3).coerceAtLeast(dp(92))); cell.invalidateOutline(); cell.post { cell.invalidateOutline() }
         cell.contentDescription = "${if (item.video) "วิดีโอ" else if (item.file) "ไฟล์ ${item.name}" else "รูป"} ${formatTime(item.time)} แตะค้างเพื่อดูตัวอย่าง"
         val cached = cache.get(item.key + 320)
         if (cached != null) { placeholder.visibility = View.GONE; image.setImageBitmap(cached) }

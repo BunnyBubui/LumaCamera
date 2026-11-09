@@ -21,8 +21,8 @@ fun Activity.showStudioSettings(rawAvailable: Boolean, changed: () -> Unit) {
     val prefs = getSharedPreferences("camera", 0)
     val dialog = Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
     val host = FrameLayout(this).apply { background = Glass.page() }
-    val menu = GlassMenu(host)
     val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+    val menu = GlassMenu(host) { on -> Glass.blur(column, if (on) 12f else 0f) }
     host.addView(column, -1, -1)
 
     // The dialog is full screen, so the header clears the status bar and cutout itself, with room to breathe.
@@ -115,18 +115,16 @@ fun Activity.showStudioSettings(rawAvailable: Boolean, changed: () -> Unit) {
     }
 
     section("ภาพถ่าย")
-    choose("สัดส่วนภาพ", Icons.FRAME, "aspect", listOf("4:3", "1:1", "16:9"), listOf("4:3", "1:1", "16:9"), "4:3", listOf("เต็มเซนเซอร์", "จัตุรัส", "จอกว้าง"))
+    choose("สัดส่วนภาพ", Icons.FRAME, "aspect", Aspects.keys, Aspects.keys, "4:3", Aspects.keys.map { Aspects.note(it) })
     choose("ตั้งเวลาถ่าย", Icons.TIMER, "timer", listOf("ปิด", "3 วินาที", "10 วินาที"), listOf("0", "3", "10"), "0")
     choose("คุณภาพ JPEG", Icons.FILE, "jpeg_quality", listOf("ประหยัด 85%", "มาตรฐาน 95%", "สูงสุด 100%"), listOf("85", "95", "100"), "95")
-    row("จำนวนเฟรม AI", Icons.STACK, "${prefs.getInt("frames", 8)} เฟรม · แตะเพื่อตั้งค่าการรวมภาพ") { showCaptureSettings(rawAvailable, changed) }
-    toggle("AI อัตโนมัติใน JPEG", Icons.AI, "auto", true, "เลือกเพิ่มรายละเอียดเมื่อซูมหรือแสงน้อย")
-    toggle("ครอปจากกล้องหลัก 1×", Icons.SEARCH, "software", note = "ซูมด้วยการครอปภาพจากเลนส์หลักแทนการสลับเลนส์ ใช้คู่กับ AI SR1")
+    choose("ครอปจากเลนส์", Icons.SEARCH, "crop_from", listOf("ปิด", "เลนส์หลัก 1×", "เลนส์ 2×", "เลนส์เทเล 3.5×"), listOf("0", "1", "2", "3.5"), if (prefs.getBoolean("software", false)) "1" else "0", listOf("สลับเลนส์ตามระยะซูม", "ซูมด้วยการครอปจากเลนส์หลัก", "ครอปจากระยะ 2×", "ครอปจากระยะ 3.5×"))
     section("การควบคุม")
     choose("ปุ่มเสียง", Icons.SOUND, "volume_action", listOf("ถ่ายภาพ", "ซูม", "ปรับเสียงระบบ"), listOf("shutter", "zoom", "system"), "shutter")
     choose("ความเร็วซูม", Icons.SEARCH, "zoom_speed", listOf("ช้า", "ปกติ", "เร็ว"), listOf("slow", "normal", "fast"), "normal")
     toggle("แตะภาพสดเพื่อถ่าย", Icons.TAP, "tap_shutter")
     toggle("ตรวจจับใบหน้า", Icons.PORTRAIT, "face_detect", true, "แสดงกรอบใบหน้าและให้กล้องวัดแสง/โฟกัสที่หน้าคนทุกโหมด")
-    toggle("ใช้โหมดของผู้ผลิต", Icons.AI, "oem_extensions", note = "บุคคลและกลางคืนของระบบมือถือ เปิดช้ากว่าและปรับค่า f ไม่ได้")
+    toggle("ใช้โหมดของผู้ผลิต", Icons.GEAR, "oem_extensions", note = "ใช้โหมดบุคคลของระบบมือถือแทนของ Luma เปิดช้ากว่าและปรับค่า f ไม่ได้ (โหมดกลางคืนใช้ของระบบอยู่แล้ว)")
     row("ตรวจความสามารถกล้อง", Icons.INFO, "fps, WB, high-speed และความละเอียดที่ระบบเปิดให้แอป") {
         val text = CameraState.report(this)
         android.app.AlertDialog.Builder(this).setTitle("ความสามารถกล้อง").setMessage(text).setPositiveButton("ปิด", null)
@@ -148,6 +146,10 @@ fun Activity.showStudioSettings(rawAvailable: Boolean, changed: () -> Unit) {
     toggle("บันทึก GPS", Icons.PIN, "gps", note = "ใช้ตำแหน่งล่าสุดของระบบ เมื่อได้รับสิทธิ์เท่านั้น")
     section("เกี่ยวกับ")
     row("ความสามารถกล้อง", Icons.INFO, "ดูและส่งออกรายงานของเครื่องนี้") { Capabilities.show(this) }
+    row("คืนค่าเริ่มต้นของโหมดถ่าย", Icons.RESET, "สัดส่วน ฟิลเตอร์ ตั้งเวลา ครอปเลนส์ ค่า f และรูปแบบไฟล์ของทุกโหมด") {
+        AlertDialog.Builder(this).setTitle("คืนค่าเริ่มต้นของทุกโหมด?").setMessage("เฉพาะค่าที่ปรับในโหมดถ่าย ส่วนค่าอื่นไม่เปลี่ยน")
+            .setPositiveButton("คืนค่า") { _, _ -> prefs.edit().remove("aspect").remove("timer").remove("crop_from").remove("software").remove("output").remove("look").remove("look_kind").remove("film").remove("look_bright").remove("look_warm").remove("portrait_f").remove("night_frames").remove("night_toggle").remove("video_aspect").remove("video_fps").remove("video_res").apply(); changed(); dialog.dismiss() }.setNegativeButton("ยกเลิก", null).show()
+    }
     row("คืนค่าการตั้งค่า", Icons.RESET, "รูปและวิดีโอที่บันทึกไว้ยังอยู่") {
         AlertDialog.Builder(this).setTitle("คืนค่าการตั้งค่า?").setMessage("รูปและวิดีโอที่บันทึกไว้ยังอยู่")
             .setPositiveButton("คืนค่า") { _, _ -> prefs.edit().clear().apply(); changed(); dialog.dismiss() }.setNegativeButton("ยกเลิก", null).show()

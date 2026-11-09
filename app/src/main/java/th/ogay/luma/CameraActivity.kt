@@ -58,16 +58,17 @@ class CameraActivity : ComponentActivity() {
     companion object {
         /** Rear camera zoom limit: hardware zoom, then the app's crop enlarged by AI SR1 when the photo is saved. */
         const val SUPER_ZOOM = 200f
+        val F_STEPS = listOf(1.2f, 1.4f, 1.6f, 1.8f, 2f, 2.2f, 2.5f, 2.8f, 3.2f, 3.5f, 4f, 4.5f, 5f, 5.6f, 6.3f, 7.1f, 8f, 9f, 10f, 11f, 13f, 14f, 16f)
+        fun blurWord(f: Float) = when { f <= 1.4f -> "เบลอมากที่สุด"; f <= 2.8f -> "เบลอชัด"; f <= 5.6f -> "เบลอพอดี"; else -> "เบลอน้อย" }
         val APERTURES = listOf(1.2f, 1.4f, 1.8f, 2f, 2.8f, 4f, 5.6f, 8f, 11f, 16f)
         val ALL = listOf(
             BarMode("NIGHT", "กลางคืน", Icons.NIGHT), BarMode("PORTRAIT", "บุคคล", Icons.PORTRAIT), BarMode("PHOTO", "ภาพถ่าย", Icons.PHOTO),
             BarMode("VIDEO", "วิดีโอ", Icons.VIDEO), BarMode("PRO", "โปร", Icons.PRO), BarMode("MOVIE", "วิดีโอโปร", Icons.MOVIE),
-            BarMode("HDR", "HDR", Icons.HDR), BarMode("ULTRA_HDR", "Ultra HDR", Icons.ULTRA), BarMode("HIRES", "ความละเอียดสูง", Icons.HIRES),
-            BarMode("DOCUMENT", "เอกสาร", Icons.DOC), BarMode("PANORAMA", "พาโนรามา", Icons.PANO), BarMode("TIMELAPSE", "Time-lapse", Icons.TIMELAPSE),
-            BarMode("SLOW", "Slow-motion", Icons.SLOWMO))
+            BarMode("HDR", "HDR", Icons.HDR), BarMode("HIRES", "ความละเอียดสูง", Icons.HIRES),
+            BarMode("FLASH_NIGHT", "แฟลชเร็ว", Icons.FLASH), BarMode("FILM", "ฟิล์ม", Icons.FILM))
         const val DEFAULT_BAR = "NIGHT,PORTRAIT,PHOTO,VIDEO,PRO"
         val LOOKS = listOf("มาตรฐาน", "สดใส", "อบอุ่น", "เย็น", "ฟิล์ม", "ขาวดำ")
-        val NIGHT_FRAMES = listOf(16, 24, 32)
+        val NIGHT_FRAMES = listOf(6, 9, 12)
     }
     private val main by lazy { ContextCompat.getMainExecutor(this) }
     private val prefs by lazy { getSharedPreferences("camera", MODE_PRIVATE) }
@@ -80,13 +81,15 @@ class CameraActivity : ComponentActivity() {
     private var illuminating=false
     private var timerGeneration = 0
     private val panoFiles = mutableListOf<File>()
-    private val tones = ToneGenerator(AudioManager.STREAM_SYSTEM, 40)
+    private val tones = ToneGenerator(AudioManager.STREAM_MUSIC, 40)
     private var provider: ProcessCameraProvider? = null
     private var camera: Camera? = null
     private var capture: ImageCapture? = null
     private var metadata: FrameMetadata? = null
     private var rear = true
     private var software = false
+    /** Zoom ratio the picture is cropped from once the hardware zoom reaches it (0 = switch lenses normally). */
+    private var cropFrom = 0f
     private var ratio = 1f
     private var auto = true
     private var output = CaptureOutput.AI
@@ -192,11 +195,14 @@ class CameraActivity : ComponentActivity() {
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
-        output = runCatching { CaptureOutput.valueOf(prefs.getString("output", CaptureOutput.AI.name)!!) }.getOrDefault(CaptureOutput.AI)
+        requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+        output = runCatching { CaptureOutput.valueOf(prefs.getString("output", CaptureOutput.JPEG.name)!!) }.getOrDefault(CaptureOutput.JPEG)
+        if (output.enhance) output = CaptureOutput.JPEG
+        if (prefs.getInt("night_frames", 6) > 12 || prefs.getInt("night_frames", 6) < 6) prefs.edit().putInt("night_frames", 6).apply()
         mode = runCatching { PhotoMode.valueOf(prefs.getString("photo_mode", "PHOTO")!!) }.getOrDefault(PhotoMode.PHOTO)
-        if(mode in listOf(PhotoMode.VIDEO, PhotoMode.MORE))mode=PhotoMode.PHOTO
+        if(ALL.none { it.key == mode.name })mode=PhotoMode.PHOTO
         shutterSound.load(MediaActionSound.SHUTTER_CLICK)
-        auto = prefs.getBoolean("auto", true); software = prefs.getBoolean("software", false)
+        auto = false; cropFrom = cropPref(); software = cropFrom > 0f
         nightOn = prefs.getBoolean("night_toggle", false)
         rear = state?.getBoolean("rear",true) ?: true
         ratio = state?.getFloat("zoom",1f) ?: 1f
@@ -209,13 +215,9 @@ class CameraActivity : ComponentActivity() {
         orientation = object : OrientationEventListener(this) {
             override fun onOrientationChanged(degrees: Int) {
                 if (degrees == ORIENTATION_UNKNOWN) return
-                if (::modeStrip.isInitialized) turner.update(degrees, ::turnables, Glass.reduced(this@CameraActivity))
-                targetRotation = when (degrees) {
-                    in 45..134 -> Surface.ROTATION_270
-                    in 135..224 -> Surface.ROTATION_180
-                    in 225..314 -> Surface.ROTATION_90
-                    else -> Surface.ROTATION_0
-                }
+                // The screen itself turns with the phone, so the photo follows the display.
+                @Suppress("DEPRECATION") val next = windowManager.defaultDisplay.rotation
+                targetRotation = next
                 if (!busy) capture?.targetRotation = targetRotation
             }
         }
@@ -334,7 +336,7 @@ class CameraActivity : ComponentActivity() {
         stage.addView(macroButton, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.BOTTOM or Gravity.START).apply { setMargins(dp(14), 0, 0, dp(12)) })
         apertureButton = text("", 14f, Glass.ACCENT, true).apply {
             gravity = Gravity.CENTER; background = glass(24); setPadding(dp(14), 0, dp(14), 0); minWidth = dp(64); isClickable = true; isFocusable = true
-            pressMenu(menu) { v -> chooseAperture(v) }
+            setOnClickListener { if (openChip == "F") closeDial() else openDial("F") }; glassTouch()
         }
         stage.addView(apertureButton, FrameLayout.LayoutParams(-2, dp(48), Gravity.BOTTOM or Gravity.START).apply { setMargins(dp(14), 0, 0, dp(12)) })
         nightButton = glassButton(IconView(this, Icons.NIGHT), 48, "ถ่ายกลางคืน กดค้างเพื่อเลือกเวลา") { toggleNight() }
@@ -387,7 +389,7 @@ class CameraActivity : ComponentActivity() {
     private fun layoutMask(w0: Int, h0: Int) {
         val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         val format = prefs.getString("aspect", "4:3")
-        val aspect = when (format) { "1:1" -> 1f; "16:9" -> if (landscape) 16f / 9 else 9f / 16; else -> if (landscape) 4f / 3 else 3f / 4 }
+        val aspect = Aspects.value(format ?: "4:3", landscape)
         val w = minOf(w0, (h0 * aspect).roundToInt()); val h = (w / aspect).roundToInt()
         val lp = mask.layoutParams as FrameLayout.LayoutParams
         val top = if (format == "1:1") ((h0 - h) / 3).coerceAtLeast(0) else 0
@@ -551,11 +553,11 @@ class CameraActivity : ComponentActivity() {
         if (output != CaptureOutput.JPEG && mode in listOf(PhotoMode.PHOTO, PhotoMode.PRO)) statusIcon(Icons.FILE, after = output.label.replace(" + ", "+"), name = "รูปแบบไฟล์ ${output.label}")
         if (aeLock || pressLock) statusIcon(Icons.LOCK, after = "AE", name = "ล็อกความสว่าง")
         if (macro) statusIcon(Icons.FLOWER, name = "มาโคร เปิด")
-        if (nightActive()) statusIcon(Icons.NIGHT, after = listOf("3s", "5s", "10s")[nightIndex()], name = "กลางคืน · " + if (activeExtension) "ระบบกล้อง" else "AI รวมเฟรม")
+        if (nightActive()) statusIcon(Icons.NIGHT, after = listOf("2s", "3s", "5s")[nightIndex()], name = "กลางคืน · " + if (activeExtension) "ระบบกล้อง" else "AI รวมเฟรม")
         if (auto && output == CaptureOutput.JPEG && mode == PhotoMode.PHOTO) statusIcon(Icons.AI, name = "AI อัตโนมัติ เปิด")
         statusRow.contentDescription = "สิ่งที่เปิดอยู่: " + (0 until statusRow.childCount).joinToString(", ") { statusRow.getChildAt(it).contentDescription }
     }
-    private fun nightIndex() = NIGHT_FRAMES.indexOf(prefs.getInt("night_frames", 16)).coerceAtLeast(0)
+    private fun nightIndex() = NIGHT_FRAMES.indexOf(prefs.getInt("night_frames", 6)).coerceAtLeast(0)
     private fun nightActive() = mode == PhotoMode.NIGHT || (nightOn && mode == PhotoMode.PHOTO)
 
     private fun setEv(v: Float, fromGesture: Boolean) {
@@ -587,7 +589,7 @@ class CameraActivity : ComponentActivity() {
     private fun installGestures() {
         val scale = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScaleBegin(detector: ScaleGestureDetector): Boolean { if (zoomFollower?.isRunning != true) zoomGoal = ratio; return true }
-            override fun onScale(detector: ScaleGestureDetector): Boolean { zoomTo(zoomGoal * detector.scaleFactor); return true }
+            override fun onScale(detector: ScaleGestureDetector): Boolean { if (zoomLocked()) return true; zoomTo(zoomGoal * detector.scaleFactor); return true }
         })
         var axis = 0; var zone = 0; var ev0 = 0f; var fd0 = 0f; var sx = 0f; var sy = 0f
         val taps = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
@@ -604,7 +606,7 @@ class CameraActivity : ComponentActivity() {
             override fun onScroll(first: MotionEvent?, last: MotionEvent, dx: Float, dy: Float): Boolean {
                 if (first == null) return false
                 val mx = last.x - first.x; val my = last.y - first.y
-                if (axis == 0) { if (abs(my) > dp(10) && abs(my) > abs(mx)) { axis = 1; sy = last.y } else if (abs(mx) > dp(10)) axis = 2 }
+                if (axis == 0) { if (abs(my) > dp(4) && abs(my) > abs(mx)) { axis = 1; sy = last.y } else if (abs(mx) > dp(6)) axis = 2 }
                 if (axis != 1) return false
                 val move = last.y - sy
                 if (zone == 2) { showRail(focusRail); setFocusRail((fd0 + move / dp(220)).coerceIn(0f, 1f)) }
@@ -638,9 +640,12 @@ class CameraActivity : ComponentActivity() {
         }
     }
     // ---------- Zoom ----------
+    /** Zoom gestures pause while an adjuster, menu or sheet is open, so they never fight with it. */
+    private fun zoomLocked() = openChip != null || panel.showing || editor.showing || menu.showing
     private var dragZoom0 = 1f
-    private fun zoomDragStart() { dragZoom0 = if (zoomFollower?.isRunning == true) zoomGoal else ratio; dialing = true; wheel.removeCallbacks(hideWheel); zoomAnimation?.cancel(); zooms.animate().alpha(0f).setDuration(200).start(); wheel.show(true) }
+    private fun zoomDragStart() { if (zoomLocked()) return; dragZoom0 = if (zoomFollower?.isRunning == true) zoomGoal else ratio; dialing = true; wheel.removeCallbacks(hideWheel); zoomAnimation?.cancel(); zooms.animate().alpha(0f).setDuration(200).start(); wheel.show(true) }
     private fun zoomDragMove(dx: Float) {
+        if (zoomLocked()) return
         val (lo, hi) = range()
         var z = (dragZoom0 * 2f.pow(-dx / dp(80))).coerceIn(lo, hi)
         renderedZooms.firstOrNull { abs(ln(z / it) / ln(2f)) < 0.075f }?.let { lens -> if (abs(ratio - lens) > 0.001f) { Glass.tick(wheel); snapshotLens(lens) }; z = lens }
@@ -719,11 +724,12 @@ class CameraActivity : ComponentActivity() {
         val keys = chipKeys()
         chipTexts.forEachIndexed { i, (t, v) -> val on = i == live; t.setTextColor(if (on) Color.WHITE else Glass.TEXT3); v.text = chipValue(keys[i]); v.setTextColor(chipColor(keys[i])); (v.parent as? View)?.animate()?.scaleX(if (on) 1f else 0.92f)?.scaleY(if (on) 1f else 0.92f)?.setDuration(300)?.start() }
     }
-    private fun chipTitle(k: String) = when (k) { "ALL" -> "ทั้งหมด"; "ISO" -> "ISO"; "S" -> "ชัตเตอร์"; "WB" -> "WB"; "TINT" -> "ทินต์"; "AF" -> "โฟกัส"; "CON" -> "คอนทราสต์"; "SHP" -> "ความคม"; "NR" -> "ลดนอยส์"; else -> "EV" }
+    private fun chipTitle(k: String) = when (k) { "ALL" -> "ทั้งหมด"; "ISO" -> "ISO"; "S" -> "ชัตเตอร์"; "WB" -> "WB"; "TINT" -> "ทินต์"; "AF" -> "โฟกัส"; "CON" -> "คอนทราสต์"; "SHP" -> "ความคม"; "NR" -> "ลดนอยส์"; "F" -> "เบลอพื้นหลัง"; else -> "EV" }
     private fun chipValues(k: String): List<String> {
         val m = manual
         return when (k) {
             "ALL" -> listOf("AUTO")
+            "F" -> F_STEPS.map { "f/" + fText(it) }
             "ISO" -> listOf("AUTO") + (m?.isoValues ?: emptyList()).map { it.toString() }
             "S" -> listOf("AUTO") + (m?.shutterValues ?: emptyList()).map { it.first }
             "WB" -> (m?.wbValues ?: listOf("AUTO" to 1)).map { it.first }
@@ -740,6 +746,7 @@ class CameraActivity : ComponentActivity() {
         val m = manual
         return when (k) {
             "ALL" -> 0
+            "F" -> F_STEPS.indices.minBy { abs(F_STEPS[it] - prefs.getFloat("portrait_f", 2.8f)) }
             "ISO" -> m?.currentIso?.let { (m.isoValues.indexOf(it) + 1).coerceAtLeast(0) } ?: 0
             "S" -> m?.currentShutter?.let { s -> (m.shutterValues.indexOfFirst { it.second == s } + 1).coerceAtLeast(0) } ?: 0
             "WB" -> (m?.wbValues?.indexOfFirst { it.second == m.currentWb } ?: 0).coerceAtLeast(0)
@@ -753,6 +760,7 @@ class CameraActivity : ComponentActivity() {
     }
     private fun chipValue(k: String) = chipValues(k).getOrElse(chipIndex(k)) { "AUTO" }
     private fun chipAuto(k: String) = when (k) {
+        "F" -> F_STEPS.indexOfFirst { abs(it - 2.8f) < 0.01f }
         "EV" -> evValues().indexOfFirst { abs(it) < 0.01f }.coerceAtLeast(0)
         "TINT" -> manual?.tintValues?.indexOfFirst { it.second == 0 }?.coerceAtLeast(0) ?: 0
         "CON" -> manual?.contrastValues?.indexOfFirst { it.second == 0 }?.coerceAtLeast(0) ?: 0
@@ -760,6 +768,7 @@ class CameraActivity : ComponentActivity() {
     }
     private fun chipSep(k: String) = k in listOf("ISO", "S", "AF")
     private fun chipGrad(k: String) = when (k) {
+        "F" -> intArrayOf(0xffbf9bff.toInt(), 0xff7db8ff.toInt(), Color.WHITE, 0xffffd9a8.toInt())
         "ISO" -> intArrayOf(0xff5ac8fa.toInt(), 0xff7be3b0.toInt(), Glass.ACCENT, 0xffff9f0a.toInt(), 0xffff453a.toInt())
         "S" -> intArrayOf(0xff64d2ff.toInt(), 0xffbf9bff.toInt(), Glass.ACCENT, 0xffff9f0a.toInt())
         "WB" -> intArrayOf(0xffff9a3d.toInt(), 0xffffd9a8.toInt(), Color.WHITE, 0xffcfe5ff.toInt(), 0xff7db8ff.toInt())
@@ -779,7 +788,7 @@ class CameraActivity : ComponentActivity() {
         val first = openChip == null; openChip = k
         dialTitle.text = chipTitle(k); val values = chipValues(k)
         slider.lo = if (chipSep(k)) 1 else 0; slider.values = values; slider.grad = chipGrad(k); slider.index = chipIndex(k)
-        dialReset.text = if (k == "EV" || k == "TINT" || k == "CON") "±0" else "AUTO"; updateDialValue(k)
+        dialReset.text = if (k == "EV" || k == "TINT" || k == "CON") "±0" else if (k == "F") "f/2.8" else "AUTO"; if (k == "F") dialTitle.text = "เบลอพื้นหลัง · " + blurWord(F_STEPS[chipIndex("F")]); updateDialValue(k)
         if (first || dial.visibility != View.VISIBLE) { dial.visibility = View.VISIBLE; Liquid.show(dial, dial.width / 2f, dial.height.toFloat(), false) }
         else Liquid.show(dial, dial.width / 2f, dial.height.toFloat(), false)
         zooms.animate().alpha(0f).setDuration(160).start()
@@ -788,6 +797,7 @@ class CameraActivity : ComponentActivity() {
     private fun updateDialValue(k: String) { dialValue.text = chipValue(k); dialValue.setTextColor(chipColor(k)); val auto = chipIndex(k) == chipAuto(k); dialReset.setTextColor(if (auto) Glass.ON_ACCENT else Color.WHITE); (dialReset.background as? GlassDrawable)?.let { it.fill = if (auto) Glass.ACCENT else 0x1fffffff; it.invalidateSelf() } }
     private fun sliderChanged(i: Int) { applyChip(openChip ?: return, i) }
     private fun applyChip(k: String, i: Int) {
+        if (k == "F") { prefs.edit().putFloat("portrait_f", F_STEPS[i.coerceIn(0, F_STEPS.size - 1)]).apply(); updateDialValue(k); dialTitle.text = "เบลอพื้นหลัง · " + blurWord(F_STEPS[i.coerceIn(0, F_STEPS.size - 1)]); refresh(); return }
         val m = manual ?: return
         when (k) {
             "ISO" -> m.setIso(if (i <= 0) null else m.isoValues.getOrNull(i - 1))
@@ -830,7 +840,7 @@ class CameraActivity : ComponentActivity() {
     }
     private fun chooseNightLength(anchor: View) {
         closeDial()
-        menu.show(anchor, "เวลารวมแสงกลางคืน", listOf(GlassMenu.Option("อัตโนมัติ", Icons.NIGHT, "16 เฟรม ประมาณ 3 วินาที"), GlassMenu.Option("ยาว", Icons.NIGHT, "24 เฟรม ฉากมืดมาก"), GlassMenu.Option("ยาวที่สุด", Icons.NIGHT, "32 เฟรม ใช้ขาตั้ง")), nightIndex()) { i ->
+        menu.show(anchor, "เวลารวมแสงกลางคืน", listOf(GlassMenu.Option("อัตโนมัติ", Icons.NIGHT, "6 เฟรม ประมาณ 2 วินาที"), GlassMenu.Option("ยาว", Icons.NIGHT, "9 เฟรม ฉากมืดมาก"), GlassMenu.Option("ยาวที่สุด", Icons.NIGHT, "12 เฟรม ใช้ขาตั้ง")), nightIndex()) { i ->
             prefs.edit().putInt("night_frames", NIGHT_FRAMES[i]).apply(); if (mode != PhotoMode.NIGHT) { nightOn = true; prefs.edit().putBoolean("night_toggle", true).apply() }; refresh()
         }
     }
@@ -880,17 +890,22 @@ class CameraActivity : ComponentActivity() {
                 tile("ตั้งเวลา", Icons.TIMER, if (timer == "0") "ปิด" else "$timer วิ", timer != "0", isMenu = true) { v ->
                     menu.show(v, "ตั้งเวลา", listOf(GlassMenu.Option("ปิด", Icons.TIMER), GlassMenu.Option("3 วินาที", Icons.TIMER), GlassMenu.Option("10 วินาที", Icons.TIMER)), timers.indexOf(timer)) { i -> prefs.edit().putString("timer", timers[i]).apply(); refresh(); reopen() }
                 }
-                val aspects = listOf("4:3", "1:1", "16:9"); val aspect = prefs.getString("aspect", "4:3") ?: "4:3"
+                val aspects = Aspects.keys; val aspect = prefs.getString("aspect", "4:3") ?: "4:3"
                 tile("สัดส่วนภาพ", Icons.FRAME, aspect, aspect != "4:3", aspect, true) { v ->
-                    menu.show(v, "สัดส่วนภาพ", listOf(GlassMenu.Option("4:3", Icons.FRAME, "เต็มเซนเซอร์ ละเอียดที่สุด", "4:3"), GlassMenu.Option("1:1", Icons.FRAME, "จัตุรัส", "1:1"), GlassMenu.Option("16:9", Icons.FRAME, "จอกว้าง ครอปบนล่าง", "16:9")), aspects.indexOf(aspect)) { i ->
+                    menu.show(v, "สัดส่วนภาพ", Aspects.keys.map { GlassMenu.Option(it, Icons.FRAME, Aspects.note(it), it) }, aspects.indexOf(aspect)) { i ->
                         if (!busy) { prefs.edit().putString("aspect", aspects[i]).apply(); layoutMask(stage.width, stage.height); freezeFrame(); bind() }; reopen()
                     }
                 }
-                val outs = CaptureOutput.entries.filter { !it.needsRaw || rawAvailable }
+                val outs = CaptureOutput.entries.filter { !it.enhance && (!it.needsRaw || rawAvailable) }
                 tile("รูปแบบไฟล์", Icons.FILE, output.label, output != CaptureOutput.JPEG, isMenu = true) { v ->
-                    menu.show(v, "รูปแบบไฟล์", outs.map { GlassMenu.Option(it.label, if (it.enhance) Icons.AI else if (it.needsRaw) Icons.RAW else Icons.FILE, when (it) { CaptureOutput.JPEG -> "ภาพที่กล้องประมวลผล"; CaptureOutput.RAW -> "DNG จากเซนเซอร์"; CaptureOutput.RAW_LOG -> "DNG · ดูภาพแบบ Log แบนขณะถ่าย"; CaptureOutput.AI -> "รวมหลายเฟรม + SR1"; else -> "DNG พร้อมภาพ AI" }) }, outs.indexOf(output)) { i -> setOutput(outs[i]); reopen() }
+                    menu.show(v, "รูปแบบไฟล์", outs.map { GlassMenu.Option(it.label, if (it.needsRaw) Icons.RAW else Icons.FILE, when (it) { CaptureOutput.JPEG -> "ไฟล์เล็ก เปิดได้ทุกที่"; CaptureOutput.PNG -> "ไม่สูญเสียคุณภาพ ไฟล์ใหญ่"; CaptureOutput.WEBP -> "เล็กกว่า JPEG คุณภาพใกล้เคียง"; CaptureOutput.RAW -> "DNG จากเซนเซอร์"; else -> "DNG · ดูภาพแบบ Log แบนขณะถ่าย" }) }, outs.indexOf(output)) { i -> setOutput(outs[i]); reopen() }
                 }
-                tile("AI อัตโนมัติ", Icons.AI, if (auto) "เปิด" else "ปิด", auto, isMenu = false) { auto = !auto; prefs.edit().putBoolean("auto", auto).apply(); refresh(); reopen() }
+                val crops = listOf("0", "1", "2", "3.5"); val cropNow = prefs.getString("crop_from", null) ?: if (prefs.getBoolean("software", false)) "1" else "0"
+                tile("ครอปเลนส์", Icons.SEARCH, if (cropNow == "0") "ปิด" else "${cropNow}×", cropNow != "0", isMenu = true) { v ->
+                    menu.show(v, "ครอปจากเลนส์", listOf(GlassMenu.Option("ปิด", Icons.SEARCH, "สลับเลนส์ตามระยะซูม"), GlassMenu.Option("เลนส์หลัก 1×", Icons.SEARCH, "ซูมด้วยการครอปจากเลนส์หลัก"), GlassMenu.Option("เลนส์ 2×", Icons.SEARCH, "ครอปจากระยะ 2×"), GlassMenu.Option("เลนส์เทเล 3.5×", Icons.SEARCH, "ครอปจากระยะ 3.5×")), crops.indexOf(cropNow).coerceAtLeast(0)) { i ->
+                        prefs.edit().putString("crop_from", crops[i]).apply(); cropFrom = crops[i].toFloat(); software = cropFrom > 0f; if (!busy) { boundKey = null; applyZoom(ratio) }; reopen()
+                    }
+                }
                 val grid0 = prefs.getBoolean("grid", false)
                 tile("เส้นกริด", Icons.GRID, if (grid0) "เปิด" else "ปิด", grid0, isMenu = false) { prefs.edit().putBoolean("grid", !grid0).apply(); overlay.grid = !grid0; reopen() }
             }
@@ -902,22 +917,10 @@ class CameraActivity : ComponentActivity() {
             head.addView(text("คืนค่า", 12f).apply { gravity = Gravity.CENTER; background = glass(16, 0x1affffff); setPadding(dp(14), 0, dp(14), 0); minWidth = dp(48); isClickable = true; glassTouch()
                 setOnClickListener { prefs.edit().putInt("look", 0).putInt("look_bright", 0).putInt("look_warm", 0).apply(); applyLook(); sheet.refresh() } }, -2, dp(48))
             box.addView(head)
-            val looks = CenterStrip(this, 10).apply { capsuleHeightDp = 0; capsule.visibility = View.GONE; fadeDp = 44f }
-            val frames = mutableListOf<View>()
-            looks.setItems(LOOKS.mapIndexed { i, name ->
-                val cell = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; isClickable = true; contentDescription = "สไตล์$name" }
-                val frame = FrameLayout(this).apply { background = glass(20, 0x14ffffff); setPadding(dp(3), dp(3), dp(3), dp(3)) }
-                frame.addView(View(this).apply { background = android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0xff34506a.toInt(), 0xff34506a.toInt(), 0xff1a2631.toInt())).apply { cornerRadius = dp(17).toFloat() }; lookFilter(this, i) }, -1, -1)
-                frames += frame
-                cell.addView(frame, dp(68), dp(68)); cell.addView(text(name, 12f, Glass.TEXT2).apply { gravity = Gravity.CENTER; setPadding(0, dp(8), 0, 0) }, -2, -2)
-                CenterStrip.Item(name, 72, cell)
-            }, prefs.getInt("look", 0))
-            looks.onLive = { live -> frames.forEachIndexed { i, f -> (f.background as? GlassDrawable)?.let { it.fill = if (i == live) 0xebffffff.toInt() else 0x14ffffff; it.invalidateSelf() }; (f.parent as View).animate().scaleX(if (i == live) 1f else 0.9f).scaleY(if (i == live) 1f else 0.9f).setDuration(300).start() } }
-            looks.onSelect = { i -> prefs.edit().putInt("look", i).apply(); applyLook() }
-            box.addView(looks, -1, dp(108))
-            box.addView(lookSlider("ความสว่าง", Icons.SUN, "look_bright"))
-            box.addView(lookSlider("ความอุ่น", Icons.THERMO, "look_warm"))
-            box.addView(text("โทนนี้แสดงบนภาพพรีวิว ยังไม่ได้ใส่ลงไฟล์ที่บันทึก", 11.5f, Glass.TEXT3).apply { maxLines = 3; ellipsize = null; setPadding(dp(2), dp(2), 0, dp(10)) })
+            val lookBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            box.addView(lookBox, -1, -2)
+            buildLookSection(lookBox)
+            box.addView(text("โทนที่เลือกจะใส่ลงไฟล์ภาพที่บันทึกด้วย", 11.5f, Glass.TEXT3).apply { maxLines = 3; ellipsize = null; setPadding(dp(2), dp(2), 0, dp(6)) })
 
             val links = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = glass(20) }
             fun link(title: String, icon: String, act: () -> Unit) {
@@ -930,6 +933,54 @@ class CameraActivity : ComponentActivity() {
             link("ตั้งค่าทั้งหมด", Icons.GEAR) { sheet.close { showAllSettings() } }
             box.addView(links, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
         }
+    }
+    /** Preview thumbnail source: one small still of the live view, so every look shows real colours. */
+    private fun lookSample(): Bitmap? = runCatching { preview.bitmap?.let { f -> Bitmap.createScaledBitmap(f, 120, (120f * f.height / f.width).toInt().coerceAtLeast(1), true).also { if (it !== f) f.recycle() } } }.getOrNull()
+    private fun lookThumb(sample: Bitmap?, m: ColorMatrix, label: String, selected: Boolean, onTap: () -> Unit): View {
+        val cell = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; isClickable = true; contentDescription = label; setOnClickListener { onTap() }; glassTouch() }
+        val frame = FrameLayout(this).apply { background = glass(18, if (selected) 0xebffffff.toInt() else 0x14ffffff); setPadding(dp(3), dp(3), dp(3), dp(3)) }
+        val img = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP; if (sample != null) setImageBitmap(sample) else setBackgroundColor(0xff34506a.toInt()); colorFilter = ColorMatrixColorFilter(m); clipToOutline = true; outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: android.graphics.Outline) { o.setRoundRect(0, 0, v.width, v.height, dp(15).toFloat()) } } }
+        frame.addView(img, -1, -1)
+        cell.addView(frame, dp(72), dp(72)); cell.addView(text(label, 11.5f, if (selected) Color.WHITE else Glass.TEXT2).apply { gravity = Gravity.CENTER; maxLines = 1; setPadding(0, dp(6), 0, 0) }, dp(76), -2)
+        return cell
+    }
+    private fun buildLookSection(host: LinearLayout) {
+        host.removeAllViews()
+        val kind = if (mode == PhotoMode.FILM) "film" else prefs.getString("look_kind", "basic")
+        val sample = lookSample()
+        if (mode != PhotoMode.FILM) {
+            val seg = LinearLayout(this).apply { background = glass(16, 0x14ffffff); setPadding(dp(3), dp(3), dp(3), dp(3)) }
+            listOf("basic" to "ปรับแต่งทั่วไป", "film" to "ฟิล์ม").forEach { (k, t) ->
+                seg.addView(text(t, 13f, if (kind == k) Color.BLACK else Glass.TEXT2, kind == k).apply { gravity = Gravity.CENTER; isClickable = true; background = if (kind == k) glass(14, 0xebffffff.toInt()) else null
+                    setOnClickListener { prefs.edit().putString("look_kind", k).apply(); applyLook(); buildLookSection(host) } }, LinearLayout.LayoutParams(0, dp(38), 1f))
+            }
+            host.addView(seg, LinearLayout.LayoutParams(-1, dp(44)).apply { bottomMargin = dp(8) })
+        }
+        val row = LinearLayout(this).apply { gravity = Gravity.CENTER_HORIZONTAL; setPadding(dp(4), dp(4), dp(4), dp(4)); clipChildren = false; clipToPadding = false }
+        val scroll = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; clipChildren = false; clipToPadding = false; addView(row) }
+        if (kind == "film") {
+            val cur = Films.byId(prefs.getString("film", null))
+            var group = cur?.group ?: Films.groups[0]
+            val groups = LinearLayout(this).apply { setPadding(dp(4), 0, dp(4), dp(6)) }
+            val gs = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(groups) }
+            fun fillFilms() {
+                row.removeAllViews()
+                Films.inGroup(group).forEach { f ->
+                    row.addView(lookThumb(sample, Films.matrix(f), f.name, prefs.getString("film", null) == f.id) { prefs.edit().putString("film", f.id).putString("look_kind", "film").apply(); applyLook(); buildLookSection(host) }, LinearLayout.LayoutParams(dp(80), -2).apply { rightMargin = dp(6) })
+                }
+            }
+            Films.groups.forEach { g ->
+                groups.addView(text(g, 12.5f, if (g == group) Color.BLACK else Glass.TEXT2).apply { gravity = Gravity.CENTER; setPadding(dp(14), 0, dp(14), 0); isClickable = true; background = glass(16, if (g == group) 0xebffffff.toInt() else 0x14ffffff)
+                    setOnClickListener { group = g; for (i in 0 until groups.childCount) { val t = groups.getChildAt(i) as TextView; val on = t.text == g; t.setTextColor(if (on) Color.BLACK else Glass.TEXT2); t.background = glass(16, if (on) 0xebffffff.toInt() else 0x14ffffff) }; fillFilms() } }, LinearLayout.LayoutParams(-2, dp(34)).apply { rightMargin = dp(6) })
+            }
+            host.addView(gs, -1, dp(40))
+            fillFilms()
+        } else {
+            LOOKS.forEachIndexed { i, name -> row.addView(lookThumb(sample, lookMatrix(i, 0, 0), name, prefs.getInt("look", 0) == i) { prefs.edit().putInt("look", i).apply(); applyLook(); buildLookSection(host) }, LinearLayout.LayoutParams(dp(80), -2).apply { rightMargin = dp(6) }) }
+        }
+        host.addView(scroll, -1, dp(112))
+        host.addView(lookSlider("ความสว่าง", Icons.SUN, "look_bright"))
+        host.addView(lookSlider("ความอุ่น", Icons.THERMO, "look_warm"))
     }
     private fun sectionTitle(t: String) = text(t, 14f, 0xdbffffff.toInt(), true).apply { setPadding(dp(2), dp(4), 0, dp(8)) }
     private fun lookSlider(title: String, icon: String, key: String) = LinearLayout(this).apply {
@@ -959,9 +1010,9 @@ class CameraActivity : ComponentActivity() {
     }
     private fun lookFilter(v: View, look: Int) { v.setLayerType(View.LAYER_TYPE_HARDWARE, Paint().apply { colorFilter = ColorMatrixColorFilter(lookMatrix(look, 0, 0)) }) }
     private fun applyLook() {
-        val look = prefs.getInt("look", 0); val b = prefs.getInt("look_bright", 0); val w = prefs.getInt("look_warm", 0)
         val tv = (0 until preview.childCount).map { preview.getChildAt(it) }.firstOrNull { it is TextureView } as? TextureView ?: return
-        tv.setLayerPaint(if (look == 0 && b == 0 && w == 0) null else Paint().apply { colorFilter = ColorMatrixColorFilter(lookMatrix(look, b, w)) })
+        val active = Films.active(prefs, mode == PhotoMode.FILM)
+        tv.setLayerPaint(if (active == null) null else Paint().apply { colorFilter = ColorMatrixColorFilter(active.first) })
     }
     private fun setOutput(choice: CaptureOutput) {
         if (busy) return
@@ -1031,7 +1082,7 @@ class CameraActivity : ComponentActivity() {
             box.addView(sectionTitle("โหมดเพิ่มเติม").apply { setPadding(dp(2), dp(16), 0, dp(8)) }); box.addView(more, -1, -2)
         }
     }
-    private fun saveBar(list: List<String>) { prefs.edit().putString("mode_bar", (if ("PHOTO" in list) list else listOf("PHOTO") + list).distinct().joinToString(",")).apply(); rebuildModeStrip() }
+    private fun saveBar(list: List<String>) { if (mode.name !in list && ALL.any { it.key == mode.name }) selectMode(PhotoMode.PHOTO); prefs.edit().putString("mode_bar", (if ("PHOTO" in list) list else listOf("PHOTO") + list).distinct().joinToString(",")).apply(); rebuildModeStrip() }
     private fun useTemporary(key: String) {
         val m = ALL.first { it.key == key }
         val pm = runCatching { PhotoMode.valueOf(key) }.getOrNull()
@@ -1048,7 +1099,7 @@ class CameraActivity : ComponentActivity() {
             stops.forEach { v ->
                 val cell = FrameLayout(this).apply { isClickable = true; isFocusable = true; contentDescription = "ซูม ${zoomText(v)} ลากซ้ายขวาเพื่อซูมละเอียด" }
                 cell.addView(text(zoomText(v), 12f, Color.WHITE, true).apply { setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 12f); gravity = Gravity.CENTER; background = GlassDrawable(0x1affffff, dp(20).toFloat(), resources.displayMetrics.density) }, FrameLayout.LayoutParams(dp(32), dp(32), Gravity.CENTER))
-                cell.setOnClickListener { snapshotLens(v); animateZoom(v) }
+                cell.setOnClickListener { if (!zoomLocked()) { snapshotLens(v); animateZoom(v) } }
                 zooms.addView(cell, LinearLayout.LayoutParams(dp(48), dp(48)).apply { setMargins(dp(1), 0, dp(1), 0) })
             }
         }
@@ -1066,7 +1117,7 @@ class CameraActivity : ComponentActivity() {
         macroButton.visibility = if (showSide && rear && !portrait && macroLens != null) View.VISIBLE else View.GONE
         apertureButton.visibility = if (showSide && portrait) View.VISIBLE else View.GONE
         val f = prefs.getFloat("portrait_f", 2.8f); apertureButton.text = "f/${fText(f)}"; apertureButton.contentDescription = "เบลอพื้นหลัง f/${fText(f)} แตะเพื่อเปลี่ยน"
-        nightButton.visibility = if (showSide) View.VISIBLE else View.GONE
+        nightButton.visibility = if (showSide && (mode == PhotoMode.PHOTO || mode == PhotoMode.PRO || mode == PhotoMode.NIGHT) && !portrait) View.VISIBLE else View.GONE
         // A switched-on mode stays solid orange (not just a tinted icon), so it reads as on at a glance.
         fun lit(v: FrameLayout, on: Boolean) { (v.background as? GlassDrawable)?.let { if ((it.fill == Glass.ACCENT) != on) { it.fill = if (on) Glass.ACCENT else Glass.FILL; v.invalidate() } }; (v.getChildAt(0) as IconView).tint = if (on) Glass.ON_ACCENT else Color.WHITE }
         lit(macroButton, macro); lit(nightButton, nightActive())
@@ -1078,7 +1129,6 @@ class CameraActivity : ComponentActivity() {
         if (chipFrame.visibility == View.VISIBLE) styleChips(chips.selected)
         val dlp = dial.layoutParams as FrameLayout.LayoutParams; val want = if (chipFrame.visibility == View.VISIBLE) dp(78 + 56 * grow()) else dp(70)
         if (dlp.bottomMargin != want) { dlp.bottomMargin = want; dial.layoutParams = dlp }
-        if (mode == PhotoMode.PANORAMA && pano == null) hint("พาโนรามา · แตะชัตเตอร์แล้วหมุนกล้องช้า ๆ ไปทางขวา", 1800)
     }
     private var hintVersion=0
     private fun hint(text:String,ms:Long=1500) {
@@ -1120,7 +1170,7 @@ class CameraActivity : ComponentActivity() {
             val extension=when(mode){PhotoMode.HDR->ExtensionMode.HDR;PhotoMode.NIGHT->ExtensionMode.NIGHT;PhotoMode.PORTRAIT->ExtensionMode.BOKEH;else->ExtensionMode.NONE}
             // Maker portrait/night extensions open slowly (or not at all) on some phones and hide the f-number control,
             // so Luma's own portrait blur and AI night are the default; the maker versions are an opt-in setting.
-            val oemAllowed=extension==ExtensionMode.HDR||prefs.getBoolean("oem_extensions",false)
+            val oemAllowed=extension==ExtensionMode.HDR||extension==ExtensionMode.NIGHT||prefs.getBoolean("oem_extensions",false)
             activeExtension=oemAllowed && output==CaptureOutput.JPEG && extension!=ExtensionMode.NONE && extensions?.isExtensionAvailable(baseSelector,extension)==true
             val selected=if(activeExtension)extensions!!.getExtensionEnabledCameraSelector(baseSelector,extension) else baseSelector
             val info=provider.availableCameraInfos.firstOrNull { it in baseSelector.filter(provider.availableCameraInfos) }
@@ -1130,12 +1180,12 @@ class CameraActivity : ComponentActivity() {
             if(output.needsRaw&&!rawAvailable){output=CaptureOutput.JPEG;prefs.edit().putString("output",output.name).apply();notice("กล้องนี้ไม่รองรับ RAW · เปลี่ยนเป็น JPEG แล้ว")}
             if(mode==PhotoMode.NIGHT&&!activeExtension&&output==CaptureOutput.JPEG)output=CaptureOutput.AI
             val key=listOf(rear,activeExtension,if(activeExtension)extension else ExtensionMode.NONE,output.needsRaw,
-                mode==PhotoMode.HIRES,mode==PhotoMode.ULTRA_HDR,mode in listOf(PhotoMode.PRO,PhotoMode.HDR,PhotoMode.HIRES,PhotoMode.NIGHT),prefs.getString("aspect","4:3"),prefs.getString("jpeg_quality","95"))
+                mode==PhotoMode.HIRES,false,mode in listOf(PhotoMode.PRO,PhotoMode.HDR,PhotoMode.HIRES,PhotoMode.NIGHT),prefs.getString("aspect","4:3"),prefs.getString("jpeg_quality","95"))
             if(key==boundKey&&capture?.let{provider.isBound(it)}==true){
                 // Same stream combination: keep the session, refresh only per-mode state.
                 boundPreview?.setSurfaceProvider(preview.surfaceProvider);capture?.targetRotation=targetRotation
                 manual=ManualControls(this,camera!!,false,mode==PhotoMode.PRO).also{it.onNotice={t->notice(t)}};afterBind()
-                capture?.flashMode=if(info.hasFlashUnit())flash else ImageCapture.FLASH_MODE_OFF
+                capture?.flashMode=if(info.hasFlashUnit())(if(mode==PhotoMode.FLASH_NIGHT)ImageCapture.FLASH_MODE_ON else flash) else ImageCapture.FLASH_MODE_OFF
                 unfreeze();applyZoom(ratio);refresh();return
             }
             val ticket=++binding
@@ -1145,21 +1195,18 @@ class CameraActivity : ComponentActivity() {
             val frames=FrameMetadata(single)
             val framing=ResolutionSelector.Builder().setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
             val previewCase=Preview.Builder().setResolutionSelector(framing.build()).build().apply { surfaceProvider=preview.surfaceProvider }
-            val builder=ImageCapture.Builder().setCaptureMode(if(mode in listOf(PhotoMode.PRO,PhotoMode.HDR,PhotoMode.HIRES,PhotoMode.NIGHT))ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY else ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+            val builder=ImageCapture.Builder().setCaptureMode(if(mode in listOf(PhotoMode.PRO,PhotoMode.HDR,PhotoMode.HIRES))ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY else ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
                 .setJpegQuality(prefs.getString("jpeg_quality","95")!!.toInt())
                 .setResolutionSelector(framing.setResolutionStrategy(ResolutionStrategy(Size(4000,3000),ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER)).build())
                 .setTargetRotation(targetRotation)
             if(mode==PhotoMode.HIRES)builder.setResolutionSelector(ResolutionSelector.Builder().setAllowedResolutionMode(ResolutionSelector.PREFER_HIGHER_RESOLUTION_OVER_CAPTURE_RATE).setResolutionStrategy(ResolutionStrategy.HIGHEST_AVAILABLE_STRATEGY).build())
-            if(mode==PhotoMode.ULTRA_HDR){
-                check(formats.contains(ImageCapture.OUTPUT_FORMAT_JPEG_ULTRA_HDR)){"กล้องนี้ไม่เปิดไฟล์ Ultra HDR ให้แอป"}
-                builder.setOutputFormat(ImageCapture.OUTPUT_FORMAT_JPEG_ULTRA_HDR)
-            }else if (output.needsRaw && rawAvailable) builder.setOutputFormat(ImageCapture.OUTPUT_FORMAT_RAW_JPEG)
+            if (output.needsRaw && rawAvailable) builder.setOutputFormat(ImageCapture.OUTPUT_FORMAT_RAW_JPEG)
             Camera2Interop.Extender(builder).setSessionCaptureCallback(frames)
             val useCase=builder.build()
             camera?.cameraInfo?.zoomState?.removeObservers(this)
             provider.unbindAll()
             val group=UseCaseGroup.Builder().addUseCase(previewCase).addUseCase(useCase)
-            val aspect=when(prefs.getString("aspect","4:3")){"1:1"->Rational(1,1);"16:9"->Rational(16,9);else->Rational(4,3)}
+            val aspect=Aspects.rational(prefs.getString("aspect","4:3")?:"4:3")
             if(aspect!=Rational(4,3)&&!activeExtension)group.setViewPort(ViewPort.Builder(aspect,targetRotation).build())
             camera=provider.bindToLifecycle(this,selected,group.build())
             manual=ManualControls(this,camera!!,false,mode==PhotoMode.PRO).also{it.onNotice={t->notice(t)}}
@@ -1167,7 +1214,7 @@ class CameraActivity : ComponentActivity() {
             if(mode==PhotoMode.NIGHT&&!activeExtension&&output==CaptureOutput.JPEG){output=CaptureOutput.AI}
 
             boundKey=key;boundPreview=previewCase;capture=useCase;metadata=frames
-            useCase.flashMode=if(info.hasFlashUnit()) flash else ImageCapture.FLASH_MODE_OFF
+            useCase.flashMode=if(info.hasFlashUnit()) (if(mode==PhotoMode.FLASH_NIGHT)ImageCapture.FLASH_MODE_ON else flash) else ImageCapture.FLASH_MODE_OFF
             val range=camera?.cameraInfo?.zoomState?.value
             ratio=range().let{(lo,hi)->ratio.coerceIn(lo,hi)}
             zoomGoal=ratio;applyZoom(ratio)
@@ -1195,10 +1242,11 @@ class CameraActivity : ComponentActivity() {
         frozen.animate().alpha(0f).setDuration(220).withEndAction { Glass.blur(frozen, 0f); val old = (frozen.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap; frozen.setImageDrawable(null); old?.recycle() }.start()
     }
     /** Highest ratio the camera zooms by itself; beyond it the app crops the preview and AI SR1 enlarges the photo. */
-    private fun hardwareMax(): Float = if(software && rear) 1f else camera?.cameraInfo?.zoomState?.value?.maxZoomRatio ?: 1f
+    private fun cropPref(): Float = (prefs.getString("crop_from", null) ?: if (prefs.getBoolean("software", false)) "1" else "0").toFloatOrNull() ?: 0f
+    private fun hardwareMax(): Float = if(software && rear) minOf(cropFrom, camera?.cameraInfo?.zoomState?.value?.maxZoomRatio ?: cropFrom) else camera?.cameraInfo?.zoomState?.value?.maxZoomRatio ?: 1f
     private fun range(): Pair<Float,Float> {
         val z=camera?.cameraInfo?.zoomState?.value
-        val lo=if(software && rear) 1f else z?.minZoomRatio ?: 1f
+        val lo=if(software && rear && cropFrom<=1f) 1f else z?.minZoomRatio ?: 1f
         return lo to (if(rear) maxOf(SUPER_ZOOM,hardwareMax()) else z?.maxZoomRatio ?: 1f)
     }
     /** Part of [ratio] the app adds by cropping (1 = none). */
@@ -1299,12 +1347,12 @@ class CameraActivity : ComponentActivity() {
         busy = true
         hintVersion++
         refresh()
-        val count = if (kind.enhance) burstCount(if (night) prefs.getInt("night_frames", 16) else prefs.getInt("frames", 8)) else 1
+        val count = if (kind.enhance) burstCount(if (night) prefs.getInt("night_frames", 6).coerceAtMost(12) else 8) else 1
         if (night) nightProgress(0, count) // the stop button works from the first moment, not after the 3A lock
         burst = BurstCapture(
             applicationContext, useCase, kind,
             count,
-            rear, if (appCrop() > 1.001f && !(software && rear)) appCrop() else ratio, (software && rear) || appCrop() > 1.001f, targetRotation,
+            rear, if (appCrop() > 1.001f) appCrop() else ratio, appCrop() > 1.001f, targetRotation,
             started = { captureFeedback() },
             progress = { done, total ->
                 if (!isDestroyed && night) nightProgress(done, total)
@@ -1368,15 +1416,15 @@ class CameraActivity : ComponentActivity() {
         if(filesDir.usableSpace<32L*1024*1024){hint("พื้นที่ว่างไม่พอสำหรับถ่ายภาพ กรุณาคืนพื้นที่แล้วลองใหม่",5000);return}
         val useCase=capture ?: return
         if(mode==PhotoMode.HDR&&!activeExtension){takeHdr(useCase);return}
-        if(mode==PhotoMode.ULTRA_HDR){takeUltra(useCase);return}
+        if(mode==PhotoMode.FLASH_NIGHT&&camera?.cameraInfo?.hasFlashUnit()!=true){hint("กล้องนี้ไม่มีแฟลช",1600);return}
         if(busy || zoomSettling) return
-        if (output != CaptureOutput.JPEG || (nightOn && mode == PhotoMode.PHOTO)) {
+        if (output.needsRaw || output.enhance || (nightOn && mode == PhotoMode.PHOTO)) {
             takeBurst()
             return
         }
         busy=true;refresh()
-        val isRear=rear;val zoom=ratio;val extra=appCrop();val useSoftware=(software && isRear)||extra>1.001f;val cropBy=if(software&&isRear) zoom else extra
-        val allowAuto=(auto && mode==PhotoMode.PHOTO)||extra>1.001f;val frames=metadata;val photoMode=mode;val nativeEffect=activeExtension
+        val isRear=rear;val zoom=ratio;val extra=appCrop();val useSoftware=extra>1.001f;val cropBy=extra
+        val allowAuto=false;val outFormat=output;val frames=metadata;val photoMode=mode;val nativeEffect=activeExtension
         val aperture=prefs.getFloat("portrait_f",2.8f)
         val camId=camera?.let{runCatching{Camera2CameraInfo.from(it.cameraInfo).cameraId}.getOrNull()};val hwZoom=minOf(zoom,hardwareMax())
         val time=System.currentTimeMillis();val id=UUID.randomUUID().toString()
@@ -1412,7 +1460,10 @@ class CameraActivity : ComponentActivity() {
                     val crop=if(useSoftware && cropBy>1f) size.pixels else frame?.crop
                     val actualZoom=if(!useSoftware && frame?.ratio!=null && frame.ratio!=1f) frame.ratio else zoom
                     val reason=decide(allowAuto,isRear,actualZoom,size.pixels,crop)
-                    val uri=PhotoMedia.publish(this@CameraActivity,original,"LUMA_${time}_${id}.jpg",time)
+                    val uri=if(outFormat==CaptureOutput.PNG||outFormat==CaptureOutput.WEBP){
+                        val converted=PhotoEffects.convert(original,outFormat,prefs.getString("jpeg_quality","95")!!.toInt())
+                        try{PhotoMedia.publish(this@CameraActivity,converted,"LUMA_${time}_${id}.${if(outFormat==CaptureOutput.PNG)"png" else "webp"}",time,if(outFormat==CaptureOutput.PNG)"image/png" else "image/webp")}finally{converted.delete()}
+                    }else PhotoMedia.publish(this@CameraActivity,original,"LUMA_${time}_${id}.jpg",time)
                     val stage=if(reason.startsAi) Stage.QUEUED else Stage.ORIGINAL
                     luma.shots.insert(Shot(id,time,uri,size,actualZoom,isRear,frame?.lens,crop,reason,stage,null,0,null,useSoftware))
                     if(photoMode==PhotoMode.PANORAMA){
@@ -1459,7 +1510,7 @@ class CameraActivity : ComponentActivity() {
     @Suppress("DEPRECATION")
     private fun openVideo(kind:String){cancelModeSwitch();freezeFrame();provider?.unbindAll();capture=null;startActivity(Intent(this,VideoActivity::class.java).putExtra("mode",kind));overridePendingTransition(0,0)}
     @Suppress("DEPRECATION") private fun openSpecial(kind:String){cancelModeSwitch();freezeFrame();provider?.unbindAll();capture=null;startActivity(Intent(this,SpecialVideoActivity::class.java).putExtra("mode",kind));overridePendingTransition(0,0)}
-    private fun showAllSettings(){showStudioSettings(rawAvailable){auto=prefs.getBoolean("auto",true);software=prefs.getBoolean("software",false);overlay.grid=prefs.getBoolean("grid",false)
+    private fun showAllSettings(){showStudioSettings(rawAvailable){auto=prefs.getBoolean("auto",true);cropFrom=cropPref();software=cropFrom>0f;boundKey=null;overlay.grid=prefs.getBoolean("grid",false)
         if(prefs.getBoolean("gps",false)&&ContextCompat.checkSelfPermission(this,Manifest.permission.ACCESS_COARSE_LOCATION)!=PackageManager.PERMISSION_GRANTED)locationRequest.launch(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION,Manifest.permission.ACCESS_FINE_LOCATION))
         refresh();if(!busy){layoutMask(stage.width,stage.height);bind()}
     }}
@@ -1500,7 +1551,7 @@ class CameraActivity : ComponentActivity() {
     private fun finishPanorama(){if(busy)return;if(panoFiles.size<2){notice("ถ่ายอย่างน้อย 2 ภาพ โดยแต่ละภาพซ้อนทับกันประมาณครึ่งหนึ่ง");return};busy=true;refresh();hint("กำลังจับคู่และต่อภาพ…",120000)
         val input=panoFiles.toList();luma.fileIo.execute{runCatching{val result=PanoramaEngine.stitch(this,input);publishSpecial(result,"Panorama · ORB / homography");result.delete()}.onSuccess{input.forEach{it.delete()};runOnUiThread{panoFiles.clear();complete("บันทึกพาโนรามาแล้ว")}}.onFailure{complete("ต่อภาพไม่ได้ · ${it.localizedMessage} · เฟรมต้นฉบับยังอยู่")}}
     }
-    override fun onKeyDown(code:Int,event:KeyEvent):Boolean{if(code==KeyEvent.KEYCODE_VOLUME_UP||code==KeyEvent.KEYCODE_VOLUME_DOWN){when(prefs.getString("volume_action","shutter")){"system"->return super.onKeyDown(code,event);"zoom"->{if(!busy)applyZoom(ratio*if(code==KeyEvent.KEYCODE_VOLUME_UP)1.1f else 0.9f)};else->if(event.repeatCount==0)takePhoto()};return true};return super.onKeyDown(code,event)}
+    override fun onKeyDown(code:Int,event:KeyEvent):Boolean{if(code==KeyEvent.KEYCODE_VOLUME_UP||code==KeyEvent.KEYCODE_VOLUME_DOWN){when(prefs.getString("volume_action","shutter")){"system"->return super.onKeyDown(code,event);"zoom"->{if(!busy&&!zoomLocked())applyZoom(ratio*if(code==KeyEvent.KEYCODE_VOLUME_UP)1.1f else 0.9f)};else->if(event.repeatCount==0)takePhoto()};return true};return super.onKeyDown(code,event)}
     private fun loadThumb() {
         luma.fileIo.execute {
             val uri=luma.shots.latest()?.uri ?: return@execute

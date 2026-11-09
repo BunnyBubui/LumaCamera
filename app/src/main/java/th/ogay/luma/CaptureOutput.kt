@@ -2,6 +2,8 @@ package th.ogay.luma
 
 enum class CaptureOutput(val label: String, val needsRaw: Boolean, val enhance: Boolean) {
     JPEG("JPEG", false, false),
+    PNG("PNG", false, false),
+    WEBP("WebP", false, false),
     RAW("RAW", true, false),
     AI("AI", false, true),
     BOTH("RAW + AI", true, true),

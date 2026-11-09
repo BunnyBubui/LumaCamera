@@ -30,19 +30,27 @@ object PhotoEffects {
         val scale=kotlin.math.sqrt(maxPixels.toDouble()/(rotated.width.toLong()*rotated.height))
         return Bitmap.createScaledBitmap(rotated,(rotated.width*scale).toInt().coerceAtLeast(1),(rotated.height*scale).toInt().coerceAtLeast(1),true).also{if(it!==rotated)rotated.recycle()}
     }
+    /** Re-saves a finished JPEG as PNG or WebP next to it; the caller deletes the returned copy after publishing. */
+    fun convert(file:File,format:CaptureOutput,quality:Int):File{
+        val b=read(file,60_000_000);val ext=if(format==CaptureOutput.PNG)"png" else "webp";val out=File(file.parentFile,file.nameWithoutExtension+"-conv."+ext)
+        val fmt=if(format==CaptureOutput.PNG)Bitmap.CompressFormat.PNG else if(android.os.Build.VERSION.SDK_INT>=30)Bitmap.CompressFormat.WEBP_LOSSY else @Suppress("DEPRECATION")Bitmap.CompressFormat.WEBP
+        try{out.outputStream().use{check(b.compress(fmt,quality.coerceIn(60,100),it))}}finally{b.recycle()};return out
+    }
     fun write(bitmap:Bitmap,file:File,quality:Int=95){file.outputStream().use{check(bitmap.compress(Bitmap.CompressFormat.JPEG,quality,it))}}
     fun decorate(c:Context,file:File,rear:Boolean){
         val p=c.getSharedPreferences("camera",0);val aspect=p.getString("aspect","4:3")!!
         val mirror=!rear&&p.getBoolean("mirror_selfie",false);val watermark=p.getBoolean("watermark",false)
-        if(aspect!="4:3"||mirror||watermark){
+        val look=if(p.getString("photo_mode","PHOTO")=="FILM")Films.active(p,true) else Films.active(p)
+        if(aspect!="4:3"||mirror||watermark||look!=null){
             val source=read(file,12_000_000)
             val portrait=source.height>=source.width
-            val ratio=when(aspect){"1:1"->1f;"16:9"->if(portrait)9f/16 else 16f/9;else->if(portrait)3f/4 else 4f/3}
+            val ratio=Aspects.value(aspect,!portrait)
             val w=minOf(source.width,(source.height*ratio).toInt());val h=minOf(source.height,(source.width/ratio).toInt())
             val cropped=Bitmap.createBitmap(source,(source.width-w)/2,(source.height-h)/2,w,h)
             val image=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888);val canvas=Canvas(image)
             if(mirror){canvas.save();canvas.scale(-1f,1f,w/2f,h/2f)}
             canvas.drawBitmap(cropped,0f,0f,null);if(mirror)canvas.restore()
+            if(look!=null){val styled=Films.render(image,look.first,look.second);canvas.drawBitmap(styled,0f,0f,null);styled.recycle()}
             if(watermark){val paint=Paint(Paint.ANTI_ALIAS_FLAG).apply{color=Color.WHITE;textSize=w*0.026f;setShadowLayer(3f,0f,1f,Color.BLACK)};canvas.drawText(p.getString("watermark_name","Luma")+"  ·  "+java.text.SimpleDateFormat("yyyy.MM.dd HH:mm",java.util.Locale.US).format(java.util.Date()),w*0.04f,h*0.96f,paint)}
             write(image,file,p.getString("jpeg_quality","95")!!.toInt());image.recycle();if(cropped!==source)cropped.recycle();source.recycle();PhotoMedia.tag(file,0)
         }

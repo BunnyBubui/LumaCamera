@@ -16,7 +16,7 @@ import kotlin.random.Random
 /**
  * Luma's own soft UI sounds and shutter, synthesised once into small WAV files (no recorded assets, nothing
  * borrowed): muted switch clicks in a few pitches so repeated taps do not sound identical, and a two-stage
- * mechanical shutter. Clicks follow the ringer (silent/vibrate = no clicks) and the "เสียงปุ่ม" setting.
+ * mechanical shutter. All sounds play on the media volume and follow the "เสียงปุ่ม" / "เสียงชัตเตอร์" settings.
  */
 object Sounds {
     enum class Kind { TAP, DETENT, ON, OFF, OPEN, CLOSE, SHUTTER }
@@ -28,7 +28,7 @@ object Sounds {
 
     fun init(c: Context) {
         if (pool != null) return
-        val p = SoundPool.Builder().setMaxStreams(4).setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build()).build()
+        val p = SoundPool.Builder().setMaxStreams(4).setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build()).build()
         pool = p
         val app = c.applicationContext
         Thread {
@@ -53,13 +53,11 @@ object Sounds {
         if (k == Kind.SHUTTER) { if (!prefs.getBoolean("sound", true) && !androidx.camera.core.CameraInfo.mustPlayShutterSound()) return }
         else {
             if (!prefs.getBoolean("click_sound", true)) return
-            val am = c.getSystemService(Context.AUDIO_SERVICE) as AudioManager
-            if (am.ringerMode != AudioManager.RINGER_MODE_NORMAL) return
             // Fast scrolling ticks would turn into a buzz.
-            val now = System.nanoTime(); if (k == Kind.DETENT && now - last < 45_000_000L) return; last = now
+            val now = System.nanoTime(); if (k == Kind.DETENT && now - last < 28_000_000L) return; last = now
         }
         val set = ids[k] ?: return
-        val vol = when (k) { Kind.SHUTTER -> 0.9f; Kind.DETENT -> 0.22f; else -> 0.35f }
+        val vol = when (k) { Kind.SHUTTER -> 0.9f; Kind.DETENT -> 0.3f; else -> 0.4f }
         p.play(set[Random.nextInt(set.size)], vol, vol, 1, 0, 1f)
     }
 

@@ -299,7 +299,7 @@ class EdgeRail(context: Context, val focusRail: Boolean) : View(context) {
     init { importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }
     fun show(on: Boolean) {
         val target = if (on) 1f else 0f; if (target == open && anim?.isRunning != true) return
-        anim?.cancel(); anim = ValueAnimator.ofFloat(open, target).apply { duration = if (Glass.reduced(context)) 0 else 420; interpolator = Glass.POP
+        anim?.cancel(); anim = ValueAnimator.ofFloat(open, target).apply { duration = if (Glass.reduced(context)) 0 else if (on) 130 else 260; interpolator = Glass.EASE
             addUpdateListener { open = it.animatedValue as Float; invalidate() }; start() }
     }
     private fun railLeft(): Float { val hidden = context.px(30f) * (1 - open); return if (focusRail) width - context.px(46f) + hidden else context.px(10f) - hidden }
@@ -339,7 +339,8 @@ class EdgeRail(context: Context, val focusRail: Boolean) : View(context) {
 
 /** Half-circle glass zoom wheel with fine ticks, lens labels and a fading lower edge. */
 class ZoomWheel(context: Context) : View(context) {
-    var zoom = 1f; set(v) { field = v; invalidate() }
+    private var lastStep = Int.MIN_VALUE
+    var zoom = 1f; set(v) { field = v; if (open > 0.05f) { val step = Math.round(ln(v) / ln(2f) * 14f); if (step != lastStep) { if (lastStep != Int.MIN_VALUE) Glass.tick(this, HapticFeedbackConstants.CLOCK_TICK); lastStep = step } }; invalidate() }
     var lenses = listOf(1f); var maxZoom = 10f; var minZoom = 1f
     private var open = 0f
     private val glass = context.glass(0)
@@ -372,8 +373,8 @@ class ZoomWheel(context: Context) : View(context) {
             val a = deg(l); if (abs(a) > 33) return@forEach
             val on = abs(l - zoom) < 0.01f
             paint.color = if (on) Glass.ACCENT else Color.WHITE; paint.strokeWidth = 2.5f * d
-            if (l in lenses) tick(c, cx, cy, a, 308 * d, 18 * d)
-            c.save(); c.rotate(a, cx, cy); c.drawText(zoomText(l).removeSuffix("×"), cx, cy - 282 * d, paint); c.restore()
+            if (l in lenses) tick(c, cx, cy, a, 308 * d, 14 * d)
+            c.save(); c.rotate(a, cx, cy); c.drawText(zoomText(l).removeSuffix("×"), cx, cy - 272 * d, paint); c.restore()
         }
         paint.color = Glass.ACCENT; paint.strokeWidth = 2 * d; c.drawLine(cx, 40 * d, cx, 62 * d, paint)
         val label = zoomText(zoom); val tw = paint.measureText(label) + 24 * d
@@ -452,8 +453,33 @@ open class LayerFrame(context: Context) : FrameLayout(context) {
     var closing = false
     /** Take every touch before the children, so a finger can slide across rows (the rows stay clickable for TalkBack). */
     var scrub = false
+    /** Sheets: a downward drag that starts in the top [pullZonePx] pulls the whole layer, however fast the finger moves. */
+    var pullZonePx = 0
+    var onPull: ((end: Boolean, dy: Float, velocityY: Float) -> Unit)? = null
+    private var tracking = false; private var pulling = false; private var y0 = 0f; private var x0 = 0f
+    private var tracker: VelocityTracker? = null
+    private val slop = ViewConfiguration.get(context).scaledTouchSlop
     override fun dispatchTouchEvent(e: MotionEvent): Boolean = if (closing) false else super.dispatchTouchEvent(e)
-    override fun onInterceptTouchEvent(e: MotionEvent): Boolean = scrub || super.onInterceptTouchEvent(e)
+    override fun onInterceptTouchEvent(e: MotionEvent): Boolean {
+        if (scrub) return true
+        if (onPull != null) when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> { tracking = e.y < pullZonePx; pulling = false; y0 = e.rawY; x0 = e.rawX; tracker?.recycle(); tracker = VelocityTracker.obtain().also { it.addMovement(e) } }
+            MotionEvent.ACTION_MOVE -> { tracker?.addMovement(e); if (tracking && !pulling) { val dy = e.rawY - y0; if (dy > slop && dy > abs(e.rawX - x0)) { pulling = true; parent?.requestDisallowInterceptTouchEvent(true); return true } } }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { tracking = false; tracker?.recycle(); tracker = null }
+        }
+        return super.onInterceptTouchEvent(e)
+    }
+    override fun onTouchEvent(e: MotionEvent): Boolean {
+        if (onPull != null && pulling) {
+            tracker?.addMovement(e)
+            when (e.actionMasked) {
+                MotionEvent.ACTION_MOVE -> onPull?.invoke(false, e.rawY - y0, 0f)
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { tracker?.computeCurrentVelocity(1000); val v = tracker?.yVelocity ?: 0f; tracker?.recycle(); tracker = null; pulling = false; tracking = false; onPull?.invoke(true, e.rawY - y0, v) }
+            }
+            return true
+        }
+        return super.onTouchEvent(e)
+    }
 }
 
 /**
@@ -562,7 +588,7 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
         // Touch and drawing order follow elevation, so the menu layer must sit above sheets (16 dp) or it is hidden and untappable.
         val shade = View(c).apply { setBackgroundColor(if (quiet) 0 else 0x29000000); alpha = 0f; isClickable = true; contentDescription = "ปิดเมนู"; elevation = 20 * d; outlineProvider = null; setOnClickListener { dismiss(true) } }
         host.addView(shade, FrameLayout.LayoutParams(-1, -1)); shade.animate().alpha(1f).setDuration(320).start()
-        val menu = LayerFrame(c).apply { background = c.glass(22, if (quiet) 0xf5222225.toInt() else Glass.FILL_POP); setPadding(c.dp(6), c.dp(6), c.dp(6), c.dp(6)); elevation = 24 * d }
+        val menu = LayerFrame(c).apply { background = c.glass(22, if (quiet) 0xf5222225.toInt() else Glass.FILL_POP); setPadding(c.dp(8), c.dp(8), c.dp(8), c.dp(8)); elevation = 24 * d }
         val hi = View(c).apply { background = GlassDrawable(0x24ffffff, c.dp(16).toFloat(), d) }
         val list = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
         list.addView(c.text(title, 12f, Glass.TEXT2, true).apply { setPadding(c.dp(10), c.dp(6), 0, 0); importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES; isFocusable = true }, -1, c.dp(30))
@@ -570,6 +596,7 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
             LinearLayout(c).apply {
                 orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(c.dp(10), 0, c.dp(10), 0); minimumHeight = c.dp(52)
                 contentDescription = o.label + if (o.note.isNotEmpty()) ", ${o.note}" else ""; isClickable = true; isFocusable = true
+                if (i == selected) background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = c.dp(18).toFloat(); setColor(0x14ffffff); setStroke(c.dp(1), 0xb3ff9f43.toInt()) }
                 isSelected = i == selected; androidx.core.view.ViewCompat.setStateDescription(this, if (i == selected) "เลือกอยู่" else null)
                 if (o.icon.isNotEmpty()) addView(IconView(c, o.icon).apply { tint = if (i == selected) Glass.ACCENT else Color.WHITE; inner = o.inner }, c.dp(22), c.dp(22))
                 val texts = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL; setPadding(c.dp(10), 0, 0, 0) }
@@ -590,8 +617,8 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
             fun moveHi(i: Int, press: Boolean) {
                 val r = rows[i]
                 hi.layoutParams = (hi.layoutParams as FrameLayout.LayoutParams).apply { height = r.height.coerceAtLeast(c.dp(52)) }
-                hi.animate().translationY((r.top - rows[0].top).toFloat()).scaleX(if (press) 1.03f else 1f).scaleY(if (press) 1.03f else 1f).setInterpolator(Glass.POP).setDuration(240).start()
-                rows.forEachIndexed { k, row -> row.animate().scaleX(if (press && k == i) 1.02f else 1f).scaleY(if (press && k == i) 1.02f else 1f).setDuration(200).start() }
+                hi.animate().translationY((r.top - rows[0].top).toFloat()).setInterpolator(Glass.EASE).setDuration(if (press) 110 else 200).start()
+                rows.forEachIndexed { k, row -> row.animate().scaleX(if (press && k == i) 0.985f else 1f).scaleY(if (press && k == i) 0.985f else 1f).setDuration(120).start() }
             }
             var current = selected.coerceIn(0, rows.size - 1)
             menu.post { if (rows[current].height > 0) moveHi(current, false) }
@@ -681,7 +708,7 @@ class GlassSheet(private val host: FrameLayout, private val pivotYFromBottom: ()
         val sheet = card ?: return
         if (sheet.height == 0) { pendingRelease = opening to velocity; return }
         val p = progress(sheet)
-        val keep = if (opening) p > 0.3f || velocity > 900 else p > 0.7f && velocity > -1200
+        val keep = if (opening) p > 0.3f || velocity > 900 else p > 0.72f && velocity > -500
         if (keep) settle(sheet) else close()
     }
     private fun settle(sheet: View) {
@@ -701,21 +728,9 @@ class GlassSheet(private val host: FrameLayout, private val pivotYFromBottom: ()
         val handle = FrameLayout(c).apply { contentDescription = "ปัดลงหรือแตะเพื่อปิด"; isClickable = true; isFocusable = true }
         handle.addView(View(c).apply { background = GlassDrawable(0x52ffffff, c.dp(3).toFloat(), d) }, FrameLayout.LayoutParams(c.dp(40), c.dp(5), Gravity.CENTER))
         b.addView(handle, LinearLayout.LayoutParams(c.dp(120), c.dp(48)).apply { gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = -c.dp(12) })
-        // The handle follows the finger down; past about a third (or a quick flick) the sheet closes, otherwise it springs back.
-        var startY = 0f; var tracker: android.view.VelocityTracker? = null
-        handle.setOnTouchListener { _, e ->
-            if (tracker == null) tracker = android.view.VelocityTracker.obtain()
-            tracker?.addMovement(e)
-            when (e.actionMasked) {
-                MotionEvent.ACTION_DOWN -> startY = e.rawY
-                MotionEvent.ACTION_MOVE -> { val dy = e.rawY - startY; sheet.translationY = if (dy > 0) dy else dy * 0.2f; pushBack(progress(sheet)) }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    val dy = e.rawY - startY; tracker?.computeCurrentVelocity(1000); val v = tracker?.yVelocity ?: 0f; tracker?.recycle(); tracker = null
-                    if (e.actionMasked == MotionEvent.ACTION_UP && abs(dy) < c.dp(4)) close() else release(false, -v)
-                }
-            }
-            true
-        }
+        // The whole top of the sheet follows the finger down; a quick flick or about a third of the way closes it, otherwise it springs back.
+        sheet.pullZonePx = c.dp(88); sheet.clipToOutline = true
+        sheet.onPull = { end, dy, v -> if (!end) { sheet.translationY = if (dy > 0) dy else dy * 0.2f; pushBack(progress(sheet)) } else release(false, -v) }
         handle.setOnClickListener { close() }
         b.addView(LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }, -1, -2)
         build(b.getChildAt(1) as LinearLayout, this)

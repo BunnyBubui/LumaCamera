@@ -111,9 +111,9 @@ class SpecialVideoActivity:ComponentActivity(){
         recording=false;recorder?.release();recorder=null;session?.close();session=null
         if(output!=null&&success&&output.length()>0)luma.fileIo.execute{runCatching{val uri=MediaLedger.publishVideo(this,output,output.name,"${if(slow)"Slow-motion $fps → 30 fps" else "Time-lapse ทุก $interval วินาที"} · เวลาถ่าย ${wall/1000}s");ClipInspector.record(this,uri,output.name);output.delete()}.onSuccess{runOnUiThread{status.text="บันทึกคลิปแล้ว"}}.onFailure{runOnUiThread{status.text="ไฟล์ยังอยู่ในแอป · ${it.localizedMessage}"};MediaLedger.rememberFile(this,output,"video/mp4")}}
         else{output?.delete();runOnUiThread{status.text="คลิปสั้นเกินไปหรือ recorder ไม่ส่งไฟล์ที่สมบูรณ์"}}
-        runOnUiThread{working=false;shutter.recording=false;requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED};if(visible)preview()else close()
+        runOnUiThread{working=false;shutter.recording=false;requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR};if(visible)preview()else close()
     }}
-    private fun showError(message:String){runOnUiThread{working=false;requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;shutter.recording=false;shutter.isEnabled=false;status.text=message}}
+    private fun showError(message:String){runOnUiThread{working=false;requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR;shutter.recording=false;shutter.isEnabled=false;status.text=message}}
     private fun close(){session?.close();session=null;camera?.close();camera=null;runCatching{recorder?.reset()};recorder?.release();recorder=null;previewSurface?.release();previewSurface=null}
     override fun onPause(){visible=false;if(recording&&!working)stop()else handler.post{close()};super.onPause()}
     override fun onDestroy(){handler.post{close();thread.quitSafely()};super.onDestroy()}

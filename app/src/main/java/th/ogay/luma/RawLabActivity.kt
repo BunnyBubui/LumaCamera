@@ -160,7 +160,7 @@ class RawLabActivity:ComponentActivity(){
                 }
                 fusion=null
             }.onSuccess{runOnUiThread{status.text="เก็บ $frames เฟรมแล้ว · dropped $dropped\n${if(ai)"เข้าคิว SR1 แล้ว · DNG ต้นฉบับยังอยู่"else "ส่งออก ZIP เพื่อดู DNG / WAV / timestamps"}"}}.onFailure{runOnUiThread{status.text="ไฟล์ที่ปิดแล้วอยู่ในแอป · ${it.localizedMessage}"}}
-            runOnUiThread{finishing=false;shutter.isEnabled=visible&&session!=null;requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED}
+            runOnUiThread{finishing=false;shutter.isEnabled=visible&&session!=null;requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR}
         }
     }
     private fun exportLast(){if(running||finishing){notice("หยุดบันทึกก่อนส่งออก");return};writer.execute{runCatching{

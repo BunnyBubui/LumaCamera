@@ -192,6 +192,7 @@ object Icons {
     const val LIBRARY = "M4 4h7v7H4z M13 4h7v7h-7z M4 13h7v7H4z M13 13h7v7h-7z"
     const val PLUS = "M12 5v14 M5 12h14"
     const val MINUS = "M5 12h14"
+    const val FILM = "M4 4h16v16H4z M8 4v16 M16 4v16 M4 8h4 M4 12h4 M4 16h4 M16 8h4 M16 12h4 M16 16h4"
     const val FLASH = "M13 3 5 14h6l-1 7 8-11h-6z"
     const val FLASH_OFF = "M13 3 5 14h6l-1 7 8-11h-6z M4 4l16 16"
     const val TIMER = "M12 21a8 8 0 1 0 0-16 8 8 0 0 0 0 16z M12 9v4l2.5 2.5 M9.5 2.5h5"
@@ -329,14 +330,15 @@ fun View.glassTouch(extra: ((MotionEvent) -> Boolean)? = null) {
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 active = true; sx = e.rawX; sy = e.rawY
-                if (!Glass.reduced(context)) v.animate().scaleX(1.06f).scaleY(1.06f).setInterpolator(Glass.EASE).setDuration(180).start()
+                if (!Glass.reduced(context)) v.animate().scaleX(0.97f).scaleY(0.97f).setInterpolator(Glass.EASE).setDuration(140).start()
                 g?.let { it.touchX = e.x; it.touchY = e.y; it.touchAlpha = 1f }
             }
             MotionEvent.ACTION_MOVE -> if (active) {
                 if (hypot(e.rawX - sx, e.rawY - sy) > slop) release(v)
                 else if (!Glass.reduced(context)) {
-                    v.translationX = (e.x / v.width.coerceAtLeast(1) - 0.5f) * min(12 * resources.displayMetrics.density, v.width * 0.1f)
-                    v.translationY = (e.y / v.height.coerceAtLeast(1) - 0.5f) * min(9 * resources.displayMetrics.density, v.height * 0.1f)
+                    // The press shrinks the view, so a small lean stays inside its own bounds and is never clipped by the parent.
+                    v.translationX = (e.x / v.width.coerceAtLeast(1) - 0.5f) * min(4 * resources.displayMetrics.density, v.width * 0.02f)
+                    v.translationY = (e.y / v.height.coerceAtLeast(1) - 0.5f) * min(3 * resources.displayMetrics.density, v.height * 0.02f)
                     g?.let { it.touchX = e.x; it.touchY = e.y; it.invalidateSelf() }
                 }
             }
