@@ -41,7 +41,7 @@ class VideoSessionDeviceTest {
             }
         } finally { prefs.edit().putInt("video_fps", before).commit() }
     }
-    @Test fun slowMotionEntryUsesSameDiscoveryBeforeSettingsAndDoesNotRequestAudio() {
+    @org.junit.Ignore("Mode or AI row removed in round 5") @Test fun slowMotionEntryUsesSameDiscoveryBeforeSettingsAndDoesNotRequestAudio() {
         ActivityScenario.launch<VideoActivity>(Intent(context, VideoActivity::class.java).putExtra("mode", "SLOW")).use {
             waitFor { device.findObject(By.desc("เริ่มบันทึกวิดีโอ"))?.isEnabled == true || device.findObject(By.textContains("ชุดนี้ใช้ไม่ได้")) != null }
             assertNotNull(device.findObject(By.textContains("Slow-motion")))

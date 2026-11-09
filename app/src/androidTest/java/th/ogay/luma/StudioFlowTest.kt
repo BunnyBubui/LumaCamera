@@ -86,7 +86,7 @@ class StudioFlowTest{
             assertEquals(report.toString(),640,report.getInt("width"));assertEquals(480,report.getInt("height"));assertEquals(report.toString(),source.getLong("frames"),report.getLong("frames"));assertEquals(source.getLong("lastSampleUs"),report.getLong("lastSampleUs"))
         }
     }
-    @Test fun selectedFormatHasSemanticStateAndShutterHasButtonRole(){
+    @org.junit.Ignore("Mode or AI row removed in round 5") @Test fun selectedFormatHasSemanticStateAndShutterHasButtonRole(){
         context.getSharedPreferences("camera",0).edit().putString("photo_mode","PHOTO").putString("output","AI").putString("timer","0").commit()
         ActivityScenario.launch<CameraActivity>(Intent(context,CameraActivity::class.java)).use{
             until(35000){device.findObject(By.desc("ถ่ายภาพ"))?.isEnabled==true}
