@@ -480,6 +480,7 @@ class GalleryActivity : ComponentActivity() {
     }
 
     // ---------- Luma video or file from the ledger ----------
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     private fun showLedgerItem(item: Item) {
         showingId = item.key; root.removeAllViews()
         viewerBar(if (item.video) "วิดีโอ" else "ไฟล์")
