@@ -1,6 +1,7 @@
 package th.ogay.luma
 
 import android.app.AlertDialog
+import android.content.Intent
 import android.os.Bundle
 import android.view.*
 import android.widget.*
@@ -90,25 +91,41 @@ class GalleryActivity : ComponentActivity() {
             status=label("",14f,MUTED).apply {gravity=Gravity.CENTER;setPadding(dp(12),dp(5),dp(12),dp(5))}
             root.addView(status,-1,-2)
             toggle=LinearLayout(this).apply {gravity=Gravity.CENTER;setPadding(dp(6),0,dp(6),dp(8))}
-            root.addView(toggle,-1,-2)
+            root.addView(HorizontalScrollView(this).apply {
+                isHorizontalScrollBarEnabled = false
+                isFillViewport = true
+                addView(toggle)
+            }, -1, -2)
         }
         if(s.ai==null) useAi=false
         inspect.show(if(useAi) s.ai!! else s.uri)
         status.text=when(s.stage){
+            Stage.CAPTURING -> "กำลังถ่าย ${s.frames}/${s.requestedFrames} เฟรม"
             Stage.QUEUED->"รอประมวลผล AI"
             Stage.RUNNING->"กำลังสร้างสำเนา AI"
             Stage.FAILED->"AI ยังไม่สำเร็จ · ${s.error}"
-            Stage.DONE->if(useAi) "AI $MODEL_VERSION   ·   ${pixelsText(scaledSize(s.size,TARGET_PIXELS).pixels)}" else "ต้นฉบับ   ·   ${pixelsText(s.size.pixels)}"
-            Stage.ORIGINAL->"${pixelsText(s.size.pixels)}   ·   ${s.reason.description}"
+            Stage.DONE->if(useAi) "AI ${s.aiVersion}   ·   ${pixelsText(scaledSize(s.size,TARGET_PIXELS).pixels)}" else "ต้นฉบับ   ·   ${pixelsText(s.size.pixels)}"
+            Stage.ORIGINAL -> if (s.output == CaptureOutput.RAW) "ภาพตัวอย่าง RAW · DNG เก็บแยก"
+                else "${pixelsText(s.size.pixels)}   ·   ${s.reason.description}"
         }
         toggle.removeAllViews()
         fun chip(text:String,active:Boolean=false,click:()->Unit) {
             toggle.addView(pill(text,click).apply {if(active)setTextColor(LIME)},LinearLayout.LayoutParams(-2,dp(44)).apply{setMargins(dp(2),0,dp(2),0)})
         }
+        if (s.raw != null) {
+            chip("เปิด DNG") {
+                try {
+                    startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(s.raw, "image/x-adobe-dng")
+                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+                } catch (_: android.content.ActivityNotFoundException) {
+                    notice("บันทึก DNG ใน Pictures/Luma แล้ว เปิดด้วยแอปที่รองรับ RAW")
+                }
+            }
+        }
         if(s.ai!=null) {
-            chip("ต้นฉบับ",!useAi){useAi=false;showDetail(s)}
+            chip(if (s.output == CaptureOutput.RAW) "ตัวอย่าง RAW" else "ต้นฉบับ",!useAi){useAi=false;showDetail(s)}
             chip("ภาพ AI",useAi){useAi=true;showDetail(s)}
-        } else if(s.stage!=Stage.RUNNING && s.stage!=Stage.QUEUED) {
+        } else if(s.stage!=Stage.RUNNING && s.stage!=Stage.QUEUED && s.stage!=Stage.CAPTURING) {
             chip(if(s.stage==Stage.FAILED) "ลอง AI อีกครั้ง" else "ปรับด้วย AI") {
                 luma.fileIo.execute {
                     val current=luma.shots.get(s.id)
@@ -127,10 +144,17 @@ class GalleryActivity : ComponentActivity() {
             add(formatTime(s.time));add("ต้นฉบับ  ${s.size.w} × ${s.size.h} px")
             add("กล้อง${if(s.rear) "หลัง" else "หน้า"}  ·  ${zoomText(s.zoom)}")
             add(if(s.softwareCrop) "ซูมครอปจาก 1×" else "ซูมด้วยระบบกล้อง")
+            add("รูปแบบ ${s.output.label}")
+            if (s.output.needsRaw) add("DNG เก็บข้อมูลเซนเซอร์เต็มตามที่กล้องส่ง ภาพตัวอย่าง JPEG อาจมีครอป/ซูม")
+            if (s.output.enhance) {
+                add("รับ ${s.frames}/${s.requestedFrames} เฟรม · ผ่านการจัดแนว ${s.fusedFrames} เฟรม")
+                add("ส่วนที่เคลื่อนไหวมากใช้ภาพอ้างอิง")
+            }
+            s.captureNote?.let { add(it) }
             add("Physical camera ID  ${s.lens ?: "เครื่องไม่รายงาน"}")
             add("พื้นที่ครอป  ${s.cropped?.let(::pixelsText) ?: "เครื่องไม่รายงาน"}")
             add(s.reason.description)
-            if(s.ai!=null){add("AI $MODEL_VERSION  ${ai.w} × ${ai.h} px");add("เวลาประมวลผล  ${s.elapsed} ms")}
+            if(s.ai!=null){add("AI ${s.aiVersion}  ${ai.w} × ${ai.h} px");add("เวลาประมวลผล  ${s.elapsed} ms")}
         }.joinToString("\n")
         AlertDialog.Builder(this).setTitle("ข้อมูลภาพ").setMessage(text).setPositiveButton("ปิด",null).show()
     }

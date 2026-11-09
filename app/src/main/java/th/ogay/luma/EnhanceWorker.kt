@@ -2,6 +2,7 @@ package th.ogay.luma
 
 import android.content.Context
 import android.os.SystemClock
+import android.net.Uri
 import androidx.work.*
 import java.io.File
 import java.io.IOException
@@ -19,14 +20,21 @@ class EnhanceWorker(context: Context, params: WorkerParameters) : Worker(context
             // Reattach an already-published file if the previous process died before updating SQLite.
             PhotoMedia.published(context, shot.aiName)?.let {
                 db.update(id, Stage.DONE, ai = it, elapsed = shot.elapsed)
+                if (shot.output.enhance) File(context.filesDir, "bursts/${shot.id}").deleteRecursively()
                 return Result.success()
             }
             db.update(id, Stage.RUNNING)
             if (context.cacheDir.usableSpace < 24L*1024*1024) throw IOException("พื้นที่ว่างไม่พอสำหรับสำเนา AI")
-            SuperResolution(context).process(shot, temp) { isStopped }
+            val input = if (shot.output.enhance) {
+                val fusion = MultiFrameFusion(context).process(shot) { isStopped }
+                db.fusionProgress(id, fusion.used)
+                shot.copy(uri = Uri.fromFile(fusion.file), size = fusion.size)
+            } else shot
+            SuperResolution(context).process(input, temp) { isStopped }
             if (isStopped) throw CancellationException()
             val uri = PhotoMedia.publish(context, temp, shot.aiName, shot.time)
             db.update(id, Stage.DONE, ai = uri, elapsed = SystemClock.elapsedRealtime()-start)
+            if (shot.output.enhance) File(context.filesDir, "bursts/${shot.id}").deleteRecursively()
             return Result.success()
         } catch (_: CancellationException) {
             db.update(id, Stage.QUEUED)

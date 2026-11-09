@@ -6,6 +6,9 @@ import android.graphics.*
 import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.View
+import android.view.MotionEvent
+import android.view.HapticFeedbackConstants
+import android.view.animation.OvershootInterpolator
 import android.widget.*
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
@@ -26,7 +29,7 @@ fun Context.label(value: String, sp: Float, tint: Int = WHITE) = TextView(this).
 }
 fun Context.pill(value: String, action: () -> Unit) = label(value,14f).apply {
     gravity = Gravity.CENTER; minHeight = dp(44); setPadding(dp(14),0,dp(14),0)
-    background = shape(PANEL, dp(22).toFloat()); isFocusable = true; setOnClickListener { action() }
+    background = shape(PANEL, dp(22).toFloat()); isFocusable = true; setOnClickListener { action() }; pressFeedback()
 }
 fun LinearLayout.space(weight: Float = 1f) {
     val params = if (orientation == LinearLayout.HORIZONTAL) LinearLayout.LayoutParams(0,1,weight) else LinearLayout.LayoutParams(1,0,weight)
@@ -52,6 +55,7 @@ class Glyph(context: Context, private val kind: String, desc: String, action: ()
     init {
         contentDescription = desc; isFocusable = true; isClickable = true
         setOnClickListener { action() }
+        pressFeedback()
     }
     override fun onDraw(c: Canvas) {
         val size = minOf(width,height).toFloat()
@@ -72,5 +76,26 @@ class Glyph(context: Context, private val kind: String, desc: String, action: ()
             "back" -> { c.drawLine(28f,15f,19f,24f,p);c.drawLine(19f,24f,28f,33f,p) }
         }
         c.restore()
+    }
+}
+
+fun View.pressFeedback() {
+    val prefs = context.getSharedPreferences("camera", Context.MODE_PRIVATE)
+    setOnTouchListener { view, event ->
+        if (view.isEnabled) {
+            val reduced = prefs.getBoolean("reduce_motion", false)
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> view.animate().scaleX(if (reduced) 1f else 0.95f)
+                    .scaleY(if (reduced) 1f else 0.95f).setDuration(70).start()
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    view.animate().scaleX(1f).scaleY(1f).setInterpolator(OvershootInterpolator(0.6f))
+                        .setDuration(if (reduced) 0 else 170).start()
+                    if (event.actionMasked == MotionEvent.ACTION_UP && prefs.getBoolean("haptic", true)) {
+                        view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                    }
+                }
+            }
+        }
+        false
     }
 }

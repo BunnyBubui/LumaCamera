@@ -4,6 +4,9 @@ on:
   workflow_dispatch:
 permissions:
   contents: read
+concurrency:
+  group: camera-device-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   emulator:
     runs-on: ubuntu-24.04
@@ -19,9 +22,13 @@ jobs:
         with:
           packages: platform-tools
       - name: Install Android SDK components
-        run: sdkmanager 'platforms;android-35' 'build-tools;34.0.0' 'build-tools;35.0.0'
+        run: sdkmanager 'platforms;android-36' 'build-tools;34.0.0' 'build-tools;35.0.0'
       - name: Prepare app and test APKs
-        run: bash gradlew :app:assembleDebug :app:assembleDebugAndroidTest
+        run: bash gradlew --no-daemon -Pkotlin.compiler.execution.strategy=in-process :app:assembleDebug :app:assembleDebugAndroidTest
+      - name: Free space for the emulator
+        run: |
+          sudo rm -rf /usr/share/dotnet "${ANDROID_HOME:?}/ndk"
+          df -h /
       - name: Enable KVM
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
@@ -34,12 +41,24 @@ jobs:
           target: default
           arch: x86_64
           disable-animations: true
+          disk-size: 2048M
+          ram-size: 2048M
+          heap-size: 384M
+          emulator-boot-timeout: 300
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back emulated -camera-front emulated
-          script: bash gradlew :app:connectedDebugAndroidTest
+          script: |
+            bash gradlew --no-daemon -Pkotlin.compiler.execution.strategy=in-process :app:connectedDebugAndroidTest
+            adb install -r -t app/build/outputs/apk/debug/app-debug.apk
+            adb shell pm grant th.ogay.luma.dev android.permission.CAMERA
+            adb shell am start -W -n th.ogay.luma.dev/th.ogay.luma.CameraActivity
+            sleep 3
+            adb shell screencap -p /sdcard/Download/camera-screen.png
+            adb pull /sdcard/Download/camera-screen.png app/build/reports/camera-screen.png
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: Camera-device-test-report
           path: |
             app/build/reports/androidTests/
+            app/build/reports/camera-screen.png
             app/build/outputs/androidTest-results/
