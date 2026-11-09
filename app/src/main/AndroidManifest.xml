@@ -18,6 +18,7 @@
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths"/>
         </provider>
         <activity android:name=".StudioLibraryActivity" android:exported="false"/>
+        <activity android:name=".CameraProbeActivity" android:exported="false"/>
         <activity android:name=".VideoActivity" android:exported="false"/>
         <activity android:name=".SpecialVideoActivity" android:exported="false"/>
         <activity android:name=".DocumentActivity" android:exported="false"/>
@@ -35,4 +36,3 @@
         </activity>
     </application>
 </manifest>
-
