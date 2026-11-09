@@ -120,6 +120,7 @@ fun Activity.showStudioSettings(rawAvailable: Boolean, changed: () -> Unit) {
     choose("คุณภาพ JPEG", Icons.FILE, "jpeg_quality", listOf("ประหยัด 85%", "มาตรฐาน 95%", "สูงสุด 100%"), listOf("85", "95", "100"), "95")
     row("จำนวนเฟรม AI", Icons.STACK, "${prefs.getInt("frames", 8)} เฟรม · แตะเพื่อตั้งค่าการรวมภาพ") { showCaptureSettings(rawAvailable, changed) }
     toggle("AI อัตโนมัติใน JPEG", Icons.AI, "auto", true, "เลือกเพิ่มรายละเอียดเมื่อซูมหรือแสงน้อย")
+    toggle("HDR แบบ native EF2 (ทดลอง)", Icons.HDR, HdrCapture.NATIVE_KEY, note = "รวมภาพ HDR ด้วย OpenCV เพื่อเทียบกับ EF1 ยังไม่มีระบบกันเงาซ้อน")
     toggle("ครอปจากกล้องหลัก 1×", Icons.SEARCH, "software", note = "ซูมด้วยการครอปภาพจากเลนส์หลักแทนการสลับเลนส์ ใช้คู่กับ AI SR1")
     section("การควบคุม")
     choose("ปุ่มเสียง", Icons.SOUND, "volume_action", listOf("ถ่ายภาพ", "ซูม", "ปรับเสียงระบบ"), listOf("shutter", "zoom", "system"), "shutter")

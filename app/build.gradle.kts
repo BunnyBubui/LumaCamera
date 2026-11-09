@@ -14,7 +14,13 @@ android {
         versionCode = providers.environmentVariable("LUMA_BUILD_NUMBER").orNull?.toIntOrNull() ?: 100
         versionName = "0.3.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // Native HDR EF2 links the OpenCV AAR's libopencv_java4.so, which is built against c++_shared.
+        externalNativeBuild { cmake { arguments += listOf("-DANDROID_STL=c++_shared") } }
     }
+    externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" } }
+    buildFeatures { prefab = true }
+    // Both the OpenCV AAR and this app's CMake build ship libc++_shared.so; keep one copy.
+    packaging { jniLibs { pickFirsts += "**/libc++_shared.so" } }
     val keyFile = providers.environmentVariable("LUMA_KEYSTORE").orNull
     signingConfigs {
         if (keyFile != null) {
