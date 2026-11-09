@@ -154,7 +154,7 @@ class StudioAccessibilityTest {
         report += moreSheetAtLargeFont()
         report.forEach { Log.i(TAG, it) }
         // Temporary: fail with the full report so CI logs carry the measurements.
-        throw AssertionError("A11Y REPORT\n" + report.joinToString("\n"))
+        throw AssertionError("A11Y REPORT ‖ " + report.joinToString(" ‖ "))
     }
 
     /** Opens the "เพิ่มเติม" bottom sheet at font 2.0 and checks that its last action can be scrolled to. */
