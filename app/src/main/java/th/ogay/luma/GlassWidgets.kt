@@ -660,34 +660,6 @@ fun View.pressMenu(menu: GlassMenu, open: (View) -> Unit) {
     }
 }
 
-/** Sheet card that can be pulled down from anywhere once its list is scrolled to the top. */
-class SheetFrame(context: Context) : LayerFrame(context) {
-    var scroll: ScrollView? = null
-    var onPull: (Float) -> Unit = {}
-    var onLetGo: (Float, Float) -> Unit = { _, _ -> }
-    private val slop = ViewConfiguration.get(context).scaledTouchSlop
-    private var y0 = 0f; private var x0 = 0f; private var pulling = false; private var fromTop = false
-    private var tracker: android.view.VelocityTracker? = null
-    override fun onInterceptTouchEvent(e: MotionEvent): Boolean {
-        when (e.actionMasked) {
-            MotionEvent.ACTION_DOWN -> { y0 = e.rawY; x0 = e.rawX; pulling = false; fromTop = e.y < context.px(60f) }
-            // Only a drag that starts on the top strip of the sheet (around the handle) pulls it; elsewhere a drag scrolls the list.
-            MotionEvent.ACTION_MOVE -> { val dy = e.rawY - y0; if (!scrub && fromTop && (scroll?.scrollY ?: 0) == 0 && dy > slop && dy > abs(e.rawX - x0) * 1.3f) { pulling = true; return true } }
-        }
-        return super.onInterceptTouchEvent(e)
-    }
-    override fun onTouchEvent(e: MotionEvent): Boolean {
-        if (!pulling) return super.onTouchEvent(e)
-        if (tracker == null) tracker = android.view.VelocityTracker.obtain()
-        tracker?.addMovement(e)
-        when (e.actionMasked) {
-            MotionEvent.ACTION_MOVE -> onPull(e.rawY - y0)
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { tracker?.computeCurrentVelocity(1000); val v = tracker?.yVelocity ?: 0f; tracker?.recycle(); tracker = null; pulling = false; onLetGo(e.rawY - y0, v) }
-        }
-        return true
-    }
-}
-
 /**
  * Bottom glass sheet that grows from a drop at [pivotYFromBottom] and sinks back there; drag the handle down to dismiss.
  * [pushBack] receives 0..1 so the caller can shrink and blur the camera behind it.
@@ -709,7 +681,7 @@ class GlassSheet(private val host: FrameLayout, private val pivotYFromBottom: ()
         val sheet = card ?: return
         if (sheet.height == 0) { pendingRelease = opening to velocity; return }
         val p = progress(sheet)
-        val keep = if (opening) p > 0.3f || velocity > 900 else p > 0.7f && velocity < 1200
+        val keep = if (opening) p > 0.3f || velocity > 900 else p > 0.7f && velocity > -1200
         if (keep) settle(sheet) else close()
     }
     private fun settle(sheet: View) {
@@ -723,24 +695,23 @@ class GlassSheet(private val host: FrameLayout, private val pivotYFromBottom: ()
         modal.hide()
         val s = View(c).apply { setBackgroundColor(0x52000000); alpha = 0f; isClickable = true; contentDescription = "ปิดแผง"; elevation = 14 * d; outlineProvider = null; setOnClickListener { close() } }
         host.addView(s, FrameLayout.LayoutParams(-1, -1)); s.animate().alpha(1f).setDuration(300).start()
-        val sheet = SheetFrame(c).apply { background = c.glass(34, Glass.FILL_STRONG); elevation = 16 * d }
+        val sheet = LayerFrame(c).apply { background = c.glass(34, Glass.FILL_STRONG); elevation = 16 * d }
         val scroll = ScrollView(c).apply { isVerticalScrollBarEnabled = false; overScrollMode = View.OVER_SCROLL_NEVER; clipToPadding = false }
-        sheet.scroll = scroll
-        sheet.onPull = { dy -> sheet.translationY = if (dy > 0) dy else dy * 0.2f; pushBack(progress(sheet)) }
-        sheet.onLetGo = { _, v -> release(false, -v) }
         val b = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL; setPadding(c.dp(16), c.dp(4), c.dp(16), c.dp(20)) }
         val handle = FrameLayout(c).apply { contentDescription = "ปัดลงหรือแตะเพื่อปิด"; isClickable = true; isFocusable = true }
         handle.addView(View(c).apply { background = GlassDrawable(0x52ffffff, c.dp(3).toFloat(), d) }, FrameLayout.LayoutParams(c.dp(40), c.dp(5), Gravity.CENTER))
         b.addView(handle, LinearLayout.LayoutParams(c.dp(120), c.dp(48)).apply { gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = -c.dp(12) })
-        var startY = 0f; var t0 = 0L
+        // The handle follows the finger down; past about a third (or a quick flick) the sheet closes, otherwise it springs back.
+        var startY = 0f; var tracker: android.view.VelocityTracker? = null
         handle.setOnTouchListener { _, e ->
+            if (tracker == null) tracker = android.view.VelocityTracker.obtain()
+            tracker?.addMovement(e)
             when (e.actionMasked) {
-                MotionEvent.ACTION_DOWN -> { startY = e.rawY; t0 = e.eventTime }
+                MotionEvent.ACTION_DOWN -> startY = e.rawY
                 MotionEvent.ACTION_MOVE -> { val dy = e.rawY - startY; sheet.translationY = if (dy > 0) dy else dy * 0.2f; pushBack(progress(sheet)) }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    val dy = e.rawY - startY
-                    if (e.actionMasked == MotionEvent.ACTION_UP && (dy > c.dp(80) || (dy > c.dp(24) && e.eventTime - t0 < 250) || abs(dy) < c.dp(4))) close()
-                    else { sheet.animate().translationY(0f).setInterpolator(Glass.SPRING).setDuration(420).start(); pushBack(1f) }
+                    val dy = e.rawY - startY; tracker?.computeCurrentVelocity(1000); val v = tracker?.yVelocity ?: 0f; tracker?.recycle(); tracker = null
+                    if (e.actionMasked == MotionEvent.ACTION_UP && abs(dy) < c.dp(4)) close() else release(false, -v)
                 }
             }
             true
