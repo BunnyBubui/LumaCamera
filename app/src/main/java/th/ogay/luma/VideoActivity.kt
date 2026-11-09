@@ -209,10 +209,7 @@ class VideoActivity:ComponentActivity(){
             }catch(e:Exception){VideoDiagnostics.save(this,if(slow)"high-speed-start"else "normal-start",boundConfig,e);requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;starting=false;recording=null;shutter.isEnabled=true;config.isEnabled=true;status.text="เริ่มบันทึกไม่ได้ · ${e.localizedMessage}"}
         },if(sound)300 else 0)
     }
-    /** Who asked to stop, for device tests that see a clip stop before it starts. */
-    @androidx.annotation.VisibleForTesting var stopTrace:String?=null
-    @androidx.annotation.VisibleForTesting val clickLog=mutableListOf<String>()
-    private fun stopRecording(){stopTrace=Throwable().stackTrace.drop(1).take(6).joinToString(" < "){"${it.methodName}:${it.lineNumber}"};animator?.cancel();finalizing=true;shutter.isEnabled=false;pause.isEnabled=false;status.text="กำลังปิดไฟล์…";recording?.stop()}
+    private fun stopRecording(){animator?.cancel();finalizing=true;shutter.isEnabled=false;pause.isEnabled=false;status.text="กำลังปิดไฟล์…";recording?.stop()}
     private fun zoomPanel(){studioSheet("ซูมอัตโนมัติ A → B"){box,d->
         box.addView(pill("กำหนด A ที่ระยะปัจจุบัน"){zoomA=camera?.cameraInfo?.zoomState?.value?.zoomRatio?:1f;notice("A = ${zoomText(zoomA)}")},-1,dp(52))
         box.addView(pill("กำหนด B ที่ระยะปัจจุบัน"){zoomB=camera?.cameraInfo?.zoomState?.value?.zoomRatio?:3f;notice("B = ${zoomText(zoomB)}")},-1,dp(52))
@@ -290,7 +287,8 @@ class VideoActivity:ComponentActivity(){
         val left=FrameLayout(this).apply{addView(library,-1,-1);addView(pause,-1,-1)}
         actions.addView(left,dp(56),dp(56));actions.space()
         shutter=ShutterButton(this).apply{video=true;isEnabled=false;alpha=0.45f;contentDescription="เริ่มบันทึกวิดีโอ"
-            setOnClickListener{clickLog+="${android.os.SystemClock.uptimeMillis()}:${recording!=null}/${starting}";if(recording!=null)stopRecording()else if(!starting&&!finalizing){if(mic&&ContextCompat.checkSelfPermission(this@VideoActivity,Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED)audioPermission.launch(Manifest.permission.RECORD_AUDIO)else startRecording()}}}
+            // Inside apply{} a bare "recording" is ShutterButton.recording (a Boolean, never null), which made every tap stop.
+            setOnClickListener{if(this@VideoActivity.recording!=null)stopRecording()else if(!starting&&!finalizing){if(mic&&ContextCompat.checkSelfPermission(this@VideoActivity,Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED)audioPermission.launch(Manifest.permission.RECORD_AUDIO)else startRecording()}}}
         actions.addView(shutter,dp(88),dp(88));actions.space()
         val flipIcon=IconView(this,Icons.FLIP)
         flip=roundButton(flipIcon,56,"สลับกล้องวิดีโอ"){if(!busy()&&!dual){flipIcon.animate().rotationBy(180f).setInterpolator(Glass.EASE).setDuration(420).start();rear=!rear;bind()}}

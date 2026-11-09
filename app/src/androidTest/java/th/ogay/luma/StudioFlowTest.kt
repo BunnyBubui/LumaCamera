@@ -38,8 +38,7 @@ class StudioFlowTest{
             // The glass pause button changes its description when CameraX reports Pause and Resume.
             val end=SystemClock.elapsedRealtime()+15000
             while(SystemClock.elapsedRealtime()<end&&device.findObject(By.desc("พักการบันทึก"))?.isEnabled!=true)SystemClock.sleep(250)
-            var trace:String?=null;it.onActivity{a->trace="${a.stopTrace} clicks=${a.clickLog} now=${SystemClock.uptimeMillis()}"}
-            assertTrue("Pause button not ready · stop=$trace · "+GlassNav.dump(device),device.findObject(By.desc("พักการบันทึก"))?.isEnabled==true)
+            assertTrue("Pause button not ready · "+GlassNav.dump(device),device.findObject(By.desc("พักการบันทึก"))?.isEnabled==true)
             SystemClock.sleep(2500);device.findObject(By.desc("พักการบันทึก")).click()
             assertNotNull(device.wait(Until.findObject(By.desc("ต่อการบันทึก")),10000));SystemClock.sleep(500)
             device.findObject(By.desc("ต่อการบันทึก")).click();assertNotNull(device.wait(Until.findObject(By.desc("พักการบันทึก")),10000))
