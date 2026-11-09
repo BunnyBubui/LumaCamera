@@ -1,0 +1,1061 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<title>Luma Camera หน้ากล้อง</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#000}
+a{color:#FFD447}a:hover{color:#ffe28a}
+button,a.btn{font:inherit;color:inherit;background:none;border:0;padding:0;margin:0;cursor:pointer;text-decoration:none;-webkit-tap-highlight-color:transparent}
+button:focus-visible,a:focus-visible{outline:2px solid #FFD447;outline-offset:2px}
+.glass{background:rgba(30,30,32,0.52);-webkit-backdrop-filter:blur(22px) saturate(170%);backdrop-filter:blur(22px) saturate(170%);border:1px solid rgba(255,255,255,0.14);box-shadow:inset 0 1px 0 rgba(255,255,255,0.14),0 10px 28px rgba(0,0,0,0.32)}
+.glass-strong{background:rgba(28,28,30,0.78);-webkit-backdrop-filter:blur(30px) saturate(170%);backdrop-filter:blur(30px) saturate(170%);border:1px solid rgba(255,255,255,0.12);box-shadow:inset 0 1px 0 rgba(255,255,255,0.12),0 18px 40px rgba(0,0,0,0.45)}
+.press{transition:transform 220ms cubic-bezier(0.34,1.56,0.64,1)}
+.press:active{transform:scale(0.92);transition:transform 90ms ease-out}
+.lg{position:relative;overflow:hidden;isolation:isolate;translate:var(--tx,0px) var(--ty,0px);scale:var(--s,1);transition:translate 560ms cubic-bezier(0.34,1.56,0.64,1),scale 560ms cubic-bezier(0.34,1.56,0.64,1),background-color 200ms ease,color 200ms ease,box-shadow 200ms ease}
+.lg.lg-on{--s:1.06;-webkit-backdrop-filter:blur(34px) saturate(200%);backdrop-filter:blur(34px) saturate(200%);transition:translate 120ms ease-out,scale 200ms cubic-bezier(0.2,0.8,0.2,1),background-color 200ms ease,color 200ms ease}
+.lg::after{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:radial-gradient(110px circle at var(--lx,50%) var(--ly,50%),rgba(255,255,255,0.32),rgba(255,255,255,0) 62%);opacity:0;transition:opacity 480ms ease}
+.lg.lg-on::after{opacity:1;transition:opacity 100ms ease}
+.rm .press,.rm .press:active,.rm .lg,.rm .lg.lg-on{transition:none;transform:none;translate:none;scale:none}
+.shadow{filter:drop-shadow(0 1px 2px rgba(0,0,0,0.65))}
+.scroll-x{overflow-x:auto;scrollbar-width:none}.scroll-x::-webkit-scrollbar{display:none}
+.scroll-y{overflow-y:auto;scrollbar-width:none}.scroll-y::-webkit-scrollbar{display:none}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:32px;background:transparent;margin:0}
+input[type=range]::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:rgba(255,255,255,0.22)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:24px;height:24px;margin-top:-10px;border-radius:12px;background:#fff;box-shadow:0 2px 6px rgba(0,0,0,0.4)}
+input[type=range]::-moz-range-track{height:4px;border-radius:2px;background:rgba(255,255,255,0.22)}
+input[type=range]::-moz-range-thumb{width:24px;height:24px;border:0;border-radius:12px;background:#fff}
+@keyframes focusA{0%{transform:scale(1.5);opacity:0}18%{transform:scale(1);opacity:1}75%{opacity:1}100%{opacity:0.35}}
+@keyframes focusB{0%{transform:scale(1.5);opacity:0}18%{transform:scale(1);opacity:1}75%{opacity:1}100%{opacity:0.35}}
+@keyframes blinkA{0%{opacity:0.9}100%{opacity:0}}
+@keyframes blinkB{0%{opacity:0.9}100%{opacity:0}}
+@keyframes popA{0%{transform:scale(0.4)}60%{transform:scale(1.12)}100%{transform:scale(1)}}
+@keyframes popB{0%{transform:scale(0.4)}60%{transform:scale(1.12)}100%{transform:scale(1)}}
+@keyframes recdot{0%,100%{opacity:1}50%{opacity:0.25}}
+@keyframes lockA{0%{transform:scale(1.5);opacity:0}20%{transform:scale(1);opacity:1}35%{transform:scale(1.12)}50%{transform:scale(1)}65%{transform:scale(1.08)}80%,100%{transform:scale(1);opacity:1}}
+@keyframes lockB{0%{transform:scale(1.5);opacity:0}20%{transform:scale(1);opacity:1}35%{transform:scale(1.12)}50%{transform:scale(1)}65%{transform:scale(1.08)}80%,100%{transform:scale(1);opacity:1}}
+@keyframes liquidInA{0.0%{scale:0.1400 0.0660;border-radius:999px;opacity:0.90}3.3%{scale:0.1795 0.0660;border-radius:965px;opacity:0.91}6.7%{scale:0.2770 0.0712;border-radius:883px;opacity:0.93}10.0%{scale:0.4054 0.1388;border-radius:779px;opacity:0.94}13.3%{scale:0.5437 0.2588;border-radius:669px;opacity:0.95}16.7%{scale:0.6768 0.4041;border-radius:562px;opacity:0.97}20.0%{scale:0.7949 0.5539;border-radius:464px;opacity:0.98}23.3%{scale:0.8927 0.6940;border-radius:377px;opacity:0.99}26.7%{scale:0.9682 0.8153;border-radius:304px;opacity:1.00}30.0%{scale:1.0221 0.9135;border-radius:243px;opacity:1.00}33.3%{scale:1.0567 0.9875;border-radius:193px;opacity:1.00}36.7%{scale:1.0753 1.0387;border-radius:153px;opacity:1.00}40.0%{scale:1.0814 1.0701;border-radius:121px;opacity:1.00}43.3%{scale:1.0786 1.0853;border-radius:97px;opacity:1.00}46.7%{scale:1.0698 1.0883;border-radius:78px;opacity:1.00}50.0%{scale:1.0579 1.0827;border-radius:65px;opacity:1.00}53.3%{scale:1.0448 1.0718;border-radius:54px;opacity:1.00}56.7%{scale:1.0321 1.0582;border-radius:47px;opacity:1.00}60.0%{scale:1.0207 1.0440;border-radius:42px;opacity:1.00}63.3%{scale:1.0112 1.0305;border-radius:38px;opacity:1.00}66.7%{scale:1.0038 1.0188;border-radius:36px;opacity:1.00}70.0%{scale:0.9984 1.0092;border-radius:34px;opacity:1.00}73.3%{scale:0.9949 1.0019;border-radius:34px;opacity:1.00}76.7%{scale:0.9930 0.9968;border-radius:34px;opacity:1.00}80.0%{scale:0.9923 0.9936;border-radius:34px;opacity:1.00}83.3%{scale:0.9925 0.9920;border-radius:34px;opacity:1.00}86.7%{scale:0.9933 0.9916;border-radius:34px;opacity:1.00}90.0%{scale:0.9944 0.9921;border-radius:34px;opacity:1.00}93.3%{scale:0.9956 0.9931;border-radius:34px;opacity:1.00}96.7%{scale:0.9968 0.9943;border-radius:34px;opacity:1.00}100.0%{scale:0.9979 0.9957;opacity:1.00}}
+@keyframes liquidInB{0.0%{scale:0.1400 0.0660;border-radius:999px;opacity:0.90}3.3%{scale:0.1795 0.0660;border-radius:965px;opacity:0.91}6.7%{scale:0.2770 0.0712;border-radius:883px;opacity:0.93}10.0%{scale:0.4054 0.1388;border-radius:779px;opacity:0.94}13.3%{scale:0.5437 0.2588;border-radius:669px;opacity:0.95}16.7%{scale:0.6768 0.4041;border-radius:562px;opacity:0.97}20.0%{scale:0.7949 0.5539;border-radius:464px;opacity:0.98}23.3%{scale:0.8927 0.6940;border-radius:377px;opacity:0.99}26.7%{scale:0.9682 0.8153;border-radius:304px;opacity:1.00}30.0%{scale:1.0221 0.9135;border-radius:243px;opacity:1.00}33.3%{scale:1.0567 0.9875;border-radius:193px;opacity:1.00}36.7%{scale:1.0753 1.0387;border-radius:153px;opacity:1.00}40.0%{scale:1.0814 1.0701;border-radius:121px;opacity:1.00}43.3%{scale:1.0786 1.0853;border-radius:97px;opacity:1.00}46.7%{scale:1.0698 1.0883;border-radius:78px;opacity:1.00}50.0%{scale:1.0579 1.0827;border-radius:65px;opacity:1.00}53.3%{scale:1.0448 1.0718;border-radius:54px;opacity:1.00}56.7%{scale:1.0321 1.0582;border-radius:47px;opacity:1.00}60.0%{scale:1.0207 1.0440;border-radius:42px;opacity:1.00}63.3%{scale:1.0112 1.0305;border-radius:38px;opacity:1.00}66.7%{scale:1.0038 1.0188;border-radius:36px;opacity:1.00}70.0%{scale:0.9984 1.0092;border-radius:34px;opacity:1.00}73.3%{scale:0.9949 1.0019;border-radius:34px;opacity:1.00}76.7%{scale:0.9930 0.9968;border-radius:34px;opacity:1.00}80.0%{scale:0.9923 0.9936;border-radius:34px;opacity:1.00}83.3%{scale:0.9925 0.9920;border-radius:34px;opacity:1.00}86.7%{scale:0.9933 0.9916;border-radius:34px;opacity:1.00}90.0%{scale:0.9944 0.9921;border-radius:34px;opacity:1.00}93.3%{scale:0.9956 0.9931;border-radius:34px;opacity:1.00}96.7%{scale:0.9968 0.9943;border-radius:34px;opacity:1.00}100.0%{scale:0.9979 0.9957;opacity:1.00}}
+@keyframes liquidOut{0.0%{transform:translateY(calc(var(--dy,0px) * 1.000));scale:1.0000 1.0000;border-radius:34px;opacity:1.00}7.1%{transform:translateY(calc(var(--dy,0px) * 0.989));scale:0.9903 0.9886;border-radius:45px;opacity:1.00}14.3%{transform:translateY(calc(var(--dy,0px) * 0.963));scale:0.9685 0.9631;border-radius:69px;opacity:1.00}21.4%{transform:translateY(calc(var(--dy,0px) * 0.927));scale:0.9373 0.9265;border-radius:104px;opacity:1.00}28.6%{transform:translateY(calc(var(--dy,0px) * 0.881));scale:0.8978 0.8801;border-radius:149px;opacity:1.00}35.7%{transform:translateY(calc(var(--dy,0px) * 0.826));scale:0.8506 0.8248;border-radius:202px;opacity:1.00}42.9%{transform:translateY(calc(var(--dy,0px) * 0.763));scale:0.7963 0.7611;border-radius:263px;opacity:1.00}50.0%{transform:translateY(calc(var(--dy,0px) * 0.692));scale:0.7353 0.6895;border-radius:331px;opacity:1.00}57.1%{transform:translateY(calc(var(--dy,0px) * 0.614));scale:0.6679 0.6104;border-radius:407px;opacity:1.00}64.3%{transform:translateY(calc(var(--dy,0px) * 0.528));scale:0.5942 0.5240;border-radius:489px;opacity:0.89}71.4%{transform:translateY(calc(var(--dy,0px) * 0.436));scale:0.5146 0.4307;border-radius:579px;opacity:0.71}78.6%{transform:translateY(calc(var(--dy,0px) * 0.336));scale:0.4292 0.3305;border-radius:674px;opacity:0.54}85.7%{transform:translateY(calc(var(--dy,0px) * 0.231));scale:0.3383 0.2238;border-radius:777px;opacity:0.36}92.9%{transform:translateY(calc(var(--dy,0px) * 0.118));scale:0.2418 0.1107;border-radius:885px;opacity:0.18}100.0%{transform:translateY(calc(var(--dy,0px) * 0.000));scale:0.1400 0.0660;border-radius:999px;opacity:0.00}}
+@keyframes popInA{0.0%{scale:0.3000 0.2000;border-radius:calc(var(--r,20px) * 15.000);opacity:0.00}4.2%{scale:0.3372 0.2000;border-radius:calc(var(--r,20px) * 13.413);opacity:0.21}8.3%{scale:0.4255 0.2282;border-radius:calc(var(--r,20px) * 10.063);opacity:0.42}12.5%{scale:0.5367 0.3203;border-radius:calc(var(--r,20px) * 6.647);opacity:0.62}16.7%{scale:0.6510 0.4442;border-radius:calc(var(--r,20px) * 4.028);opacity:0.83}20.8%{scale:0.7560 0.5755;border-radius:calc(var(--r,20px) * 2.378);opacity:1.00}25.0%{scale:0.8449 0.6984;border-radius:calc(var(--r,20px) * 1.509);opacity:1.00}29.2%{scale:0.9151 0.8041;border-radius:calc(var(--r,20px) * 1.135);opacity:1.00}33.3%{scale:0.9668 0.8886;border-radius:calc(var(--r,20px) * 1.017);opacity:1.00}37.5%{scale:1.0020 0.9518;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}41.7%{scale:1.0236 0.9956;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}45.8%{scale:1.0346 1.0231;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}50.0%{scale:1.0380 1.0378;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}54.2%{scale:1.0363 1.0432;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}58.3%{scale:1.0317 1.0422;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}62.5%{scale:1.0258 1.0375;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}66.7%{scale:1.0195 1.0309;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}70.8%{scale:1.0138 1.0237;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}75.0%{scale:1.0088 1.0170;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}79.2%{scale:1.0049 1.0111;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}83.3%{scale:1.0020 1.0064;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}87.5%{scale:1.0000 1.0029;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}91.7%{scale:0.9988 1.0004;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}95.8%{scale:0.9982 0.9989;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}100.0%{scale:0.9979 0.9980;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}}
+@keyframes popInB{0.0%{scale:0.3000 0.2000;border-radius:calc(var(--r,20px) * 15.000);opacity:0.00}4.2%{scale:0.3372 0.2000;border-radius:calc(var(--r,20px) * 13.413);opacity:0.21}8.3%{scale:0.4255 0.2282;border-radius:calc(var(--r,20px) * 10.063);opacity:0.42}12.5%{scale:0.5367 0.3203;border-radius:calc(var(--r,20px) * 6.647);opacity:0.62}16.7%{scale:0.6510 0.4442;border-radius:calc(var(--r,20px) * 4.028);opacity:0.83}20.8%{scale:0.7560 0.5755;border-radius:calc(var(--r,20px) * 2.378);opacity:1.00}25.0%{scale:0.8449 0.6984;border-radius:calc(var(--r,20px) * 1.509);opacity:1.00}29.2%{scale:0.9151 0.8041;border-radius:calc(var(--r,20px) * 1.135);opacity:1.00}33.3%{scale:0.9668 0.8886;border-radius:calc(var(--r,20px) * 1.017);opacity:1.00}37.5%{scale:1.0020 0.9518;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}41.7%{scale:1.0236 0.9956;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}45.8%{scale:1.0346 1.0231;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}50.0%{scale:1.0380 1.0378;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}54.2%{scale:1.0363 1.0432;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}58.3%{scale:1.0317 1.0422;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}62.5%{scale:1.0258 1.0375;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}66.7%{scale:1.0195 1.0309;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}70.8%{scale:1.0138 1.0237;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}75.0%{scale:1.0088 1.0170;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}79.2%{scale:1.0049 1.0111;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}83.3%{scale:1.0020 1.0064;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}87.5%{scale:1.0000 1.0029;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}91.7%{scale:0.9988 1.0004;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}95.8%{scale:0.9982 0.9989;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}100.0%{scale:0.9979 0.9980;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}}
+@keyframes popOut{0.0%{scale:1.0000 1.0000;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}8.3%{scale:0.9869 0.9835;border-radius:calc(var(--r,20px) * 1.004);opacity:1.00}16.7%{scale:0.9602 0.9499;border-radius:calc(var(--r,20px) * 1.039);opacity:1.00}25.0%{scale:0.9238 0.9042;border-radius:calc(var(--r,20px) * 1.142);opacity:1.00}33.3%{scale:0.8793 0.8483;border-radius:calc(var(--r,20px) * 1.357);opacity:1.00}41.7%{scale:0.8275 0.7832;border-radius:calc(var(--r,20px) * 1.729);opacity:1.00}50.0%{scale:0.7691 0.7097;border-radius:calc(var(--r,20px) * 2.306);opacity:1.00}58.3%{scale:0.7045 0.6285;border-radius:calc(var(--r,20px) * 3.139);opacity:0.93}66.7%{scale:0.6341 0.5400;border-radius:calc(var(--r,20px) * 4.279);opacity:0.74}75.0%{scale:0.5582 0.4446;border-radius:calc(var(--r,20px) * 5.779);opacity:0.56}83.3%{scale:0.4771 0.3427;border-radius:calc(var(--r,20px) * 7.696);opacity:0.37}91.7%{scale:0.3910 0.2344;border-radius:calc(var(--r,20px) * 10.084);opacity:0.19}100.0%{scale:0.3000 0.2000;border-radius:calc(var(--r,20px) * 13.000);opacity:0.00}}
+@keyframes viewInA{0.0%{scale:0.3000 0.2000;border-radius:60px;opacity:0.00}4.2%{scale:0.3412 0.2000;border-radius:57px;opacity:0.17}8.3%{scale:0.4368 0.2312;border-radius:51px;opacity:0.33}12.5%{scale:0.5542 0.3314;border-radius:43px;opacity:0.50}16.7%{scale:0.6719 0.4630;border-radius:35px;opacity:0.67}20.8%{scale:0.7770 0.5989;border-radius:28px;opacity:0.83}25.0%{scale:0.8633 0.7227;border-radius:22px;opacity:1.00}29.2%{scale:0.9291 0.8259;border-radius:16px;opacity:1.00}33.3%{scale:0.9757 0.9058;border-radius:12px;opacity:1.00}37.5%{scale:1.0059 0.9632;border-radius:9px;opacity:1.00}41.7%{scale:1.0231 1.0012;border-radius:6px;opacity:1.00}45.8%{scale:1.0308 1.0235;border-radius:4px;opacity:1.00}50.0%{scale:1.0320 1.0342;border-radius:3px;opacity:1.00}54.2%{scale:1.0293 1.0368;border-radius:2px;opacity:1.00}58.3%{scale:1.0245 1.0343;border-radius:1px;opacity:1.00}62.5%{scale:1.0190 1.0292;border-radius:1px;opacity:1.00}66.7%{scale:1.0137 1.0230;border-radius:0px;opacity:1.00}70.8%{scale:1.0091 1.0168;border-radius:0px;opacity:1.00}75.0%{scale:1.0054 1.0114;border-radius:0px;opacity:1.00}79.2%{scale:1.0026 1.0069;border-radius:0px;opacity:1.00}83.3%{scale:1.0007 1.0035;border-radius:0px;opacity:1.00}87.5%{scale:0.9995 1.0011;border-radius:0px;opacity:1.00}91.7%{scale:0.9988 0.9996;border-radius:0px;opacity:1.00}95.8%{scale:0.9985 0.9987;border-radius:0px;opacity:1.00}100.0%{scale:0.9985 0.9984;opacity:1.00}}
+@keyframes viewInB{0.0%{scale:0.3000 0.2000;border-radius:60px;opacity:0.00}4.2%{scale:0.3412 0.2000;border-radius:57px;opacity:0.17}8.3%{scale:0.4368 0.2312;border-radius:51px;opacity:0.33}12.5%{scale:0.5542 0.3314;border-radius:43px;opacity:0.50}16.7%{scale:0.6719 0.4630;border-radius:35px;opacity:0.67}20.8%{scale:0.7770 0.5989;border-radius:28px;opacity:0.83}25.0%{scale:0.8633 0.7227;border-radius:22px;opacity:1.00}29.2%{scale:0.9291 0.8259;border-radius:16px;opacity:1.00}33.3%{scale:0.9757 0.9058;border-radius:12px;opacity:1.00}37.5%{scale:1.0059 0.9632;border-radius:9px;opacity:1.00}41.7%{scale:1.0231 1.0012;border-radius:6px;opacity:1.00}45.8%{scale:1.0308 1.0235;border-radius:4px;opacity:1.00}50.0%{scale:1.0320 1.0342;border-radius:3px;opacity:1.00}54.2%{scale:1.0293 1.0368;border-radius:2px;opacity:1.00}58.3%{scale:1.0245 1.0343;border-radius:1px;opacity:1.00}62.5%{scale:1.0190 1.0292;border-radius:1px;opacity:1.00}66.7%{scale:1.0137 1.0230;border-radius:0px;opacity:1.00}70.8%{scale:1.0091 1.0168;border-radius:0px;opacity:1.00}75.0%{scale:1.0054 1.0114;border-radius:0px;opacity:1.00}79.2%{scale:1.0026 1.0069;border-radius:0px;opacity:1.00}83.3%{scale:1.0007 1.0035;border-radius:0px;opacity:1.00}87.5%{scale:0.9995 1.0011;border-radius:0px;opacity:1.00}91.7%{scale:0.9988 0.9996;border-radius:0px;opacity:1.00}95.8%{scale:0.9985 0.9987;border-radius:0px;opacity:1.00}100.0%{scale:0.9985 0.9984;opacity:1.00}}
+@keyframes viewOut{0.0%{scale:1.0000 1.0000;border-radius:0px;opacity:1.00}7.1%{scale:0.9921 0.9903;border-radius:1px;opacity:1.00}14.3%{scale:0.9744 0.9684;border-radius:2px;opacity:1.00}21.4%{scale:0.9490 0.9370;border-radius:4px;opacity:1.00}28.6%{scale:0.9168 0.8973;border-radius:7px;opacity:1.00}35.7%{scale:0.8784 0.8499;border-radius:10px;opacity:1.00}42.9%{scale:0.8342 0.7954;border-radius:14px;opacity:1.00}50.0%{scale:0.7845 0.7341;border-radius:18px;opacity:1.00}57.1%{scale:0.7296 0.6663;border-radius:23px;opacity:1.00}64.3%{scale:0.6697 0.5923;border-radius:28px;opacity:0.89}71.4%{scale:0.6049 0.5124;border-radius:34px;opacity:0.71}78.6%{scale:0.5354 0.4266;border-radius:40px;opacity:0.54}85.7%{scale:0.4614 0.3352;border-radius:46px;opacity:0.36}92.9%{scale:0.3829 0.2383;border-radius:53px;opacity:0.18}100.0%{scale:0.3000 0.2000;border-radius:60px;opacity:0.00}}
+@keyframes contentIn{0%,30%{opacity:0;translate:0 8px}100%{opacity:1;translate:0 0}}
+@keyframes contentOut{0%{opacity:1}100%{opacity:0}}
+.glass-pop{background:rgba(32,32,35,0.9);-webkit-backdrop-filter:blur(14px) saturate(160%);backdrop-filter:blur(14px) saturate(160%);border:1px solid rgba(255,255,255,0.12);box-shadow:inset 0 1px 0 rgba(255,255,255,0.12),0 18px 40px rgba(0,0,0,0.45)}
+.liquid-in,.liquid-out{will-change:scale,opacity}
+.liquid-in>*{animation:contentIn 520ms cubic-bezier(0.2,0.8,0.2,1) both}
+.liquid-out>*{animation:contentOut 160ms ease both}
+@keyframes chipSlideLA{0%{translate:70px 0;opacity:0}100%{translate:0 0;opacity:1}}
+@keyframes chipSlideLB{0%{translate:70px 0;opacity:0}100%{translate:0 0;opacity:1}}
+@keyframes chipSlideRA{0%{translate:-70px 0;opacity:0}100%{translate:0 0;opacity:1}}
+@keyframes chipSlideRB{0%{translate:-70px 0;opacity:0}100%{translate:0 0;opacity:1}}
+@keyframes nudge{0%,70%,100%{transform:translateY(0)}80%{transform:translateY(-4px)}90%{transform:translateY(0)}}
+</style>
+</helmet>
+<div data-root="1" class="{{rootClass}}" onPointerDown="{{lgDown}}" onPointerMove="{{lgMove}}" onPointerUp="{{lgUp}}" onPointerCancel="{{lgUp}}" onPointerLeave="{{lgUp}}" style="width: 390px; height: 844px; position: relative; overflow: hidden; background: #000; color: #fff; font-family: 'IBM Plex Sans Thai', system-ui, sans-serif; user-select: none">
+
+  <div aria-label="ภาพจากกล้อง แตะเพื่อโฟกัส ปัดซ้ายขวาเพื่อเปลี่ยนโหมด" onPointerDown="{{onDown}}" onPointerMove="{{onMove}}" onPointerUp="{{onUp}}" onPointerCancel="{{onUp}}" style="position: absolute; left: 0; top: {{pvTop}}px; width: 390px; height: {{pvH}}px; overflow: hidden; transform: scale({{pvScale}}); border-radius: {{pvRadius}}px; transition: {{pvMotion}}; touch-action: none; cursor: crosshair">
+    <div style="position: absolute; left: 0; top: {{sceneTop}}px; width: 390px; height: 693px; pointer-events: none; transform: scale({{sceneScale}}) scaleX({{mirror}}); transform-origin: 50% 50%; filter: {{sceneFilter}}; transition: {{sceneMotion}}">
+      <div style="position: absolute; inset: 0; background: #34506a"></div>
+      <div style="position: absolute; left: 262px; top: 156px; width: 74px; height: 74px; border-radius: 50%; background: #f3c66d"></div>
+      <div style="position: absolute; left: -60px; top: 336px; width: 520px; height: 220px; border-radius: 50%; background: #263b4d"></div>
+      <div style="position: absolute; left: 34px; top: 282px; width: 92px; height: 250px; background: #1a2631"></div>
+      <div style="position: absolute; left: 52px; top: 308px; width: 14px; height: 18px; background: #e7b860; opacity: 0.8"></div>
+      <div style="position: absolute; left: 92px; top: 308px; width: 14px; height: 18px; background: #e7b860; opacity: 0.5"></div>
+      <div style="position: absolute; left: 52px; top: 348px; width: 14px; height: 18px; background: #e7b860; opacity: 0.4"></div>
+      <div style="position: absolute; left: 92px; top: 348px; width: 14px; height: 18px; background: #e7b860; opacity: 0.85"></div>
+      <div style="position: absolute; left: 248px; top: 322px; width: 112px; height: 220px; background: #1f2d3a"></div>
+      <div style="position: absolute; left: 268px; top: 348px; width: 16px; height: 20px; background: #e7b860; opacity: 0.75"></div>
+      <div style="position: absolute; left: 322px; top: 348px; width: 16px; height: 20px; background: #e7b860; opacity: 0.45"></div>
+      <div style="position: absolute; left: 140px; top: 386px; width: 112px; height: 52px; border-radius: 6px; background: #f4efe4; display: flex; align-items: center; justify-content: center; font-size: 17px; font-weight: 600; color: #2a2118">ร้านกาแฟ ลูมา</div>
+      <div style="position: absolute; left: 192px; top: 438px; width: 6px; height: 100px; background: #121a21"></div>
+      <div style="position: absolute; left: 0; top: 526px; width: 390px; height: 167px; background: #121a21"></div>
+    </div>
+    <sc-if value="{{grid}}" hint-placeholder-val="{{ false }}">
+      <div aria-hidden="true" style="position: absolute; inset: 0; pointer-events: none">
+        <div style="position: absolute; left: 130px; top: 0; width: 1px; height: {{pvH}}px; background: rgba(255,255,255,0.32)"></div>
+        <div style="position: absolute; left: 260px; top: 0; width: 1px; height: {{pvH}}px; background: rgba(255,255,255,0.32)"></div>
+        <div style="position: absolute; left: 0; top: {{gridY1}}px; width: 390px; height: 1px; background: rgba(255,255,255,0.32)"></div>
+        <div style="position: absolute; left: 0; top: {{gridY2}}px; width: 390px; height: 1px; background: rgba(255,255,255,0.32)"></div>
+      </div>
+    </sc-if>
+    <div aria-hidden="true" style="position: absolute; left: {{focusX}}px; top: {{focusY}}px; width: 76px; height: 76px; margin: -38px 0 0 -38px; border: {{ringW}}px solid {{accent}}; border-radius: 18px; pointer-events: none; opacity: 0; animation: {{focusAnim}}"></div>
+  </div>
+
+  <div aria-hidden="true" style="position: absolute; left: 0; top: {{pvTop}}px; width: 390px; height: {{pvH}}px; background: #fff; pointer-events: none; opacity: 0; animation: {{blinkAnim}}"></div>
+
+  <div aria-hidden="true" class="glass" style="position: absolute; left: 10px; top: {{railTop}}px; width: 36px; height: 240px; border-radius: 18px; opacity: {{expOpacity}}; transform: translateX({{expShift}}px); transition: {{railMotion}}; pointer-events: none">
+    <span style="position: absolute; left: 17px; top: 30px; width: 2px; height: 180px; border-radius: 1px; background: rgba(255,255,255,0.25)"></span>
+    <span style="position: absolute; left: 12px; top: 119px; width: 12px; height: 2px; border-radius: 1px; background: rgba(255,255,255,0.6)"></span>
+    <span style="position: absolute; left: 16px; top: {{expFillTop}}px; width: 4px; height: {{expFillH}}px; border-radius: 2px; background: {{accent}}; transition: {{railThumbMotion}}"></span>
+    <span style="position: absolute; left: 6px; top: {{expThumbY}}px; width: 24px; height: 24px; border-radius: 12px; background: #fff; color: #1a1400; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 14px {{expGlow}}; transition: {{railThumbMotion}}">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8z M12 2v2 M12 20v2 M2 12h2 M20 12h2 M4.9 4.9l1.4 1.4 M17.7 17.7l1.4 1.4 M4.9 19.1l1.4-1.4 M17.7 6.3l1.4-1.4"></path></svg>
+    </span>
+    <span class="glass" style="position: absolute; left: 44px; top: {{expLabelY}}px; padding: 3px 10px; border-radius: 12px; font-size: 13px; font-weight: 600; color: {{accent}}; white-space: nowrap; font-variant-numeric: tabular-nums; opacity: {{expLabelOpacity}}; transition: {{railThumbMotion}}, opacity 200ms ease">{{expText}}</span>
+  </div>
+  <button class="lg glass" aria-label="{{lockName}}" aria-pressed="{{lockPressed}}" onClick="{{toggleLock}}" style="position: absolute; left: 10px; top: {{lockTop}}px; width: 36px; height: 36px; border-radius: 18px; display: flex; align-items: center; justify-content: center; color: {{lockColor}}; opacity: {{lockOpacity}}; transform: translateX({{lockShift}}px); pointer-events: {{lockEvents}}; transition: opacity 240ms ease, transform 420ms cubic-bezier(0.2, 0.9, 0.25, 1.15), color 200ms ease, translate 560ms cubic-bezier(0.34,1.56,0.64,1), scale 560ms cubic-bezier(0.34,1.56,0.64,1)">
+    <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="{{lockIcon}}"></path></svg>
+  </button>
+  <div aria-hidden="true" class="glass" style="position: absolute; right: 10px; top: {{railTop}}px; width: 36px; height: 240px; border-radius: 18px; opacity: {{focOpacity}}; transform: translateX({{focShift}}px); transition: {{railMotion}}; pointer-events: none">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.8)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="position: absolute; left: 10px; top: 8px"><path d="M3 19l6-9 4 6 3-4 5 7z"></path></svg>
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.8)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="position: absolute; left: 10px; bottom: 8px"><path d="M12 13a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M12 13v8 M12 18c-3 0-5-2-5-4 M12 18c3 0 5-2 5-4"></path></svg>
+    <span style="position: absolute; left: 17px; top: 30px; width: 2px; height: 180px; border-radius: 1px; background: rgba(255,255,255,0.25)"></span>
+    <span style="position: absolute; left: 16px; top: 30px; width: 4px; height: {{focFillH}}px; border-radius: 2px; background: #64D2FF; transition: {{railThumbMotion}}"></span>
+    <span style="position: absolute; left: 6px; top: {{focThumbY}}px; width: 24px; height: 24px; border-radius: 12px; border: 3px solid #64D2FF; box-sizing: border-box; background: rgba(0,0,0,0.35); box-shadow: 0 0 14px rgba(100,210,255,0.7); transition: {{railThumbMotion}}"></span>
+    <span class="glass" style="position: absolute; right: 44px; top: {{focLabelY}}px; padding: 3px 10px; border-radius: 12px; font-size: 13px; font-weight: 600; color: #64D2FF; white-space: nowrap; font-variant-numeric: tabular-nums; transition: {{railThumbMotion}}">{{focText}}</span>
+  </div>
+
+  <div role="status" aria-label="สิ่งที่เปิดอยู่" style="position: absolute; right: 12px; top: 48px; height: 44px; display: flex; align-items: center; gap: 2px">
+    <sc-for list="{{status}}" as="st" hint-placeholder-count="2">
+      <button class="press shadow" aria-label="{{st.name}} แตะเพื่อเปิดตัวเลือก" onClick="{{openPanel}}" style="min-width: 40px; height: 44px; padding: 0 3px; display: flex; align-items: center; justify-content: center; gap: 2px; color: {{accent}}">
+        <span style="position: relative; display: flex; align-items: center; justify-content: center">
+          <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="{{st.d}}"></path></svg>
+          <span style="position: absolute; font-size: 8.5px; font-weight: 600; letter-spacing: -0.2px">{{st.inner}}</span>
+        </span>
+        <span style="font-size: 12px; font-weight: 600; white-space: nowrap">{{st.after}}</span>
+      </button>
+    </sc-for>
+  </div>
+
+  <div class="glass" role="status" style="--r: 16px; position: absolute; z-index: 4; left: 50%; top: 52px; transform: translateX(-50%); transform-origin: 50% 50%; opacity: {{banner.opacity}}; animation: {{banner.anim}}; padding: 6px 14px; border-radius: 16px; display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: {{accent}}; pointer-events: none">
+    <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 11h12v9H6z M8.5 11V8a3.5 3.5 0 0 1 7 0v3"></path></svg>
+    ล็อก AE/AF
+  </div>
+
+  <div class="glass" aria-label="ภาพเต็มจากเลนส์ {{miniLens}} กรอบคือส่วนที่ซูมอยู่" role="img" style="--r: 18px; position: absolute; z-index: 4; right: 12px; top: 98px; width: 98px; height: 130px; padding: 4px; box-sizing: border-box; border-radius: 18px; opacity: {{mini.opacity}}; transform-origin: 100% 0; animation: {{mini.anim}}; pointer-events: none">
+    <div style="position: relative; width: 90px; height: 120px; border-radius: 14px; overflow: hidden">
+      <div style="position: absolute; left: 0; top: 0; width: 390px; height: 520px; transform: scale(0.230769); transform-origin: 0 0">
+        <div style="position: absolute; left: 0; top: -87px; width: 390px; height: 693px; transform: scale({{miniLensScale}}); transform-origin: 50% 50%; filter: {{miniFilter}}; transition: transform 300ms ease">
+      <div style="position: absolute; inset: 0; background: #34506a"></div>
+      <div style="position: absolute; left: 262px; top: 156px; width: 74px; height: 74px; border-radius: 50%; background: #f3c66d"></div>
+      <div style="position: absolute; left: -60px; top: 336px; width: 520px; height: 220px; border-radius: 50%; background: #263b4d"></div>
+      <div style="position: absolute; left: 34px; top: 282px; width: 92px; height: 250px; background: #1a2631"></div>
+      <div style="position: absolute; left: 52px; top: 308px; width: 14px; height: 18px; background: #e7b860; opacity: 0.8"></div>
+      <div style="position: absolute; left: 92px; top: 308px; width: 14px; height: 18px; background: #e7b860; opacity: 0.5"></div>
+      <div style="position: absolute; left: 52px; top: 348px; width: 14px; height: 18px; background: #e7b860; opacity: 0.4"></div>
+      <div style="position: absolute; left: 92px; top: 348px; width: 14px; height: 18px; background: #e7b860; opacity: 0.85"></div>
+      <div style="position: absolute; left: 248px; top: 322px; width: 112px; height: 220px; background: #1f2d3a"></div>
+      <div style="position: absolute; left: 268px; top: 348px; width: 16px; height: 20px; background: #e7b860; opacity: 0.75"></div>
+      <div style="position: absolute; left: 322px; top: 348px; width: 16px; height: 20px; background: #e7b860; opacity: 0.45"></div>
+      <div style="position: absolute; left: 140px; top: 386px; width: 112px; height: 52px; border-radius: 6px; background: #f4efe4; display: flex; align-items: center; justify-content: center; font-size: 17px; font-weight: 600; color: #2a2118">ร้านกาแฟ ลูมา</div>
+      <div style="position: absolute; left: 192px; top: 438px; width: 6px; height: 100px; background: #121a21"></div>
+      <div style="position: absolute; left: 0; top: 526px; width: 390px; height: 167px; background: #121a21"></div>
+        </div>
+      </div>
+      <div style="position: absolute; left: 50%; top: 50%; width: {{miniBoxW}}px; height: {{miniBoxH}}px; transform: translate(-50%, -50%); border: 1.5px solid {{accent}}; border-radius: 3px; box-shadow: 0 0 0 200px rgba(0,0,0,0.38)"></div>
+      <span class="glass" style="position: absolute; left: 4px; bottom: 4px; padding: 1px 7px; border-radius: 9px; font-size: 10.5px; font-weight: 600">{{miniLens}}</span>
+    </div>
+  </div>
+
+  <div class="glass" role="status" aria-live="polite" style="--r: 18px; position: absolute; z-index: 6; left: 50%; top: 100px; transform: translateX(-50%); transform-origin: 50% 50%; opacity: {{toastL.opacity}}; animation: {{toastL.anim}}; padding: 8px 16px; border-radius: 18px; font-size: 13px; font-weight: 500; white-space: nowrap; pointer-events: none">{{toast}}</div>
+
+  <sc-if value="{{rec}}" hint-placeholder-val="{{ false }}">
+    <div class="glass" style="position: absolute; left: 50%; top: 52px; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; padding: 6px 14px; border-radius: 16px; font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums">
+      <span aria-hidden="true" style="width: 8px; height: 8px; border-radius: 4px; background: #ff453a; animation: recdot 1s infinite"></span>
+      <span>{{recTime}}</span>
+    </div>
+  </sc-if>
+
+  <div class="glass {{dialL.cls}}" aria-hidden="{{dialHidden}}" style="--r: 24px; position: absolute; z-index: 6; left: 16px; right: 16px; top: {{dialTop}}px; padding: 12px 16px 14px; border-radius: 24px; display: flex; flex-direction: column; gap: 8px; opacity: {{dialL.opacity}}; transform-origin: {{dialOrigin}} 100%; pointer-events: {{dialEvents}}; animation: {{dialL.anim}}">
+    <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px">
+      <span style="font-size: 13px; color: rgba(255,255,255,0.72)">{{dialTitle}}</span>
+      <span style="font-size: 20px; font-weight: 600; color: {{dialColor}}; font-variant-numeric: tabular-nums; transition: color 160ms ease">{{dialValue}}</span>
+      <button class="lg" aria-label="คืนค่า {{autoLabel}}" onClick="{{dialAuto}}" style="height: 32px; padding: 0 12px; border-radius: 16px; background: {{autoBg}}; color: {{autoColor}}; font-size: 12px; font-weight: 600; white-space: nowrap">{{autoLabel}}</button>
+    </div>
+    <div role="slider" tabindex="0" aria-label="{{dialTitle}}" aria-valuetext="{{dialValue}}" aria-valuemin="0" aria-valuemax="{{dialMax}}" aria-valuenow="{{dialIndex}}" onKeyDown="{{dialKey}}" onPointerDown="{{trackDown}}" onPointerMove="{{trackMove}}" onPointerUp="{{trackUp}}" onPointerCancel="{{trackUp}}" style="position: relative; height: 40px; touch-action: none; cursor: pointer">
+      <div aria-hidden="true" style="position: absolute; left: 0; right: 0; top: 17px; height: 6px; border-radius: 3px; background: {{trackGradient}}; opacity: 0.28"></div>
+      <div aria-hidden="true" style="position: absolute; left: 0; top: 17px; height: 6px; width: calc({{fillPct}}% + {{overPx}}px); border-radius: 3px; background: {{trackGradient}}; background-size: {{gradSize}}% 100%; transition: {{snapMotionW}}"></div>
+      <div aria-hidden="true" style="position: absolute; top: 14px; left: {{tailLeft}}%; width: {{tailW}}px; height: 12px; margin-left: {{tailShift}}px; border-radius: 6px; background: {{tailGradient}}; filter: blur(3px); opacity: {{tailOpacity}}; transition: width 520ms cubic-bezier(0.22, 1, 0.36, 1), margin-left 520ms cubic-bezier(0.22, 1, 0.36, 1), opacity 520ms ease"></div>
+      <sc-for list="{{dialTicks}}" as="tk" hint-placeholder-count="8">
+        <span aria-hidden="true" style="position: absolute; top: 30px; left: {{tk.pos}}%; width: 2px; height: 6px; margin-left: -1px; border-radius: 1px; background: rgba(255,255,255,0.4)"></span>
+      </sc-for>
+      <div aria-hidden="true" style="position: absolute; top: {{thumbTop}}px; left: {{fillPct}}%; width: {{thumbW}}px; height: {{thumbH}}px; margin-left: {{thumbML}}px; border-radius: 16px; background: #fff; box-shadow: 0 0 0 {{thumbRingW}}px {{thumbRing}}, 0 0 {{thumbGlowR}}px {{thumbGlow}}, 0 3px 8px rgba(0,0,0,0.45); transform: scale({{thumbScale}}); transition: {{snapMotionL}}"></div>
+    </div>
+    <div aria-hidden="true" style="display: flex; justify-content: space-between; font-size: 11px; color: rgba(255,255,255,0.72)"><span>{{dialMin}}</span><span>{{dialEnd}}</span></div>
+  </div>
+
+  <sc-if value="{{showCats}}" hint-placeholder-val="{{ false }}">
+    <div class="glass" role="tablist" aria-label="หมวดการปรับวิดีโอโปร ปัดเพื่อสลับ" onPointerDown="{{catBarDown}}" onPointerUp="{{catBarUp}}" style="position: absolute; z-index: 5; left: 50%; top: 412px; width: 236px; margin-left: -118px; height: 30px; padding: 2px; box-sizing: border-box; border-radius: 15px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); touch-action: none">
+      <span aria-hidden="true" style="position: absolute; top: 2px; left: 2px; width: calc(50% - 2px); height: 24px; border-radius: 12px; background: rgba(255,255,255,0.2); box-shadow: inset 0 1px 0 rgba(255,255,255,0.22); transform: translateX({{catHiX}}%); transition: {{catHiMotion}}"></span>
+      <sc-for list="{{cats}}" as="ct" hint-placeholder-count="2">
+        <button role="tab" aria-selected="{{ct.on}}" onClick="{{ct.pick}}" style="position: relative; height: 26px; font-size: 12px; font-weight: 600; color: {{ct.color}}; transition: color 200ms ease">{{ct.title}}</button>
+      </sc-for>
+    </div>
+  </sc-if>
+  <sc-if value="{{chipRow}}" hint-placeholder-val="{{ false }}">
+    <div class="glass" onPointerDown="{{chipDown}}" onPointerMove="{{chipMove}}" onPointerUp="{{chipUp}}" onPointerCancel="{{chipUp}}" onPointerLeave="{{chipUp}}" style="position: absolute; z-index: 5; left: 16px; right: 16px; top: 448px; height: 52px; border-radius: 24px; overflow: hidden; touch-action: none">
+      <div aria-hidden="true" style="position: absolute; top: 4px; left: {{capL}}px; width: 72px; height: 44px; border-radius: 20px; background: {{capBg}}; box-shadow: inset 0 1px 0 rgba(255,255,255,0.2), 0 4px 12px rgba(0,0,0,0.2); transition: background-color 220ms ease"></div>
+      <div style="position: absolute; inset: 0; animation: {{chipAnim}}; -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 40px, #000 calc(100% - 40px), transparent 100%); mask-image: linear-gradient(90deg, transparent 0, #000 40px, #000 calc(100% - 40px), transparent 100%)">
+        <div style="position: absolute; top: 4px; left: 0; height: 44px; transform: translateX({{chipTrackX}}px); transition: {{chipTrackMotion}}">
+          <sc-for list="{{chips}}" as="p" hint-placeholder-count="5">
+            <button class="lg" aria-label="{{p.title}} {{p.value}}" aria-expanded="{{p.open}}" onClick="{{p.pick}}" style="position: absolute; top: 0; left: {{p.x}}px; width: {{p.w}}px; height: 44px; border-radius: 20px; display: flex; flex-direction: column; align-items: center; justify-content: center; transform: scale({{p.scale}}); transition: transform 300ms cubic-bezier(0.34, 1.56, 0.64, 1), translate 560ms cubic-bezier(0.34,1.56,0.64,1), scale 560ms cubic-bezier(0.34,1.56,0.64,1)">
+              <span style="font-size: 10.5px; color: {{p.titleColor}}; line-height: 1.2; white-space: nowrap; transition: color 200ms ease">{{p.title}}</span>
+              <span style="font-size: 13px; font-weight: 600; color: {{p.color}}; line-height: 1.3; white-space: nowrap; transition: color 200ms ease">{{p.value}}</span>
+            </button>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <div aria-hidden="true" style="position: absolute; left: 0; top: 410px; width: 390px; height: 150px; overflow: hidden; pointer-events: none; -webkit-mask-image: linear-gradient(to bottom, #000 40%, rgba(0,0,0,0.6) 70%, transparent 100%); mask-image: linear-gradient(to bottom, #000 40%, rgba(0,0,0,0.6) 70%, transparent 100%); opacity: {{wheelOpacity}}; transform: translateY({{wheelY}}px) scale({{wheelScale}}); transform-origin: 50% 100%; transition: {{wheelMotion}}">
+    <div class="glass" style="position: absolute; left: -125px; top: 34px; width: 640px; height: 640px; border-radius: 50%; box-shadow: inset 0 1px 0 rgba(255,255,255,0.18)"></div>
+    <sc-for list="{{wheelTicks}}" as="w" hint-placeholder-count="12">
+      <span style="position: absolute; left: 195px; top: 354px; width: {{w.width}}px; height: {{w.h}}px; margin-left: {{w.half}}px; border-radius: 1px; background: {{w.color}}; transform-origin: 50% 0; transform: rotate({{w.deg}}deg) translateY(-308px)"></span>
+    </sc-for>
+    <sc-for list="{{wheelLabels}}" as="wl" hint-placeholder-count="4">
+      <span style="position: absolute; left: 175px; top: 354px; width: 40px; text-align: center; font-size: 12px; font-weight: 600; color: {{wl.color}}; transform-origin: 50% 0; transform: rotate({{wl.deg}}deg) translateY(-290px)">{{wl.label}}</span>
+    </sc-for>
+    <span style="position: absolute; left: 194px; top: 40px; width: 2px; height: 22px; border-radius: 1px; background: {{accent}}"></span>
+    <span class="glass" style="position: absolute; left: 50%; top: 0; transform: translateX(-50%); padding: 3px 12px; border-radius: 14px; font-size: 15px; font-weight: 600; color: {{accent}}; font-variant-numeric: tabular-nums">{{zoomText}}</span>
+  </div>
+
+  <sc-if value="{{showSide}}" hint-placeholder-val="{{ true }}">
+    <button class="lg glass" aria-label="{{macroName}}" aria-pressed="{{macroPressed}}" onClick="{{toggleMacro}}" style="position: absolute; z-index: 3; left: 16px; top: 512px; width: 44px; height: 44px; border-radius: 22px; display: flex; align-items: center; justify-content: center; color: {{macroColor}}; opacity: {{sideOpacity}}; transition: opacity 200ms ease, color 200ms ease, translate 560ms cubic-bezier(0.34,1.56,0.64,1), scale 560ms cubic-bezier(0.34,1.56,0.64,1)">
+      <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 13a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M12 7c0-2 1-4 0-4s0 2 0 4 M9.2 9.5C7.5 8.5 5.5 8.6 5.9 9.6s2.2-.1 3.3 0 M14.8 9.5c1.7-1 3.7-.9 3.3.1s-2.2-.1-3.3-.1 M12 13v8 M12 18c-3 0-5-2-5-4 M12 18c3 0 5-2 5-4"></path></svg>
+    </button>
+    <button class="lg glass" aria-label="{{nightName}}" aria-pressed="{{nightPressed}}" onClick="{{toggleNight}}" onPointerDown="{{nightDown}}" onPointerUp="{{nightUp}}" onPointerLeave="{{nightUp}}" style="position: absolute; z-index: 3; right: 16px; top: 512px; width: 44px; height: 44px; border-radius: 22px; display: flex; align-items: center; justify-content: center; color: {{nightColor}}; opacity: {{sideOpacity}}; transition: opacity 200ms ease, color 200ms ease, translate 560ms cubic-bezier(0.34,1.56,0.64,1), scale 560ms cubic-bezier(0.34,1.56,0.64,1)">
+      <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"></path></svg>
+      <span style="position: absolute; right: 2px; bottom: 3px; font-size: 9px; font-weight: 600">{{nightBadge}}</span>
+    </button>
+  </sc-if>
+
+  <div class="glass {{nightL.cls}}" role="status" aria-live="polite" style="--r: 28px; position: absolute; z-index: 6; left: 50%; top: {{nightTop}}px; width: 220px; margin-left: -110px; padding: 16px 16px 14px; box-sizing: border-box; border-radius: 28px; display: flex; flex-direction: column; align-items: center; gap: 6px; opacity: {{nightL.opacity}}; animation: {{nightL.anim}}; pointer-events: none">
+    <div aria-hidden="true" style="position: relative; width: 64px; height: 64px">
+      <span style="position: absolute; left: 31px; top: 12px; width: 2px; height: 40px; border-radius: 1px; background: rgba(255,255,255,0.5)"></span>
+      <span style="position: absolute; left: 12px; top: 31px; width: 40px; height: 2px; border-radius: 1px; background: rgba(255,255,255,0.5)"></span>
+      <span style="position: absolute; left: 22px; top: 22px; width: 20px; height: 20px; border-radius: 10px; border: 2px solid {{accent}}; box-sizing: border-box; transform: translate({{jitX}}px, {{jitY}}px); transition: transform 120ms linear"></span>
+    </div>
+    <span style="font-size: 30px; font-weight: 600; color: {{accent}}; font-variant-numeric: tabular-nums; line-height: 1.1">{{nightLeft}}</span>
+    <span style="font-size: 13px; font-weight: 500">ถือกล้องให้นิ่ง</span>
+    <span style="font-size: 11.5px; color: rgba(255,255,255,0.72)">กำลังรวมแสงกลางคืน · แตะชัตเตอร์เพื่อหยุด</span>
+  </div>
+
+  <sc-if value="{{showZoom}}" hint-placeholder-val="{{ true }}">
+    <div class="glass" onPointerDown="{{zDown}}" onPointerMove="{{zMove}}" onPointerUp="{{zUp}}" onPointerCancel="{{zUp}}" style="position: absolute; left: 50%; top: 508px; transform: translateX(-50%); display: flex; align-items: center; gap: 4px; padding: 4px; border-radius: 26px; touch-action: none; opacity: {{pillsOpacity}}; transition: opacity 200ms ease">
+      <sc-for list="{{zooms}}" as="z" hint-placeholder-count="4">
+        <button class="lg" aria-label="ซูม {{z.full}} ปัดซ้ายขวาเพื่อซูมละเอียด" onClick="{{z.pick}}" style="width: 44px; height: 44px; border-radius: 22px; display: flex; align-items: center; justify-content: center">
+          <span style="width: {{z.size}}px; height: {{z.size}}px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: {{z.bg}}; color: {{z.color}}; font-size: {{z.font}}px; font-weight: 600; transition: {{z.motion}}">{{z.label}}</span>
+        </button>
+      </sc-for>
+    </div>
+  </sc-if>
+
+  <div onPointerDown="{{dockDown}}" onPointerMove="{{dockMove}}" onPointerUp="{{dockUp}}" onPointerLeave="{{dockUp}}" onPointerCancel="{{dockUp}}" style="position: absolute; left: 0; top: 560px; width: 390px; height: 284px; touch-action: none">
+    <button class="press" aria-label="ปัดขึ้นหรือแตะเพื่อดูตัวเลือกกล้อง" onClick="{{openPanel}}" style="position: absolute; left: 50%; top: 0; transform: translateX(-50%); width: 96px; height: 28px; display: flex; align-items: center; justify-content: center; color: rgba(255,255,255,0.72)">
+      <svg aria-hidden="true" width="22" height="12" viewBox="0 0 22 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="animation: {{nudgeAnim}}"><path d="M3 9l8-6 8 6"></path></svg>
+    </button>
+    <nav aria-label="โหมดกล้อง" style="position: absolute; left: 0; top: 26px; width: 390px; height: 60px; overflow: hidden">
+      <div aria-hidden="true" class="glass" style="position: absolute; top: 4px; left: {{capX}}px; width: {{capW}}px; height: 52px; border-radius: 18px; transition: {{capMotion}}"></div>
+      <div style="position: absolute; top: 4px; left: 0; display: flex; gap: {{gap}}px; transform: translateX({{trackX}}px); transition: {{trackMotion}}">
+        <sc-for list="{{barItems}}" as="m" hint-placeholder-count="5">
+          <button aria-label="โหมด{{m.title}}" aria-current="{{m.current}}" onClick="{{m.pick}}" style="width: {{m.w}}px; height: 52px; border-radius: 18px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; color: {{m.color}}; transition: color 200ms ease">
+            <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="{{m.d}}"></path></svg>
+            <span style="font-size: 12.5px; font-weight: {{m.weight}}; white-space: nowrap; line-height: 1.2">{{m.title}}</span>
+          </button>
+        </sc-for>
+        <button class="press" aria-label="ปรับแต่งแถบโหมด" onClick="{{openEditor}}" style="width: 52px; height: 52px; border-radius: 18px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; color: rgba(255,255,255,0.72)">
+          <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14 M5 12h14"></path></svg>
+          <span style="font-size: 12.5px; line-height: 1.2">ปรับ</span>
+        </button>
+      </div>
+    </nav>
+    <div style="position: absolute; left: 0; top: 108px; width: 390px; height: 96px; box-sizing: border-box; padding: 0 36px; display: flex; align-items: center; justify-content: space-between">
+      <a class="btn lg glass" href="Gallery.dc.html" aria-label="เปิดแกลเลอรี" style="width: 56px; height: 56px; border-radius: 16px; display: flex; align-items: center; justify-content: center; color: rgba(255,255,255,0.72)">
+        <sc-if value="{{hasShot}}" hint-placeholder-val="{{ false }}">
+          <span style="position: absolute; inset: 0; background: #34506a; animation: {{popAnim}}">
+            <span style="position: absolute; left: 34px; top: 8px; width: 12px; height: 12px; border-radius: 50%; background: #f3c66d"></span>
+            <span style="position: absolute; left: 0; top: 34px; width: 56px; height: 22px; background: #1a2631"></span>
+            <span style="position: absolute; left: 18px; top: 26px; width: 20px; height: 10px; border-radius: 2px; background: #f4efe4"></span>
+          </span>
+        </sc-if>
+        <sc-if value="{{noShot}}" hint-placeholder-val="{{ true }}">
+          <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16v14H4z M4 16l4.5-4.5 3.5 3.5 2.5-2.5L20 18 M15.5 9.5h.01"></path></svg>
+        </sc-if>
+      </a>
+      <button class="press" aria-label="{{shutterName}}" onClick="{{shoot}}" style="position: relative; width: 80px; height: 80px; border-radius: 40px; border: 4px solid {{shutterBorder}}; box-sizing: border-box; display: flex; align-items: center; justify-content: center">
+        <svg aria-hidden="true" width="88" height="88" viewBox="0 0 88 88" style="position: absolute; left: -8px; top: -8px; transform: rotate(-90deg); opacity: {{ringOpacity}}; transition: opacity 200ms ease"><circle cx="44" cy="44" r="40" fill="none" stroke="{{accent}}" stroke-width="4" stroke-linecap="round" stroke-dasharray="251.3" stroke-dashoffset="{{ringOffset}}"></circle></svg>
+        <span style="width: {{innerSize}}px; height: {{innerSize}}px; border-radius: {{innerRadius}}px; background: {{innerColor}}; transition: {{innerMotion}}"></span>
+      </button>
+      <button class="lg glass" aria-label="สลับกล้องหน้าและหลัง" onClick="{{flipCam}}" style="width: 56px; height: 56px; border-radius: 28px; display: flex; align-items: center; justify-content: center">
+        <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="transform: rotate({{flipDeg}}deg); transition: {{flipMotion}}"><path d="M20 11a8 8 0 0 0-14.3-4.9 M4 13a8 8 0 0 0 14.3 4.9 M5.5 3v3.5H9 M18.5 21v-3.5H15"></path></svg>
+      </button>
+    </div>
+  </div>
+
+  <div aria-hidden="true" onClick="{{closeAll}}" style="position: absolute; z-index: 7; inset: 0; background: rgba(0,0,0,0.32); -webkit-backdrop-filter: blur(12px) saturate(140%); backdrop-filter: blur(12px) saturate(140%); opacity: {{dimOpacity}}; pointer-events: {{dimEvents}}; transition: {{dimMotion}}"></div>
+
+  <section aria-label="ตัวเลือกกล้อง" aria-hidden="{{panelHidden}}" class="glass-strong scroll-y {{panelL.cls}}" style="position: absolute; z-index: 7; left: 8px; right: 8px; bottom: 8px; max-height: 812px; border-radius: 34px; padding: 4px 16px 20px; box-sizing: border-box; --dy: {{panelDy}}px; transform: translateY({{panelY}}); transform-origin: 50% calc(100% - 262px); opacity: {{panelL.opacity}}; pointer-events: {{panelEvents}}; animation: {{panelL.anim}}; transition: {{panelMotion}}; display: flex; flex-direction: column; gap: 14px">
+    <button aria-label="ปัดลงหรือแตะเพื่อปิด" onPointerDown="{{sheetDown}}" onPointerMove="{{sheetMove}}" onPointerUp="{{sheetUp}}" onPointerCancel="{{sheetUp}}" style="align-self: center; width: 120px; height: 28px; flex: 0 0 auto; display: flex; align-items: center; justify-content: center; touch-action: none">
+      <span aria-hidden="true" style="width: 40px; height: 5px; border-radius: 3px; background: rgba(255,255,255,0.32)"></span>
+    </button>
+    <h2 style="margin: 0; font-size: 14px; font-weight: 600; color: rgba(255,255,255,0.86)">ถ่ายภาพ</h2>
+    <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px">
+      <sc-for list="{{tiles}}" as="q" hint-placeholder-count="6">
+        <button class="lg" aria-label="{{q.title}} {{q.value}}" aria-haspopup="{{q.popup}}" onClick="{{q.tap}}" style="height: 88px; border-radius: 20px; background: {{q.bg}}; border: 1px solid rgba(255,255,255,0.08); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: {{q.color}}">
+          <span style="position: relative; display: flex; align-items: center; justify-content: center">
+            <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="{{q.d}}"></path></svg>
+            <span style="position: absolute; font-size: 8.5px; font-weight: 600">{{q.inner}}</span>
+          </span>
+          <span style="font-size: 12px; color: #fff">{{q.title}}</span>
+          <span style="font-size: 11.5px; font-weight: 600; display: flex; align-items: center; gap: 2px">{{q.value}}<sc-if value="{{q.isMenu}}" hint-placeholder-val="{{ false }}"><svg aria-hidden="true" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 10l5 5 5-5"></path></svg></sc-if></span>
+        </button>
+      </sc-for>
+    </div>
+    <div style="display: flex; align-items: center; justify-content: space-between">
+      <h2 style="margin: 0; font-size: 14px; font-weight: 600; color: rgba(255,255,255,0.86)">ปรับแต่งภาพ</h2>
+      <button class="lg" onClick="{{resetLook}}" style="height: 32px; padding: 0 12px; border-radius: 16px; background: rgba(255,255,255,0.1); font-size: 12px; display: flex; align-items: center; gap: 4px">
+        <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12a8 8 0 1 0 2.3-5.7 M4 4v4h4"></path></svg>
+        คืนค่า
+      </button>
+    </div>
+    <div onPointerDown="{{lookDown}}" onPointerMove="{{lookMove}}" onPointerUp="{{lookUp}}" onPointerCancel="{{lookUp}}" onPointerLeave="{{lookUp}}" style="position: relative; flex: 0 0 auto; height: 104px; margin: -6px -16px 0; overflow: hidden; touch-action: none; -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 44px, #000 calc(100% - 44px), transparent 100%); mask-image: linear-gradient(90deg, transparent 0, #000 44px, #000 calc(100% - 44px), transparent 100%)">
+      <div style="position: absolute; top: 8px; left: 0; height: 96px; transform: translateX({{lookX}}px); transition: {{lookMotion}}">
+      <sc-for list="{{looks}}" as="l" hint-placeholder-count="6">
+        <button aria-pressed="{{l.on}}" onClick="{{l.pick}}" style="position: absolute; top: 0; left: {{l.x}}px; width: 72px; display: flex; flex-direction: column; align-items: center; gap: 8px; transform: scale({{l.scale}}); transition: transform 320ms cubic-bezier(0.34, 1.56, 0.64, 1)">
+          <span class="lg" style="width: 68px; height: 68px; border-radius: 20px; padding: 3px; box-sizing: border-box; display: block; background: {{l.frame}}; transition: background-color 220ms ease, translate 560ms cubic-bezier(0.34,1.56,0.64,1), scale 560ms cubic-bezier(0.34,1.56,0.64,1)">
+            <span style="position: relative; display: block; width: 62px; height: 62px; border-radius: 17px; overflow: hidden; filter: {{l.filter}}">
+              <span style="position: absolute; inset: 0; background: #34506a"></span>
+              <span style="position: absolute; left: 38px; top: 9px; width: 14px; height: 14px; border-radius: 50%; background: #f3c66d"></span>
+              <span style="position: absolute; left: 0; top: 38px; width: 62px; height: 24px; background: #1a2631"></span>
+              <span style="position: absolute; left: 16px; top: 30px; width: 28px; height: 12px; border-radius: 2px; background: #f4efe4"></span>
+            </span>
+            <sc-if value="{{l.selected}}" hint-placeholder-val="{{ false }}">
+              <span style="position: absolute; right: 6px; bottom: 6px; width: 18px; height: 18px; border-radius: 9px; background: #fff; color: #000; display: flex; align-items: center; justify-content: center">
+                <svg aria-hidden="true" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>
+              </span>
+            </sc-if>
+          </span>
+          <span style="font-size: 12px; font-weight: {{l.weight}}; color: {{l.color}}">{{l.name}}</span>
+        </button>
+      </sc-for>
+      </div>
+    </div>
+    <label style="display: flex; flex-direction: column; gap: 2px">
+      <span style="display: flex; justify-content: space-between; font-size: 13px"><span style="display: flex; align-items: center; gap: 6px"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10z M12 2v2 M12 20v2 M2 12h2 M20 12h2"></path></svg>ความสว่าง</span><span style="font-variant-numeric: tabular-nums; color: rgba(255,255,255,0.72)">{{brightText}}</span></span>
+      <input type="range" min="-100" max="100" step="5" value="{{bright}}" onInput="{{setBright}}" onChange="{{setBright}}">
+    </label>
+    <label style="display: flex; flex-direction: column; gap: 2px">
+      <span style="display: flex; justify-content: space-between; font-size: 13px"><span style="display: flex; align-items: center; gap: 6px"><svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 14.8V4a2 2 0 0 0-4 0v10.8a4 4 0 1 0 4 0z"></path></svg>ความอุ่น</span><span style="font-variant-numeric: tabular-nums; color: rgba(255,255,255,0.72)">{{warmText}}</span></span>
+      <input type="range" min="-100" max="100" step="5" value="{{warm}}" onInput="{{setWarm}}" onChange="{{setWarm}}">
+    </label>
+    <div class="glass" style="border-radius: 20px; display: flex; flex-direction: column; overflow: hidden; flex: 0 0 auto">
+      <button class="lg" onClick="{{openEditorFromPanel}}" style="height: 52px; padding: 0 16px; display: flex; align-items: center; gap: 12px; text-align: left">
+        <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16 M4 12h16 M4 17h10 M18 15v4 M16 17h4"></path></svg>
+        <span style="flex: 1; font-size: 14px">ปรับแต่งแถบโหมด</span>
+        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.5)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"></path></svg>
+      </button>
+      <div aria-hidden="true" style="height: 1px; margin-left: 48px; background: rgba(255,255,255,0.1)"></div>
+      <a class="btn lg" href="Settings.dc.html" style="height: 52px; padding: 0 16px; display: flex; align-items: center; gap: 12px; color: #fff">
+        <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M4 12h2 M18 12h2 M12 4v2 M12 18v2 M6.3 6.3l1.4 1.4 M16.3 16.3l1.4 1.4 M6.3 17.7l1.4-1.4 M16.3 7.7l1.4-1.4"></path></svg>
+        <span style="flex: 1; font-size: 14px">ตั้งค่าทั้งหมด</span>
+        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.5)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"></path></svg>
+      </a>
+    </div>
+  </section>
+
+  <section aria-label="ปรับแต่งแถบโหมด" aria-hidden="{{sheetHidden}}" class="glass-strong scroll-y {{editL.cls}}" style="position: absolute; z-index: 7; left: 8px; right: 8px; bottom: 8px; max-height: 812px; border-radius: 34px; padding: 10px 20px 24px; box-sizing: border-box; transform-origin: 50% calc(100% - 236px); opacity: {{editL.opacity}}; pointer-events: {{sheetEvents}}; animation: {{editL.anim}}; display: flex; flex-direction: column; gap: 16px">
+    <div aria-hidden="true" style="align-self: center; width: 40px; height: 5px; border-radius: 3px; background: rgba(255,255,255,0.3); flex: 0 0 auto"></div>
+    <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px">
+      <h2 style="margin: 0; font-size: 20px; font-weight: 600">ปรับแต่งแถบโหมด</h2>
+      <button class="lg" aria-label="เสร็จ" onClick="{{closeAll}}" style="height: 44px; padding: 0 16px; border-radius: 22px; background: {{accent}}; color: #1a1400; font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 6px">
+        <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>
+        เสร็จ
+      </button>
+    </div>
+    <p style="margin: 0; font-size: 13px; line-height: 1.55; color: rgba(255,255,255,0.72)">ลากโหมดจากด้านล่างขึ้นไปวางในแถบ ใส่ได้ไม่จำกัด ลากในแถบเพื่อเรียงใหม่ หรือแตะ + และ − แตะชื่อโหมดเพิ่มเติมเพื่อใช้ทันทีโดยไม่ต้องเพิ่มลงแถบ ภาพถ่ายต้องอยู่ในแถบเสมอ</p>
+    <div style="display: flex; align-items: baseline; justify-content: space-between">
+      <h3 style="margin: 0; font-size: 14px; font-weight: 600; color: rgba(255,255,255,0.86)">ในแถบล่าง</h3>
+      <span style="font-size: 13px; color: rgba(255,255,255,0.72); font-variant-numeric: tabular-nums">{{barCount}} โหมด</span>
+    </div>
+    <div onDragOver="{{overBar}}" onDrop="{{dropBar}}" style="display: flex; flex-wrap: wrap; gap: 8px; padding: 10px; min-height: 64px; border-radius: 22px; border: 1.5px dashed {{barZoneBorder}}; background: {{barZoneBg}}; transition: background-color 160ms ease, border-color 160ms ease">
+      <sc-for list="{{editBar}}" as="c" hint-placeholder-count="5">
+        <div draggable="true" onDragStart="{{c.dragStart}}" onDragEnd="{{c.dragEnd}}" onDragOver="{{c.over}}" onDrop="{{c.drop}}" style="display: flex; align-items: center; gap: 6px; height: 44px; padding: 0 6px 0 10px; border-radius: 22px; background: rgba(255,255,255,0.1); box-shadow: {{c.ring}}; opacity: {{c.opacity}}; cursor: grab; transition: box-shadow 140ms ease, opacity 140ms ease">
+          <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="{{c.d}}"></path></svg>
+          <span style="font-size: 13.5px; white-space: nowrap">{{c.title}}</span>
+          <sc-if value="{{c.removable}}" hint-placeholder-val="{{ true }}">
+            <button class="lg" aria-label="นำ{{c.title}}ออกจากแถบ" onClick="{{c.remove}}" style="width: 32px; height: 32px; border-radius: 16px; display: flex; align-items: center; justify-content: center; background: rgba(255,255,255,0.12)">
+              <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 12h14"></path></svg>
+            </button>
+          </sc-if>
+          <sc-if value="{{c.locked}}" hint-placeholder-val="{{ false }}">
+            <span aria-label="ล็อกไว้" style="width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; color: rgba(255,255,255,0.6)">
+              <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 11h12v9H6z M8.5 11V8a3.5 3.5 0 0 1 7 0v3"></path></svg>
+            </span>
+          </sc-if>
+        </div>
+      </sc-for>
+    </div>
+    <h3 style="margin: 0; font-size: 14px; font-weight: 600; color: rgba(255,255,255,0.86)">โหมดเพิ่มเติม</h3>
+    <div onDragOver="{{overMore}}" onDrop="{{dropMore}}" style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 10px; min-height: 64px; border-radius: 22px; border: 1.5px dashed {{moreZoneBorder}}; background: {{moreZoneBg}}; transition: background-color 160ms ease, border-color 160ms ease">
+      <sc-for list="{{extras}}" as="x" hint-placeholder-count="6">
+        <div draggable="true" onDragStart="{{x.dragStart}}" onDragEnd="{{x.dragEnd}}" style="display: flex; align-items: center; gap: 8px; height: 52px; padding: 0 6px 0 12px; border-radius: 18px; background: rgba(255,255,255,0.07); opacity: {{x.opacity}}; cursor: grab">
+          <button class="lg" aria-label="ใช้โหมด{{x.title}}ทันที" onClick="{{x.use}}" style="flex: 1; min-width: 0; height: 44px; margin-left: -6px; padding: 0 6px; border-radius: 14px; display: flex; align-items: center; gap: 8px; text-align: left">
+            <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="{{x.d}}"></path></svg>
+            <span style="flex: 1; font-size: 13.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis">{{x.title}}</span>
+          </button>
+          <button class="lg" aria-label="เพิ่ม{{x.title}}ลงแถบ" onClick="{{x.add}}" style="width: 36px; height: 36px; border-radius: 18px; display: flex; align-items: center; justify-content: center; background: rgba(255,255,255,0.12); color: {{accent}}">
+            <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14 M5 12h14"></path></svg>
+          </button>
+        </div>
+      </sc-for>
+      <sc-if value="{{noExtras}}" hint-placeholder-val="{{ false }}">
+        <p style="margin: 0; grid-column: 1 / -1; font-size: 13px; color: rgba(255,255,255,0.72)">ทุกโหมดอยู่ในแถบแล้ว ลากโหมดลงมาที่นี่เพื่อนำออก</p>
+      </sc-if>
+    </div>
+  </section>
+
+  <div aria-hidden="true" onClick="{{closeMenu}}" style="position: absolute; z-index: 8; inset: 0; background: rgba(0,0,0,0.16); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); opacity: {{menuDim}}; transition: opacity 320ms ease; pointer-events: {{menuEvents}}"></div>
+  <div role="listbox" aria-label="{{menuTitle}}" aria-hidden="{{menuHidden}}" class="glass-pop {{menuL.cls}}" onPointerDown="{{menuDown}}" onPointerMove="{{menuMove}}" onPointerUp="{{menuUp}}" onPointerCancel="{{menuCancel}}" style="--r: 22px; position: absolute; z-index: 9; left: {{menuX}}px; top: {{menuY}}px; width: {{menuW}}px; border-radius: 22px; padding: 6px; box-sizing: border-box; display: flex; flex-direction: column; gap: 2px; touch-action: none; opacity: {{menuL.opacity}}; transform-origin: {{menuOrigin}}; pointer-events: {{menuEvents}}; animation: {{menuL.anim}}">
+    <span aria-hidden="true" style="position: absolute; left: 6px; right: 6px; top: {{hiTop}}px; height: 52px; border-radius: 16px; background: rgba(255,255,255,0.14); box-shadow: inset 0 1px 0 rgba(255,255,255,0.22), 0 6px 16px rgba(0,0,0,0.25); transform: scale({{hiScale}}); transition: {{hiMotion}}"></span>
+    <span style="display: block; height: 28px; box-sizing: border-box; padding: 6px 10px 0; font-size: 12px; font-weight: 600; color: rgba(255,255,255,0.72)">{{menuTitle}}</span>
+    <sc-for list="{{menuItems}}" as="mi" hint-placeholder-count="3">
+      <button role="option" aria-selected="{{mi.on}}" onClick="{{mi.pick}}" style="position: relative; height: 52px; padding: 0 10px; border-radius: 16px; display: flex; align-items: center; gap: 10px; text-align: left; transform: scale({{mi.scale}}); transition: transform 260ms cubic-bezier(0.34, 1.56, 0.64, 1)">
+        <span style="position: relative; flex: 0 0 auto; display: flex; align-items: center; justify-content: center; color: {{mi.color}}">
+          <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="{{mi.d}}"></path></svg>
+          <span style="position: absolute; font-size: 8px; font-weight: 600">{{mi.inner}}</span>
+        </span>
+        <span style="flex: 1; display: flex; flex-direction: column">
+          <span style="font-size: 14px; font-weight: {{mi.weight}}">{{mi.label}}</span>
+          <sc-if value="{{mi.hasNote}}" hint-placeholder-val="{{ false }}"><span style="font-size: 11.5px; color: rgba(255,255,255,0.72)">{{mi.note}}</span></sc-if>
+        </span>
+        <sc-if value="{{mi.check}}" hint-placeholder-val="{{ false }}">
+          <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="{{accent}}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"></path></svg>
+        </sc-if>
+      </button>
+    </sc-for>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"accent":{"editor":"color","default":"#FFD447","options":["#FFD447","#34C759","#0A84FF","#FF9F0A"]},"reduceMotion":{"editor":"boolean","default":false},"$preview":{"width":390,"height":844}}'>
+const MODES = {
+  NIGHT: { t: 'กลางคืน', w: 80, d: 'M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z' },
+  PORTRAIT: { t: 'บุคคล', w: 68, d: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8z M4.5 20a7.5 7.5 0 0 1 15 0' },
+  PHOTO: { t: 'ภาพถ่าย', w: 76, d: 'M4 8h3l2-2.5h6L17 8h3v11H4z M12 16.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z' },
+  VIDEO: { t: 'วิดีโอ', w: 68, d: 'M3.5 7h11v10h-11z M14.5 10.5 20.5 7v10l-6-3.5' },
+  PRO: { t: 'โปร', w: 56, d: 'M6 4v16 M12 4v16 M18 4v16 M4 15h4 M10 8h4 M16 12h4' },
+  HDR: { t: 'HDR', w: 60, d: 'M12 3v2 M12 19v2 M3 12h2 M19 12h2 M5.6 5.6 7 7 M17 17l1.4 1.4 M5.6 18.4 7 17 M17 7l1.4-1.4 M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8z' },
+  ULTRA: { t: 'Ultra HDR', w: 92, d: 'M10 14a4 4 0 1 1 4-4 M17.5 14v7 M14 17.5h7 M10 2v2 M2 10h2 M4.3 4.3l1.4 1.4 M15.7 4.3l-1.4 1.4' },
+  HIRES: { t: 'ความละเอียดสูง', w: 116, d: 'M3 6h18v12H3z M7 10v4 M7 12h3 M10 10v4 M13.5 10h2a2 2 0 0 1 0 4h-2z' },
+  DOC: { t: 'เอกสาร', w: 70, d: 'M7 3h7l5 5v13H7z M14 3v5h5 M10 13h6 M10 17h6' },
+  PANO: { t: 'พาโนรามา', w: 86, d: 'M3 7c6 2 12 2 18 0v10c-6-2-12-2-18 0z' },
+  TIMELAPSE: { t: 'Time-lapse', w: 92, d: 'M7 3h10 M7 21h10 M8 3c0 5 8 5 8 9s-8 4-8 9 M16 3c0 5-8 5-8 9s8 4 8 9' },
+  SLOWMO: { t: 'Slow-motion', w: 104, d: 'M12 21a9 9 0 1 0-9-9 M12 7v5l3 2 M3 16h4 M2 19h6' },
+  DUAL: { t: 'Dual-view', w: 92, d: 'M3 6h8v12H3z M13 6h8v12h-8z' },
+  MOVIE: { t: 'วิดีโอโปร', w: 84, d: 'M3 8h18v12H3z M3 8l3-4h4l-3 4 M10 8l3-4h4l-3 4' },
+  RAWV: { t: 'RAW Video', w: 98, d: 'M3.5 7h11v10h-11z M14.5 10.5 20.5 7v10l-6-3.5 M7 14v-4h2a1 1 0 0 1 0 2H7 M9 14l-1-2' }
+};
+const ORDER = ['NIGHT', 'PORTRAIT', 'PHOTO', 'VIDEO', 'PRO', 'MOVIE', 'HDR', 'ULTRA', 'HIRES', 'DOC', 'PANO', 'TIMELAPSE', 'SLOWMO', 'DUAL', 'RAWV'];
+const VIDEO_MODES = ['VIDEO', 'TIMELAPSE', 'SLOWMO', 'DUAL', 'MOVIE', 'RAWV'];
+const ASPECTS = { '4:3': { top: 40, h: 520 }, '1:1': { top: 105, h: 390 }, '16:9': { top: 40, h: 693 } };
+const LENSES = [0.6, 1, 2, 3.5];
+const ZMIN = 0.6, ZMAX = 30, DEG_PER_STOP = 30, MINI_FROM = 10;
+const I = {
+  flash: 'M13 3 5 14h6l-1 7 8-11h-6z', flashOff: 'M13 3 5 14h6l-1 7 8-11h-6z M4 4l16 16',
+  timer: 'M12 21a8 8 0 1 0 0-16 8 8 0 0 0 0 16z M12 9v4l2.5 2.5 M9.5 2.5h5',
+  frame: 'M4 9V5h4 M16 5h4v4 M20 15v4h-4 M8 19H4v-4',
+  file: 'M5 8h12v12H5z M8 5h10a2 2 0 0 1 2 2v10',
+  ai: 'M11 3l1.7 4.6L17.3 9.3l-4.6 1.7L11 15.6 9.3 11 4.7 9.3 9.3 7.6z M18 14l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z',
+  grid: 'M4 4h16v16H4z M9.3 4v16 M14.7 4v16 M4 9.3h16 M4 14.7h16',
+  res: 'M3 6h18v12H3z M7 10v4 M7 12h3 M10 10v4 M13.5 10h2a2 2 0 0 1 0 4h-2z',
+  lock: 'M6 11h12v9H6z M8.5 11V8a3.5 3.5 0 0 1 7 0v3',
+  unlock: 'M6 11h12v9H6z M8.5 11V8a3.5 3.5 0 0 1 6.8-1.2',
+  sun: 'M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8z M12 2v2 M12 20v2 M2 12h2 M20 12h2'
+};
+const MENUS = {
+  flash: { title: 'แฟลช', opts: [{ label: 'ปิด', d: I.flashOff }, { label: 'อัตโนมัติ', d: I.flash, note: 'เปิดเมื่อแสงน้อย' }, { label: 'เปิด', d: I.flash }] },
+  timer: { title: 'ตั้งเวลา', opts: [{ label: 'ปิด', d: I.timer }, { label: '3 วินาที', d: I.timer }, { label: '10 วินาที', d: I.timer }] },
+  aspect: { title: 'สัดส่วนภาพ', opts: [{ label: '4:3', d: I.frame, inner: '4:3', note: 'เต็มเซนเซอร์ ละเอียดที่สุด' }, { label: '1:1', d: I.frame, inner: '1:1', note: 'จัตุรัส' }, { label: '16:9', d: I.frame, inner: '16:9', note: 'จอกว้าง ครอปบนล่าง' }] },
+  night: { title: 'เวลารวมแสงกลางคืน', opts: [{ label: 'อัตโนมัติ', d: 'M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z', note: 'ประมาณ 3 วินาที ตามแสงในฉาก' }, { label: '5 วินาที', d: 'M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z', note: 'ฉากมืดมาก' }, { label: '10 วินาที', d: 'M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z', note: 'ใช้ขาตั้ง' }] },
+  fmt: { title: 'รูปแบบไฟล์', opts: [{ label: 'JPEG', d: I.file, note: 'ภาพที่กล้องประมวลผล' }, { label: 'RAW', d: I.file, note: 'DNG จากเซนเซอร์' }, { label: 'AI', d: I.ai, note: 'รวมหลายเฟรม + SR1' }, { label: 'RAW + AI', d: I.ai, note: 'DNG พร้อมภาพ AI' }] }
+};
+const PARAMS = {
+  ISO: { title: 'ISO', values: ['AUTO', '50', '100', '200', '400', '800', '1600', '3200', '6400'], auto: 0, sep: true, grad: ['#5AC8FA', '#7BE3B0', '#FFD447', '#FF9F0A', '#FF453A'] },
+  S: { title: 'ชัตเตอร์', values: ['AUTO', '1/8000', '1/1000', '1/250', '1/60', '1/30', '1/8', '1/2', '1s'], auto: 0, sep: true, grad: ['#64D2FF', '#BF9BFF', '#FFD447', '#FF9F0A'] },
+  WB: { title: 'WB', values: ['AUTO', '2800K', '4000K', '5500K', '6500K', '7500K'], auto: 0, sep: true, grad: ['#FF9A3D', '#FFD9A8', '#FFFFFF', '#CFE5FF', '#7DB8FF'] },
+  AF: { title: 'โฟกัส', values: ['AUTO', '∞', 'ไกล', 'กลาง', 'ใกล้', 'มาโคร'], auto: 0, sep: true, grad: ['#8E8E93', '#BBF0FF', '#5AC8FA'] },
+  EV: { title: 'EV', values: ['-2.0', '-1.7', '-1.3', '-1.0', '-0.7', '-0.3', '±0', '+0.3', '+0.7', '+1.0', '+1.3', '+1.7', '+2.0'], auto: 6, grad: ['#3A3A3C', '#8E8E93', '#FFFFFF'] },
+  vres: { title: 'ความละเอียด', values: ['720p', '1080p', '4K'], auto: 1, grad: ['#8E8E93', '#64D2FF', '#BF9BFF'] },
+  vfps: { title: 'fps', values: ['24', '30', '60'], auto: 1, grad: ['#FFD447', '#7BE3B0', '#64D2FF'] },
+  vslow: { title: 'fps', values: ['120', '240'], auto: 0, grad: ['#64D2FF', '#BF9BFF'] },
+  vlapse: { title: 'ช่วงถ่าย', values: ['0.5 วิ', '1 วิ', '2 วิ'], auto: 1, grad: ['#7BE3B0', '#64D2FF', '#BF9BFF'] },
+  vstab: { title: 'กันสั่น', values: ['ปิด', 'มาตรฐาน', 'แอ็กชัน'], auto: 1, grad: ['#8E8E93', '#7BE3B0', '#FFD447'] },
+  vhdr: { title: 'HDR', values: ['ปิด', 'HLG'], auto: 0, grad: ['#8E8E93', '#FFD447'] },
+  vmic: { title: 'เสียง', values: ['สเตอริโอ', 'โมโน', 'ลดลม'], auto: 0, grad: ['#64D2FF', '#7BE3B0', '#FFD447'] }
+};
+const ROWS = {
+  PRO: ['ISO', 'S', 'WB', 'AF', 'EV'],
+  MOVIE: ['ISO', 'S', 'WB', 'AF', 'EV', 'vres', 'vfps', 'vstab', 'vhdr', 'vmic'],
+  VIDEO: ['vres', 'vfps', 'vstab', 'vhdr', 'vmic'], DUAL: ['vres', 'vfps', 'vmic'], RAWV: ['vres', 'vfps', 'vmic'],
+  SLOWMO: ['vres', 'vslow', 'vmic'], TIMELAPSE: ['vres', 'vlapse', 'vstab']
+};
+const MOVIE_CATS = [{ title: 'ปรับแต่งวิดีโอ', keys: ['ISO', 'S', 'WB', 'AF', 'EV'] }, { title: 'คุณภาพวิดีโอ', keys: ['vres', 'vfps', 'vstab', 'vhdr', 'vmic'] }];
+const LOOKS = [
+  { name: 'มาตรฐาน', f: '' }, { name: 'สดใส', f: 'saturate(1.35) contrast(1.06)' },
+  { name: 'อบอุ่น', f: 'sepia(0.28) saturate(1.1)' }, { name: 'เย็น', f: 'hue-rotate(-14deg) saturate(0.95)' },
+  { name: 'ฟิล์ม', f: 'contrast(0.9) sepia(0.16) brightness(1.05)' }, { name: 'ขาวดำ', f: 'grayscale(1) contrast(1.1)' }
+];
+const GAP = 4, ROW_INNER = 350, ITEM_H = 52, ITEM_PITCH = 54, ITEMS_TOP = 36;
+const EASE = 'cubic-bezier(0.32, 0.72, 0, 1)';
+const SPRING = 'cubic-bezier(0.34, 1.56, 0.64, 1)';
+const POP = 'cubic-bezier(0.2, 0.9, 0.25, 1.15)';
+const log2 = Math.log2;
+function hex(c) { const n = parseInt(c.slice(1), 16); return [n >> 16 & 255, n >> 8 & 255, n & 255]; }
+function mix(stops, t) {
+  const x = Math.max(0, Math.min(1, t)) * (stops.length - 1);
+  const i = Math.min(stops.length - 2, Math.floor(x)); const f = x - i;
+  const a = hex(stops[i]), b = hex(stops[i + 1]);
+  return 'rgb(' + a.map((v, k) => Math.round(v + (b[k] - v) * f)).join(',') + ')';
+}
+function fmtZoom(z) { return (z < 0.95 ? z.toFixed(1).replace('0.', '.') : (Math.abs(z - Math.round(z)) < 0.05 ? String(Math.round(z)) : z.toFixed(1))) + '×'; }
+function focusDistance(fd) { return fd < 0.04 ? Infinity : 0.1 / Math.pow(fd, 1.6); }
+function fmtDistance(m) { return m === Infinity ? '∞' : m >= 1 ? m.toFixed(m >= 10 ? 0 : 1) + ' ม.' : Math.round(m * 100) + ' ซม.'; }
+function localPoint(e, el) { const r = el.getBoundingClientRect(); const k = r.width / el.offsetWidth || 1; return { x: (e.clientX - r.left) / k, y: (e.clientY - r.top) / k, k }; }
+
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    const v = {}; Object.keys(PARAMS).forEach((k) => { v[k] = PARAMS[k].auto; });
+    this.state = {
+      bar: ['NIGHT', 'PORTRAIT', 'PHOTO', 'VIDEO', 'PRO'], mode: 'PHOTO', zoom: 1, dialing: false,
+      flash: 0, timer: 0, fmt: 0, ai: true, aspect: '4:3', grid: false,
+      editing: false, panel: false, front: false, flipDeg: 0, switching: false,
+      shots: 0, focus: null, focusN: 0, toast: '', toastOn: false, rec: false, sec: 0,
+      hover: '', dragging: '', look: 0, bright: 0, warm: 0,
+      open: '', v, dragP: null, tail: 0, menu: 'flash', menuOpen: false, hi: 0, menuPress: false,
+      ev: 0, aeLock: false, afLock: false, lockSrc: '', mf: false, fd: 0, rail: '', railHold: false,
+      stripDrag: 0, stripDragging: false, panelDrag: 0, panelDy: 0, sel: {}, chipDrag: 0, chipDragging: false, sdKey: '', sdX: 0, pulse: 0, proCat: 0, catDir: 1, catN: 0, macro: false, night: false, nightDur: 0, nightRun: null, nightP: 0, over: 0, stretch: 1, pressing: false
+    };
+    this.lastMenu = { key: 'flash', x: 20, y: 400, w: 220, up: false, ox: 50 };
+  }
+  componentWillUnmount() { clearInterval(this.ni); [this.tt, this.st, this.zt, this.tailT, this.rt, this.mt, this.lpT, this.pt2, this.bpT].forEach(clearTimeout); clearInterval(this.ri); }
+  centers() { const out = []; let x = 0; this.ids().forEach((id) => { const w = MODES[id].w; out.push(x + w / 2); x += w + GAP; }); return out; }
+  nearestTo(pos) { const c = this.centers(); let best = 0; c.forEach((v, i) => { if (Math.abs(v - pos) < Math.abs(c[best] - pos)) best = i; }); return best; }
+  openPanel() { clearTimeout(this.pt2); this.setState({ panel: true, panelDrag: 0, panelDy: 0, open: '', menuOpen: false }); }
+  closePanel() {
+    if (!this.state.panel) return; clearTimeout(this.pt2);
+    this.setState({ panel: false, panelDy: this.state.panelDrag, panelDrag: 0 });
+    this.pt2 = setTimeout(() => this.setState({ panelDy: 0 }), 480);
+  }
+  liquid(key, val, kind) {
+    this.lq = this.lq || {}; const st = this.lq[key] || (this.lq[key] = { prev: null, n: 0, ever: false });
+    if (val && val !== st.prev) st.n++;
+    if (val) st.ever = true; st.prev = val || null;
+    if (this.props.reduceMotion) return { anim: 'none', cls: '', opacity: val ? 1 : 0 };
+    const P = st.n % 2 ? 'A' : 'B'; const sheet = kind === 'sheet';
+    if (val) return { anim: (sheet ? 'liquidIn' + P + ' 720ms' : 'popIn' + P + ' 520ms') + ' linear both', cls: 'liquid-in', opacity: 1 };
+    return { anim: st.ever ? (sheet ? 'liquidOut 420ms' : 'popOut 280ms') + ' linear forwards' : 'none', cls: st.ever ? 'liquid-out' : '', opacity: 0 };
+  }
+  lockAt(x, y) {
+    this.setState({ focus: { x, y }, focusN: this.state.focusN + 1, aeLock: true, afLock: true, lockSrc: 'press', mf: false, fd: 0 });
+    this.showRail('exp');
+  }
+  say(msg) { clearTimeout(this.tt); this.setState({ toast: msg, toastOn: true }); this.tt = setTimeout(() => this.setState({ toastOn: false }), 1500); }
+  guard(fn) { return (...a) => { if (this.swallow) { this.swallow = false; return; } fn(...a); }; }
+  pick(id) { if (id === this.state.mode) return; this.stopRec(); this.setState({ mode: id, open: '' }); this.blurPulse(10, 280); }
+  switchCat(i) {
+    const s = this.state; if (i === s.proCat || i < 0 || i >= MOVIE_CATS.length) return;
+    const wasOpen = !!s.open; const keys = MOVIE_CATS[i].keys; const keep = s.sel['MOVIE:' + i];
+    const next = keep && keys.includes(keep) ? keep : keys[0];
+    this.setState({ proCat: i, catDir: i > s.proCat ? 1 : -1, catN: s.catN + 1, open: wasOpen ? next : '', dragP: null });
+  }
+  blurPulse(px, ms) { if (this.props.reduceMotion) return; clearTimeout(this.bpT); this.setState({ pulse: px }); this.bpT = setTimeout(() => this.setState({ pulse: 0 }), ms); }
+  strip(key, n, pitch, selIdx, onSelect) {
+    const s = this.state; const dx = s.sdKey === key ? s.sdX : 0; const dragging = s.sdKey === key;
+    const live = dragging ? Math.max(0, Math.min(n - 1, Math.round((selIdx * pitch - dx) / pitch))) : selIdx;
+    return {
+      dx, live, dragging,
+      down: (e) => { this.sdSwallow = false; const k = e.currentTarget.getBoundingClientRect().width / e.currentTarget.offsetWidth || 1; this.sd = { key, x: e.clientX, k, moved: false, lx: e.clientX, lt: Date.now(), vx: 0 }; },
+      move: (e) => {
+        const d = this.sd; if (!d || d.key !== key) return; const mx = (e.clientX - d.x) / d.k;
+        if (!d.moved && Math.abs(mx) < 6) return; d.moved = true;
+        const now = Date.now(); d.vx = d.vx * 0.6 + ((e.clientX - d.lx) / d.k / Math.max(1, now - d.lt)) * 0.4; d.lx = e.clientX; d.lt = now;
+        const lo = -(n - 1 - selIdx) * pitch, hi = selIdx * pitch;
+        this.setState({ sdKey: key, sdX: mx > hi ? hi + (mx - hi) * 0.35 : mx < lo ? lo + (mx - lo) * 0.35 : mx });
+      },
+      up: () => {
+        const d = this.sd; this.sd = null; if (!d || d.key !== key || !d.moved) return;
+        this.sdSwallow = true; setTimeout(() => { this.sdSwallow = false; }, 60);
+        const target = Math.max(0, Math.min(n - 1, Math.round((selIdx * pitch - this.state.sdX - d.vx * 160) / pitch)));
+        this.setState({ sdKey: '', sdX: 0 }); if (target !== selIdx) onSelect(target);
+      }
+    };
+  }
+  step(dir) { const ids = this.ids(); const i = ids.indexOf(this.state.mode) + dir; if (i >= 0 && i < ids.length) this.pick(ids[i]); }
+  stopRec() { clearInterval(this.ri); this.ri = null; if (this.state.rec) this.setState({ rec: false, sec: 0 }); }
+  startNight() {
+    const total = [3000, 5000, 10000][this.state.nightDur]; const start = Date.now();
+    clearInterval(this.ni); this.setState({ nightRun: { start, total }, nightP: 0 });
+    this.ni = setInterval(() => { const p = Math.min(1, (Date.now() - start) / total); this.setState({ nightP: p }); if (p >= 1) this.endNight(); }, 60);
+  }
+  endNight() { clearInterval(this.ni); this.ni = null; this.setState({ nightRun: null, nightP: 0, shots: this.state.shots + 1 }); this.blurPulse(4, 200); this.say('บันทึกภาพกลางคืนแล้ว'); }
+  shoot() {
+    const s = this.state;
+    if (s.nightRun) { this.endNight(); return; }
+    if ((s.night || s.mode === 'NIGHT') && !VIDEO_MODES.includes(s.mode)) { this.startNight(); return; }
+    if (VIDEO_MODES.includes(s.mode)) {
+      if (s.rec) { this.stopRec(); this.say('บันทึกวิดีโอแล้ว'); this.setState({ shots: s.shots + 1 }); return; }
+      this.setState({ rec: true, sec: 0 }); this.ri = setInterval(() => this.setState({ sec: this.state.sec + 1 }), 1000); return;
+    }
+    this.setState({ shots: s.shots + 1 }); this.blurPulse(3, 160);
+  }
+  flip() { clearTimeout(this.st); this.setState({ front: !this.state.front, flipDeg: this.state.flipDeg + 180, switching: true, zoom: 1 }); this.st = setTimeout(() => this.setState({ switching: false }), 320); }
+  limited() { return false; }
+  ids(s) { s = s || this.state; return !s.bar.includes(s.mode) ? s.bar.concat(s.mode) : s.bar; }
+  add(id) { const bar = this.state.bar; if (bar.includes(id) || this.limited(bar, id)) return; this.setState({ bar: bar.concat(id) }); }
+  remove(id) {
+    const s = this.state;
+    if (id === 'PHOTO') { this.say('ภาพถ่ายต้องอยู่ในแถบเสมอ'); return; }
+    if (!s.bar.includes(id)) return;
+    this.setState({ bar: s.bar.filter((x) => x !== id), mode: s.mode === id ? 'PHOTO' : s.mode });
+  }
+  dropBefore(target) {
+    const id = this.dragId; this.dragId = ''; this.setState({ hover: '', dragging: '' });
+    if (!id || id === target) return;
+    const s = this.state; if (this.limited(s.bar, id)) return;
+    const bar = s.bar.filter((x) => x !== id); const at = target ? bar.indexOf(target) : -1;
+    bar.splice(at < 0 ? bar.length : at, 0, id); this.setState({ bar });
+  }
+  hoverOn(zone) { if (this.state.hover !== zone) this.setState({ hover: zone }); }
+  dragProps(id) {
+    return {
+      dragStart: (e) => { this.dragId = id; try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', id); } catch (_) {} this.setState({ dragging: id }); },
+      dragEnd: () => { this.dragId = ''; this.setState({ dragging: '', hover: '' }); },
+      opacity: this.state.dragging === id ? 0.35 : 1
+    };
+  }
+  openMenu(key, e) {
+    const el = e.currentTarget; const root = el.closest('[data-root]');
+    const r = el.getBoundingClientRect(), rr = root.getBoundingClientRect(); const k = rr.width / 390;
+    const ax = (r.left - rr.left) / k, ay = (r.top - rr.top) / k, aw = r.width / k, ah = r.height / k;
+    const w = Math.max(232, aw); const x = Math.max(12, Math.min(390 - 12 - w, ax + aw / 2 - w / 2));
+    const h = ITEMS_TOP + MENUS[key].opts.length * ITEM_PITCH + 6;
+    const up = ay + ah + 8 + h > 830;
+    this.lastMenu = { key, x, y: up ? Math.max(12, ay - 8 - h) : ay + ah + 8, w, up, ox: Math.round(((ax + aw / 2 - x) / w) * 100) };
+    this.setState({ menu: key, menuOpen: true, hi: this.menuValue(key), menuPress: false });
+  }
+  menuValue(key) {
+    const s = this.state;
+    if (key === 'flash') return s.flash; if (key === 'timer') return [0, 3, 10].indexOf(s.timer);
+    if (key === 'aspect') return Object.keys(ASPECTS).indexOf(s.aspect); if (key === 'night') return s.nightDur; return s.fmt;
+  }
+  setMenuValue(key, i) {
+    if (key === 'flash') this.setState({ flash: i }); else if (key === 'timer') this.setState({ timer: [0, 3, 10][i] });
+    else if (key === 'aspect') this.setState({ aspect: Object.keys(ASPECTS)[i] }); else if (key === 'night') this.setState({ nightDur: i, night: true }); else this.setState({ fmt: i });
+    clearTimeout(this.mt); this.mt = setTimeout(() => this.setState({ menuOpen: false, menuPress: false }), 160);
+  }
+  menuIndexAt(e, el) {
+    const n = MENUS[this.lastMenu.key].opts.length; const pt = localPoint(e, el);
+    return Math.max(0, Math.min(n - 1, Math.floor((pt.y - ITEMS_TOP) / ITEM_PITCH)));
+  }
+  range(k) { const p = PARAMS[k]; const lo = p.sep ? 1 : 0; return { lo, n: p.values.length - lo }; }
+  setFromPointer(e) {
+    const k = this.state.open; if (!k) return;
+    const r = e.currentTarget.getBoundingClientRect(); const sc = r.width / e.currentTarget.offsetWidth || 1;
+    const raw = (e.clientX - r.left) / r.width; const t = Math.max(0, Math.min(1, raw));
+    const excess = (raw < 0 ? raw : raw > 1 ? raw - 1 : 0) * r.width / sc;
+    const over = Math.sign(excess) * 24 * (1 - Math.exp(-Math.abs(excess) / 60));
+    const { lo, n } = this.range(k); const idx = lo + Math.round(t * (n - 1));
+    const v = (e.clientX - (this.lastX ?? e.clientX)) / sc; this.lastX = e.clientX;
+    const tail = Math.max(-150, Math.min(150, this.state.tail * 0.55 + v * 7));
+    const stretch = Math.min(1.7, this.state.stretch * 0.5 + (1 + Math.abs(v) * 0.04) * 0.5);
+    clearTimeout(this.tailT); this.tailT = setTimeout(() => this.setState({ tail: 0, stretch: 1 }), 70);
+    this.setState({ dragP: t, tail, over, stretch, v: Object.assign({}, this.state.v, { [k]: idx }) });
+  }
+  setZoom(z) {
+    let v = Math.max(ZMIN, Math.min(ZMAX, z));
+    for (const L of LENSES) if (Math.abs(log2(v / L)) < 0.075) return this.setState({ zoom: L });
+    this.setState({ zoom: Math.round(v * 10) / 10 });
+  }
+  showRail(which) { clearTimeout(this.rt); this.setState({ rail: which }); }
+  hideRailSoon() { clearTimeout(this.rt); this.rt = setTimeout(() => this.setState({ rail: '' }), 1600); }
+  exposure() {
+    const s = this.state; const p = s.v; let stops = s.ev;
+    if (s.mode === 'PRO' || s.mode === 'MOVIE') {
+      if (p.ISO) stops += log2(Number(PARAMS.ISO.values[p.ISO]) / 200);
+      if (p.S) { const val = PARAMS.S.values[p.S]; const sec = val.endsWith('s') ? parseFloat(val) : 1 / Number(val.split('/')[1]); stops += log2(sec * 125); }
+      stops += parseFloat(PARAMS.EV.values[p.EV].replace('±', '')) || 0;
+    }
+    return Math.min(2.4, Math.max(0.3, Math.pow(2, stops * 0.45)));
+  }
+  lgPos(e) {
+    const el = this.lgEl; if (!el) return;
+    const r = el.getBoundingClientRect(); const x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
+    el.style.setProperty('--lx', (x * 100).toFixed(1) + '%'); el.style.setProperty('--ly', (y * 100).toFixed(1) + '%');
+    el.style.setProperty('--tx', ((x - 0.5) * Math.min(12, el.offsetWidth * 0.1)).toFixed(1) + 'px');
+    el.style.setProperty('--ty', ((y - 0.5) * Math.min(9, el.offsetHeight * 0.1)).toFixed(1) + 'px');
+  }
+  renderVals() {
+    const s = this.state;
+    const accent = this.props.accent ?? '#FFD447';
+    const still = this.props.reduceMotion ?? false;
+    const t = (v) => (still ? 'none' : v);
+    const g = (fn) => this.guard(fn);
+    const ids = this.ids(s);
+    const items = ids.map((id) => MODES[id]);
+    const index = Math.max(0, ids.indexOf(s.mode));
+    let before = 0; for (let i = 0; i < index; i++) before += items[i].w + GAP;
+    const liveIdx = s.stripDragging ? this.nearestTo(before + (items[index] ? items[index].w / 2 : 38) - s.stripDrag) : index;
+    const selW = items[liveIdx] ? items[liveIdx].w : 76;
+    const video = VIDEO_MODES.includes(s.mode);
+    const isPro = s.mode === 'PRO' || s.mode === 'MOVIE';
+    const geo = ASPECTS[s.aspect];
+    const parity = (n) => (n % 2 ? 'A' : 'B');
+    const flashNames = ['ปิด', 'อัตโนมัติ', 'เปิด'];
+    const movie = s.mode === 'MOVIE';
+    const row = movie ? MOVIE_CATS[s.proCat].keys : ROWS[s.mode] || null;
+    const selMode = movie ? 'MOVIE:' + s.proCat : s.mode;
+
+    const wbK = isPro && s.v.WB ? parseInt(PARAMS.WB.values[s.v.WB], 10) : 5500;
+    const wbFilter = wbK < 5000 ? ' sepia(' + ((5000 - wbK) / 6000).toFixed(2) + ')' : wbK > 6000 ? ' hue-rotate(' + (-(wbK - 6000) / 120).toFixed(1) + 'deg)' : '';
+    let blur = isPro && s.v.AF ? [0, 0, 0.6, 1.5, 3, 5][s.v.AF] : 0;
+    if (s.mf) blur = Math.max(blur, Math.min(6, Math.abs(Math.log(focusDistance(s.fd) / 2)) * 1.3));
+    const warmF = s.warm > 0 ? ' sepia(' + (s.warm / 280).toFixed(2) + ')' : s.warm < 0 ? ' hue-rotate(' + (s.warm / 6).toFixed(1) + 'deg)' : '';
+    const look = LOOKS[s.look].f;
+    let filter = 'brightness(' + (this.exposure() * (1 + s.bright / 260)).toFixed(3) + ')' + (look ? ' ' + look : '') + warmF + wbFilter;
+    if (blur > 0.05) filter += ' blur(' + blur.toFixed(2) + 'px)';
+    if (s.switching) filter += ' blur(16px) brightness(0.7)';
+    if (s.pulse) filter += ' blur(' + s.pulse + 'px)';
+    if (s.nightRun) filter = filter.replace(/^brightness\(([\d.]+)\)/, (m, b) => 'brightness(' + (Number(b) * (0.75 + 0.7 * s.nightP)).toFixed(3) + ') contrast(' + (1 + 0.12 * s.nightP).toFixed(3) + ')');
+
+    const status = [];
+    if (s.flash) status.push({ d: I.flash, inner: '', after: s.flash === 1 ? 'A' : '', name: 'แฟลช' + flashNames[s.flash] });
+    if (s.timer) status.push({ d: I.timer, inner: '', after: s.timer + 's', name: 'ตั้งเวลา ' + s.timer + ' วินาที' });
+    if (s.aspect !== '4:3') status.push({ d: I.frame, inner: s.aspect, after: '', name: 'สัดส่วนภาพ ' + s.aspect });
+    if (s.fmt && !video) status.push({ d: I.file, inner: '', after: MENUS.fmt.opts[s.fmt].label.replace(' + ', '+'), name: 'รูปแบบไฟล์ ' + MENUS.fmt.opts[s.fmt].label });
+    if (video) { const r = PARAMS.vres.values[s.v.vres]; const f = s.mode === 'SLOWMO' ? PARAMS.vslow.values[s.v.vslow] : s.mode === 'TIMELAPSE' ? 'TL' : PARAMS.vfps.values[s.v.vfps]; status.push({ d: I.res, inner: '', after: r + ' · ' + f, name: 'วิดีโอ ' + r + ' ' + f }); }
+    if (s.aeLock) status.push({ d: I.lock, inner: '', after: 'AE', name: 'ล็อกความสว่าง' });
+    if (s.macro) status.push({ d: 'M12 13a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M12 13v8 M12 18c-3 0-5-2-5-4 M12 18c3 0 5-2 5-4', inner: '', after: '', name: 'มาโคร เปิด' });
+    if ((s.night || s.mode === 'NIGHT') && !video) status.push({ d: 'M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z', inner: '', after: ['3s', '5s', '10s'][s.nightDur], name: 'กลางคืน ' + MENUS.night.opts[s.nightDur].label });
+    if (s.ai && s.mode === 'PHOTO') status.push({ d: I.ai, inner: '', after: '', name: 'AI อัตโนมัติ เปิด' });
+
+    const tile = (title, d, value, on, tap, inner, isMenu) => ({
+      title, d, value, inner: inner || '', tap, isMenu: !!isMenu, popup: isMenu ? 'listbox' : 'false',
+      color: on ? accent : 'rgba(255,255,255,0.72)', bg: on ? 'rgba(255,212,71,0.12)' : 'rgba(255,255,255,0.07)'
+    });
+    const tiles = [
+      tile('แฟลช', s.flash ? I.flash : I.flashOff, flashNames[s.flash], s.flash > 0, (e) => this.openMenu('flash', e), '', true),
+      tile('ตั้งเวลา', I.timer, s.timer ? s.timer + ' วิ' : 'ปิด', s.timer > 0, (e) => this.openMenu('timer', e), '', true),
+      tile('สัดส่วนภาพ', I.frame, s.aspect, s.aspect !== '4:3', (e) => this.openMenu('aspect', e), s.aspect, true),
+      tile('รูปแบบไฟล์', I.file, MENUS.fmt.opts[s.fmt].label, s.fmt > 0, (e) => this.openMenu('fmt', e), '', true),
+      tile('AI อัตโนมัติ', I.ai, s.ai ? 'เปิด' : 'ปิด', s.ai, () => this.setState({ ai: !s.ai })),
+      tile('เส้นกริด', I.grid, s.grid ? 'เปิด' : 'ปิด', s.grid, () => this.setState({ grid: !s.grid }))
+    ];
+
+    const CW = 72, CP = 76, CMID = 178;
+    let chips = [];
+    const selKey = row ? (s.open && row.includes(s.open) ? s.open : (s.sel[selMode] && row.includes(s.sel[selMode]) ? s.sel[selMode] : row[0])) : null;
+    const selIdx = row ? row.indexOf(selKey) : 0;
+    const liveChip = row && s.chipDragging ? Math.max(0, Math.min(row.length - 1, Math.round((selIdx * CP - s.chipDrag) / CP))) : selIdx;
+    if (row) {
+      chips = row.map((k, i) => {
+        const p = PARAMS[k]; const val = s.v[k]; const manual = val !== p.auto; const r = this.range(k); const cur = i === liveChip;
+        return {
+          title: p.title, value: p.values[val], open: s.open === k ? 'true' : 'false', w: CW, x: i * CP,
+          color: manual ? mix(p.grad, (val - r.lo) / Math.max(1, r.n - 1)) : cur ? '#fff' : 'rgba(255,255,255,0.86)',
+          titleColor: cur ? '#fff' : 'rgba(255,255,255,0.6)', scale: cur ? 1 : 0.92,
+          pick: () => {
+            if (this.chipSwallow) { this.chipSwallow = false; return; }
+            this.lastX = null; this.setState({ sel: Object.assign({}, s.sel, { [selMode]: k }), open: s.open === k ? '' : k, dragP: null });
+          }
+        };
+      });
+    }
+    const open = row && s.open && row.includes(s.open) ? PARAMS[s.open] : null;
+    const rng = open ? this.range(s.open) : { lo: 0, n: 2 };
+    const idx = open ? s.v[s.open] : 0;
+    const manualOpen = open && idx !== open.auto;
+    const posFromIdx = open ? Math.max(0, (idx - rng.lo) / Math.max(1, rng.n - 1)) : 0;
+    const p = s.dragP != null ? s.dragP : (open && open.sep && !manualOpen ? 0 : posFromIdx);
+    const grad = open ? 'linear-gradient(90deg, ' + open.grad.join(', ') + ')' : 'none';
+    const tailDir = s.tail >= 0 ? -1 : 1;
+    const dragging = s.dragP != null;
+
+    const lookStrip = this.strip('look', LOOKS.length, 82, s.look, (i) => this.setState({ look: i }));
+    const ml = this.lastMenu; const menuDef = MENUS[ml.key]; const mv = this.menuValue(ml.key);
+    const z = s.zoom;
+    const lensIdx = LENSES.reduce((a, L, i) => (z >= L - 0.001 ? i : a), 0);
+    const ticks = [];
+    for (let k = 0; k <= 80; k++) {
+      const tz = ZMIN * Math.pow(2, k / 14); if (tz > ZMAX * 1.001) break;
+      const deg = (log2(tz) - log2(z)) * DEG_PER_STOP; if (Math.abs(deg) > 34) continue;
+      ticks.push({ deg: deg.toFixed(2), h: 10, width: 1.5, half: -0.75, color: 'rgba(255,255,255,' + (0.75 - Math.abs(deg) / 60).toFixed(2) + ')' });
+    }
+    LENSES.forEach((L) => { const deg = (log2(L) - log2(z)) * DEG_PER_STOP; if (Math.abs(deg) < 34) ticks.push({ deg: deg.toFixed(2), h: 18, width: 2.5, half: -1.25, color: Math.abs(L - z) < 0.01 ? accent : '#fff' }); });
+    const labels = LENSES.concat([5, 10, 20, 30]).map((L) => ({ L, deg: (log2(L) - log2(z)) * DEG_PER_STOP }))
+      .filter((o) => Math.abs(o.deg) < 32)
+      .map((o) => ({ deg: o.deg.toFixed(2), label: fmtZoom(o.L).replace('×', ''), color: Math.abs(o.L - z) < 0.01 ? accent : 'rgba(255,255,255,0.86)' }));
+
+    const railTop = Math.round(geo.top + geo.h / 2 - 120);
+    const expOn = s.rail === 'exp';
+    const focOn = s.rail === 'foc';
+    const evY = 120 - (s.ev / 2) * 90;
+    const fdY = 30 + s.fd * 180;
+
+    return {
+      accent, gap: GAP, rootClass: still ? 'rm' : '',
+      lgDown: (e) => { const el = e.target.closest && e.target.closest('.lg'); if (!el || still) return; this.lgEl = el; this.lgStart = { x: e.clientX, y: e.clientY }; el.classList.add('lg-on'); this.lgPos(e); },
+      lgMove: (e) => { const st = this.lgStart; if (this.lgEl && st && Math.hypot(e.clientX - st.x, e.clientY - st.y) > 12) { const el = this.lgEl; el.classList.remove('lg-on'); el.style.setProperty('--tx', '0px'); el.style.setProperty('--ty', '0px'); this.lgEl = null; return; } this.lgPos(e); },
+      lgUp: () => { const el = this.lgEl; if (!el) return; el.classList.remove('lg-on'); el.style.setProperty('--tx', '0px'); el.style.setProperty('--ty', '0px'); this.lgEl = null; },
+      status, openPanel: g(() => this.openPanel()),
+      sceneScale: (Math.pow(z / 0.6, 0.5) * (s.macro ? 1.22 : 1)).toFixed(3), mirror: s.front ? -1 : 1, sceneFilter: filter,
+      sceneMotion: t((s.dialing ? 'transform 90ms linear' : 'transform 320ms ' + EASE) + (s.rail ? ', filter 90ms linear' : ', filter 260ms ease')),
+      grid: s.grid, gridY1: Math.round(geo.h / 3), gridY2: Math.round(geo.h * 2 / 3),
+      pvTop: geo.top, pvH: geo.h, sceneTop: Math.round((geo.h - 693) / 2),
+      pvMotion: t('top 380ms ' + EASE + ', height 380ms ' + EASE + ', transform 560ms ' + SPRING + ', border-radius 400ms ' + EASE),
+      pvScale: s.panel || s.editing ? 0.94 : s.menuOpen ? 0.98 : 1, pvRadius: s.panel || s.editing ? 28 : s.menuOpen ? 16 : 0,
+      toast: s.toast, toastL: this.liquid('toast', s.toastOn ? s.toast : '', 'pop'),
+      focusX: s.focus ? s.focus.x : 195, focusY: s.focus ? s.focus.y : 260,
+      focusAnim: s.focus ? (s.afLock ? 'lock' : 'focus') + parity(s.focusN) + ' ' + (still ? '1ms' : s.afLock ? '900ms' : '1100ms') + ' ease-out forwards' : 'none', ringW: s.afLock ? 2.5 : 1.5,
+      banner: this.liquid('banner', s.afLock, 'pop'),
+      onDown: (e) => {
+        if (e.target !== e.currentTarget) { this.pv = null; return; }
+        const pt = localPoint(e, e.currentTarget);
+        this.pv = { x0: e.clientX, y0: e.clientY, k: pt.k, lx: pt.x, ly: pt.y, t: Date.now(), axis: '', ev0: s.ev, fd0: s.fd, zone: pt.x > 270 ? 'foc' : 'exp', locked: false, cy: e.clientY };
+        try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {}
+        clearTimeout(this.lpT);
+        this.lpT = setTimeout(() => { const d = this.pv; if (!d || d.axis) return; d.locked = true; d.zone = 'exp'; d.y0 = d.cy; d.ev0 = this.state.ev; this.lockAt(d.lx, d.ly); }, 550);
+      },
+      onMove: (e) => {
+        const d = this.pv; if (!d) return;
+        d.cy = e.clientY;
+        const dx = (e.clientX - d.x0) / d.k, dy = (e.clientY - d.y0) / d.k;
+        if (!d.axis) { if (Math.abs(dy) > 10 && Math.abs(dy) > Math.abs(dx)) { d.axis = 'v'; clearTimeout(this.lpT); this.showRail(d.zone); } else if (Math.abs(dx) > 10 && !d.locked) { d.axis = 'h'; clearTimeout(this.lpT); } }
+        if (d.axis !== 'v') return;
+        if (d.zone === 'exp') this.setState({ ev: Math.round(Math.max(-2, Math.min(2, d.ev0 - dy / 90)) * 10) / 10 });
+        else this.setState({ mf: true, fd: Math.max(0, Math.min(1, d.fd0 + dy / 220)) });
+      },
+      onUp: (e) => {
+        const d = this.pv; this.pv = null; clearTimeout(this.lpT); if (!d) return;
+        if (d.axis === 'v' || d.locked) { this.hideRailSoon(); return; }
+        const dx = (e.clientX - d.x0) / d.k;
+        if (d.axis === 'h' && Math.abs(dx) > 40 && Date.now() - d.t < 700) { this.step(dx < 0 ? 1 : -1); return; }
+        if (d.axis) return;
+        if (s.open) { this.setState({ open: '' }); return; }
+        if (s.afLock) { this.setState({ afLock: false, aeLock: false, lockSrc: '', ev: 0, focus: { x: d.lx, y: d.ly }, focusN: s.focusN + 1 }); this.say('ปลดล็อก AE/AF'); this.showRail('exp'); this.hideRailSoon(); return; }
+        const reset = s.aeLock ? {} : { ev: 0 };
+        this.setState(Object.assign({ focus: { x: d.lx, y: d.ly }, focusN: s.focusN + 1, mf: false, fd: 0 }, reset));
+        if (!s.aeLock && s.ev) this.say('ล้างค่าความสว่างแล้ว');
+        this.showRail('exp'); this.hideRailSoon();
+      },
+      railTop, railMotion: t('opacity 260ms ease, transform 420ms ' + POP),
+      railThumbMotion: this.pv && this.pv.axis === 'v' ? 'none' : t('top 260ms ' + SPRING + ', height 260ms ' + SPRING),
+      expOpacity: expOn ? 1 : s.ev ? 0.85 : 0.5, expShift: expOn ? 0 : -30,
+      expThumbY: evY - 12, expFillTop: Math.min(120, evY), expFillH: Math.abs(evY - 120),
+      expGlow: s.ev ? accent : 'rgba(255,255,255,0.5)', expLabelY: evY - 12, expLabelOpacity: expOn ? 1 : 0,
+      expText: (s.ev > 0 ? '+' : s.ev < 0 ? '' : '±') + s.ev.toFixed(1) + (s.aeLock ? ' · ล็อก' : ''),
+      lockTop: railTop - 44, lockOpacity: expOn || s.aeLock ? 1 : 0, lockShift: expOn || s.aeLock ? 0 : -30, lockEvents: expOn || s.aeLock ? 'auto' : 'none',
+      lockIcon: s.aeLock ? I.lock : I.unlock, lockColor: s.aeLock ? accent : '#fff', lockPressed: s.aeLock ? 'true' : 'false',
+      lockName: s.aeLock ? 'ปลดล็อกความสว่าง' : 'ล็อกความสว่าง ไม่ให้แตะโฟกัสแล้วล้างค่า',
+      toggleLock: () => { this.setState({ aeLock: !s.aeLock, afLock: false, lockSrc: s.aeLock ? '' : 'button' }); this.say(s.aeLock ? 'ปลดล็อกความสว่าง' : 'ล็อกความสว่างแล้ว แตะโฟกัสจะไม่ล้างค่า'); this.showRail('exp'); this.hideRailSoon(); },
+      focOpacity: focOn ? 1 : s.mf ? 0.85 : 0.5, focShift: focOn ? 0 : 30,
+      focThumbY: fdY - 12, focFillH: Math.max(0, fdY - 30), focLabelY: fdY - 12,
+      focText: s.mf ? 'MF ' + fmtDistance(focusDistance(s.fd)) : 'AF',
+      dockDown: (e) => { this.swallow = false; const k = e.currentTarget.getBoundingClientRect().width / 390 || 1; this.dock = { x: e.clientX, y: e.clientY, t: Date.now(), k, axis: '', lx: e.clientX, lt: Date.now(), vx: 0 }; },
+      dockMove: (e) => {
+        const d = this.dock; if (!d) return;
+        const dx = (e.clientX - d.x) / d.k, dy = (e.clientY - d.y) / d.k;
+        if (!d.axis) { if (Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy)) d.axis = 'h'; else if (Math.abs(dy) > 8) d.axis = 'v'; }
+        if (d.axis !== 'h') return;
+        const now = Date.now(); d.vx = d.vx * 0.6 + ((e.clientX - d.lx) / d.k / Math.max(1, now - d.lt)) * 0.4; d.lx = e.clientX; d.lt = now;
+        const cs = this.centers(); const cur = cs[Math.max(0, ids.indexOf(s.mode))] || 0;
+        const lo = cur - cs[cs.length - 1], hi = cur - cs[0];
+        const rub = (v, a, b) => (v > b ? b + (v - b) * 0.35 : v < a ? a + (v - a) * 0.35 : v);
+        this.setState({ stripDragging: true, stripDrag: rub(dx, lo, hi) });
+      },
+      dockUp: (e) => {
+        const d = this.dock; this.dock = null; if (!d) return;
+        const dx = (e.clientX - d.x) / d.k, dy = (e.clientY - d.y) / d.k;
+        if (d.axis === 'h') {
+          this.swallow = true;
+          const cs = this.centers(); const cur = cs[Math.max(0, ids.indexOf(s.mode))] || 0;
+          const target = this.nearestTo(cur - this.state.stripDrag - d.vx * 160);
+          this.setState({ stripDragging: false, stripDrag: 0 });
+          if (ids[target] !== s.mode) this.pick(ids[target]);
+          return;
+        }
+        if (d.axis === 'v' && dy < -36 && Date.now() - d.t < 700) { this.swallow = true; this.openPanel(); }
+      },
+      sheetDown: (e) => { const k = e.currentTarget.getBoundingClientRect().width / e.currentTarget.offsetWidth || 1; this.sheet = { y: e.clientY, k, t: Date.now() }; try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {} },
+      sheetMove: (e) => { const d = this.sheet; if (!d) return; const dy = (e.clientY - d.y) / d.k; this.setState({ panelDrag: dy > 0 ? dy : dy * 0.2 }); },
+      sheetUp: (e) => {
+        const d = this.sheet; this.sheet = null; if (!d) return; const dy = (e.clientY - d.y) / d.k;
+        if (dy > 80 || (dy > 24 && Date.now() - d.t < 250) || Math.abs(dy) < 4) this.closePanel(); else this.setState({ panelDrag: 0 });
+      },
+      nudgeAnim: still || s.panel ? 'none' : 'nudge 3.2s ease-in-out 1.2s infinite',
+      rec: s.rec, recTime: '00:' + String(s.sec).padStart(2, '0'),
+      showZoom: !s.front && !open, pillsOpacity: s.dialing ? 0 : 1,
+      zDown: (e) => { this.zs = { x: e.clientX, z: s.zoom, moved: false }; try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {} clearTimeout(this.zt); },
+      zMove: (e) => {
+        const st = this.zs; if (!st) return; const dx = e.clientX - st.x;
+        if (!st.moved && Math.abs(dx) < 6) return;
+        if (!st.moved) { st.moved = true; this.setState({ dialing: true }); }
+        this.setZoom(st.z * Math.pow(2, -dx / 95));
+      },
+      zUp: () => { const st = this.zs; this.zs = null; if (st && st.moved) { this.zSwallow = true; clearTimeout(this.zt); this.zt = setTimeout(() => this.setState({ dialing: false }), 1300); } },
+      zooms: LENSES.map((L, i) => {
+        const sel = i === lensIdx;
+        return {
+          label: sel ? fmtZoom(z) : fmtZoom(L).replace('×', ''), full: fmtZoom(L), size: sel ? 40 : 32, font: sel ? 12.5 : 12,
+          bg: sel ? 'rgba(0,0,0,0.55)' : 'rgba(255,255,255,0.1)', color: sel ? accent : '#fff',
+          motion: t('width 220ms ' + SPRING + ', height 220ms ' + SPRING + ', background-color 160ms ease'),
+          pick: () => { if (this.zSwallow) { this.zSwallow = false; return; } this.setState({ zoom: L }); }
+        };
+      }),
+      wheelOpacity: s.dialing ? 1 : 0, wheelY: s.dialing ? 0 : 24, wheelScale: s.dialing ? 1 : 0.94,
+      wheelMotion: t('opacity 240ms ease, transform 420ms ' + POP), wheelTicks: ticks, wheelLabels: labels, zoomText: fmtZoom(z),
+      mini: this.liquid('mini', z > MINI_FROM, 'pop'),
+      miniLens: (z >= 3.5 ? '3.5' : '1') + '×', miniLensScale: Math.pow((z >= 3.5 ? 3.5 : 1) / 0.6, 0.5).toFixed(3),
+      miniBoxW: (90 * Math.pow((z >= 3.5 ? 3.5 : 1) / z, 0.5)).toFixed(1), miniBoxH: (120 * Math.pow((z >= 3.5 ? 3.5 : 1) / z, 0.5)).toFixed(1),
+      miniFilter: 'brightness(' + this.exposure().toFixed(3) + ')',
+      chipRow: chips.length > 0 && !s.dialing, chips,
+      showCats: movie && !s.dialing, cats: MOVIE_CATS.map((c, i) => ({ title: c.title, on: i === s.proCat ? 'true' : 'false', color: i === s.proCat ? '#fff' : 'rgba(255,255,255,0.6)', pick: () => { if (this.catSwallow) { this.catSwallow = false; return; } this.switchCat(i); } })),
+      catHiX: s.proCat * 100, catHiMotion: t('transform 420ms ' + POP),
+      catBarDown: (e) => { this.cb = { x: e.clientX }; },
+      catBarUp: (e) => { const c = this.cb; this.cb = null; if (!c) return; const dx = e.clientX - c.x; if (Math.abs(dx) > 24) { this.catSwallow = true; setTimeout(() => { this.catSwallow = false; }, 60); this.switchCat(s.proCat + (dx < 0 ? 1 : -1)); } },
+      chipAnim: movie && s.catN && !still ? 'chipSlide' + (s.catDir > 0 ? 'L' : 'R') + (s.catN % 2 ? 'A' : 'B') + ' 460ms cubic-bezier(0.2, 0.9, 0.25, 1.1) both' : 'none',
+      dialTop: movie ? 270 : 302,
+      showSide: !open, sideOpacity: s.dialing || s.nightRun ? 0 : 1,
+      macroColor: s.macro ? accent : '#fff', macroPressed: s.macro ? 'true' : 'false', macroName: s.macro ? 'ปิดมาโคร' : 'เปิดมาโคร ถ่ายใกล้ได้ทุกระยะเลนส์',
+      toggleMacro: () => { if (s.front) { this.say('มาโครใช้ได้กับกล้องหลัง'); return; } this.setState({ macro: !s.macro }); this.blurPulse(6, 240); this.say(s.macro ? 'ปิดมาโคร' : 'มาโคร · โฟกัสใกล้สุดราว 3 ซม. ที่ ' + fmtZoom(z)); },
+      nightColor: (s.night || s.mode === 'NIGHT') && !video ? accent : '#fff', nightPressed: s.night || s.mode === 'NIGHT' ? 'true' : 'false',
+      nightBadge: (s.night || s.mode === 'NIGHT') && !video ? ['3s', '5s', '10s'][s.nightDur] : '',
+      nightName: 'ถ่ายกลางคืน ' + (s.night ? 'เปิด' : 'ปิด') + ' กดค้างเพื่อเลือกเวลา',
+      toggleNight: () => { if (this.nightHeld) { this.nightHeld = false; return; } if (video) { this.say('กลางคืนใช้กับภาพนิ่ง'); return; } if (s.mode === 'NIGHT') { this.say('โหมดกลางคืนเปิดอยู่แล้ว'); return; } this.setState({ night: !s.night }); this.say(s.night ? 'ปิดถ่ายกลางคืน' : 'ถ่ายกลางคืน · กดชัตเตอร์แล้วถือนิ่ง ' + ['3', '5', '10'][s.nightDur] + ' วินาที'); },
+      nightDown: (e) => { const el = e.currentTarget; clearTimeout(this.nlT); this.nlT = setTimeout(() => { this.nightHeld = true; this.openMenu('night', { currentTarget: el }); }, 480); },
+      nightUp: () => clearTimeout(this.nlT),
+      nightL: this.liquid('night', !!s.nightRun, 'pop'), nightTop: Math.round(geo.top + geo.h / 2 - 110),
+      nightLeft: s.nightRun ? Math.max(1, Math.ceil((1 - s.nightP) * s.nightRun.total / 1000)) : '',
+      jitX: s.nightRun ? (Math.sin(s.nightP * 40) * 7 * (1 - s.nightP)).toFixed(1) : 0, jitY: s.nightRun ? (Math.cos(s.nightP * 33) * 6 * (1 - s.nightP)).toFixed(1) : 0,
+      ringOpacity: s.nightRun ? 1 : 0, ringOffset: (251.3 * (1 - s.nightP)).toFixed(1), shutterBorder: s.nightRun ? 'rgba(255,255,255,0.3)' : '#fff',
+      chipTrackX: (CMID - CW / 2 - selIdx * CP + s.chipDrag).toFixed(1), chipTrackMotion: s.chipDragging ? 'none' : t('transform 440ms ' + POP),
+      capL: CMID - CW / 2, capBg: open ? 'rgba(255,255,255,0.2)' : 'rgba(255,255,255,0.12)',
+      chipDown: (e) => { this.chipSwallow = false; const k = e.currentTarget.getBoundingClientRect().width / e.currentTarget.offsetWidth || 1; this.cd = { x: e.clientX, k, moved: false, lx: e.clientX, lt: Date.now(), vx: 0 }; },
+      chipMove: (e) => {
+        const d = this.cd; if (!d || !row) return; const dx = (e.clientX - d.x) / d.k;
+        if (!d.moved && Math.abs(dx) < 6) return; d.moved = true;
+        const now = Date.now(); d.vx = d.vx * 0.6 + ((e.clientX - d.lx) / d.k / Math.max(1, now - d.lt)) * 0.4; d.lx = e.clientX; d.lt = now;
+        const lo = -(row.length - 1 - selIdx) * CP, hi = selIdx * CP;
+        d.raw = dx; d.lo = lo; d.hi = hi;
+        const v = dx > hi ? hi + (dx - hi) * 0.35 : dx < lo ? lo + (dx - lo) * 0.35 : dx;
+        this.setState({ chipDragging: true, chipDrag: v });
+      },
+      chipUp: () => {
+        const d = this.cd; this.cd = null; if (!d || !d.moved || !row) return;
+        this.chipSwallow = true; setTimeout(() => { this.chipSwallow = false; }, 60);
+        if (movie && d.raw < d.lo - 50 && s.proCat < MOVIE_CATS.length - 1) { this.setState({ chipDragging: false, chipDrag: 0 }); this.switchCat(s.proCat + 1); return; }
+        if (movie && d.raw > d.hi + 50 && s.proCat > 0) { this.setState({ chipDragging: false, chipDrag: 0 }); this.switchCat(s.proCat - 1); return; }
+        const target = Math.max(0, Math.min(row.length - 1, Math.round((selIdx * CP - this.state.chipDrag - d.vx * 160) / CP)));
+        const k = row[target];
+        this.setState({ chipDragging: false, chipDrag: 0, sel: Object.assign({}, this.state.sel, { [selMode]: k }), open: this.state.open ? k : '', dragP: null });
+      },
+      dialHidden: open ? 'false' : 'true', dialL: this.liquid('dial', open ? s.open : '', 'pop'),
+      dialEvents: open ? 'auto' : 'none', dialOrigin: '50%',
+      popMotion: t('opacity 220ms ease, transform 380ms ' + POP + ', filter 260ms ease'),
+      dialTitle: open ? open.title : '', dialValue: open ? open.values[idx] : '',
+      dialColor: manualOpen ? mix(open.grad, posFromIdx) : '#fff',
+      autoLabel: open && !open.sep && open !== PARAMS.EV ? 'ค่าเริ่มต้น' : 'AUTO',
+      autoBg: open && !manualOpen ? accent : 'rgba(255,255,255,0.12)', autoColor: open && !manualOpen ? '#1a1400' : '#fff',
+      dialMax: rng.n - 1, dialIndex: Math.max(0, idx - rng.lo),
+      dialMin: open ? open.values[rng.lo] : '', dialEnd: open ? open.values[open.values.length - 1] : '',
+      dialTicks: Array.from({ length: rng.n }, (_, i) => ({ pos: (i / Math.max(1, rng.n - 1) * 100).toFixed(2) })),
+      trackGradient: grad, gradSize: p > 0.001 ? (100 / p).toFixed(1) : 100, fillPct: (p * 100).toFixed(2),
+      snapMotionW: dragging ? 'width 90ms linear' : t('width 420ms ' + SPRING),
+      snapMotionL: dragging ? 'width 120ms ease-out, height 120ms ease-out, margin-left 120ms ease-out, top 120ms ease-out, transform 160ms ease-out, box-shadow 160ms ease' : t('left 420ms ' + SPRING + ', width 420ms ' + SPRING + ', height 420ms ' + SPRING + ', margin-left 420ms ' + SPRING + ', top 420ms ' + SPRING + ', transform 300ms ' + SPRING + ', box-shadow 300ms ease'),
+      overPx: dragging ? s.over.toFixed(1) : 0,
+      thumbW: (28 * (dragging ? s.stretch : 1)).toFixed(1), thumbH: (28 / Math.sqrt(dragging ? s.stretch : 1)).toFixed(1),
+      thumbML: (-14 * (dragging ? s.stretch : 1) + (dragging ? s.over : 0)).toFixed(1), thumbTop: (6 + (28 - 28 / Math.sqrt(dragging ? s.stretch : 1)) / 2).toFixed(1),
+      thumbScale: s.pressing ? 1.14 : 1, thumbRingW: s.pressing ? 6 : 4, thumbGlowR: s.pressing ? 26 : 18,
+      thumbRing: open ? mix(open.grad, p).replace('rgb', 'rgba').replace(')', ',0.55)') : 'transparent',
+      thumbGlow: open ? mix(open.grad, p) : 'transparent',
+      tailLeft: (p * 100).toFixed(2), tailW: Math.abs(s.tail), tailShift: tailDir < 0 ? -Math.abs(s.tail) : 0, tailOpacity: s.tail ? 0.95 : 0,
+      tailGradient: open ? 'linear-gradient(' + (tailDir < 0 ? '270deg' : '90deg') + ', ' + mix(open.grad, p) + ', rgba(255,255,255,0))' : 'none',
+      trackDown: (e) => { this.lastX = e.clientX; try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {} this.setState({ pressing: true }); this.setFromPointer(e); },
+      trackMove: (e) => { if (this.lastX != null) this.setFromPointer(e); },
+      trackUp: () => { this.lastX = null; this.setState({ dragP: null, pressing: false, over: 0, stretch: 1 }); },
+      dialKey: (e) => {
+        if (!open) return; const d = e.key === 'ArrowRight' || e.key === 'ArrowUp' ? 1 : e.key === 'ArrowLeft' || e.key === 'ArrowDown' ? -1 : 0;
+        if (!d) return; e.preventDefault(); const base = open.sep && idx === 0 ? rng.lo - 1 : idx;
+        this.setState({ v: Object.assign({}, s.v, { [s.open]: Math.max(rng.lo, Math.min(open.values.length - 1, base + d)) }) });
+      },
+      dialAuto: () => { if (open) this.setState({ v: Object.assign({}, s.v, { [s.open]: open.auto }), dragP: null }); },
+      blinkAnim: s.shots ? 'blink' + parity(s.shots) + ' ' + (still ? '1ms' : '220ms') + ' ease-out' : 'none',
+      trackX: 195 - before - (items[index] ? items[index].w : 76) / 2 + s.stripDrag, trackMotion: s.stripDragging ? 'none' : t('transform 420ms ' + POP),
+      capX: 195 - selW / 2, capW: selW, capMotion: t('left 360ms ' + EASE + ', width 360ms ' + EASE),
+      barItems: items.map((m, i) => { const id = ids[i]; const cur = i === liveIdx; return { title: m.t, d: m.d, w: m.w, color: cur ? accent : 'rgba(255,255,255,0.72)', weight: cur ? 600 : 400, current: cur ? 'true' : 'false', pick: g(() => this.pick(id)) }; }),
+      openEditor: g(() => this.setState({ editing: true })),
+      openEditorFromPanel: () => { this.closePanel(); this.setState({ editing: true }); },
+      closeAll: () => { this.closePanel(); this.setState({ editing: false, hover: '', dragging: '', menuOpen: false }); },
+      hasShot: s.shots > 0, noShot: s.shots === 0,
+      popAnim: s.shots ? 'pop' + parity(s.shots) + ' ' + (still ? '1ms' : '420ms') + ' ' + SPRING : 'none',
+      shoot: g(() => this.shoot()),
+      shutterName: video ? (s.rec ? 'หยุดบันทึกวิดีโอ' : 'เริ่มบันทึกวิดีโอ') : s.nightRun ? 'หยุดรวมแสงและบันทึก' : 'ถ่ายภาพ',
+      innerSize: video && s.rec ? 30 : 64, innerRadius: video && s.rec ? 8 : 32, innerColor: video ? '#ff453a' : '#fff',
+      innerMotion: t('width 260ms ' + SPRING + ', height 260ms ' + SPRING + ', border-radius 260ms ' + EASE + ', background-color 200ms ease'),
+      flipCam: g(() => this.flip()), flipDeg: s.flipDeg, flipMotion: t('transform 420ms ' + EASE),
+      dimOpacity: s.editing || s.panel ? 1 : 0, dimEvents: s.editing || s.panel ? 'auto' : 'none', dimMotion: t('opacity 300ms ease'),
+      panelL: this.liquid('panel', s.panel, 'sheet'), panelY: (s.panel ? s.panelDrag : 0) + 'px', panelDy: s.panelDy,
+      panelMotion: still || this.sheet || !s.panel ? 'none' : 'transform 420ms ' + SPRING,
+      panelHidden: s.panel ? 'false' : 'true', panelEvents: s.panel ? 'auto' : 'none',
+      editL: this.liquid('edit', s.editing, 'sheet'), sheetHidden: s.editing ? 'false' : 'true', sheetEvents: s.editing ? 'auto' : 'none',
+      tiles,
+      looks: LOOKS.map((l, i) => ({
+        name: l.name, filter: l.f || 'none', on: i === s.look ? 'true' : 'false', selected: i === lookStrip.live, x: i * 82,
+        frame: i === lookStrip.live ? 'rgba(255,255,255,0.92)' : 'rgba(255,255,255,0.08)', weight: i === lookStrip.live ? 600 : 400,
+        scale: i === lookStrip.live ? 1 : 0.9, color: i === lookStrip.live ? '#fff' : 'rgba(255,255,255,0.72)',
+        pick: () => { if (this.sdSwallow) { this.sdSwallow = false; return; } this.setState({ look: i }); }
+      })),
+      lookX: (187 - 36 - s.look * 82 + lookStrip.dx).toFixed(1), lookMotion: lookStrip.dragging ? 'none' : t('transform 440ms ' + POP),
+      lookDown: lookStrip.down, lookMove: lookStrip.move, lookUp: lookStrip.up,
+      bright: s.bright, brightText: (s.bright > 0 ? '+' : '') + s.bright, warm: s.warm, warmText: (s.warm > 0 ? '+' : '') + s.warm,
+      setBright: (e) => this.setState({ bright: Number(e.target.value) }), setWarm: (e) => this.setState({ warm: Number(e.target.value) }),
+      resetLook: () => this.setState({ look: 0, bright: 0, warm: 0 }),
+      menuTitle: menuDef.title, menuX: ml.x, menuY: ml.y, menuW: ml.w, menuOrigin: ml.ox + '% ' + (ml.up ? '100%' : '0%'),
+      menuL: this.liquid('menu', s.menuOpen ? ml.key + ':' + ml.x + ':' + ml.y : '', 'pop'),
+      menuEvents: s.menuOpen ? 'auto' : 'none', menuHidden: s.menuOpen ? 'false' : 'true',
+      closeMenu: () => this.setState({ menuOpen: false, menuPress: false }), menuDim: s.menuOpen ? 1 : 0,
+      hiTop: ITEMS_TOP + s.hi * ITEM_PITCH, hiScale: s.menuPress ? 1.03 : 1, hiMotion: t('top 240ms ' + POP + ', transform 200ms ' + SPRING),
+      menuDown: (e) => { this.mp = { y: e.clientY, moved: false }; try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {} this.setState({ menuPress: true, hi: this.menuIndexAt(e, e.currentTarget) }); },
+      menuMove: (e) => {
+        const i = this.menuIndexAt(e, e.currentTarget);
+        if (this.mp && Math.abs(e.clientY - this.mp.y) > 4) this.mp.moved = true;
+        if (i !== this.state.hi && (this.mp || e.pointerType === 'mouse')) this.setState({ hi: i });
+      },
+      menuUp: (e) => { const m = this.mp; this.mp = null; if (!m) return; this.setMenuValue(ml.key, this.menuIndexAt(e, e.currentTarget)); },
+      menuCancel: () => { this.mp = null; this.setState({ menuPress: false }); },
+      menuItems: menuDef.opts.map((o, i) => ({
+        label: o.label, d: o.d, inner: o.inner || '', note: o.note || '', hasNote: !!o.note, on: i === mv ? 'true' : 'false', check: i === mv,
+        weight: i === s.hi ? 600 : 400, color: i === mv ? accent : '#fff', scale: s.menuPress && i === s.hi ? 1.02 : 1,
+        pick: () => this.setMenuValue(ml.key, i)
+      })),
+      barCount: s.bar.length,
+      barZoneBorder: s.hover === 'bar' ? accent : 'rgba(255,255,255,0.2)', barZoneBg: s.hover === 'bar' ? 'rgba(255,212,71,0.08)' : 'rgba(255,255,255,0.03)',
+      moreZoneBorder: s.hover === 'more' ? accent : 'rgba(255,255,255,0.14)', moreZoneBg: s.hover === 'more' ? 'rgba(255,212,71,0.08)' : 'transparent',
+      overBar: (e) => { e.preventDefault(); this.hoverOn('bar'); }, dropBar: (e) => { e.preventDefault(); this.dropBefore(null); },
+      overMore: (e) => { e.preventDefault(); this.hoverOn('more'); },
+      dropMore: (e) => { e.preventDefault(); const id = this.dragId; this.dragId = ''; this.setState({ hover: '', dragging: '' }); if (id) this.remove(id); },
+      editBar: s.bar.map((id) => Object.assign({
+        title: MODES[id].t, d: MODES[id].d, removable: id !== 'PHOTO', locked: id === 'PHOTO', remove: () => this.remove(id),
+        ring: s.hover === 'chip:' + id ? 'inset 0 0 0 2px ' + accent : 'none',
+        over: (e) => { e.preventDefault(); e.stopPropagation(); this.hoverOn('chip:' + id); },
+        drop: (e) => { e.preventDefault(); e.stopPropagation(); this.dropBefore(id); }
+      }, this.dragProps(id))),
+      extras: ORDER.filter((id) => !s.bar.includes(id)).map((id) => Object.assign({ title: MODES[id].t, d: MODES[id].d, add: (e) => { if (e && e.stopPropagation) e.stopPropagation(); this.add(id); }, use: () => { this.setState({ editing: false }); this.pick(id); this.say('ใช้โหมด' + MODES[id].t + ' · กด + เพื่อเพิ่มลงแถบถาวร'); } }, this.dragProps(id))),
+      noExtras: ORDER.every((id) => s.bar.includes(id))
+    };
+  }
+}
+</script>
+</body>
+</html>
