@@ -670,8 +670,8 @@ class SheetFrame(context: Context) : LayerFrame(context) {
     private var tracker: android.view.VelocityTracker? = null
     override fun onInterceptTouchEvent(e: MotionEvent): Boolean {
         when (e.actionMasked) {
-            MotionEvent.ACTION_DOWN -> { y0 = e.rawY; x0 = e.rawX; pulling = false; fromTop = e.y < context.px(140f) }
-            // Only a drag that starts on the top part of the sheet pulls it; lower down a downward drag scrolls the list.
+            MotionEvent.ACTION_DOWN -> { y0 = e.rawY; x0 = e.rawX; pulling = false; fromTop = e.y < context.px(60f) }
+            // Only a drag that starts on the top strip of the sheet (around the handle) pulls it; elsewhere a drag scrolls the list.
             MotionEvent.ACTION_MOVE -> { val dy = e.rawY - y0; if (!scrub && fromTop && (scroll?.scrollY ?: 0) == 0 && dy > slop && dy > abs(e.rawX - x0) * 1.3f) { pulling = true; return true } }
         }
         return super.onInterceptTouchEvent(e)
