@@ -455,6 +455,12 @@ open class LayerFrame(context: Context) : FrameLayout(context) {
     var scrub = false
     /** Sheets: a downward drag that starts in the top [pullZonePx] pulls the whole layer, however fast the finger moves. */
     var pullZonePx = 0
+    /** A list that is scrolled down keeps its own drag; only a sheet resting at the top is pulled closed. */
+    private fun contentScrolled(v: View): Boolean {
+        if (v is android.widget.ScrollView && v.scrollY > 0) return true
+        if (v is ViewGroup) for (i in 0 until v.childCount) if (contentScrolled(v.getChildAt(i))) return true
+        return false
+    }
     var onPull: ((end: Boolean, dy: Float, velocityY: Float) -> Unit)? = null
     private var tracking = false; private var pulling = false; private var y0 = 0f; private var x0 = 0f
     private var tracker: VelocityTracker? = null
@@ -463,7 +469,7 @@ open class LayerFrame(context: Context) : FrameLayout(context) {
     override fun onInterceptTouchEvent(e: MotionEvent): Boolean {
         if (scrub) return true
         if (onPull != null) when (e.actionMasked) {
-            MotionEvent.ACTION_DOWN -> { tracking = e.y < pullZonePx; pulling = false; y0 = e.rawY; x0 = e.rawX; tracker?.recycle(); tracker = VelocityTracker.obtain().also { it.addMovement(e) } }
+            MotionEvent.ACTION_DOWN -> { tracking = e.y < pullZonePx && !contentScrolled(this); pulling = false; y0 = e.rawY; x0 = e.rawX; tracker?.recycle(); tracker = VelocityTracker.obtain().also { it.addMovement(e) } }
             MotionEvent.ACTION_MOVE -> { tracker?.addMovement(e); if (tracking && !pulling) { val dy = e.rawY - y0; if (dy > slop && dy > abs(e.rawX - x0)) { pulling = true; parent?.requestDisallowInterceptTouchEvent(true); return true } } }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { tracking = false; tracker?.recycle(); tracker = null }
         }
