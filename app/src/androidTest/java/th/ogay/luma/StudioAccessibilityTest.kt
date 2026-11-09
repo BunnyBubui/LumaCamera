@@ -26,6 +26,7 @@ import androidx.test.uiautomator.UiScrollable
 import androidx.test.uiautomator.UiSelector
 import androidx.test.uiautomator.Until
 import org.junit.After
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -153,8 +154,9 @@ class StudioAccessibilityTest {
         }
         report += moreSheetAtLargeFont()
         report.forEach { Log.i(TAG, it) }
-        // Temporary: fail with the full report so CI logs carry the measurements.
-        throw AssertionError("A11Y REPORT ‖ " + report.joinToString(" ‖ "))
+        // Report mode: findings are listed in docs/claude/UI_REVIEW_V03.md and fixed in a follow-up
+        // integration change, which switches this to assertTrue(findings.isEmpty()).
+        assertTrue("the audit visited no screen", report.size > 1)
     }
 
     /** Opens the "เพิ่มเติม" bottom sheet at font 2.0 and checks that its last action can be scrolled to. */
@@ -164,6 +166,8 @@ class StudioAccessibilityTest {
         val out = mutableListOf<String>()
         ActivityScenario.launch<CameraActivity>(Intent(context, CameraActivity::class.java)).use {
             SystemClock.sleep(3500)
+            // The mode strip scrolls horizontally; at large font "เพิ่มเติม" starts off screen.
+            runCatching { UiScrollable(UiSelector().scrollable(true).className("android.widget.HorizontalScrollView")).setAsHorizontalList().scrollIntoView(UiSelector().description("โหมด เพิ่มเติม")) }
             val more = device.wait(Until.findObject(By.desc("โหมด เพิ่มเติม")), 5000)
             if (more == null) { out += "MoreSheet | font 2.0 | portrait | missing | mode strip has no \"โหมด เพิ่มเติม\""; return out }
             more.click(); SystemClock.sleep(1500)
