@@ -59,10 +59,13 @@ class CameraProbeActivity : ComponentActivity() {
     private var stage="idle"
     private var reportFile:File?=null
     private var clipUri:Uri?=null
-    private val sensor=VideoDiagnostics()
+    private var sensor=VideoDiagnostics()
     private val permission=registerForActivityResult(ActivityResultContracts.RequestPermission()){allowed->if(allowed)launchProbe()else status.text="ต้องอนุญาตกล้องเพื่อทดสอบ"}
     private fun ui(action:()->Unit)=runOnUiThread{if(!isDestroyed)action()}
-    private fun stage(value:String){stage=value;events.put(JSONObject().put("stage",value).put("elapsedNs",SystemClock.elapsedRealtimeNanos()))}
+    private fun stage(value:String){stage=value;events.put(JSONObject().put("stage",value).put("elapsedNs",SystemClock.elapsedRealtimeNanos()));
+        val message=when(value){"prepare"->"กำลังเตรียมไฟล์…";"open"->"กำลังเปิดกล้อง…";"configure"->"กำลังเปิดชุดวิดีโอ…";"start"->"กำลังเริ่มบันทึก…";"stop"->"กำลังปิดไฟล์…";else->null}
+        if(message!=null)ui{status.text=message}
+    }
     override fun onCreate(state:Bundle?){
         super.onCreate(state)
         val body=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(16),0,dp(16),dp(20))}
@@ -117,8 +120,8 @@ class CameraProbeActivity : ComponentActivity() {
     private fun begin(selected:Choice,rotation:Int){
         if(!foreground){abort("cancelled-before-open",null);return}
         val ticket=++generation
-        events=JSONArray();reportFile=null;sensor.reset()
-        report=JSONObject().put("schema",1).put("model",Build.MODEL).put("sdk",Build.VERSION.SDK_INT)
+        events=JSONArray();reportFile=null;sensor=VideoDiagnostics()
+        report=JSONObject().put("schema",1).put("timeMs",System.currentTimeMillis()).put("model",Build.MODEL).put("sdk",Build.VERSION.SDK_INT)
             .put("cameraId",selected.id).put("size",selected.size.toString()).put("requestedCaptureFps",selected.fps)
             .put("expectedPlaybackFps",if(selected.highSpeed)30 else selected.fps).put("sessionType",if(selected.highSpeed)"constrained_high_speed"else "normal")
             .put("inventory",inventory).put("events",events)
@@ -138,8 +141,8 @@ class CameraProbeActivity : ComponentActivity() {
             r.setVideoEncodingBitRate(if(selected.highSpeed)20_000_000 else 8_000_000);r.setVideoFrameRate(30)
             if(selected.highSpeed)r.setCaptureRate(selected.fps.toDouble())
             r.setOrientationHint(hint);r.setMaxFileSize(filesDir.usableSpace-64L*1024*1024)
-            r.setOnErrorListener{_,what,extra->handler.post{abort("recorder-error",IllegalStateException("$what/$extra"))}}
-            r.setOnInfoListener{_,what,_->if(what==MediaRecorder.MEDIA_RECORDER_INFO_MAX_FILESIZE_REACHED)handler.post{finishProbe(true)}}
+            r.setOnErrorListener{_,what,extra->handler.post{if(ticket==generation&&busy)abort("recorder-error",IllegalStateException("$what/$extra"))}}
+            r.setOnInfoListener{_,what,_->if(what==MediaRecorder.MEDIA_RECORDER_INFO_MAX_FILESIZE_REACHED)handler.post{if(ticket==generation)finishProbe(true)}}
             r.prepare();stage("open")
             manager.openCamera(selected.id,object:CameraDevice.StateCallback(){
                 override fun onOpened(camera:CameraDevice){if(ticket!=generation||!foreground){camera.close();return};device=camera;configure(camera,selected,ticket)}
