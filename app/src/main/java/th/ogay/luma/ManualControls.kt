@@ -42,6 +42,20 @@ class ManualControls(private val context:Context, val camera:Camera, private val
         Camera2CameraControl.from(camera.cameraControl).setCaptureRequestOptions(b.build())
     }
     fun lock(value:Boolean){locked=value;apply()}
+    // Direct setters for the glass UI chips and edge rails (values are applied immediately).
+    val minFocus get()=info.getCameraCharacteristic(CC.LENS_INFO_MINIMUM_FOCUS_DISTANCE)?:0f
+    val isoValues get()=if(!canManual)emptyList() else info.getCameraCharacteristic(CC.SENSOR_INFO_SENSITIVITY_RANGE)!!.let{r->listOf(50,100,200,400,800,1600,3200,6400).filter{it in r.lower..r.upper}}
+    val shutterValues get()=if(!canManual)emptyList() else info.getCameraCharacteristic(CC.SENSOR_INFO_EXPOSURE_TIME_RANGE)!!.let{r->listOf("1/8000" to 125_000L,"1/1000" to 1_000_000L,"1/250" to 4_000_000L,"1/60" to 16_666_666L,"1/30" to 33_333_333L,"1/8" to 125_000_000L,"1/2" to 500_000_000L,"1s" to 1_000_000_000L).filter{it.second>=r.lower&&it.second<=minOf(r.upper,if(video)(1_000_000_000L/videoFps) else r.upper)}}
+    val wbValues get()=(info.getCameraCharacteristic(CC.CONTROL_AWB_AVAILABLE_MODES)?:intArrayOf()).let{m->listOf("AUTO" to CR.CONTROL_AWB_MODE_AUTO,"แดด" to CR.CONTROL_AWB_MODE_DAYLIGHT,"เมฆ" to CR.CONTROL_AWB_MODE_CLOUDY_DAYLIGHT,"หลอดไฟ" to CR.CONTROL_AWB_MODE_INCANDESCENT,"ฟลูออเรสเซนต์" to CR.CONTROL_AWB_MODE_FLUORESCENT).filter{it.second in m}}
+    val currentIso get()=iso
+    val currentShutter get()=ns
+    val currentWb get()=wb
+    val currentFocus get()=focus
+    fun setIso(v:Int?){iso=v;if(v==null)ns=null;apply()}
+    fun setShutter(v:Long?){ns=v;if(v!=null&&iso==null)iso=isoValues.firstOrNull{it>=100}?:isoValues.firstOrNull();apply()}
+    fun setWb(mode:Int){wb=mode;apply()}
+    /** Diopters: 0 = infinity, [minFocus] = closest. Null returns to autofocus. */
+    fun setFocus(v:Float?){focus=v?.coerceIn(0f,minFocus);apply()}
     fun reset(){iso=null;ns=null;focus=null;wb=CR.CONTROL_AWB_MODE_AUTO;locked=false;apply()}
     fun show(){context.studioSheet(if(video)"PRO VIDEO" else "PRO · ควบคุมกล้อง"){box,_->
         fun options(title:String,values:List<String>,selected:Int,choose:(Int)->Unit){
