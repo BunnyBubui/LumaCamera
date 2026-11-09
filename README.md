@@ -75,3 +75,7 @@ CI ใช้ Gradle Wrapper, ตรวจ SHA-256 โมเดล และเ�
 | รุ่นเก่าหรือ RAM ต่ำ | ต้นฉบับ 20 ครั้งต้องมี 20 ไฟล์ วัดมัธยฐาน/P95 ของเวลา AI และตรวจเมื่อพื้นที่หรือหน่วยความจำไม่เพียงพอ |
 
 ยังต้องวัดผลฮาร์ดแวร์และคุณภาพบน Reno15 จริง แอปใช้ AndroidX CameraX 1.6.2, WorkManager 2.9.1 และ ExifInterface 1.3.7
+
+## Portfolio review
+
+See [portfolio notes](docs/PORTFOLIO.md) for scope, attribution and local configuration.
