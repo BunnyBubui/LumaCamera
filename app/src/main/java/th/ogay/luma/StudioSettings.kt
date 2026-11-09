@@ -119,6 +119,7 @@ fun Activity.showStudioSettings(rawAvailable: Boolean, changed: () -> Unit) {
     choose("ตั้งเวลาถ่าย", Icons.TIMER, "timer", listOf("ปิด", "3 วินาที", "10 วินาที"), listOf("0", "3", "10"), "0")
     choose("คุณภาพ JPEG", Icons.FILE, "jpeg_quality", listOf("ประหยัด 85%", "มาตรฐาน 95%", "สูงสุด 100%"), listOf("85", "95", "100"), "95")
     choose("ครอปจากเลนส์", Icons.SEARCH, "crop_from", listOf("ปิด", "เลนส์หลัก 1×", "เลนส์ 2×", "เลนส์เทเล 3.5×"), listOf("0", "1", "2", "3.5"), if (prefs.getBoolean("software", false)) "1" else "0", listOf("สลับเลนส์ตามระยะซูม", "ซูมด้วยการครอปจากเลนส์หลัก", "ครอปจากระยะ 2×", "ครอปจากระยะ 3.5×"))
+    toggle("HDR แบบ native EF2 (ทดลอง)", Icons.HDR, HdrCapture.NATIVE_KEY, note = "รวมภาพ HDR ด้วย OpenCV เพื่อเทียบกับ EF1 ยังไม่มีระบบกันเงาซ้อน")
     section("การควบคุม")
     choose("ปุ่มเสียง", Icons.SOUND, "volume_action", listOf("ถ่ายภาพ", "ซูม", "ปรับเสียงระบบ"), listOf("shutter", "zoom", "system"), "shutter")
     choose("ความเร็วซูม", Icons.SEARCH, "zoom_speed", listOf("ช้า", "ปกติ", "เร็ว"), listOf("slow", "normal", "fast"), "normal")
