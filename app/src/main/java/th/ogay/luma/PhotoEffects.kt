@@ -50,17 +50,18 @@ object PhotoEffects {
             runCatching{val manager=c.getSystemService(Context.LOCATION_SERVICE) as LocationManager;val location=manager.getProviders(true).mapNotNull{manager.getLastKnownLocation(it)}.maxByOrNull{it.time};if(location!=null&&System.currentTimeMillis()-location.time<15*60*1000)ExifInterface(file).apply{setGpsInfo(location);saveAttributes()}}
         }
     }
-    fun portrait(file:File){
+    /** [aperture] sets the simulated blur: f/1.4 ≈ the old fixed strength, f/16 almost none. */
+    fun portrait(file:File,aperture:Float=2.8f){
         check(OpenCVLoader.initLocal()){ "เปิดระบบภาพ Portrait ไม่สำเร็จ" }
         val image=read(file);val processor=Segmentation.getClient(SelfieSegmenterOptions.Builder().setDetectorMode(SelfieSegmenterOptions.SINGLE_IMAGE_MODE).build())
         try{
             val mask=Tasks.await(processor.process(InputImage.fromBitmap(image,0)),30,TimeUnit.SECONDS)
-            val source=Mat();val blurred=Mat();Utils.bitmapToMat(image,source);Imgproc.GaussianBlur(source,blurred,Size(0.0,0.0),16.0)
+            val source=Mat();val blurred=Mat();Utils.bitmapToMat(image,source);Imgproc.GaussianBlur(source,blurred,Size(0.0,0.0),(22.0*1.4/aperture.coerceIn(1f,22f)).coerceIn(1.0,26.0))
             val background=Bitmap.createBitmap(image.width,image.height,Bitmap.Config.ARGB_8888);Utils.matToBitmap(blurred,background);source.release();blurred.release()
             val a=IntArray(image.width*image.height);val b=IntArray(a.size);image.getPixels(a,0,image.width,0,0,image.width,image.height);background.getPixels(b,0,image.width,0,0,image.width,image.height)
             val confidence=mask.buffer;confidence.rewind();val weights=FloatArray(mask.width*mask.height);confidence.asFloatBuffer().get(weights)
             for(y in 0 until image.height)for(x in 0 until image.width){val i=y*image.width+x;val f=((weights[(y*mask.height/image.height)*mask.width+x*mask.width/image.width]-0.15f)/0.7f).coerceIn(0f,1f);var color=0xff000000.toInt();for(shift in intArrayOf(16,8,0)){val v=(((a[i] ushr shift)and 255)*f+((b[i] ushr shift)and 255)*(1-f)).toInt();color=color or(v shl shift)};a[i]=color}
-            image.setPixels(a,0,image.width,0,0,image.width,image.height);write(image,file);PhotoMedia.tag(file,0);ExifInterface(file).apply{setAttribute(ExifInterface.TAG_SOFTWARE,"Luma Portrait · ML Kit selfie segmentation beta");saveAttributes()};background.recycle()
+            image.setPixels(a,0,image.width,0,0,image.width,image.height);write(image,file);PhotoMedia.tag(file,0);ExifInterface(file).apply{setAttribute(ExifInterface.TAG_SOFTWARE,"Luma Portrait · simulated f/$aperture · ML Kit selfie segmentation beta");saveAttributes()};background.recycle()
         }finally{processor.close();image.recycle()}
     }
 }

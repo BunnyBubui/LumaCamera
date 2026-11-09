@@ -43,5 +43,20 @@ class VideoSessions {
             JSONObject().put("range", it.range.toString()).put("capabilitySource", it.source)
         })).put("queryErrors", JSONArray(errors[Key(info, quality, dynamic, eis, slow)].orEmpty()))
     }
+    /**
+     * Whether the camera's own Camera2 tables allow 60 fps at this recording size even when CameraX lists no 60 fps
+     * session for it: an AE target range reaching 60 and a minimum frame duration of at most 1/60 s for the encoder
+     * surface. A clip recorded this way is experimental; ClipInspector measures what the file really holds.
+     */
+    @androidx.annotation.OptIn(androidx.camera.camera2.interop.ExperimentalCamera2Interop::class)
+    fun camera2Allows60(info: CameraInfo, quality: Quality): Boolean = runCatching {
+        val c = androidx.camera.camera2.interop.Camera2CameraInfo.from(info)
+        val ae = c.getCameraCharacteristic(android.hardware.camera2.CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES) ?: return@runCatching false
+        if (ae.none { it.upper >= 60 }) return@runCatching false
+        val map = c.getCameraCharacteristic(android.hardware.camera2.CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP) ?: return@runCatching false
+        val (w, h) = when (quality) { Quality.UHD -> 3840 to 2160; Quality.FHD -> 1920 to 1080; Quality.HD -> 1280 to 720; else -> 720 to 480 }
+        val size = map.getOutputSizes(android.media.MediaCodec::class.java)?.firstOrNull { it.width == w && it.height == h } ?: return@runCatching false
+        map.getOutputMinFrameDuration(android.media.MediaCodec::class.java, size) in 1..16_700_000L
+    }.getOrDefault(false)
     fun label(mode: Mode): String { val range = mode.range; return (if (range.lower == range.upper) "${range.upper} fps" else "สูงสุด ${range.upper} fps (${range.lower}–${range.upper})") + if (mode.source == Recorder.VIDEO_CAPABILITIES_SOURCE_CODEC_CAPABILITIES) " · ตรวจไฟล์จริง" else "" }
 }

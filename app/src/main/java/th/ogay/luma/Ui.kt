@@ -16,13 +16,13 @@ import androidx.core.view.WindowInsetsCompat
 import java.util.Locale
 import kotlin.math.roundToInt
 
-val BG = 0xff000000.toInt()
-val PANEL = 0xff202023.toInt()
+val BG = 0xff070b16.toInt()
+val PANEL = 0xff18213a.toInt()
 val WHITE = 0xffffffff.toInt()
 val MUTED = 0xffa7a7ad.toInt()
-val LIME = 0xffffd447.toInt()
+val LIME = 0xffff9f45.toInt()
 fun Context.dp(x: Int) = (resources.displayMetrics.density*x).roundToInt()
-fun shape(color: Int, radius: Float = 32f) = GradientDrawable().apply { setColor(color); cornerRadius = radius }
+fun shape(color: Int, radius: Float = 32f) = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(Glass.top(color), Glass.bottom(color))).apply { cornerRadius = radius * 1.2f }
 fun Context.label(value: String, sp: Float, tint: Int = WHITE) = TextView(this).apply {
     text = value; textSize = sp; setTextColor(tint); gravity = Gravity.CENTER_VERTICAL
     includeFontPadding = true
@@ -50,7 +50,8 @@ fun LinearLayout.space(weight: Float = 1f) {
 }
 fun Activity.installRoot(root: View) {
     WindowCompat.setDecorFitsSystemWindows(window,false)
-    root.setBackgroundColor(BG)
+    root.background = Glass.page()
+    preferFastestRefresh()
     ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
         val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
         v.setPadding(bars.left,bars.top,bars.right,bars.bottom)
@@ -116,4 +117,14 @@ fun View.pressFeedback() {
         }
         false
     }
+}
+
+/** Asks for the display's fastest refresh rate at the current resolution (120 Hz on Reno-class screens). */
+fun Activity.preferFastestRefresh() {
+    if (android.os.Build.VERSION.SDK_INT < 23) return
+    val d = (if (android.os.Build.VERSION.SDK_INT >= 30) display else @Suppress("DEPRECATION") windowManager.defaultDisplay) ?: return
+    val now = d.mode
+    val best = d.supportedModes.filter { it.physicalWidth == now.physicalWidth && it.physicalHeight == now.physicalHeight }.maxByOrNull { it.refreshRate } ?: return
+    if (best.modeId != window.attributes.preferredDisplayModeId) window.attributes = window.attributes.apply { preferredDisplayModeId = best.modeId }
+    if (android.os.Build.VERSION.SDK_INT >= 30) runCatching { window.attributes = window.attributes.apply { preferredRefreshRate = best.refreshRate } }
 }

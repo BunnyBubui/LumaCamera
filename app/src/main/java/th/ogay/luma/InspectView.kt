@@ -41,13 +41,20 @@ class InspectView(context: Context) : View(context) {
             val rect=box(width,height,aspect,zoom,cx,cy)
             cx+=dx/rect.width();cy+=dy/rect.height();clamp();change();return true
         }
+        override fun onFling(a:MotionEvent?,b:MotionEvent,vx:Float,vy:Float):Boolean {
+            if(zoom>1.05f||scale.isInProgress)return false
+            if(kotlin.math.abs(vx)>kotlin.math.abs(vy)*1.5f&&kotlin.math.abs(vx)>900*resources.displayMetrics.density/2.75f){onSwipe?.invoke(if(vx<0)1 else -1);return true}
+            return false
+        }
         override fun onDoubleTap(e:MotionEvent):Boolean {
             val rect=box(width,height,aspect,zoom,cx,cy)
             cx=(e.x-rect.left)/rect.width();cy=(e.y-rect.top)/rect.height()
             zoom=if(zoom>1.1f) 1f else 3f;clamp();change();return true
         }
     })
-    init { setBackgroundColor(0xff080a08.toInt()); contentDescription="ภาพถ่าย บีบเพื่อซูม ลากเพื่อเลื่อน หรือแตะสองครั้ง" }
+    /** Fling sideways at fit-to-screen: +1 next, −1 previous. */
+    var onSwipe:((Int)->Unit)?=null
+    init { setBackgroundColor(0xff05070f.toInt()); contentDescription="ภาพถ่าย บีบเพื่อซูม ลากเพื่อเลื่อน หรือแตะสองครั้ง" }
     private fun box(w:Int,h:Int,ratio:Float,z:Float,x:Float,y:Float):RectF {
         val sw=minOf(w.toFloat(),h*ratio)*z
         val sh=sw/ratio

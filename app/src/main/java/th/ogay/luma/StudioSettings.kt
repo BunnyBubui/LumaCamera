@@ -20,12 +20,17 @@ import android.widget.*
 fun Activity.showStudioSettings(rawAvailable: Boolean, changed: () -> Unit) {
     val prefs = getSharedPreferences("camera", 0)
     val dialog = Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
-    val host = FrameLayout(this).apply { setBackgroundColor(BG) }
+    val host = FrameLayout(this).apply { background = Glass.page() }
     val menu = GlassMenu(host)
     val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
     host.addView(column, -1, -1)
 
-    val top = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), dp(10), dp(16), dp(6)) }
+    // The dialog is full screen, so the header clears the status bar and cutout itself, with room to breathe.
+    val top = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), dp(36), dp(16), dp(10)) }
+    androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(top) { v, insets ->
+        val bars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars() or androidx.core.view.WindowInsetsCompat.Type.displayCutout())
+        v.setPadding(dp(16), maxOf(bars.top, dp(24)) + dp(16), dp(16), dp(10)); insets
+    }
     val back = FrameLayout(this).apply {
         background = glass(22); contentDescription = "กลับไปที่กล้อง"; isClickable = true; glassTouch()
         addView(IconView(this@showStudioSettings, Icons.CHEVRON_LEFT, 2.2f), FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER))
@@ -93,7 +98,7 @@ fun Activity.showStudioSettings(rawAvailable: Boolean, changed: () -> Unit) {
         val end = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; addView(value, -2, -2); addView(IconView(this@showStudioSettings, Icons.UPDOWN, 2f).apply { tint = Glass.TEXT3 }, dp(18), dp(18)) }
         fun current() = values.indexOf(prefs.getString(key, default)).coerceAtLeast(0)
         value.text = labels[current()]
-        row(title, icon, end = end) { anchor ->
+        row(title, icon, end = end) {}.pressMenu(menu) { anchor ->
             menu.show(anchor, title, labels.mapIndexed { i, l -> GlassMenu.Option(l, "", notes.getOrElse(i) { "" }) }, current()) { i ->
                 prefs.edit().putString(key, values[i]).apply(); value.text = labels[i]; changed()
             }

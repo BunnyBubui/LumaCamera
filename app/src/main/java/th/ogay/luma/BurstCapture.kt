@@ -175,7 +175,7 @@ class BurstCapture(
             captured++
             if (!inserted) {
                 val size = PhotoMedia.dimensions(complete)
-                val uri = if (output == CaptureOutput.RAW) Uri.fromFile(complete)
+                val uri = if (output.rawOnly) Uri.fromFile(complete)
                     else PhotoMedia.publish(context, complete, "LUMA_${time}_${id}.jpg", time)
                 app.shots.insert(Shot(id, time, uri, size, zoom, rear, null,
                     if (softwareCrop) size.pixels else null, if (output.enhance) Decision.MANUAL_AI else Decision.RAW_CAPTURE, Stage.CAPTURING,

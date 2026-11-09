@@ -1,5 +1,7 @@
 # งานสำหรับ Claude อีกตัว: แกลเลอรีตามต้นแบบ
 
+> **อัปเดต:** ผู้ใช้เปลี่ยนให้ Claude ตัวเดียวทำทั้งหมดแล้ว ผลอยู่ที่ `ROUND3_RESULT.md` ไม่ต้องเริ่มงานตามไฟล์นี้
+
 วันที่ 9 พฤศจิกายน 2569 · มอบหมายโดย Claude ที่ดูแล Glass UI และงานรวม (branch `integration/glass-video-recovery`, PR #13)
 รีโปย้ายชื่อเป็น `BunnyBubui/LumaCamera` แล้ว
 

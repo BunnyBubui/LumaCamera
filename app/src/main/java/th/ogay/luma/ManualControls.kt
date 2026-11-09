@@ -5,6 +5,7 @@ import android.hardware.camera2.CameraCharacteristics as CC
 import android.hardware.camera2.CaptureRequest as CR
 import android.widget.LinearLayout
 import android.widget.SeekBar
+import kotlin.math.pow
 import androidx.camera.camera2.interop.Camera2CameraControl
 import androidx.camera.camera2.interop.Camera2CameraInfo
 import androidx.camera.camera2.interop.CaptureRequestOptions
@@ -16,15 +17,18 @@ class ManualControls(private val context:Context, val camera:Camera, private val
     private val info=Camera2CameraInfo.from(camera.cameraInfo)
     private val prefs=context.getSharedPreferences("camera",0)
     private var iso:Int?=null;private var ns:Long?=null;private var wb=CR.CONTROL_AWB_MODE_AUTO;private var focus:Float?=null
+    private var tint=0;private var edge:Int?=null;private var nr:Int?=null;private var contrast=0
     var locked=false;private set
     val canManual get()=info.getCameraCharacteristic(CC.REQUEST_AVAILABLE_CAPABILITIES)?.contains(CC.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR)==true
     private val key="manual.${info.cameraId}.${if(video)"video" else "photo"}."
     init {
         if(persistent){iso=prefs.getInt(key+"iso",-1).takeIf{it>0};ns=prefs.getLong(key+"ns",-1).takeIf{it>0};wb=prefs.getInt(key+"wb",CR.CONTROL_AWB_MODE_AUTO);focus=prefs.getFloat(key+"focus",-1f).takeIf{it>=0}}
+        tint=prefs.getInt(key+"tint",0);edge=prefs.getInt(key+"edge",-1).takeIf{it>=0};nr=prefs.getInt(key+"nr",-1).takeIf{it>=0};contrast=prefs.getInt(key+"contrast",0)
         apply()
     }
     fun apply(){
         if(persistent)prefs.edit().putInt(key+"iso",iso?:-1).putLong(key+"ns",ns?:-1).putInt(key+"wb",wb).putFloat(key+"focus",focus?:-1f).apply()
+        prefs.edit().putInt(key+"tint",tint).putInt(key+"edge",edge?:-1).putInt(key+"nr",nr?:-1).putInt(key+"contrast",contrast).apply()
         val b=CaptureRequestOptions.Builder()
         if(canManual&&iso!=null){
             val r=info.getCameraCharacteristic(CC.SENSOR_INFO_SENSITIVITY_RANGE)!!
@@ -34,12 +38,16 @@ class ManualControls(private val context:Context, val camera:Camera, private val
             b.setCaptureRequestOption(CR.SENSOR_EXPOSURE_TIME,(ns?:16_666_666L).coerceIn(e.lower,minOf(e.upper,if(video)(1_000_000_000L/videoFps) else e.upper)))
         }
         if(wb>=KELVIN_MIN&&canKelvin){
-            // Manual white balance: AWB off, identity colour transform, per-channel gains from the colour temperature.
+            // Manual white balance: AWB off, gains and colour matrix for this temperature from the sensor calibration.
+            val (gains,ccm)=kelvinColor(wb.toDouble(),tint.toDouble())
             b.setCaptureRequestOption(CR.CONTROL_AWB_MODE,CR.CONTROL_AWB_MODE_OFF)
             b.setCaptureRequestOption(CR.COLOR_CORRECTION_MODE,CR.COLOR_CORRECTION_MODE_TRANSFORM_MATRIX)
-            b.setCaptureRequestOption(CR.COLOR_CORRECTION_GAINS,kelvinGains(wb))
-            b.setCaptureRequestOption(CR.COLOR_CORRECTION_TRANSFORM,cameraToSrgb(info.getCameraCharacteristic(CC.SENSOR_FORWARD_MATRIX1)!!))
+            b.setCaptureRequestOption(CR.COLOR_CORRECTION_GAINS,gains)
+            b.setCaptureRequestOption(CR.COLOR_CORRECTION_TRANSFORM,ccm)
         }else b.setCaptureRequestOption(CR.CONTROL_AWB_MODE,if(wb>=KELVIN_MIN)CR.CONTROL_AWB_MODE_AUTO else wb)
+        edge?.let{if(it in edgeModes)b.setCaptureRequestOption(CR.EDGE_MODE,it)}
+        nr?.let{if(it in nrModes)b.setCaptureRequestOption(CR.NOISE_REDUCTION_MODE,it)}
+        if(contrast!=0&&canCurve){b.setCaptureRequestOption(CR.TONEMAP_MODE,CR.TONEMAP_MODE_CONTRAST_CURVE);val pts=ToneCurves.contrast(contrast);b.setCaptureRequestOption(CR.TONEMAP_CURVE,android.hardware.camera2.params.TonemapCurve(pts,pts,pts))}
         val ois=info.getCameraCharacteristic(CC.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION)?:intArrayOf()
         if(CR.LENS_OPTICAL_STABILIZATION_MODE_ON in ois && (!video || !prefs.getBoolean("video_eis",false)))b.setCaptureRequestOption(CR.LENS_OPTICAL_STABILIZATION_MODE,if(prefs.getBoolean("ois",true))CR.LENS_OPTICAL_STABILIZATION_MODE_ON else CR.LENS_OPTICAL_STABILIZATION_MODE_OFF)
         if(focus!=null){b.setCaptureRequestOption(CR.CONTROL_AF_MODE,CR.CONTROL_AF_MODE_OFF);b.setCaptureRequestOption(CR.LENS_FOCUS_DISTANCE,focus!!)}
@@ -54,12 +62,44 @@ class ManualControls(private val context:Context, val camera:Camera, private val
     val isoValues get()=if(!canManual)emptyList() else info.getCameraCharacteristic(CC.SENSOR_INFO_SENSITIVITY_RANGE)!!.let{r->ISO_THIRDS.filter{it in r.lower..r.upper}}
     /** Shutter in 1/3-stop steps inside the sensor range; video is capped at one frame time. */
     val shutterValues get()=if(!canManual)emptyList() else info.getCameraCharacteristic(CC.SENSOR_INFO_EXPOSURE_TIME_RANGE)!!.let{r->SHUTTER_THIRDS.filter{it.second>=r.lower&&it.second<=minOf(r.upper,if(video)(1_000_000_000L/videoFps) else r.upper)}}
-    /** Manual white balance needs AWB off and the colour-correction controls of MANUAL_POST_PROCESSING. */
+    /** Manual white balance needs AWB off, the colour-correction controls of MANUAL_POST_PROCESSING and the sensor calibration matrices. */
     val canKelvin get()=(info.getCameraCharacteristic(CC.CONTROL_AWB_AVAILABLE_MODES)?:intArrayOf()).contains(CR.CONTROL_AWB_MODE_OFF)&&
-        info.getCameraCharacteristic(CC.SENSOR_FORWARD_MATRIX1)!=null&&
+        info.getCameraCharacteristic(CC.SENSOR_FORWARD_MATRIX1)!=null&&info.getCameraCharacteristic(CC.SENSOR_COLOR_TRANSFORM1)!=null&&
         info.getCameraCharacteristic(CC.REQUEST_AVAILABLE_CAPABILITIES)?.contains(CC.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_POST_PROCESSING)==true
-    /** AUTO, then Kelvin 2000–10000 in 100 K steps when manual WB is possible, otherwise the camera's presets. Values ≥ [KELVIN_MIN] are Kelvin. */
-    val wbValues get()=if(canKelvin)listOf("AUTO" to CR.CONTROL_AWB_MODE_AUTO)+(2000..10000 step 100).map{"${it}K" to it}
+    private fun m(t:android.hardware.camera2.params.ColorSpaceTransform?)=t?.let{x->DoubleArray(9){i->x.getElement(i%3,i/3).toDouble()}}
+    /** Gains and camera→sRGB matrix for [kelvin], both interpolated between the two calibration illuminants like a DNG converter. */
+    private fun kelvinColor(kelvin:Double,tint:Double):Pair<android.hardware.camera2.params.RggbChannelVector,android.hardware.camera2.params.ColorSpaceTransform>{
+        val k1=WhiteBalance.illuminantKelvin(info.getCameraCharacteristic(CC.SENSOR_REFERENCE_ILLUMINANT1)?:21)
+        val k2=info.getCameraCharacteristic(CC.SENSOR_REFERENCE_ILLUMINANT2)?.toInt()?.let{WhiteBalance.illuminantKelvin(it)}?:k1
+        val w=WhiteBalance.weight(kelvin,k1,k2)
+        val cm=WhiteBalance.mix(m(info.getCameraCharacteristic(CC.SENSOR_COLOR_TRANSFORM1))!!,m(info.getCameraCharacteristic(CC.SENSOR_COLOR_TRANSFORM2)),w)
+        val cal=m(info.getCameraCharacteristic(CC.SENSOR_CALIBRATION_TRANSFORM1))?.let{c1->WhiteBalance.mix(c1,m(info.getCameraCharacteristic(CC.SENSOR_CALIBRATION_TRANSFORM2)),w)}
+        val fm=WhiteBalance.mix(m(info.getCameraCharacteristic(CC.SENSOR_FORWARD_MATRIX1))!!,m(info.getCameraCharacteristic(CC.SENSOR_FORWARD_MATRIX2)),w)
+        val g=WhiteBalance.gains(cm,cal,kelvin,tint)
+        val ccm=WhiteBalance.cameraToSrgb(fm)
+        val out=IntArray(18){i->if(i%2==1)10000 else Math.round(ccm[i/2]*10000).toInt()}
+        return android.hardware.camera2.params.RggbChannelVector(g[0].toFloat(),1f,1f,g[2].toFloat()) to android.hardware.camera2.params.ColorSpaceTransform(out)
+    }
+    val edgeModes get()=(info.getCameraCharacteristic(CC.EDGE_AVAILABLE_EDGE_MODES)?:intArrayOf()).toList()
+    val nrModes get()=(info.getCameraCharacteristic(CC.NOISE_REDUCTION_AVAILABLE_NOISE_REDUCTION_MODES)?:intArrayOf()).toList()
+    val canCurve get()=(info.getCameraCharacteristic(CC.TONEMAP_AVAILABLE_TONE_MAP_MODES)?:intArrayOf()).contains(CR.TONEMAP_MODE_CONTRAST_CURVE)
+    /** Tint −50 (green) … +50 (magenta) in steps of 5; only with Kelvin white balance. */
+    val tintValues get()=(-50..50 step 5).map{(if(it>0)"M" else if(it<0)"G" else "")+kotlin.math.abs(it) to it}
+    /** Sharpening and noise reduction: AUTO plus the modes this camera lists. */
+    val edgeValues:List<Pair<String,Int?>> get()=listOf<Pair<String,Int?>>("AUTO" to null)+listOf("ปิด" to CR.EDGE_MODE_OFF,"เบา" to CR.EDGE_MODE_FAST,"คมสูง" to CR.EDGE_MODE_HIGH_QUALITY).filter{it.second in edgeModes}
+    val nrValues:List<Pair<String,Int?>> get()=listOf<Pair<String,Int?>>("AUTO" to null)+listOf("ปิด" to CR.NOISE_REDUCTION_MODE_OFF,"น้อยที่สุด" to CR.NOISE_REDUCTION_MODE_MINIMAL,"เบา" to CR.NOISE_REDUCTION_MODE_FAST,"สูง" to CR.NOISE_REDUCTION_MODE_HIGH_QUALITY).filter{it.second in nrModes}
+    /** Contrast −3 … +3 as a tone curve; 0 leaves the camera's own curve. */
+    val contrastValues get()=if(!canCurve)emptyList() else (-3..3).map{(if(it>0)"+" else if(it==0)"±" else "")+it to it}
+    val currentTint get()=tint
+    val currentEdge get()=edge
+    val currentNr get()=nr
+    val currentContrast get()=contrast
+    fun setTint(v:Int){tint=v.coerceIn(-50,50);apply()}
+    fun setEdge(v:Int?){edge=v;apply()}
+    fun setNr(v:Int?){nr=v;apply()}
+    fun setContrast(v:Int){contrast=v.coerceIn(-3,3);apply()}
+    /** AUTO, then Kelvin 2000–10000 in 50 K steps when manual WB is possible, otherwise the camera's presets. Values ≥ [KELVIN_MIN] are Kelvin. */
+    val wbValues get()=if(canKelvin)listOf("AUTO" to CR.CONTROL_AWB_MODE_AUTO)+(2000..10000 step 50).map{"${it}K" to it}
         else (info.getCameraCharacteristic(CC.CONTROL_AWB_AVAILABLE_MODES)?:intArrayOf()).let{m->listOf("AUTO" to CR.CONTROL_AWB_MODE_AUTO,"แดด" to CR.CONTROL_AWB_MODE_DAYLIGHT,"เมฆ" to CR.CONTROL_AWB_MODE_CLOUDY_DAYLIGHT,"ร่ม" to CR.CONTROL_AWB_MODE_SHADE,"หลอดไฟ" to CR.CONTROL_AWB_MODE_INCANDESCENT,"ฟลูออเรสเซนต์" to CR.CONTROL_AWB_MODE_FLUORESCENT,"วอร์มฟลูออเรสเซนต์" to CR.CONTROL_AWB_MODE_WARM_FLUORESCENT,"พลบค่ำ" to CR.CONTROL_AWB_MODE_TWILIGHT).filter{it.second in m}}
     /** Manual focus: AUTO, then 48 steps from infinity to the closest distance, labelled in metres/centimetres. */
     val focusValues:List<Pair<String,Float?>> get(){
@@ -81,25 +121,8 @@ class ManualControls(private val context:Context, val camera:Camera, private val
         val SHUTTER_THIRDS:List<Pair<String,Long>> = listOf(8000,6400,5000,4000,3200,2500,2000,1600,1250,1000,800,640,500,400,320,250,200,160,125,100,80,60,50,40,30,25,20,15,13,10,8,6,5,4,3).map{"1/$it" to 1_000_000_000L/it}+
             listOf(0.4,0.5,0.6,0.8,1.0,1.3,1.6,2.0,2.5,3.2,4.0,5.0,6.0,8.0,10.0,13.0,15.0,20.0,25.0,30.0).map{(if(it>=1.0&&it%1.0==0.0)"${it.toInt()}s" else "${it}s") to (it*1_000_000_000L).toLong()}
         fun focusLabel(diopters:Float):String=if(diopters<0.02f)"∞" else (1f/diopters).let{m->if(m>=1f)String.format(java.util.Locale.US,"%.1f ม.",m) else "${(m*100).toInt()} ซม."}
-        /** White-balanced camera RGB → linear sRGB: XYZ(D50)→sRGB (Bradford) × the sensor's forward matrix. */
-        fun cameraToSrgb(forward:android.hardware.camera2.params.ColorSpaceTransform):android.hardware.camera2.params.ColorSpaceTransform{
-            val x=doubleArrayOf(3.1338561,-1.6168667,-0.4906146,-0.9787684,1.9161415,0.0334540,0.0719453,-0.2289914,1.4052427)
-            val f=DoubleArray(9){i->forward.getElement(i%3,i/3).toDouble()}
-            val out=IntArray(18)
-            for(r in 0..2)for(c in 0..2){var v=0.0;for(k in 0..2)v+=x[r*3+k]*f[k*3+c];out[(r*3+c)*2]=Math.round(v*10000).toInt();out[(r*3+c)*2+1]=10000}
-            return android.hardware.camera2.params.ColorSpaceTransform(out)
-        }
-        /** Approximate sRGB of a black body (Tanner Helland fit), inverted into camera gains normalised to green. */
-        fun kelvinGains(k:Int):android.hardware.camera2.params.RggbChannelVector{
-            val t=k/100.0
-            val r=if(t<=66)255.0 else (329.698727446*Math.pow(t-60,-0.1332047592)).coerceIn(0.0,255.0)
-            val g=(if(t<=66)99.4708025861*Math.log(t)-161.1195681661 else 288.1221695283*Math.pow(t-60,-0.0755148492)).coerceIn(1.0,255.0)
-            val b=if(t>=66)255.0 else if(t<=19)1.0 else (138.5177312231*Math.log(t-10)-305.0447927307).coerceIn(1.0,255.0)
-            val gr=(g/r).toFloat().coerceIn(0.3f,4f); val gb=(g/b).toFloat().coerceIn(0.3f,4f)
-            return android.hardware.camera2.params.RggbChannelVector(gr,1f,1f,gb)
-        }
     }
-    fun reset(){iso=null;ns=null;focus=null;wb=CR.CONTROL_AWB_MODE_AUTO;locked=false;apply()}
+    fun reset(){iso=null;ns=null;focus=null;wb=CR.CONTROL_AWB_MODE_AUTO;tint=0;edge=null;nr=null;contrast=0;locked=false;apply()}
     fun show(){context.studioSheet(if(video)"PRO VIDEO" else "PRO · ควบคุมกล้อง"){box,_->
         fun options(title:String,values:List<String>,selected:Int,choose:(Int)->Unit){
             box.addView(context.label(title,15f,LIME),-1,-2)

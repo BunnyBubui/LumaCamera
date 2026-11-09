@@ -16,13 +16,36 @@ import kotlin.math.*
 
 /** Shared tokens, motion and drawing helpers for the glass UI. See docs/claude/UI_MOTION_PROPOSAL.md. */
 object Glass {
-    const val ACCENT = 0xffffd447.toInt()
+    /** Theme: deep navy glass with a warm orange accent. */
+    const val ACCENT = 0xffff9f45.toInt()
+    const val ACCENT_HI = 0xffffbd6e.toInt()
+    const val ACCENT_LO = 0xffff7a2e.toInt()
+    const val ON_ACCENT = 0xff2a1300.toInt()
+    const val ACCENT_SOFT = 0x2eff9f45
     const val TEXT2 = 0xb8ffffff.toInt()
     const val TEXT3 = 0x99ffffff.toInt()
     const val FOCUS_BLUE = 0xff64d2ff.toInt()
-    const val FILL = 0x851e1e20.toInt()
-    const val FILL_STRONG = 0xc71c1c1e.toInt()
-    const val FILL_POP = 0xe6202023.toInt()
+    const val FILL = 0x8c17213a.toInt()
+    const val FILL_STRONG = 0xe0101829.toInt()
+    const val FILL_POP = 0xf0141d33.toInt()
+    const val NAVY = 0xff0b1122.toInt()
+    const val NAVY_DEEP = 0xff05070f.toInt()
+    private const val TINT_TOP = 0x34508a
+    private const val TINT_BOTTOM = 0x060a18
+    /** Page background: navy at the top fading to near black. */
+    fun page(): android.graphics.drawable.GradientDrawable =
+        android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0xff111a33.toInt(), NAVY, NAVY_DEEP))
+    private fun lerp(c: Int, to: Int, k: Float): Int {
+        fun ch(s: Int) = (((c shr s) and 255) + ((((to shr s) and 255) - ((c shr s) and 255)) * k)).roundToInt().coerceIn(0, 255)
+        return (c and 0xff000000.toInt()) or (ch(16) shl 16) or (ch(8) shl 8) or ch(0)
+    }
+    private fun weight(c: Int): Float {
+        val a = (c ushr 24) and 255; val lum = (((c shr 16) and 255) + ((c shr 8) and 255) + (c and 255)) / 765f
+        return if (a > 0xc0 && lum > 0.8f) 0.06f else 0.32f
+    }
+    /** Top and bottom of the vertical gradient every glass fill is drawn with. */
+    fun top(c: Int): Int = if (c == ACCENT) ACCENT_HI else lerp(c, TINT_TOP, weight(c))
+    fun bottom(c: Int): Int = if (c == ACCENT) ACCENT_LO else lerp(c, TINT_BOTTOM, weight(c) + 0.06f)
     val EASE = PathInterpolator(0.32f, 0.72f, 0f, 1f)
     val SPRING = PathInterpolator(0.34f, 1.56f, 0.64f, 1f)
     val POP = PathInterpolator(0.2f, 0.9f, 0.25f, 1.15f)
@@ -252,32 +275,43 @@ class GlassDrawable(var fill: Int = Glass.FILL, radius: Float = 0f, private val 
     var touchAlpha = 0f; set(v) { field = v; invalidateSelf() }
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
     private val rect = RectF(); private val clip = Path()
+    // Shaders are rebuilt only when the size, fill or rim changes, never per frame.
+    private var fillShader: Shader? = null; private var rimShader: Shader? = null
+    private var keyH = -1f; private var keyFill = 0; private var keyRim = -1; private var layerAlpha = 255
     override fun draw(c: Canvas) {
         rect.set(bounds); val r = min(radius, min(rect.width(), rect.height()) / 2)
-        p.shader = null; p.style = Paint.Style.FILL; p.color = fill; c.drawRoundRect(rect, r, r, p)
+        if (fillShader == null || keyH != rect.height() || keyFill != fill || keyRim != strokeAlpha || rect.top != lastTop) {
+            keyH = rect.height(); keyFill = fill; keyRim = strokeAlpha; lastTop = rect.top
+            fillShader = LinearGradient(0f, rect.top, 0f, rect.bottom, Glass.top(fill), Glass.bottom(fill), Shader.TileMode.CLAMP)
+            val hi = (strokeAlpha * 1.6f).roundToInt().coerceAtMost(255); val lo = (strokeAlpha * 0.25f).roundToInt()
+            rimShader = LinearGradient(0f, rect.top, 0f, rect.bottom, intArrayOf(Color.argb(hi, 255, 255, 255), Color.argb(lo, 255, 255, 255), Color.argb(lo / 2, 255, 255, 255)), floatArrayOf(0f, 0.45f, 1f), Shader.TileMode.CLAMP)
+        }
+        p.style = Paint.Style.FILL; p.shader = fillShader; p.alpha = layerAlpha; c.drawRoundRect(rect, r, r, p)
         if (touchAlpha > 0.01f && touchX >= 0) {
             c.save(); clip.reset(); clip.addRoundRect(rect, r, r, Path.Direction.CW); c.clipPath(clip)
             val rr = 110f * density
-            p.shader = RadialGradient(touchX, touchY, rr, Color.argb((82 * touchAlpha).roundToInt(), 255, 255, 255), Color.TRANSPARENT, Shader.TileMode.CLAMP)
-            c.drawCircle(touchX, touchY, rr, p); p.shader = null; c.restore()
+            p.shader = RadialGradient(touchX, touchY, rr, Color.argb((70 * touchAlpha).roundToInt(), 255, 214, 170), Color.TRANSPARENT, Shader.TileMode.CLAMP)
+            c.drawCircle(touchX, touchY, rr, p); c.restore()
         }
-        p.style = Paint.Style.STROKE; p.strokeWidth = density; p.color = Color.argb(strokeAlpha, 255, 255, 255)
-        rect.inset(p.strokeWidth / 2, p.strokeWidth / 2); c.drawRoundRect(rect, r, r, p)
-        p.color = Color.argb(strokeAlpha, 255, 255, 255); rect.inset(r * 0.25f, 0f)
-        c.drawLine(rect.left + r * 0.4f, rect.top + p.strokeWidth, rect.right - r * 0.4f, rect.top + p.strokeWidth, p)
+        // One soft rim, bright at the top and fading down, instead of a hairline plus a second highlight line.
+        p.style = Paint.Style.STROKE; p.strokeWidth = density * 0.9f; p.shader = rimShader; p.alpha = layerAlpha
+        rect.inset(p.strokeWidth / 2, p.strokeWidth / 2); c.drawRoundRect(rect, r, r, p); p.shader = null
     }
-    override fun setAlpha(alpha: Int) { p.alpha = alpha }
+    private var lastTop = 0f
+    override fun setAlpha(alpha: Int) { layerAlpha = alpha; invalidateSelf() }
     override fun setColorFilter(cf: ColorFilter?) { p.colorFilter = cf }
     // Same radius as the drawn shape, so clipToOutline and elevation shadows match the glass edge.
     override fun getOutline(o: android.graphics.Outline) { val b = bounds; o.setRoundRect(b, min(radius, min(b.width(), b.height()) / 2f)) }
     @Deprecated("Deprecated in Java") override fun getOpacity() = PixelFormat.TRANSLUCENT
 }
 
+/** Corners are drawn 20% rounder than asked so every button and panel reads softer. */
 fun Context.glass(radiusDp: Int, fill: Int = Glass.FILL): GlassDrawable =
-    GlassDrawable(fill, dp(radiusDp).toFloat(), resources.displayMetrics.density)
+    GlassDrawable(fill, dp(radiusDp).toFloat() * 1.2f, resources.displayMetrics.density)
 
 /** Touch-following glass: grows slightly, leans toward the finger and lights up under it; releases when the finger starts scrolling. */
-fun View.glassTouch(extra: ((MotionEvent) -> Unit)? = null) {
+/** [extra] sees every event first; when it returns true the event is consumed (no click). */
+fun View.glassTouch(extra: ((MotionEvent) -> Boolean)? = null) {
     var sx = 0f; var sy = 0f; var active = false
     val slop = 10 * resources.displayMetrics.density
     fun release(v: View) {
@@ -287,7 +321,7 @@ fun View.glassTouch(extra: ((MotionEvent) -> Unit)? = null) {
         (v.background as? GlassDrawable)?.let { g -> ValueAnimator.ofFloat(g.touchAlpha, 0f).apply { duration = 480; addUpdateListener { g.touchAlpha = it.animatedValue as Float }; start() } }
     }
     setOnTouchListener { v, e ->
-        extra?.invoke(e)
+        if (extra?.invoke(e) == true) { release(v); return@setOnTouchListener true }
         if (!v.isEnabled) return@setOnTouchListener false
         val g = v.background as? GlassDrawable
         when (e.actionMasked) {
