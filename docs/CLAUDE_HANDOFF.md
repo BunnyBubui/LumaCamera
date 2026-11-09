@@ -11,14 +11,14 @@
 
 ## ผลตรวจล่าสุด
 
-ดูผลที่เป็นปัจจุบันจาก Checks ใน [PR #3](https://github.com/BunnyBubui/luma-camera/pull/3) และ [PR #4](https://github.com/BunnyBubui/luma-camera/pull/4) โค้ดที่เชื่อม HDR ล่าสุดผ่าน 41 JVM tests, lint และสร้าง app/test APK ในเครื่องแล้ว รอบ Android ก่อนรวมผ่าน 10/11 กรณี (RAW Lab 4 เฟรม วิดีโอพร้อมเสียง และ PDF ผ่าน) รอบใหม่แก้ตัวควบคุมพรีวิวที่บังปุ่มส่งออก และเพิ่มกรณี HDR/สถานะปุ่ม รวม 13 กรณี ต้องดูผล CI รอบใหม่นี้ก่อนถือว่าผ่าน ยังไม่มีผลตรวจรับ Reno15 จริง
+ดูผลที่เป็นปัจจุบันจาก Checks ใน [PR #3](https://github.com/BunnyBubui/luma-camera/pull/3) และ [PR #4](https://github.com/BunnyBubui/luma-camera/pull/4) โค้ดที่เชื่อม HDR ล่าสุดผ่าน 41 JVM tests, lint และสร้าง app/test APK ในเครื่องแล้ว รอบ Android ที่เชื่อม HDR ผ่าน 12/13 กรณี รวม HDR/สถานะปุ่ม/RAW Lab/เสียงวิดีโอ/PDF ส่วน SR1 ส่งออก 640×480 ได้แต่มี 26/30 เฟรม จึงเพิ่ม decoder backpressure และตรวจจำนวนเฟรม/เวลาให้ตรงต้นฉบับในรอบถัดไป ต้องดูผล CI รอบแก้นี้ก่อนถือว่าผ่าน ยังไม่มีผลตรวจรับ Reno15 จริง
 
 ## ความคืบหน้าหลังรับงาน Claude B/C
 
 - **B ส่งแล้วใน PR #4**: ทบทวนโมดูล HDR และเชื่อม `HdrCapture.kt` แล้ว ปรับ histogram ก่อน alignment, รายงานจำนวนเฟรมจริง, เพิ่มการยกเลิกและตรวจงบ scratch ขั้นต่ำ ผลลัพธ์เป็น JPEG SDR exposure fusion ไม่ใช่ Ultra HDR/gain map ตัวเลข benchmark ของ Claude เป็นผล desktop เท่านั้น
 - **C ส่งแล้วใน PR #5**: มีแผนทดสอบเครื่องจริงและรีวิว UI รุ่น 0.2 ทุกผลเครื่องจริงยังเป็น “ยังไม่ได้ทดสอบ” เก็บรีวิวเดิมไว้พร้อมบันทึกการแก้ใน 0.3
 - **A ยังไม่ได้ทำ**: ให้ Claude เริ่ม OCR ไทยตาม API ด้านล่างได้ทันที โดยดึง `v0.3-studio` ล่าสุดก่อนทำงาน
-- Codex แก้ปุ่มเลือกให้มีพื้นหลัง/รูปทรงและสถานะ accessibility, เป้าสัมผัสอย่างน้อย 48 dp, flash AUTO, ตัวเลือก RAW ตามความสามารถกล้อง และพื้นที่ก่อนถ่าย ยังต้องตรวจ TalkBack/ฟอนต์ใหญ่/ประสิทธิภาพบนเครื่องจริง
+- Codex แก้ปุ่มเลือกให้มีพื้นหลัง/ตัวหนาและสถานะ accessibility, เป้าสัมผัสอย่างน้อย 48 dp, flash AUTO, ตัวเลือก RAW ตามความสามารถกล้อง และพื้นที่ก่อนถ่าย ยังต้องตรวจ TalkBack/ฟอนต์ใหญ่/ประสิทธิภาพบนเครื่องจริง
 
 ## แบ่งงานเพื่อทำพร้อมกัน
 
@@ -26,7 +26,7 @@ Codex เป็นผู้รวมงาน ดูแล Activity, UI, camera 
 
 | งาน | สถานะตอนส่งต่อ | ผู้รับผิดชอบ / ขอบเขต |
 |---|---|---|
-| UI สีดำ/ขาว/เหลือง แถบปัดโหมด More แผงตั้งค่าด่วน ไม้บรรทัดซูม | เขียนแล้ว รอ build/UI QA | Codex: `CameraActivity.kt`, `StudioUi.kt`, `Ui.kt`, `CompositionOverlay.kt` |
+| UI สีดำ/ขาว/เหลือง แถบปัดโหมด More แผงตั้งค่าด่วน ไม้บรรทัดซูม | Build/lint ผ่าน เพิ่ม selected accessibility แล้ว รอตรวจเครื่องจริง | Codex: `CameraActivity.kt`, `StudioUi.kt`, `Ui.kt`, `CompositionOverlay.kt` |
 | ตั้งเวลา อัตราส่วน ปุ่มเสียง แสงเซลฟี่ ลายน้ำ GPS โฟลเดอร์ | เขียนบางส่วน รอเชื่อมและทดสอบทุกทางถ่าย | Codex: `StudioSettings.kt`, `PhotoEffects.kt`, `PhotoMedia.kt`, `BurstCapture.kt` |
 | Video เสียง/ปิดไมค์ พัก/ต่อ HDR กันสั่น ซูม A→B/Dual-view/Movie | เขียนแล้ว รอ build และทดสอบไฟล์จริง | Codex: `VideoActivity.kt`, `ClipInspector.kt`, `MediaLedger.kt` |
 | Slow-motion / Time-lapse | เขียน Camera2/MediaRecorder แล้ว ยังไม่ทดสอบเครื่องจริง | Codex: `SpecialVideoActivity.kt` |
@@ -34,10 +34,10 @@ Codex เป็นผู้รวมงาน ดูแล Activity, UI, camera 
 | HDR / Night / Portrait / Ultra HDR / HI-RES | มี OEM gating และ fallback เริ่มต้น ยังต้องปรับคุณภาพ | Codex ดูแล capture/session; Claude รับโมดูล HDR แยกด้านล่าง |
 | Document แก้ perspective หลายหน้า PDF / OCR Latin | เขียนแล้ว รอทดสอบ; OCR ไทยยังไม่ได้ทำ | Codex ดูแล `DocumentActivity.kt`; Claude รับ Thai OCR แยก |
 | Panorama ORB/homography/feather | เขียนแล้ว ต้องทดสอบรอยต่อ ภาพไม่ซ้อนพอ และหน่วยความจำ | Codex: `PanoramaEngine.kt` |
-| RAW video DNG sequence + WAV + timestamps + recovery | กำลังพัฒนา | Codex: `RawLabActivity.kt`, `PcmAudio.kt` |
-| RAW linear fusion / Bayer / WB / SR1 | มีโมดูลเริ่มต้น กำลังเชื่อมและทดสอบ | Codex: `RawBayer.kt`, `LinearRawFusion.java` |
-| แต่งคลิป AI SR1 / Luma Log / LUT / codec ส่งออก | กำลังพัฒนา ไม่ใช่ Log จากเซนเซอร์ | Codex: `ClipEditorActivity.kt`, `LumaVideoEffect.kt` |
-| Build/lint/tests/emulator/APK และการรวม branch | ยังไม่ผ่านรอบรวมรุ่น 0.3 | Codex |
+| RAW video DNG sequence + WAV + timestamps + recovery | เขียนและ build แล้ว ยังต้องวัด RAW video throughput/A/V sync บนเครื่องจริง | Codex: `RawLabActivity.kt`, `PcmAudio.kt` |
+| RAW linear fusion / Bayer / WB / SR1 | เชื่อมแล้ว Android flow RAW AI 4 DNG ผ่านในรอบก่อนรวม; ยังไม่ตรวจสี/คุณภาพจริง | Codex: `RawBayer.kt`, `LinearRawFusion.java` |
+| แต่งคลิป AI SR1 / Luma Log / LUT / codec ส่งออก | Build/lint ผ่าน กำลังตรวจการส่งออก SR1 บน emulator; ไม่ใช่ Log จากเซนเซอร์ | Codex: `ClipEditorActivity.kt`, `LumaVideoEffect.kt` |
+| Build/lint/tests/emulator/APK และการรวม branch | Build/lint/JVM 41 ผ่าน กำลังตรวจ emulator รอบรวม | Codex |
 | คุณภาพจริง Reno15/หลายยี่ห้อ, 60/120 Hz, HDR สี, fps, เสียง, ความร้อน | ยังไม่ได้วัด | ต้องมีเครื่อง/ไฟล์ตัวอย่างจริง; Claude เตรียมวิธีวัดได้ |
 
 ## งาน Claude A — OCR ไทย + อังกฤษแบบออฟไลน์

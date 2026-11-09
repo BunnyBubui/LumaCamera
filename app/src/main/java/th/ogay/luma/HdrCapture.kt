@@ -18,7 +18,7 @@ import kotlin.math.*
 /** Exposure-bracket fusion to SDR. The JPEG reference is retained in the system gallery. */
 class HdrCapture(private val c:Context,private val camera:Camera,private val capture:ImageCapture,private val progress:(Int)->Unit,private val done:(File?,String?)->Unit){
     private val folder=File(c.filesDir,"hdr/${UUID.randomUUID()}").apply{mkdirs()}
-    private val files=mutableListOf<File>();private var stopped=false;private var finished=false
+    private val files=mutableListOf<File>();@Volatile private var stopped=false;private var finished=false
     private val main=Handler(Looper.getMainLooper());private val initial=camera.cameraInfo.exposureState.exposureCompensationIndex
     private val range=camera.cameraInfo.exposureState.exposureCompensationRange
     private val step=camera.cameraInfo.exposureState.exposureCompensationStep.toFloat()

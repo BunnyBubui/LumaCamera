@@ -72,7 +72,7 @@ class StudioFlowTest{
         }
     }
     @Test fun sr1GpuExportsTwiceTheVideoResolution(){
-        val file=syntheticVideo();val old=MediaLedger.all(context).map{it.uri}.toSet()
+        val file=syntheticVideo();val source=ClipInspector.inspect(context,MediaLedger.privateUri(context,file));assertEquals(source.toString(),30L,source.getLong("frames"));val old=MediaLedger.all(context).map{it.uri}.toSet()
         ActivityScenario.launch<ClipEditorActivity>(Intent(context,ClipEditorActivity::class.java).setData(MediaLedger.privateUri(context,file))).use{
             val spinner=device.wait(Until.findObject(By.clazz(Spinner::class.java)),15000);assertNotNull(spinner);spinner.click()
             device.wait(Until.findObject(By.text("AI SR1 2× · SDR ≤1080p")),10000).click()
@@ -81,7 +81,7 @@ class StudioFlowTest{
             action!!.click()
             until(120000){device.findObject(By.textContains("ส่งออกไม่ได้"))?.let{fail(it.text)};MediaLedger.all(context).any{it.mime=="video/mp4"&&it.uri !in old}}
             val item=MediaLedger.all(context).first{it.mime=="video/mp4"&&it.uri !in old};val report=ClipInspector.inspect(context,item.uri)
-            assertEquals(report.toString(),640,report.getInt("width"));assertEquals(480,report.getInt("height"));assertTrue(report.toString(),report.getLong("frames")>=28)
+            assertEquals(report.toString(),640,report.getInt("width"));assertEquals(480,report.getInt("height"));assertEquals(report.toString(),source.getLong("frames"),report.getLong("frames"));assertEquals(source.getLong("lastSampleUs"),report.getLong("lastSampleUs"))
         }
     }
     @Test fun selectedFormatHasSemanticStateAndShutterHasButtonRole(){

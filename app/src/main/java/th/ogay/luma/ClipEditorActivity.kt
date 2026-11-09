@@ -53,13 +53,31 @@ class ClipEditorActivity:ComponentActivity(){
                 override fun onCompleted(composition:Composition,result:ExportResult){transformer=null;handler.removeCallbacks(poll);export.text="ส่งออกอีกครั้ง";status.text="กำลังบันทึกไฟล์…"
                     luma.fileIo.execute{runCatching{val out=MediaLedger.publishVideo(this@ClipEditorActivity,file,file.name,when(preset){1->"SR1 2× รายเฟรม · ทดลอง";3->"Luma Log SDR · ดู sidecar";else->"แต่งคลิป"});metadata.put("state","complete").put("videoFrames",result.videoFrameCount).put("output",out.toString());job!!.writeText(metadata.toString(2));MediaLedger.rememberFile(this@ClipEditorActivity,job!!,"application/json","ข้อมูลการส่งออกและ transfer curve");ClipInspector.record(this@ClipEditorActivity,out,file.name);file.delete();out}.onSuccess{out->runOnUiThread{if(!isDestroyed){status.text="ส่งออกแล้ว · ${result.videoFrameCount} เฟรม";player.setVideoURI(out);player.seekTo(1)}}}.onFailure{e->runOnUiThread{status.text="ไฟล์อยู่ในแอป · ${e.localizedMessage}"};MediaLedger.rememberFile(this@ClipEditorActivity,file,"video/mp4")}}
                 }
-                override fun onError(composition:Composition,result:ExportResult,e:ExportException){transformer=null;handler.removeCallbacks(poll);file.delete();metadata.put("state","failed").put("error",e.toString());job!!.writeText(metadata.toString(2));status.text="ส่งออกไม่ได้ · ${e.localizedMessage}\nลองลดขนาดหรือเปลี่ยน codec";export.text="ลองส่งออกใหม่"}
+                override fun onError(composition:Composition,result:ExportResult,e:ExportException){transformer=null;handler.removeCallbacks(poll);file.delete();metadata.put("state","failed").put("error",e.toString());job!!.writeText(metadata.toString(2));status.text="ส่งออกไม่ได้ · ${e.localizedMessage}\nลองลดขนาดหรือเปลี่ยน codec";export.text="ลองส่งออกใหม่";restorePreview()}
                 override fun onFallbackApplied(c:Composition,original:TransformationRequest,fallback:TransformationRequest){status.text="encoder ปรับรูปแบบตามที่เครื่องรองรับ · รายงานไฟล์จะแสดงค่าจริง"}
             }
-            val t=Transformer.Builder(this).setVideoMimeType(codec).setPortraitEncodingEnabled(true).addListener(listener).build();transformer=t;t.start(builder.build(),file.path);export.text="ยกเลิกส่งออก";handler.post(poll)
-        }catch(e:Exception){transformer?.cancel();transformer=null;file.delete();metadata.put("state","failed").put("error",e.toString());job!!.writeText(metadata.toString(2));status.text="เริ่มส่งออกไม่ได้ · ${e.localizedMessage}"}
+            // Expensive SR must apply backpressure before the decoder releases another surface
+            // frame. Some codecs otherwise coalesce SurfaceTexture callbacks and lose frames.
+            player.stopPlayback()
+            val selector=androidx.media3.exoplayer.mediacodec.MediaCodecSelector{mime,secure,tunnel->
+                val codecs=androidx.media3.exoplayer.mediacodec.MediaCodecSelector.DEFAULT.getDecoderInfos(mime,secure,tunnel)
+                // Goldfish's host-backed decoder can lose surface frames at EOS. Use the
+                // Android software codec on emulators; phones keep normal codec selection.
+                if(androidx.media3.common.util.Util.isRunningOnEmulator())codecs.sortedBy{when{it.name.contains("goldfish",true)->2;it.softwareOnly->0;else->1}}else codecs
+            }
+            val platform=DefaultDecoderFactory.Builder(this).setMediaCodecSelector(selector).build()
+            val decoder=object:Codec.DecoderFactory by platform{
+                override fun createForVideoDecoding(format:Format,surface:android.view.Surface,toneMap:Boolean,session:android.media.metrics.LogSessionId?):Codec{
+                    val delegate=platform.createForVideoDecoding(format,surface,toneMap,session)
+                    return object:Codec by delegate{override fun getMaxPendingFrameCount()=1}
+                }
+            }
+            val loaders=DefaultAssetLoaderFactory(this,decoder,androidx.media3.common.util.Clock.DEFAULT,null)
+            val t=Transformer.Builder(this).setAssetLoaderFactory(loaders).setVideoMimeType(codec).setPortraitEncodingEnabled(true).addListener(listener).build();transformer=t;t.start(builder.build(),file.path);export.text="ยกเลิกส่งออก";handler.post(poll)
+        }catch(e:Exception){transformer?.cancel();transformer=null;file.delete();metadata.put("state","failed").put("error",e.toString());job!!.writeText(metadata.toString(2));status.text="เริ่มส่งออกไม่ได้ · ${e.localizedMessage}";restorePreview()}
     }
-    private fun cancel(){if(transformer==null)return;transformer?.cancel();transformer=null;handler.removeCallbacks(poll);output?.delete();job?.let{runCatching{val m=JSONObject(it.readText());m.put("state","cancelled");it.writeText(m.toString(2))}};status.text="ยกเลิกแล้ว · ต้นฉบับยังอยู่";export.text="ลองส่งออกใหม่"}
+    private fun restorePreview(){intent.data?.let{player.setVideoURI(it);player.seekTo(1)}}
+    private fun cancel(){if(transformer==null)return;transformer?.cancel();transformer=null;handler.removeCallbacks(poll);output?.delete();job?.let{runCatching{val m=JSONObject(it.readText());m.put("state","cancelled");it.writeText(m.toString(2))}};status.text="ยกเลิกแล้ว · ต้นฉบับยังอยู่";export.text="ลองส่งออกใหม่";restorePreview()}
     override fun onSaveInstanceState(out:Bundle){out.putInt("preset",preset);out.putFloat("speed",speed);out.putBoolean("crop",crop);super.onSaveInstanceState(out)}
     override fun onStop(){cancel();player.pause();super.onStop()}
     override fun onDestroy(){player.stopPlayback();super.onDestroy()}
