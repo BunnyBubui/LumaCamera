@@ -326,7 +326,6 @@ class CameraActivity : ComponentActivity() {
         val provider=provider ?: return
         if (!granted()) {showPermission();return}
         permissionPanel.visibility=View.GONE
-        val ticket=++binding
         try {
             fun selector() = if(rear) CameraSelector.DEFAULT_BACK_CAMERA else CameraSelector.DEFAULT_FRONT_CAMERA
             if(!provider.hasCamera(selector())) rear=!rear
@@ -347,6 +346,7 @@ class CameraActivity : ComponentActivity() {
                 capture?.flashMode=if(info.hasFlashUnit())flash else ImageCapture.FLASH_MODE_OFF
                 applyZoom(ratio);refresh();return
             }
+            val ticket=++binding
             val cc=Camera2CameraInfo.from(info)
             val caps=cc.getCameraCharacteristic(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)
             val single=Build.VERSION.SDK_INT>=28 && caps!=null && !caps.contains(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_LOGICAL_MULTI_CAMERA)

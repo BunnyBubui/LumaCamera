@@ -17,19 +17,20 @@ class VideoDiagnostics : CameraCaptureSession.CaptureCallback() {
     private var frames = 0L
     private var duration = 0L
     private var intervals = 0L
-    @Synchronized fun reset() { active = false; first = 0; last = 0; frames = 0; duration = 0; intervals = 0 }
-    @Synchronized fun active(value: Boolean) { active = value; last = 0 }
+    private var segmentLast = 0L
+    @Synchronized fun reset() { active = false; first = 0; last = 0; frames = 0; duration = 0; intervals = 0; segmentLast = 0 }
+    @Synchronized fun active(value: Boolean) { active = value; segmentLast = 0 }
     @Synchronized override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
         if (!active) return
         val time = result.get(CaptureResult.SENSOR_TIMESTAMP) ?: return
         if (last != 0L && time <= last) return
         if (first == 0L) first = time
-        if (last != 0L) { duration += time - last; intervals++ }
-        last = time; frames++
+        if (segmentLast != 0L) { duration += time - segmentLast; intervals++ }
+        last = time; segmentLast = time; frames++
     }
     @Synchronized fun snapshot() = JSONObject().put("sensorFrames", frames).put("firstSensorNs", first)
         .put("lastSensorNs", last).put("sensorIntervalNs", duration)
-        .put("sensorFps", if (frames > 1 && duration > 0) intervals * 1e9 / duration else JSONObject.NULL)
+        .put("timingScope", "observed_capture_callbacks_not_encoded_frames").put("sensorFps", if (frames > 1 && duration > 0) intervals * 1e9 / duration else JSONObject.NULL)
     companion object {
         fun save(context: Context, stage: String, config: JSONObject, error: Throwable? = null) {
             // Only camera configuration/timing: no image, audio, or location data.
