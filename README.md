@@ -1,8 +1,8 @@
 # Luma Camera 0.3.0 — Studio (กำลังตรวจรับ)
 
-สถานะ: โค้ด Studio พร้อม HDR ใน PR #4 ผ่าน Gradle build, lint และ JVM 41 tests ในเครื่องแล้ว กำลังตรวจ Android emulator รอบรวม ดู Checks ของ PR #3/#4 รุ่นนี้ยังไม่ใช่การรับรองว่าทุกโหมดทำงานหรือได้คุณภาพตามเป้าบน Reno15 จริง
+สถานะ: โค้ด Studio พร้อม HDR ที่รวม PR #4/#5 ผ่าน GitHub build, lint, JVM 41 tests และ Android API 30 emulator 13/13 แล้ว รวม SR1 GPU ส่งออก 2× ครบเฟรม ดู Checks ของ PR #4 และสถานะ PR #3 รุ่นนี้ยังไม่ใช่การรับรองว่าทุกโหมดทำงานหรือได้คุณภาพตามเป้าบน Reno15 จริง
 
-แผนส่งต่องานให้ Claude พร้อมขอบเขตไฟล์และ API อยู่ที่ [docs/CLAUDE_HANDOFF.md](docs/CLAUDE_HANDOFF.md) เริ่มงานโมดูลแยกบน branch ของตนเองและเปิด PR เข้าสู่ `v0.3-studio`
+งาน Claude รอบถัดไป A: Thai OCR, D: UI 0.3 review, E: Panorama quality พร้อมขอบเขตไฟล์/เกณฑ์รับ/พรอมป์ต์อยู่ที่ [docs/CLAUDE_NEXT_TASKS.md](docs/CLAUDE_NEXT_TASKS.md) และ API เดิมที่ [docs/CLAUDE_HANDOFF.md](docs/CLAUDE_HANDOFF.md) เปิด PR เข้า `v0.3-studio` โดยไม่ merge เอง
 
 ## Studio UI และโหมดใหม่
 
@@ -17,7 +17,7 @@
 - RAW Lab ทดลอง DNG sequence 10 วินาที เก็บ JSONL timestamps/ISO/shutter จำนวนเฟรมที่เขียน/ทิ้ง และ WAV แยกเมื่อเปิดไมค์ ส่งออก ZIP ได้ ขนาด RAW รุ่นทดลองจำกัด ≤16 MP การซิงก์เสียงต้องตรวจ sensor timestamp source และ hardware audio timestamp
 - RAW AI ทดลองรวม linear RGB หลัง Bayer 2×2/WB ก่อน gamma แล้วเข้าคิว SR1 แยกจาก RAW+AI รุ่น 0.2 **ยังไม่มี lens-shading/hot-pixel calibration** DNG ต้นฉบับเก็บไว้
 - แต่งคลิปส่งออกไฟล์ใหม่: SR1 2× บน GPU จากน้ำหนักเดียวกับภาพนิ่ง (SDR ต้นฉบับ ≤1080p), Movie LUT, นำเข้า .cube 3D 2–33, ครอป 2.39, เปลี่ยนความเร็วและ codec H.264/HEVC ตาม encoder **SR1 video ยังไม่มี temporal consistency**
-- Luma Log เป็น transfer curve ที่แปลงจาก SDR หลังถ่าย พร้อม JSON sidecar **ไม่ใช่ Log จากเซนเซอร์หรือ RAW video** เปิดหน้าแต่งคลิปไว้ขณะส่งออก หากออกจากหน้าจะยกเลิกโดยเก็บต้นฉบับไว้
+- Luma Log เป็น transfer curve ที่แปลงจาก SDR หลังถ่าย พร้อม JSON sidecar **ไม่ใช่ Log จากเซนเซอร์หรือ RAW video** เปิดหน้าแต่งคลิปไว้ขณะส่งออก หากออกจากหน้าจะยกเลิกโดยเก็บต้นฉบับไว้ ระหว่างส่งออกหยุดพรีวิวและจำกัดเฟรมค้างใน decoder เพื่อลดการใช้หน่วยความจำ/เฟรมสูญหาย; emulator เลือก decoder ซอฟต์แวร์เพื่อเลี่ยงปัญหา Goldfish ที่พบใน CI ต้องวัดความเร็วจริงบนมือถือ
 - ตั้งเวลา 3/10 วินาที อัตราส่วน 4:3/1:1/16:9 ถ่าย JPEG ต่อเนื่อง 10 ภาพ ปุ่มเสียง เส้นระดับ ลายน้ำ กลับเซลฟี่ แสงหน้าจอ และโฟลเดอร์ภาพ GPS ใช้ตำแหน่งล่าสุดไม่เกิน 15 นาทีเมื่อผู้ใช้เลือกเปิดและอนุญาตเท่านั้น
 
 ## ข้อจำกัดการตรวจรับ

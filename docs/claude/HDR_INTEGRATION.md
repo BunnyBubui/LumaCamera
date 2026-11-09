@@ -78,7 +78,7 @@ public static int[] merge(int[][] frames, int width, int height,
 
 เทสต์ที่เหลือตรวจว่าภาพเดียวคืนค่าเดิม ภาพที่เหมือนกันทุกภาพ (รวม checkerboard 0/255) คืนภาพเดิมโดยไม่มี ringing ฉากเรียบไม่เกิดรอยด่าง ค่า `dx/dy` ที่ผิดทำให้ระบบถอยไปใช้ภาพอ้างอิงแทนการซ้อนขอบสองชั้น ภาพที่ไม่ซ้อนกันถูกข้าม และอินพุตที่ผิดสัญญาถูกปฏิเสธ
 
-สิ่งที่ยังไม่ได้ทดสอบ: การ build ด้วย Gradle และ Android lint, ภาพ JPEG จริงจาก Reno15, เวลาและหน่วยความจำบนมือถือ, ความถูกต้องของสีเทียบกล้อง OPPO และภาพที่มีการสั่นแบบหมุน ภาพทดสอบสังเคราะห์ไม่มี tone curve เฉพาะ local tone mapping และการบีบอัด JPEG แบบภาพจริง
+Codex ตรวจ Gradle build, Android lint และ JVM 41 tests (รวม HDR 16 tests) ผ่านแล้ว กรณีถ่าย HDR พร้อม metadata บน Android emulator ผ่านในรอบรวม ส่วนที่ยังไม่ได้ทดสอบ: ภาพ JPEG จริงจาก Reno15, เวลาและหน่วยความจำบนมือถือ, ความถูกต้องของสีเทียบกล้อง OPPO และภาพที่มีการสั่นแบบหมุน ภาพทดสอบสังเคราะห์ไม่มี tone curve เฉพาะ local tone mapping และการบีบอัด JPEG แบบภาพจริง
 
 ## ความเสี่ยงที่ควรรู้
 
@@ -95,4 +95,4 @@ Exposure fusion มักทำให้ภาพดูแบนลง (คอ�
 
 เพิ่ม overload cancellation ผ่าน `HdrFusionQuality.Cancellation` เพื่อรองรับ Android API 23 โดยไม่ต้องเพิ่ม core-library desugaring และปฏิเสธ budget ที่เล็กกว่าขั้นต่ำของแถบ แทนการจัดสรรเกิน budget ที่ร้องขอ ผล stripe/whole-frame เท่ากันตาม fixture เมื่อใช้ pyramid depth เดียวกัน หากลด depth เพื่อให้พอดีงบ ผลอาจต่างจาก whole-frame ที่ใช้ depth มากกว่า
 
-ผล desktop ด้านบนยังเป็นผลของ Claude การเพิ่ม guard และการเชื่อม capture ต้องยืนยันด้วย Gradle/lint/emulator และ Reno15 แยกจากผลนั้น ดูสถานะล่าสุดที่ PR #3
+ผล desktop ด้านบนยังเป็นผลของ Claude การเชื่อม capture มีหลักฐาน Gradle/lint/JVM และ Android emulator แยกจากผล desktop ข้างต้นแล้ว ยังต้องตรวจ Reno15 ตาม protocol ดูสถานะล่าสุดที่ PR #3/#4
