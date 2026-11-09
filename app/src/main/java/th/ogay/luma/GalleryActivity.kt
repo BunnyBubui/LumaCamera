@@ -158,7 +158,7 @@ class GalleryActivity : ComponentActivity() {
     private fun topBar(title: String, back: () -> Unit): LinearLayout {
         val bar = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(12), dp(14), dp(6)) }
         bar.addView(roundButton(Icons.CHEVRON_LEFT, "ย้อนกลับ", back), dp(48), dp(48))
-        bar.addView(text(title, 22f, Color.WHITE, true).apply { setPadding(dp(12), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
+        bar.addView(text(title, 20f, Color.WHITE, true).apply { setPadding(dp(12), 0, dp(4), 0); maxLines = 3; ellipsize = null }, LinearLayout.LayoutParams(0, -2, 1f))
         root.addView(bar, -1, -2); return bar
     }
     // A brighter fill than the default glass so the top controls read clearly on the dark page.
