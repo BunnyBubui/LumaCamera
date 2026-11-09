@@ -10,6 +10,7 @@ import kotlin.math.roundToInt
  * The camera's mode strip for screens outside the camera (video, time-lapse): same items, same order, and a
  * switch that moves to the right screen without a page transition.
  */
+@androidx.annotation.OptIn(androidx.camera.camera2.interop.ExperimentalCamera2Interop::class)
 object ModeBar {
     private val VIDEO_KINDS = setOf("VIDEO", "MOVIE", "SLOW")
     fun keys(a: Activity, kind: String): List<String> {
