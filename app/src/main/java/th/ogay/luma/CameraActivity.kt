@@ -98,6 +98,14 @@ class CameraActivity : ComponentActivity() {
     private var zoomTicket = 0
     private var binding = 0
     private var pendingBind = false
+    // Session reuse and mode coalescing (core, from codex/video-session-recovery).
+    private var previewObserved=false
+    private var boundKey:List<Any?>?=null
+    private var boundPreview:Preview?=null
+    private val captureCaps=mutableMapOf<CameraInfo,Set<Int>>()
+    private val modeHandler=android.os.Handler(android.os.Looper.getMainLooper())
+    private var modePending=false
+    private val switchMode=Runnable{modePending=false;if(!isDestroyed&&!isFinishing){bind();loadThumb()}}
     private var targetRotation = Surface.ROTATION_0
     private var lastThumbUri: Uri? = null
     private lateinit var orientation: OrientationEventListener
@@ -197,7 +205,7 @@ class CameraActivity : ComponentActivity() {
                     provider = future.get()
                     if (granted()) bind() else showPermission()
                     val ex=ExtensionsManager.getInstanceAsync(this,provider!!)
-                    ex.addListener({runCatching{extensions=ex.get();if(!busy && granted())bind()}},main)
+                    ex.addListener({runCatching{extensions=ex.get();if(!isDestroyed&&!busy&&granted()&&mode in listOf(PhotoMode.NIGHT,PhotoMode.HDR,PhotoMode.PORTRAIT))bind()}},main)
                 }
                 catch (e: Exception) { cameraError("เปิดระบบกล้องไม่ได้ · ${e.cause?.localizedMessage ?: e.localizedMessage}") }
             }
@@ -213,13 +221,14 @@ class CameraActivity : ComponentActivity() {
     }
     private fun granted() = permissions.all { ContextCompat.checkSelfPermission(this,it) == PackageManager.PERMISSION_GRANTED }
     override fun onResume() {
-        super.onResume(); orientation.enable(); loadThumb()
+        super.onResume(); orientation.enable(); loadThumb();if(modePending){modeHandler.removeCallbacks(switchMode);modeHandler.post(switchMode)}
         if (::modeStrip.isInitialized) syncModeStrip(false)
         if (granted() && provider != null && capture == null) bind()
         if (!granted()) showPermission()
     }
     override fun onPause() {
         orientation.disable()
+        modeHandler.removeCallbacks(switchMode)
         zoomAnimation?.cancel()
         burst?.cancel()
         hdr?.cancel()
@@ -262,14 +271,15 @@ class CameraActivity : ComponentActivity() {
         }
         stage.addView(mask, FrameLayout.LayoutParams(-1, -1, Gravity.TOP or Gravity.CENTER_HORIZONTAL))
         stage.addOnLayoutChangeListener { _, left, top, right, bottom, _, _, _, _ -> layoutMask(right - left, bottom - top) }
-        preview = PreviewView(this).apply { implementationMode = PreviewView.ImplementationMode.COMPATIBLE; scaleType = PreviewView.ScaleType.FIT_CENTER }
+        // The PreviewView survives a rebuilt screen (rotation) so a reused session keeps its surface.
+        preview = (if (::preview.isInitialized) preview.also { (it.parent as? ViewGroup)?.removeView(it) } else PreviewView(this)).apply { implementationMode = PreviewView.ImplementationMode.COMPATIBLE; scaleType = PreviewView.ScaleType.FIT_CENTER }
         mask.addView(preview, -1, -1)
         overlay = CompositionOverlay(this).apply { grid = prefs.getBoolean("grid", false) }
         mask.addView(overlay, -1, -1)
         overlay.monitor(preview)
         frozen = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP; alpha = 0f; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
         mask.addView(frozen, -1, -1)
-        preview.previewStreamState.observe(this) { if (it == PreviewView.StreamState.STREAMING && frozen.alpha > 0f) frozen.animate().alpha(0f).setDuration(220).withEndAction { Glass.blur(frozen, 0f); val old = (frozen.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap; frozen.setImageDrawable(null); old?.recycle() }.start() }
+        if (!previewObserved) { previewObserved = true; preview.previewStreamState.observe(this) { if (it == PreviewView.StreamState.STREAMING) unfreeze() } }
 
         expRail = EdgeRail(this, false); stage.addView(expRail, FrameLayout.LayoutParams(dp(150), -1, Gravity.START))
         focusRail = EdgeRail(this, true); stage.addView(focusRail, FrameLayout.LayoutParams(dp(170), -1, Gravity.END))
@@ -475,7 +485,7 @@ class CameraActivity : ComponentActivity() {
         if (output != CaptureOutput.JPEG && mode in listOf(PhotoMode.PHOTO, PhotoMode.PRO)) statusIcon(Icons.FILE, after = output.label.replace(" + ", "+"), name = "รูปแบบไฟล์ ${output.label}")
         if (aeLock || pressLock) statusIcon(Icons.LOCK, after = "AE", name = "ล็อกความสว่าง")
         if (macro) statusIcon(Icons.FLOWER, name = "มาโคร เปิด")
-        if (nightActive()) statusIcon(Icons.NIGHT, after = listOf("3s", "5s", "10s")[nightIndex()], name = "กลางคืน")
+        if (nightActive()) statusIcon(Icons.NIGHT, after = listOf("3s", "5s", "10s")[nightIndex()], name = "กลางคืน · " + if (activeExtension) "ระบบกล้อง" else "AI รวมเฟรม")
         if (auto && output == CaptureOutput.JPEG && mode == PhotoMode.PHOTO) statusIcon(Icons.AI, name = "AI อัตโนมัติ เปิด")
         statusRow.contentDescription = "สิ่งที่เปิดอยู่: " + (0 until statusRow.childCount).joinToString(", ") { statusRow.getChildAt(it).contentDescription }
     }
@@ -936,7 +946,7 @@ class CameraActivity : ComponentActivity() {
     }
     private fun refresh() {
         if (!::shutter.isInitialized) return
-        shutter.isEnabled = capture != null && granted() && !busy && !zoomSettling && (!output.needsRaw || rawAvailable) || nightRunning
+        shutter.isEnabled = capture != null && granted() && !modePending && !busy && !zoomSettling && (!output.needsRaw || rawAvailable) || nightRunning
         shutter.alpha = if (shutter.isEnabled) 1f else 0.45f
         shutter.contentDescription = if (nightRunning) "หยุดรวมแสงและบันทึก" else "ถ่ายภาพ"
         flip.isEnabled = !busy
@@ -989,7 +999,6 @@ class CameraActivity : ComponentActivity() {
         val provider=provider ?: return
         if (!granted()) {showPermission();return}
         permissionPanel.visibility=View.GONE
-        val ticket=++binding
         try {
             fun selector() = if(rear) CameraSelector.DEFAULT_BACK_CAMERA else CameraSelector.DEFAULT_FRONT_CAMERA
             if(!provider.hasCamera(selector())) rear=!rear
@@ -999,8 +1008,20 @@ class CameraActivity : ComponentActivity() {
             val selected=if(activeExtension)extensions!!.getExtensionEnabledCameraSelector(baseSelector,extension) else baseSelector
             val info=provider.availableCameraInfos.firstOrNull { it in baseSelector.filter(provider.availableCameraInfos) }
                 ?: throw IOException("ไม่พบกล้องที่เปิดใช้งานได้")
-            rawAvailable = ImageCapture.getImageCaptureCapabilities(info).supportedOutputFormats.contains(ImageCapture.OUTPUT_FORMAT_RAW_JPEG)
+            val formats=captureCaps.getOrPut(info){ImageCapture.getImageCaptureCapabilities(info).supportedOutputFormats.toSet()}
+            rawAvailable = formats.contains(ImageCapture.OUTPUT_FORMAT_RAW_JPEG)
             if(output.needsRaw&&!rawAvailable){output=CaptureOutput.JPEG;prefs.edit().putString("output",output.name).apply();notice("กล้องนี้ไม่รองรับ RAW · เปลี่ยนเป็น JPEG แล้ว")}
+            if(mode==PhotoMode.NIGHT&&!activeExtension&&output==CaptureOutput.JPEG)output=CaptureOutput.AI
+            val key=listOf(rear,activeExtension,if(activeExtension)extension else ExtensionMode.NONE,output.needsRaw,
+                mode==PhotoMode.HIRES,mode==PhotoMode.ULTRA_HDR,mode in listOf(PhotoMode.PRO,PhotoMode.HDR,PhotoMode.HIRES,PhotoMode.NIGHT),prefs.getString("aspect","4:3"),prefs.getString("jpeg_quality","95"))
+            if(key==boundKey&&capture?.let{provider.isBound(it)}==true){
+                // Same stream combination: keep the session, refresh only per-mode state.
+                boundPreview?.setSurfaceProvider(preview.surfaceProvider);capture?.targetRotation=targetRotation
+                manual=ManualControls(this,camera!!,false,mode==PhotoMode.PRO);afterBind()
+                capture?.flashMode=if(info.hasFlashUnit())flash else ImageCapture.FLASH_MODE_OFF
+                unfreeze();applyZoom(ratio);refresh();return
+            }
+            val ticket=++binding
             val cc=Camera2CameraInfo.from(info)
             val caps=cc.getCameraCharacteristic(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)
             val single=Build.VERSION.SDK_INT>=28 && caps!=null && !caps.contains(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_LOGICAL_MULTI_CAMERA)
@@ -1013,7 +1034,7 @@ class CameraActivity : ComponentActivity() {
                 .setTargetRotation(targetRotation)
             if(mode==PhotoMode.HIRES)builder.setResolutionSelector(ResolutionSelector.Builder().setAllowedResolutionMode(ResolutionSelector.PREFER_HIGHER_RESOLUTION_OVER_CAPTURE_RATE).setResolutionStrategy(ResolutionStrategy.HIGHEST_AVAILABLE_STRATEGY).build())
             if(mode==PhotoMode.ULTRA_HDR){
-                check(ImageCapture.getImageCaptureCapabilities(info).supportedOutputFormats.contains(ImageCapture.OUTPUT_FORMAT_JPEG_ULTRA_HDR)){"กล้องนี้ไม่เปิดไฟล์ Ultra HDR ให้แอป"}
+                check(formats.contains(ImageCapture.OUTPUT_FORMAT_JPEG_ULTRA_HDR)){"กล้องนี้ไม่เปิดไฟล์ Ultra HDR ให้แอป"}
                 builder.setOutputFormat(ImageCapture.OUTPUT_FORMAT_JPEG_ULTRA_HDR)
             }else if (output.needsRaw && rawAvailable) builder.setOutputFormat(ImageCapture.OUTPUT_FORMAT_RAW_JPEG)
             Camera2Interop.Extender(builder).setSessionCaptureCallback(frames)
@@ -1025,13 +1046,10 @@ class CameraActivity : ComponentActivity() {
             if(aspect!=Rational(4,3)&&!activeExtension)group.setViewPort(ViewPort.Builder(aspect,targetRotation).build())
             camera=provider.bindToLifecycle(this,selected,group.build())
             manual=ManualControls(this,camera!!,false,mode==PhotoMode.PRO)
-            macro=false;ev=0f;pressLock=false;focusRail.value=0f;focusRail.label="AF";banner.visibility=View.GONE
-            if(aeLock)manual?.lock(true)
-            if(mode==PhotoMode.PRO)rebuildChips()
-            preview.post{applyLook()}
+            afterBind()
             if(mode==PhotoMode.NIGHT&&!activeExtension&&output==CaptureOutput.JPEG){output=CaptureOutput.AI}
 
-            capture=useCase;metadata=frames
+            boundKey=key;boundPreview=previewCase;capture=useCase;metadata=frames
             useCase.flashMode=if(info.hasFlashUnit()) flash else ImageCapture.FLASH_MODE_OFF
             val range=camera?.cameraInfo?.zoomState?.value
             ratio=if(software && rear) ratio.coerceIn(1f,8f) else ratio.coerceIn(range?.minZoomRatio ?: 1f,range?.maxZoomRatio ?: 1f)
@@ -1041,6 +1059,18 @@ class CameraActivity : ComponentActivity() {
             camera?.cameraInfo?.zoomState?.observe(this) { if(ticket==binding) refresh() }
             refresh()
         } catch(e:Exception) {cameraError(e.localizedMessage ?: "เปิดกล้องไม่ได้")}
+    }
+    /** UI state that belongs to one ManualControls instance; reset after every bind or session reuse. */
+    private fun afterBind() {
+        macro=false;ev=0f;pressLock=false;focusRail.value=0f;focusRail.label="AF";banner.visibility=View.GONE
+        if(aeLock)manual?.lock(true)
+        if(mode==PhotoMode.PRO)rebuildChips()
+        preview.post{applyLook()}
+    }
+    /** A reused session keeps streaming, so the frozen frame must be lifted here instead of on the next STREAMING state. */
+    private fun unfreeze() {
+        if (frozen.alpha <= 0f) return
+        frozen.animate().alpha(0f).setDuration(220).withEndAction { Glass.blur(frozen, 0f); val old = (frozen.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap; frozen.setImageDrawable(null); old?.recycle() }.start()
     }
     private fun range(): Pair<Float,Float> {
         val z=camera?.cameraInfo?.zoomState?.value
@@ -1145,6 +1175,7 @@ class CameraActivity : ComponentActivity() {
     }
 
     private fun takePhoto() {
+        if(modePending)return
         if(nightRunning){burst?.cancel();hint("กำลังบันทึกเฟรมที่ได้แล้ว",1500);return}
         if(busy||timerRunning||illuminating||zoomSettling)return
         shutter.animate().scaleX(0.9f).scaleY(0.9f).setDuration(80).withEndAction{shutter.animate().scaleX(1f).scaleY(1f).setInterpolator(Glass.SPRING).setDuration(260).start()}.start()
@@ -1230,8 +1261,9 @@ class CameraActivity : ComponentActivity() {
             refresh();hint(msg,5000)
         }
     }
+    private fun cancelModeSwitch(){modeHandler.removeCallbacks(switchMode);modePending=false}
     private fun selectMode(next:PhotoMode){
-        if(busy||timerRunning)return
+        if(busy||timerRunning||next==mode)return
         if(next==PhotoMode.MORE){openEditor();return}
         if(next==PhotoMode.VIDEO){openVideo("VIDEO");return}
         if(panoFiles.isNotEmpty()&&next!=PhotoMode.PANORAMA){notice("ต่อภาพพาโนรามาหรือกลับมาถ่ายต่อได้ในโหมดพาโนรามา")}
@@ -1240,10 +1272,12 @@ class CameraActivity : ComponentActivity() {
         prefs.edit().putString("photo_mode",next.name).apply()
         if(next!=PhotoMode.PRO){chipFrame.visibility=View.GONE;closeDial()}
         if(next.name !in barKeys) rebuildModeStrip() else syncModeStrip(true)
-        Glass.blurPulse(stage,8f,260);freezeFrame();bind()
+        // Rapid swipes coalesce: only the last mode within 70 ms binds.
+        Glass.blurPulse(stage,8f,260);if(!modePending)freezeFrame()
+        modePending=true;refresh();modeHandler.removeCallbacks(switchMode);modeHandler.postDelayed(switchMode,70)
     }
-    private fun openVideo(kind:String){provider?.unbindAll();capture=null;startActivity(Intent(this,VideoActivity::class.java).putExtra("mode",kind))}
-    private fun openSpecial(kind:String){provider?.unbindAll();capture=null;startActivity(Intent(this,SpecialVideoActivity::class.java).putExtra("mode",kind))}
+    private fun openVideo(kind:String){cancelModeSwitch();provider?.unbindAll();capture=null;startActivity(Intent(this,VideoActivity::class.java).putExtra("mode",kind))}
+    private fun openSpecial(kind:String){cancelModeSwitch();provider?.unbindAll();capture=null;startActivity(Intent(this,SpecialVideoActivity::class.java).putExtra("mode",kind))}
     private fun showAllSettings(){showStudioSettings(rawAvailable){auto=prefs.getBoolean("auto",true);software=prefs.getBoolean("software",false);overlay.grid=prefs.getBoolean("grid",false)
         if(prefs.getBoolean("gps",false)&&ContextCompat.checkSelfPermission(this,Manifest.permission.ACCESS_COARSE_LOCATION)!=PackageManager.PERMISSION_GRANTED)locationRequest.launch(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION,Manifest.permission.ACCESS_FINE_LOCATION))
         refresh();if(!busy){layoutMask(stage.width,stage.height);bind()}
