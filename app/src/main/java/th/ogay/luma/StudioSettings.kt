@@ -26,6 +26,7 @@ fun Activity.showStudioSettings(rawAvailable:Boolean, changed:()->Unit) {
         choose("คุณภาพ JPEG","jpeg_quality",arrayOf("ประหยัด · 85%","มาตรฐาน · 95%","สูงสุด · 100%"),listOf("85","95","100"),"95")
         box.addView(pill("จำนวนเฟรม AI · ${prefs.getInt("frames",8)} เฟรม"){showCaptureSettings(rawAvailable,changed)},-1,-2)
         toggle("AI อัตโนมัติใน JPEG","auto",true)
+        toggle("HDR แบบ native EF2 (ทดลอง)",HdrCapture.NATIVE_KEY)
         heading("การควบคุมและจัดองค์ประกอบ")
         choose("ปุ่มเสียง","volume_action",arrayOf("ถ่ายภาพ / เริ่มหยุดวิดีโอ","ซูม","ปรับเสียงระบบ"),listOf("shutter","zoom","system"),"shutter")
         choose("ความเร็วซูม","zoom_speed",arrayOf("ช้า","ปกติ","เร็ว"),listOf("slow","normal","fast"),"normal")

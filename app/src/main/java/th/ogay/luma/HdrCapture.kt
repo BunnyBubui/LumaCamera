@@ -12,6 +12,7 @@ import androidx.camera.core.ImageCaptureException
 import java.io.File
 import java.util.UUID
 import th.ogay.luma.hdr.HdrFusionQuality
+import th.ogay.luma.hdr.HdrNative
 import androidx.exifinterface.media.ExifInterface
 import kotlin.math.*
 
@@ -23,6 +24,8 @@ class HdrCapture(private val c:Context,private val camera:Camera,private val cap
     private val range=camera.cameraInfo.exposureState.exposureCompensationRange
     private val step=camera.cameraInfo.exposureState.exposureCompensationStep.toFloat()
     var usedFrames=0;private set
+    /** Gallery label of the engine that actually produced the file. */
+    var label="HDR EF1 · Exposure fusion SDR";private set
     val requestedFrames get()=levels.size
     private val levels=listOf(initial,if(step>0)(initial+(-2/step).toInt()).coerceIn(range.lower,range.upper) else 0,if(step>0)(initial+(2/step).toInt()).coerceIn(range.lower,range.upper) else 0).distinct()
     fun cancel(){stopped=true}
@@ -66,13 +69,23 @@ class HdrCapture(private val c:Context,private val camera:Camera,private val cap
             val ev=indices.map{i->if(measured)(ln(dose[i]/dose[0])/ln(2.0)).toFloat()else (levels[i]-levels[0])*step}.toFloatArray()
             val budget=(available/6).coerceIn(4L*1024*1024,48L*1024*1024)
             usedFrames=indices.size
-            val out=HdrFusionQuality.merge(pixels,width,height,dx.toIntArray(),dy.toIntArray(),ev,budget,HdrFusionQuality.Cancellation{stopped||Thread.currentThread().isInterrupted})
-            val result=Bitmap.createBitmap(out,width,height,Bitmap.Config.ARGB_8888)
+            val cancellation=HdrFusionQuality.Cancellation{stopped||Thread.currentThread().isInterrupted}
+            fun ef1():Bitmap=Bitmap.createBitmap(HdrFusionQuality.merge(pixels,width,height,dx.toIntArray(),dy.toIntArray(),ev,budget,cancellation),width,height,Bitmap.Config.ARGB_8888)
+            // EF2 (native OpenCV) is opt-in from settings while it is being compared with EF1 on real scenes.
+            val wantNative=c.getSharedPreferences("camera",0).getBoolean(NATIVE_KEY,false)
+            var engine="EF1";var note=""
+            val result=if(!wantNative)ef1() else if(!HdrNative.available){note=", EF2 unavailable: ${HdrNative.loadError?.javaClass?.simpleName}";ef1()} else try{
+                val r=HdrNative.fuse(pixels,width,height,dx.toIntArray(),dy.toIntArray(),cancel=cancellation)
+                engine="EF2";note=", fuse ${r.fuseMs.roundToInt()} ms, tone ${r.toneMs.roundToInt()} ms";r.bitmap
+            }catch(e:java.util.concurrent.CancellationException){throw e}catch(e:Throwable){note=", EF2 failed: ${e.javaClass.simpleName}";ef1()}
+            label=if(engine=="EF2")"HDR EF2 · OpenCV fusion + local tone SDR" else "HDR EF1 · Exposure fusion SDR"
             val file=File(folder,"hdr-result.jpg");try{PhotoEffects.write(result,file)}finally{result.recycle()}
             PhotoMedia.tag(file,0,ExifInterface(files.first()).getAttribute(ExifInterface.TAG_DATETIME_ORIGINAL))
-            ExifInterface(file).apply{setAttribute(ExifInterface.TAG_SOFTWARE,"Luma HDR EF1 · exposure fusion SDR");setAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION,"HDR EF1: captured ${files.size}/${levels.size}, aligned $usedFrames, EV ${if(measured)"EXIF exposure×ISO" else "requested compensation"}");saveAttributes()}
+            val software=if(engine=="EF2")"Luma HDR EF2 · OpenCV Mertens + L* detail SDR" else "Luma HDR EF1 · exposure fusion SDR"
+            ExifInterface(file).apply{setAttribute(ExifInterface.TAG_SOFTWARE,software);setAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION,"HDR $engine: captured ${files.size}/${levels.size}, aligned $usedFrames, EV ${if(measured)"EXIF exposure×ISO" else "requested compensation"}$note");saveAttributes()}
             return file
         }finally{bitmaps.forEach{if(!it.isRecycled)it.recycle()};files.forEach{it.delete()}}
     }
+    companion object{const val NATIVE_KEY="hdr_native"}
     private fun finish(file:File?,error:String?){if(finished)return;finished=true;main.post{camera.cameraControl.setExposureCompensationIndex(initial);done(file,error)}}
 }
