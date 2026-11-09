@@ -279,7 +279,7 @@ class CameraActivity : ComponentActivity() {
         overlay.monitor(preview)
         frozen = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP; alpha = 0f; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
         mask.addView(frozen, -1, -1)
-        if (!previewObserved) { previewObserved = true; preview.previewStreamState.observe(this) { if (it == PreviewView.StreamState.STREAMING) unfreeze() } }
+        if (!previewObserved) { previewObserved = true; preview.previewStreamState.observe(this) { if (it == PreviewView.StreamState.STREAMING && !pushedBack) unfreeze() } }
 
         expRail = EdgeRail(this, false); stage.addView(expRail, FrameLayout.LayoutParams(dp(150), -1, Gravity.START))
         focusRail = EdgeRail(this, true); stage.addView(focusRail, FrameLayout.LayoutParams(dp(170), -1, Gravity.END))
@@ -391,15 +391,20 @@ class CameraActivity : ComponentActivity() {
         val s = 1f - 0.06f * f
         mask.animate().scaleX(s).scaleY(s).setInterpolator(Glass.SPRING).setDuration(if (reduced) 0 else 560).start()
         maskRadius = dp(28) * f; mask.invalidateOutline()
-        Glass.blur(stage, 12f * f)
+        // Blurring the live TextureView every frame is what made sheets stutter. Behind a sheet the camera
+        // shows one small, blurred still instead; the live preview returns when the sheet closes.
+        if (f > 0.5f && !pushedBack) { pushedBack = true; freezeFrame(8) }
+        else if (f <= 0.01f && pushedBack) { pushedBack = false; unfreeze() }
     }
-    private fun freezeFrame() {
+    private var pushedBack = false
+    /** Covers the preview with a downscaled, blurred still (rebinds, sheets). [scale] 3 for rebinds, 8 behind sheets. */
+    private fun freezeFrame(scale: Int = 3) {
+        if (frozen.alpha > 0.5f && frozen.drawable != null) return
         val full = runCatching { preview.bitmap }.getOrNull() ?: return
-        // A third of the preview size is enough under a blur and keeps the copy small.
-        val b = Bitmap.createScaledBitmap(full, (full.width / 3).coerceAtLeast(1), (full.height / 3).coerceAtLeast(1), true).also { if (it !== full) full.recycle() }
+        val b = Bitmap.createScaledBitmap(full, (full.width / scale).coerceAtLeast(1), (full.height / scale).coerceAtLeast(1), true).also { if (it !== full) full.recycle() }
         (frozen.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap?.takeIf { it !== b }?.let { frozen.setImageDrawable(null); it.recycle() }
-        frozen.setImageBitmap(b); frozen.alpha = 1f; Glass.blur(frozen, 6f)
-        Glass.blurPulse(stage, 10f, 280)
+        frozen.animate().cancel()
+        frozen.setImageBitmap(b); frozen.alpha = 1f; Glass.blur(frozen, if (scale > 3) 4f else 6f)
     }
 
     private fun buildNightCard() {
@@ -430,7 +435,13 @@ class CameraActivity : ComponentActivity() {
         head.addView(dialTitle, LinearLayout.LayoutParams(0, -2, 1f)); head.addView(dialValue, LinearLayout.LayoutParams(0, -2, 1f)); dialReset.minWidth = dp(64); head.addView(dialReset, -2, dp(48))
         dial.addView(head, -1, -2)
         slider = GlassSlider(this).apply { onChange = { i -> sliderChanged(i) } }
-        dial.addView(slider, -1, dp(56))
+        // One-step buttons for fine values (1/3 stop, 100 K, one focus step), like OPPO's dial nudges.
+        val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        fun nudge(d: Int) { val k = openChip ?: return; val t = (slider.index + d).coerceIn(slider.lo.coerceAtMost(chipAuto(k)), slider.values.size - 1); if (t != slider.index) { slider.index = t; Glass.tick(slider); applyChip(k, t) } }
+        row.addView(glassButton(IconView(this, Icons.MINUS, 2.2f), 48, "ลดหนึ่งขั้น") { nudge(-1) }, dp(48), dp(48))
+        row.addView(slider, LinearLayout.LayoutParams(0, dp(56), 1f))
+        row.addView(glassButton(IconView(this, Icons.PLUS, 2.2f), 48, "เพิ่มหนึ่งขั้น") { nudge(1) }, dp(48), dp(48))
+        dial.addView(row, -1, -2)
         stage.addView(dial, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply { setMargins(dp(16), 0, dp(16), dp(130)) })
     }
 
@@ -658,18 +669,18 @@ class CameraActivity : ComponentActivity() {
             "ISO" -> listOf("AUTO") + (m?.isoValues ?: emptyList()).map { it.toString() }
             "S" -> listOf("AUTO") + (m?.shutterValues ?: emptyList()).map { it.first }
             "WB" -> (m?.wbValues ?: listOf("AUTO" to 1)).map { it.first }
-            "AF" -> listOf("AUTO", "∞", "ไกล", "กลาง", "ใกล้", "มาโคร")
+            "AF" -> (m?.focusValues ?: listOf("AUTO" to null)).map { it.first }
             else -> evValues().map { (if (it > 0) "+" else if (it == 0f) "±" else "") + String.format(Locale.US, "%.1f", it) }
         }
     }
-    private fun evValues(): List<Float> { val st = camera?.cameraInfo?.exposureState ?: return listOf(0f); if (!st.isExposureCompensationSupported) return listOf(0f); val step = st.exposureCompensationStep.toFloat(); val r = st.exposureCompensationRange; return (r.lower..r.upper).map { it * step }.filter { abs(it) <= 2.01f } }
+    private fun evValues(): List<Float> { val st = camera?.cameraInfo?.exposureState ?: return listOf(0f); if (!st.isExposureCompensationSupported) return listOf(0f); val step = st.exposureCompensationStep.toFloat(); val r = st.exposureCompensationRange; return (r.lower..r.upper).map { it * step }.filter { abs(it) <= 4.01f } }
     private fun chipIndex(k: String): Int {
         val m = manual
         return when (k) {
             "ISO" -> m?.currentIso?.let { (m.isoValues.indexOf(it) + 1).coerceAtLeast(0) } ?: 0
             "S" -> m?.currentShutter?.let { s -> (m.shutterValues.indexOfFirst { it.second == s } + 1).coerceAtLeast(0) } ?: 0
             "WB" -> (m?.wbValues?.indexOfFirst { it.second == m.currentWb } ?: 0).coerceAtLeast(0)
-            "AF" -> m?.currentFocus?.let { f -> if (m.minFocus <= 0f) 0 else 1 + ((f / m.minFocus) * 4).roundToInt().coerceIn(0, 4) } ?: 0
+            "AF" -> m?.currentFocus?.let { f -> if (m.minFocus <= 0f) 0 else 1 + ((f / m.minFocus) * 48).roundToInt().coerceIn(0, 48) } ?: 0
             else -> evValues().let { list -> list.indexOfFirst { abs(it - (camera?.cameraInfo?.exposureState?.let { s -> s.exposureCompensationIndex * s.exposureCompensationStep.toFloat() } ?: 0f)) < 0.01f }.coerceAtLeast(0) }
         }
     }
@@ -706,7 +717,7 @@ class CameraActivity : ComponentActivity() {
             "ISO" -> m.setIso(if (i <= 0) null else m.isoValues.getOrNull(i - 1))
             "S" -> m.setShutter(if (i <= 0) null else m.shutterValues.getOrNull(i - 1)?.second)
             "WB" -> m.wbValues.getOrNull(i)?.let { m.setWb(it.second) }
-            "AF" -> m.setFocus(if (i <= 0) null else m.minFocus * (i - 1) / 4f)
+            "AF" -> m.setFocus(m.focusValues.getOrNull(i)?.second)
             else -> evValues().getOrNull(i)?.let { setEv(it, false) }
         }
         updateDialValue(k); styleChips(chips.selected)
@@ -718,7 +729,7 @@ class CameraActivity : ComponentActivity() {
         if (!rear) { hint("มาโครใช้ได้กับกล้องหลัง", 1400); return }
         val m = manual; if (m == null || m.minFocus <= 0f) { hint("กล้องนี้ไม่เปิดโฟกัสใกล้ให้แอป", 1600); return }
         macro = !macro; m.setFocus(if (macro) m.minFocus else null)
-        Glass.blurPulse(stage, 6f, 240); hint(if (macro) "มาโคร · โฟกัสใกล้สุดราว ${(100f / m.minFocus).roundToInt()} ซม. ที่ ${zoomText(ratio)}" else "ปิดมาโคร", 1600); refresh()
+        hint(if (macro) "มาโคร · โฟกัสใกล้สุดราว ${(100f / m.minFocus).roundToInt()} ซม. ที่ ${zoomText(ratio)}" else "ปิดมาโคร", 1600); refresh()
     }
     private fun toggleNight() {
         if (mode == PhotoMode.NIGHT) { hint("โหมดกลางคืนเปิดอยู่แล้ว · กดค้างเพื่อเลือกเวลา", 1500); return }
@@ -1069,7 +1080,7 @@ class CameraActivity : ComponentActivity() {
     }
     /** A reused session keeps streaming, so the frozen frame must be lifted here instead of on the next STREAMING state. */
     private fun unfreeze() {
-        if (frozen.alpha <= 0f) return
+        if (frozen.alpha <= 0f || pushedBack) return
         frozen.animate().alpha(0f).setDuration(220).withEndAction { Glass.blur(frozen, 0f); val old = (frozen.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap; frozen.setImageDrawable(null); old?.recycle() }.start()
     }
     private fun range(): Pair<Float,Float> {
@@ -1273,7 +1284,7 @@ class CameraActivity : ComponentActivity() {
         if(next!=PhotoMode.PRO){chipFrame.visibility=View.GONE;closeDial()}
         if(next.name !in barKeys) rebuildModeStrip() else syncModeStrip(true)
         // Rapid swipes coalesce: only the last mode within 70 ms binds.
-        Glass.blurPulse(stage,8f,260);if(!modePending)freezeFrame()
+        if(!modePending)freezeFrame()
         modePending=true;refresh();modeHandler.removeCallbacks(switchMode);modeHandler.postDelayed(switchMode,70)
     }
     private fun openVideo(kind:String){cancelModeSwitch();provider?.unbindAll();capture=null;startActivity(Intent(this,VideoActivity::class.java).putExtra("mode",kind))}

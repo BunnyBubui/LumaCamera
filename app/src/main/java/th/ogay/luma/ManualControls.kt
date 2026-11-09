@@ -33,7 +33,13 @@ class ManualControls(private val context:Context, val camera:Camera, private val
             b.setCaptureRequestOption(CR.SENSOR_SENSITIVITY,iso!!.coerceIn(r.lower,r.upper))
             b.setCaptureRequestOption(CR.SENSOR_EXPOSURE_TIME,(ns?:16_666_666L).coerceIn(e.lower,minOf(e.upper,if(video)(1_000_000_000L/videoFps) else e.upper)))
         }
-        b.setCaptureRequestOption(CR.CONTROL_AWB_MODE,wb)
+        if(wb>=KELVIN_MIN&&canKelvin){
+            // Manual white balance: AWB off, identity colour transform, per-channel gains from the colour temperature.
+            b.setCaptureRequestOption(CR.CONTROL_AWB_MODE,CR.CONTROL_AWB_MODE_OFF)
+            b.setCaptureRequestOption(CR.COLOR_CORRECTION_MODE,CR.COLOR_CORRECTION_MODE_TRANSFORM_MATRIX)
+            b.setCaptureRequestOption(CR.COLOR_CORRECTION_GAINS,kelvinGains(wb))
+            b.setCaptureRequestOption(CR.COLOR_CORRECTION_TRANSFORM,cameraToSrgb(info.getCameraCharacteristic(CC.SENSOR_FORWARD_MATRIX1)!!))
+        }else b.setCaptureRequestOption(CR.CONTROL_AWB_MODE,if(wb>=KELVIN_MIN)CR.CONTROL_AWB_MODE_AUTO else wb)
         val ois=info.getCameraCharacteristic(CC.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION)?:intArrayOf()
         if(CR.LENS_OPTICAL_STABILIZATION_MODE_ON in ois && (!video || !prefs.getBoolean("video_eis",false)))b.setCaptureRequestOption(CR.LENS_OPTICAL_STABILIZATION_MODE,if(prefs.getBoolean("ois",true))CR.LENS_OPTICAL_STABILIZATION_MODE_ON else CR.LENS_OPTICAL_STABILIZATION_MODE_OFF)
         if(focus!=null){b.setCaptureRequestOption(CR.CONTROL_AF_MODE,CR.CONTROL_AF_MODE_OFF);b.setCaptureRequestOption(CR.LENS_FOCUS_DISTANCE,focus!!)}
@@ -44,9 +50,22 @@ class ManualControls(private val context:Context, val camera:Camera, private val
     fun lock(value:Boolean){locked=value;apply()}
     // Direct setters for the glass UI chips and edge rails (values are applied immediately).
     val minFocus get()=info.getCameraCharacteristic(CC.LENS_INFO_MINIMUM_FOCUS_DISTANCE)?:0f
-    val isoValues get()=if(!canManual)emptyList() else info.getCameraCharacteristic(CC.SENSOR_INFO_SENSITIVITY_RANGE)!!.let{r->listOf(50,100,200,400,800,1600,3200,6400).filter{it in r.lower..r.upper}}
-    val shutterValues get()=if(!canManual)emptyList() else info.getCameraCharacteristic(CC.SENSOR_INFO_EXPOSURE_TIME_RANGE)!!.let{r->listOf("1/8000" to 125_000L,"1/1000" to 1_000_000L,"1/250" to 4_000_000L,"1/60" to 16_666_666L,"1/30" to 33_333_333L,"1/8" to 125_000_000L,"1/2" to 500_000_000L,"1s" to 1_000_000_000L).filter{it.second>=r.lower&&it.second<=minOf(r.upper,if(video)(1_000_000_000L/videoFps) else r.upper)}}
-    val wbValues get()=(info.getCameraCharacteristic(CC.CONTROL_AWB_AVAILABLE_MODES)?:intArrayOf()).let{m->listOf("AUTO" to CR.CONTROL_AWB_MODE_AUTO,"แดด" to CR.CONTROL_AWB_MODE_DAYLIGHT,"เมฆ" to CR.CONTROL_AWB_MODE_CLOUDY_DAYLIGHT,"หลอดไฟ" to CR.CONTROL_AWB_MODE_INCANDESCENT,"ฟลูออเรสเซนต์" to CR.CONTROL_AWB_MODE_FLUORESCENT).filter{it.second in m}}
+    /** ISO in 1/3-stop steps inside the sensor range (OPPO-style fine dial). */
+    val isoValues get()=if(!canManual)emptyList() else info.getCameraCharacteristic(CC.SENSOR_INFO_SENSITIVITY_RANGE)!!.let{r->ISO_THIRDS.filter{it in r.lower..r.upper}}
+    /** Shutter in 1/3-stop steps inside the sensor range; video is capped at one frame time. */
+    val shutterValues get()=if(!canManual)emptyList() else info.getCameraCharacteristic(CC.SENSOR_INFO_EXPOSURE_TIME_RANGE)!!.let{r->SHUTTER_THIRDS.filter{it.second>=r.lower&&it.second<=minOf(r.upper,if(video)(1_000_000_000L/videoFps) else r.upper)}}
+    /** Manual white balance needs AWB off and the colour-correction controls of MANUAL_POST_PROCESSING. */
+    val canKelvin get()=(info.getCameraCharacteristic(CC.CONTROL_AWB_AVAILABLE_MODES)?:intArrayOf()).contains(CR.CONTROL_AWB_MODE_OFF)&&
+        info.getCameraCharacteristic(CC.SENSOR_FORWARD_MATRIX1)!=null&&
+        info.getCameraCharacteristic(CC.REQUEST_AVAILABLE_CAPABILITIES)?.contains(CC.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_POST_PROCESSING)==true
+    /** AUTO, then Kelvin 2000–10000 in 100 K steps when manual WB is possible, otherwise the camera's presets. Values ≥ [KELVIN_MIN] are Kelvin. */
+    val wbValues get()=if(canKelvin)listOf("AUTO" to CR.CONTROL_AWB_MODE_AUTO)+(2000..10000 step 100).map{"${it}K" to it}
+        else (info.getCameraCharacteristic(CC.CONTROL_AWB_AVAILABLE_MODES)?:intArrayOf()).let{m->listOf("AUTO" to CR.CONTROL_AWB_MODE_AUTO,"แดด" to CR.CONTROL_AWB_MODE_DAYLIGHT,"เมฆ" to CR.CONTROL_AWB_MODE_CLOUDY_DAYLIGHT,"ร่ม" to CR.CONTROL_AWB_MODE_SHADE,"หลอดไฟ" to CR.CONTROL_AWB_MODE_INCANDESCENT,"ฟลูออเรสเซนต์" to CR.CONTROL_AWB_MODE_FLUORESCENT,"วอร์มฟลูออเรสเซนต์" to CR.CONTROL_AWB_MODE_WARM_FLUORESCENT,"พลบค่ำ" to CR.CONTROL_AWB_MODE_TWILIGHT).filter{it.second in m}}
+    /** Manual focus: AUTO, then 48 steps from infinity to the closest distance, labelled in metres/centimetres. */
+    val focusValues:List<Pair<String,Float?>> get(){
+        val near=minFocus; if(near<=0f)return listOf("AUTO" to null)
+        return listOf("AUTO" to null)+(0..48).map{i->val d=near*i/48f;focusLabel(d) to d}
+    }
     val currentIso get()=iso
     val currentShutter get()=ns
     val currentWb get()=wb
@@ -56,6 +75,30 @@ class ManualControls(private val context:Context, val camera:Camera, private val
     fun setWb(mode:Int){wb=mode;apply()}
     /** Diopters: 0 = infinity, [minFocus] = closest. Null returns to autofocus. */
     fun setFocus(v:Float?){focus=v?.coerceIn(0f,minFocus);apply()}
+    companion object {
+        const val KELVIN_MIN=1000
+        val ISO_THIRDS=listOf(25,32,40,50,64,80,100,125,160,200,250,320,400,500,640,800,1000,1250,1600,2000,2500,3200,4000,5000,6400,8000,10000,12800,16000,20000,25600)
+        val SHUTTER_THIRDS:List<Pair<String,Long>> = listOf(8000,6400,5000,4000,3200,2500,2000,1600,1250,1000,800,640,500,400,320,250,200,160,125,100,80,60,50,40,30,25,20,15,13,10,8,6,5,4,3).map{"1/$it" to 1_000_000_000L/it}+
+            listOf(0.4,0.5,0.6,0.8,1.0,1.3,1.6,2.0,2.5,3.2,4.0,5.0,6.0,8.0,10.0,13.0,15.0,20.0,25.0,30.0).map{(if(it>=1.0&&it%1.0==0.0)"${it.toInt()}s" else "${it}s") to (it*1_000_000_000L).toLong()}
+        fun focusLabel(diopters:Float):String=if(diopters<0.02f)"∞" else (1f/diopters).let{m->if(m>=1f)String.format(java.util.Locale.US,"%.1f ม.",m) else "${(m*100).toInt()} ซม."}
+        /** White-balanced camera RGB → linear sRGB: XYZ(D50)→sRGB (Bradford) × the sensor's forward matrix. */
+        fun cameraToSrgb(forward:android.hardware.camera2.params.ColorSpaceTransform):android.hardware.camera2.params.ColorSpaceTransform{
+            val x=doubleArrayOf(3.1338561,-1.6168667,-0.4906146,-0.9787684,1.9161415,0.0334540,0.0719453,-0.2289914,1.4052427)
+            val f=DoubleArray(9){i->forward.getElement(i%3,i/3).toDouble()}
+            val out=IntArray(18)
+            for(r in 0..2)for(c in 0..2){var v=0.0;for(k in 0..2)v+=x[r*3+k]*f[k*3+c];out[(r*3+c)*2]=Math.round(v*10000).toInt();out[(r*3+c)*2+1]=10000}
+            return android.hardware.camera2.params.ColorSpaceTransform(out)
+        }
+        /** Approximate sRGB of a black body (Tanner Helland fit), inverted into camera gains normalised to green. */
+        fun kelvinGains(k:Int):android.hardware.camera2.params.RggbChannelVector{
+            val t=k/100.0
+            val r=if(t<=66)255.0 else (329.698727446*Math.pow(t-60,-0.1332047592)).coerceIn(0.0,255.0)
+            val g=(if(t<=66)99.4708025861*Math.log(t)-161.1195681661 else 288.1221695283*Math.pow(t-60,-0.0755148492)).coerceIn(1.0,255.0)
+            val b=if(t>=66)255.0 else if(t<=19)1.0 else (138.5177312231*Math.log(t-10)-305.0447927307).coerceIn(1.0,255.0)
+            val gr=(g/r).toFloat().coerceIn(0.3f,4f); val gb=(g/b).toFloat().coerceIn(0.3f,4f)
+            return android.hardware.camera2.params.RggbChannelVector(gr,1f,1f,gb)
+        }
+    }
     fun reset(){iso=null;ns=null;focus=null;wb=CR.CONTROL_AWB_MODE_AUTO;locked=false;apply()}
     fun show(){context.studioSheet(if(video)"PRO VIDEO" else "PRO · ควบคุมกล้อง"){box,_->
         fun options(title:String,values:List<String>,selected:Int,choose:(Int)->Unit){

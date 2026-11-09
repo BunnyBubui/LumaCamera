@@ -195,6 +195,7 @@ class GlassSlider(context: Context) : View(context) {
     private var lastX = 0f; private var lastT = 0L
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private var relax: ValueAnimator? = null
+    private var trackShader: Shader? = null; private var trackW = 0f; private var trackGrad: IntArray? = null
     init { isFocusable = true; contentDescription = "แถบปรับค่า" }
     private fun n() = max(1, values.size - lo)
     private fun pos(i: Int) = if (i < lo) 0f else (i - lo).toFloat() / max(1, n() - 1)
@@ -202,12 +203,14 @@ class GlassSlider(context: Context) : View(context) {
 
     override fun onDraw(c: Canvas) {
         val d = context.px(1f); val left = pad(); val right = width - pad(); val w = right - left; val cy = height / 2f
-        val shader = LinearGradient(left, 0f, right, 0f, grad, null, Shader.TileMode.CLAMP)
-        paint.shader = shader; paint.alpha = 72; c.drawRoundRect(left, cy - 3 * d, right, cy + 3 * d, 3 * d, 3 * d, paint)
+        if (trackShader == null || trackW != w || trackGrad !== grad) { trackShader = LinearGradient(left, 0f, right, 0f, grad, null, Shader.TileMode.CLAMP); trackW = w; trackGrad = grad }
+        paint.shader = trackShader; paint.alpha = 72; c.drawRoundRect(left, cy - 3 * d, right, cy + 3 * d, 3 * d, 3 * d, paint)
         val x = left + p * w + over
         paint.alpha = 255; c.drawRoundRect(left, cy - 3 * d, max(left + 6 * d, x), cy + 3 * d, 3 * d, 3 * d, paint)
         paint.shader = null; paint.color = 0x66ffffff
-        for (i in 0 until n()) { val tx = left + w * i / max(1, n() - 1); c.drawRoundRect(tx - d, cy + 11 * d, tx + d, cy + 17 * d, d, d, paint) }
+        // Dense value lists (1/3-stop ISO, Kelvin) draw every k-th tick so marks stay at least 6 dp apart; every third mark is taller.
+        val gap = w / max(1, n() - 1); val every = max(1, ceil(6 * d / max(gap, 0.01f)).toInt())
+        var i = 0; while (i < n()) { val tx = left + gap * i; val tall = (i / every) % 3 == 0; c.drawRoundRect(tx - d * 0.8f, cy + 11 * d, tx + d * 0.8f, cy + (if (tall) 18 else 14) * d, d, d, paint); i += every }
         val col = Glass.mix(grad, p)
         if (abs(tail) > 1f) {
             val tl = abs(tail); val sx = if (tail > 0) x - tl else x; val ex = if (tail > 0) x else x + tl
@@ -534,9 +537,10 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
         val y = (if (up) above else below).coerceIn(padT, max(padT, host.height - padB - h))
         val quiet = over()
         modal.hide()
-        val shade = View(c).apply { setBackgroundColor(if (quiet) 0 else 0x29000000); alpha = 0f; isClickable = true; contentDescription = "ปิดเมนู"; setOnClickListener { dismiss(true) } }
+        // Touch and drawing order follow elevation, so the menu layer must sit above sheets (16 dp) or it is hidden and untappable.
+        val shade = View(c).apply { setBackgroundColor(if (quiet) 0 else 0x29000000); alpha = 0f; isClickable = true; contentDescription = "ปิดเมนู"; elevation = 20 * d; outlineProvider = null; setOnClickListener { dismiss(true) } }
         host.addView(shade, FrameLayout.LayoutParams(-1, -1)); shade.animate().alpha(1f).setDuration(320).start()
-        val menu = LayerFrame(c).apply { background = c.glass(22, if (quiet) 0xf5222225.toInt() else Glass.FILL_POP); setPadding(c.dp(6), c.dp(6), c.dp(6), c.dp(6)); elevation = 12 * d }
+        val menu = LayerFrame(c).apply { background = c.glass(22, if (quiet) 0xf5222225.toInt() else Glass.FILL_POP); setPadding(c.dp(6), c.dp(6), c.dp(6), c.dp(6)); elevation = 24 * d }
         val hi = View(c).apply { background = GlassDrawable(0x24ffffff, c.dp(16).toFloat(), d) }
         val list = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
         list.addView(c.text(title, 12f, Glass.TEXT2, true).apply { setPadding(c.dp(10), c.dp(6), 0, 0); importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES; isFocusable = true }, -1, c.dp(30))
@@ -616,7 +620,7 @@ class GlassSheet(private val host: FrameLayout, private val pivotYFromBottom: ()
         if (card != null) return
         val c = host.context; val d = c.resources.displayMetrics.density
         modal.hide()
-        val s = View(c).apply { setBackgroundColor(0x52000000); alpha = 0f; isClickable = true; contentDescription = "ปิดแผง"; setOnClickListener { close() } }
+        val s = View(c).apply { setBackgroundColor(0x52000000); alpha = 0f; isClickable = true; contentDescription = "ปิดแผง"; elevation = 14 * d; outlineProvider = null; setOnClickListener { close() } }
         host.addView(s, FrameLayout.LayoutParams(-1, -1)); s.animate().alpha(1f).setDuration(300).start()
         val sheet = LayerFrame(c).apply { background = c.glass(34, Glass.FILL_STRONG); elevation = 16 * d }
         val scroll = ScrollView(c).apply { isVerticalScrollBarEnabled = false; overScrollMode = View.OVER_SCROLL_NEVER; clipToPadding = false }

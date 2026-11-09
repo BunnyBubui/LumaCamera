@@ -76,7 +76,7 @@ class VideoActivity:ComponentActivity(){
     override fun onCreate(state:Bundle?){
         super.onCreate(state);mic=prefs.getBoolean("video_mic",true)
         quality=when(prefs.getString("video_quality","FHD")){"UHD"->Quality.UHD;"HD"->Quality.HD;"SD"->Quality.SD;else->Quality.FHD}
-        fps=prefs.getInt("video_fps",30);bitrate=prefs.getInt("video_bitrate",20_000_000);stabilization=prefs.getBoolean("video_eis",false)
+        flat=prefs.getBoolean("video_log",false);fps=prefs.getInt("video_fps",30);bitrate=prefs.getInt("video_bitrate",20_000_000);stabilization=prefs.getBoolean("video_eis",false)
         dynamic=when(prefs.getString("video_dynamic","SDR")){"HLG"->DynamicRange.HLG_10_BIT;"HDR10"->DynamicRange.HDR10_10_BIT;else->DynamicRange.SDR}
         if(slow){mic=false;dynamic=DynamicRange.SDR;stabilization=false;fps=prefs.getInt("slow_fps",120);quality=when(prefs.getString("slow_quality","FHD")){"UHD"->Quality.UHD;"HD"->Quality.HD;"SD"->Quality.SD;else->Quality.FHD}}
         selectedCameraId=prefs.getString(if(slow)"slow_camera"else "video_camera",null)
@@ -123,6 +123,7 @@ class VideoActivity:ComponentActivity(){
             if(dual)b.setTargetFrameRate(mode.range)
             val v=b.build();val pb=Preview.Builder()
             Camera2Interop.Extender(pb).setSessionCaptureCallback(diagnostics)
+            if(flat&&!slow&&logSupported(info)){applyLog(info,Camera2Interop.Extender(pb));applyLog(info,Camera2Interop.Extender(b));boundConfig.put("profile","luma-log")}
             val previewCase=pb.build().apply{setSurfaceProvider(preview.surfaceProvider)}
             camera?.cameraInfo?.zoomState?.removeObservers(this)
             p.unbindAll()
@@ -210,6 +211,7 @@ class VideoActivity:ComponentActivity(){
     }
     /** Who asked to stop, for device tests that see a clip stop before it starts. */
     @androidx.annotation.VisibleForTesting var stopTrace:String?=null
+    @androidx.annotation.VisibleForTesting val clickLog=mutableListOf<String>()
     private fun stopRecording(){stopTrace=Throwable().stackTrace.drop(1).take(6).joinToString(" < "){"${it.methodName}:${it.lineNumber}"};animator?.cancel();finalizing=true;shutter.isEnabled=false;pause.isEnabled=false;status.text="กำลังปิดไฟล์…";recording?.stop()}
     private fun zoomPanel(){studioSheet("ซูมอัตโนมัติ A → B"){box,d->
         box.addView(pill("กำหนด A ที่ระยะปัจจุบัน"){zoomA=camera?.cameraInfo?.zoomState?.value?.zoomRatio?:1f;notice("A = ${zoomText(zoomA)}")},-1,dp(52))
@@ -235,7 +237,10 @@ class VideoActivity:ComponentActivity(){
         val column=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL};host.addView(column,-1,-1)
         val head=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(dp(14),dp(8),dp(14),dp(6))}
         head.addView(roundButton(IconView(this,Icons.CHEVRON_LEFT,2.2f),48,"กลับไปถ่ายภาพ"){if(!busy())finish()},dp(48),dp(48))
-        head.addView(text(when(kind){"DUAL"->"Dual-view";"MOVIE"->"วิดีโอโปร";"SLOW"->"Slow-motion\nไม่มีเสียง";else->"วิดีโอ"},16f,WHITE,true).apply{gravity=Gravity.CENTER;maxLines=3;ellipsize=null},LinearLayout.LayoutParams(0,-2,1f))
+        val titles=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER}
+        titles.addView(text(when(kind){"DUAL"->"Dual-view";"MOVIE"->"วิดีโอโปร";"SLOW"->"Slow-motion";else->"วิดีโอ"},16f,WHITE,true).apply{gravity=Gravity.CENTER;maxLines=Int.MAX_VALUE;ellipsize=null},-1,-2)
+        if(slow)titles.addView(text("ไม่มีเสียง",11.5f,Glass.TEXT2).apply{gravity=Gravity.CENTER;maxLines=Int.MAX_VALUE;ellipsize=null},-1,-2)
+        head.addView(titles,LinearLayout.LayoutParams(0,-2,1f))
         config=text(if(slow)"SLOW · ตัวเลือก" else "1080p · 30",13f,WHITE,true).apply{gravity=Gravity.CENTER;maxWidth=dp(150);maxLines=2;ellipsize=null;minHeight=dp(48);background=glass(22);setPadding(dp(14),0,dp(14),0);isClickable=true;contentDescription="รายละเอียดวิดีโอทั้งหมด";glassTouch();setOnClickListener{settings()}}
         head.addView(config,-2,-2);column.addView(head,-1,-2)
         // Landscape keeps the dock beside the preview instead of under it.
@@ -255,7 +260,13 @@ class VideoActivity:ComponentActivity(){
         val dh=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL}
         dialTitle=text("",13f,Glass.TEXT2);dialValue=text("",20f,WHITE,true).apply{gravity=Gravity.END}
         dh.addView(dialTitle,LinearLayout.LayoutParams(0,-2,1f));dh.addView(dialValue,-2,-2);dial.addView(dh,-1,dp(30))
-        slider=GlassSlider(this).apply{onChange={i->openChip?.let{applyChip(it,i)}}};dial.addView(slider,-1,dp(56))
+        slider=GlassSlider(this).apply{onChange={i->openChip?.let{applyChip(it,i)}}}
+        val srow=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL}
+        fun nudge(d:Int){val k=openChip?:return;val t=(slider.index+d).coerceIn(0,slider.values.size-1);if(t!=slider.index){slider.index=t;Glass.tick(slider);applyChip(k,t)}}
+        srow.addView(roundButton(IconView(this,Icons.MINUS,2.2f),48,"ลดหนึ่งขั้น"){nudge(-1)},dp(48),dp(48))
+        srow.addView(slider,LinearLayout.LayoutParams(0,dp(56),1f))
+        srow.addView(roundButton(IconView(this,Icons.PLUS,2.2f),48,"เพิ่มหนึ่งขั้น"){nudge(1)},dp(48),dp(48))
+        dial.addView(srow,-1,-2)
         stage.addView(dial,FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM).apply{setMargins(dp(16),0,dp(16),dp(66))})
 
         val dock=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER_VERTICAL};if(landscape)body.addView(dock,dp(320),-1) else body.addView(dock,-1,-2)
@@ -279,10 +290,10 @@ class VideoActivity:ComponentActivity(){
         val left=FrameLayout(this).apply{addView(library,-1,-1);addView(pause,-1,-1)}
         actions.addView(left,dp(56),dp(56));actions.space()
         shutter=ShutterButton(this).apply{video=true;isEnabled=false;alpha=0.45f;contentDescription="เริ่มบันทึกวิดีโอ"
-            setOnClickListener{if(recording!=null)stopRecording()else if(!starting&&!finalizing){if(mic&&ContextCompat.checkSelfPermission(this@VideoActivity,Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED)audioPermission.launch(Manifest.permission.RECORD_AUDIO)else startRecording()}}}
+            setOnClickListener{clickLog+="${android.os.SystemClock.uptimeMillis()}:${recording!=null}/${starting}";if(recording!=null)stopRecording()else if(!starting&&!finalizing){if(mic&&ContextCompat.checkSelfPermission(this@VideoActivity,Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED)audioPermission.launch(Manifest.permission.RECORD_AUDIO)else startRecording()}}}
         actions.addView(shutter,dp(88),dp(88));actions.space()
         val flipIcon=IconView(this,Icons.FLIP)
-        flip=roundButton(flipIcon,56,"สลับกล้องวิดีโอ"){if(!busy()&&!dual){flipIcon.animate().rotationBy(180f).setInterpolator(Glass.EASE).setDuration(420).start();Glass.blurPulse(stage,10f,300);rear=!rear;bind()}}
+        flip=roundButton(flipIcon,56,"สลับกล้องวิดีโอ"){if(!busy()&&!dual){flipIcon.animate().rotationBy(180f).setInterpolator(Glass.EASE).setDuration(420).start();rear=!rear;bind()}}
         if(dual)flip.alpha=0.35f
         actions.addView(flip,dp(56),dp(56));dock.addView(actions,-1,dp(112))
         val pinch=android.view.ScaleGestureDetector(this,object:android.view.ScaleGestureDetector.SimpleOnScaleGestureListener(){override fun onScale(d:android.view.ScaleGestureDetector):Boolean{val s=camera?.cameraInfo?.zoomState?.value?:return false;animator?.cancel();camera?.cameraControl?.setZoomRatio((s.zoomRatio*d.scaleFactor).coerceIn(s.minZoomRatio,s.maxZoomRatio));return true}})
@@ -343,34 +354,34 @@ class VideoActivity:ComponentActivity(){
     // ---------- Chips and dial ----------
     private fun chipKeys():List<String>{
         // Slow-motion is SDR, silent and without EIS, so those chips are not offered there.
-        val quality=if(slow)listOf("RES","FPS","RATE") else listOf("RES","FPS","HDR","RATE","EIS","MIC")
+        val quality=if(slow)listOf("RES","FPS","RATE") else listOf("RES","FPS","HDR","LOG","RATE","EIS","MIC")
         val adjust=buildList{val m=manual;if(m!=null&&m.canManual){add("ISO");add("S")};add("WB");if((m?.minFocus?:0f)>0f)add("AF");add("EV")}
         return if(kind=="MOVIE"&&category==0)adjust else quality
     }
-    private fun chipTitle(k:String)=when(k){"RES"->"ความละเอียด";"FPS"->"FPS";"HDR"->"ช่วงไดนามิก";"RATE"->"Bitrate";"EIS"->"กันสั่น";"MIC"->"ไมค์";"ISO"->"ISO";"S"->"ชัตเตอร์";"WB"->"WB";"AF"->"โฟกัส";else->"EV"}
+    private fun chipTitle(k:String)=when(k){"RES"->"ความละเอียด";"FPS"->"FPS";"HDR"->"ช่วงไดนามิก";"RATE"->"Bitrate";"LOG"->"โปรไฟล์";"EIS"->"กันสั่น";"MIC"->"ไมค์";"ISO"->"ISO";"S"->"ชัตเตอร์";"WB"->"WB";"AF"->"โฟกัส";else->"EV"}
     private fun caps()=info()?.let{runCatching{capabilities(it)}.getOrNull()}
     private fun qualities()=caps()?.getSupportedQualities(dynamic)?:listOf(quality)
     /** FPS offered for the current quality/HDR/EIS set, as the session query reports it (never the camera-wide AE list). */
     private fun rateModes()=info()?.let{sessions.rates(it,quality,dynamic,stabilization,slow)}.orEmpty()
     private fun frameRates()=rateModes().map{it.upper}.ifEmpty{listOf(fps)}
     private fun ranges()=listOf(DynamicRange.SDR,DynamicRange.HLG_10_BIT,DynamicRange.HDR10_10_BIT).filter{caps()?.supportedDynamicRanges?.contains(it)?:(it==DynamicRange.SDR)}
-    private fun evValues():List<Float>{val st=camera?.cameraInfo?.exposureState?:return listOf(0f);if(!st.isExposureCompensationSupported)return listOf(0f);val step=st.exposureCompensationStep.toFloat();val r=st.exposureCompensationRange;return(r.lower..r.upper).map{it*step}.filter{abs(it)<=2.01f}}
+    private fun evValues():List<Float>{val st=camera?.cameraInfo?.exposureState?:return listOf(0f);if(!st.isExposureCompensationSupported)return listOf(0f);val step=st.exposureCompensationStep.toFloat();val r=st.exposureCompensationRange;return(r.lower..r.upper).map{it*step}.filter{abs(it)<=4.01f}}
     private fun chipValues(k:String):List<String>{val m=manual
         return when(k){
             "RES"->qualities().map{qualityName(it)};"FPS"->rateModes().let{m->if(m.isEmpty())listOf("$fps") else m.map{x->if(x.lower<x.upper)"≤${x.upper}" else "${x.upper}"}};"HDR"->ranges().map{when(it){DynamicRange.SDR->"SDR";DynamicRange.HLG_10_BIT->"HLG10";else->"HDR10"}}
-            "RATE"->listOf("8","20","40","80").map{"$it Mbps"};"EIS"->listOf("ปิด","เปิด");"MIC"->listOf("ปิด","เปิด")
+            "RATE"->listOf("8","20","40","80").map{"$it Mbps"};"LOG"->if(info()?.let{logSupported(it)}==true)listOf("มาตรฐาน","Log แบน") else listOf("มาตรฐาน");"EIS"->listOf("ปิด","เปิด");"MIC"->listOf("ปิด","เปิด")
             "ISO"->listOf("AUTO")+(m?.isoValues?:emptyList()).map{"$it"};"S"->listOf("AUTO")+(m?.shutterValues?:emptyList()).map{it.first}
-            "WB"->(m?.wbValues?:listOf("AUTO" to 1)).map{it.first};"AF"->listOf("AUTO","∞","ไกล","กลาง","ใกล้","มาโคร")
+            "WB"->(m?.wbValues?:listOf("AUTO" to 1)).map{it.first};"AF"->(m?.focusValues?:listOf("AUTO" to null)).map{it.first}
             else->evValues().map{(if(it>0)"+" else if(it==0f)"±" else "")+String.format(Locale.US,"%.1f",it)}
         }}
     private fun chipIndex(k:String):Int{val m=manual
         return when(k){
             "RES"->qualities().indexOf(quality).coerceAtLeast(0);"FPS"->frameRates().indexOf(fps).coerceAtLeast(0);"HDR"->ranges().indexOf(dynamic).coerceAtLeast(0)
-            "RATE"->listOf(8,20,40,80).indexOf(bitrate/1_000_000).coerceAtLeast(0);"EIS"->if(stabilization)1 else 0;"MIC"->if(mic)1 else 0
+            "RATE"->listOf(8,20,40,80).indexOf(bitrate/1_000_000).coerceAtLeast(0);"LOG"->if(flat)1 else 0;"EIS"->if(stabilization)1 else 0;"MIC"->if(mic)1 else 0
             "ISO"->m?.currentIso?.let{(m.isoValues.indexOf(it)+1).coerceAtLeast(0)}?:0
             "S"->m?.currentShutter?.let{s->(m.shutterValues.indexOfFirst{it.second==s}+1).coerceAtLeast(0)}?:0
             "WB"->(m?.wbValues?.indexOfFirst{it.second==m.currentWb}?:0).coerceAtLeast(0)
-            "AF"->m?.currentFocus?.let{f->if(m.minFocus<=0f)0 else 1+((f/m.minFocus)*4).roundToInt().coerceIn(0,4)}?:0
+            "AF"->m?.currentFocus?.let{f->if(m.minFocus<=0f)0 else 1+((f/m.minFocus)*48).roundToInt().coerceIn(0,48)}?:0
             else->{val st=camera?.cameraInfo?.exposureState;val cur=st?.let{it.exposureCompensationIndex*it.exposureCompensationStep.toFloat()}?:0f;evValues().indexOfFirst{abs(it-cur)<0.01f}.coerceAtLeast(0)}
         }}
     private fun chipGrad(k:String)=when(k){
@@ -392,7 +403,7 @@ class VideoActivity:ComponentActivity(){
     }
     private fun styleChips(live:Int){val keys=chipKeys();chipTexts.forEachIndexed{i,(t,v)->val on=i==live;t.setTextColor(if(on)WHITE else Glass.TEXT3);v.text=chipValues(keys[i]).getOrElse(chipIndex(keys[i])){"–"}}}
     private fun openDial(k:String){
-        val quality=k in listOf("RES","FPS","HDR","RATE","EIS","MIC")
+        val quality=k in listOf("RES","FPS","HDR","LOG","RATE","EIS","MIC")
         if(quality&&busy()){notice("หยุดคลิปก่อนเปลี่ยนรูปแบบวิดีโอ");return}
         val first=openChip==null;openChip=k
         dialTitle.text=chipTitle(k);slider.lo=if(k in listOf("ISO","S","AF"))1 else 0;slider.values=chipValues(k);slider.grad=chipGrad(k);slider.index=chipIndex(k);dialValue.text=chipValues(k).getOrElse(chipIndex(k)){"–"}
@@ -405,17 +416,34 @@ class VideoActivity:ComponentActivity(){
         when(k){
             "RES"->qualities().getOrNull(i)?.let{quality=it};"FPS"->frameRates().getOrNull(i)?.let{fps=it};"HDR"->ranges().getOrNull(i)?.let{dynamic=it}
             "RATE"->bitrate=listOf(8,20,40,80)[i.coerceIn(0,3)]*1_000_000
+            "LOG"->{flat=i==1;prefs.edit().putBoolean("video_log",flat).apply()}
             "EIS"->{stabilization=i==1;prefs.edit().putBoolean("video_eis",stabilization).apply()}
             "MIC"->{mic=i==1;prefs.edit().putBoolean("video_mic",mic).apply()}
             "ISO"->m?.setIso(if(i<=0)null else m.isoValues.getOrNull(i-1))
             "S"->m?.setShutter(if(i<=0)null else m.shutterValues.getOrNull(i-1)?.second)
             "WB"->m?.wbValues?.getOrNull(i)?.let{m.setWb(it.second)}
-            "AF"->m?.setFocus(if(i<=0)null else m.minFocus*(i-1)/4f)
+            "AF"->m?.setFocus(m.focusValues.getOrNull(i)?.second)
             else->evValues().getOrNull(i)?.let{v->val st=camera?.cameraInfo?.exposureState;if(st!=null&&st.isExposureCompensationSupported)camera?.cameraControl?.setExposureCompensationIndex((v/st.exposureCompensationStep.toFloat()).roundToInt())}
         }
         dialValue.text=chipValues(k).getOrElse(i){"–"};styleChips(chips.selected)
-        if(k in listOf("RES","FPS","HDR","RATE","EIS")){configPending();handler.removeCallbacks(rebind);handler.postDelayed(rebind,450)}
+        if(k in listOf("RES","FPS","HDR","RATE","EIS","LOG")){configPending();handler.removeCallbacks(rebind);handler.postDelayed(rebind,450)}
         else if(k=="MIC")status.text=if(mic)"ไมค์เปิด" else "ไมค์ปิด"
+    }
+    // ---------- Luma Log ----------
+    /** Flat "Log" look for grading: a logarithmic tone curve, no in-camera sharpening, light noise reduction.
+     *  It is not Canon C-Log or any vendor profile; HLG10 under ช่วงไดนามิก is the true 10-bit option. */
+    private var flat=false
+    private fun logSupported(info:CameraInfo)=runCatching{Camera2CameraInfo.from(info).getCameraCharacteristic(android.hardware.camera2.CameraCharacteristics.TONEMAP_AVAILABLE_TONE_MAP_MODES)?.contains(android.hardware.camera2.CaptureRequest.TONEMAP_MODE_CONTRAST_CURVE)==true}.getOrDefault(false)
+    private fun <T> applyLog(info:CameraInfo,e:Camera2Interop.Extender<T>){
+        val cc=Camera2CameraInfo.from(info)
+        val n=32;val pts=FloatArray(n*2){j->val i=j/2;val x=i/(n-1f);if(j%2==0)x else (kotlin.math.ln(1f+40f*x)/kotlin.math.ln(41f))}
+        e.setCaptureRequestOption(android.hardware.camera2.CaptureRequest.TONEMAP_MODE,android.hardware.camera2.CaptureRequest.TONEMAP_MODE_CONTRAST_CURVE)
+        e.setCaptureRequestOption(android.hardware.camera2.CaptureRequest.TONEMAP_CURVE,android.hardware.camera2.params.TonemapCurve(pts,pts,pts))
+        // Only modes the camera lists, so an unsupported value can never fail the session.
+        if(cc.getCameraCharacteristic(android.hardware.camera2.CameraCharacteristics.EDGE_AVAILABLE_EDGE_MODES)?.contains(android.hardware.camera2.CaptureRequest.EDGE_MODE_OFF)==true)
+            e.setCaptureRequestOption(android.hardware.camera2.CaptureRequest.EDGE_MODE,android.hardware.camera2.CaptureRequest.EDGE_MODE_OFF)
+        if(cc.getCameraCharacteristic(android.hardware.camera2.CameraCharacteristics.NOISE_REDUCTION_AVAILABLE_NOISE_REDUCTION_MODES)?.contains(android.hardware.camera2.CaptureRequest.NOISE_REDUCTION_MODE_FAST)==true)
+            e.setCaptureRequestOption(android.hardware.camera2.CaptureRequest.NOISE_REDUCTION_MODE,android.hardware.camera2.CaptureRequest.NOISE_REDUCTION_MODE_FAST)
     }
     /** State hook: the chosen set is not bound yet, so recording waits until bind() succeeds and re-enables the shutter. */
     private fun configPending(){shutter.isEnabled=false;shutter.alpha=0.45f;status.text="กำลังเปลี่ยนชุดวิดีโอ…"}
