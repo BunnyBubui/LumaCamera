@@ -21,6 +21,7 @@ import java.io.File
 import kotlin.math.*
 
 /** Camera2 constrained high-speed capture and interval recording, both explicitly silent. */
+@androidx.annotation.OptIn(androidx.camera.camera2.interop.ExperimentalCamera2Interop::class)
 class SpecialVideoActivity:ComponentActivity(){
     private val slow get()=intent.getStringExtra("mode")=="SLOW"
     private lateinit var texture:TextureView;private lateinit var status:TextView;private lateinit var shutter:Glyph
