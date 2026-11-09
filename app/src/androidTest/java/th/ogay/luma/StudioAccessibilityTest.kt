@@ -177,9 +177,12 @@ class StudioAccessibilityTest {
             val reached = runCatching { UiScrollable(UiSelector().scrollable(true)).scrollTextIntoView("ตั้งค่าทั้งหมด") }.getOrDefault(false) ||
                 device.hasObject(By.text("ตั้งค่าทั้งหมด"))
             out += "MoreSheet | font 2.0 | portrait | ${if (reached) "reachable" else "unreachable"} | last action \"ตั้งค่าทั้งหมด\""
+            // Items cut by the sheet's scroll edge report only their visible part, so they are skipped.
+            val viewport = device.findObject(By.scrollable(true))?.visibleBounds
             device.findObjects(By.clickable(true)).forEach { o ->
                 val b = o.visibleBounds
-                if (b.width() < 48 * density - 1 || b.height() < 48 * density - 1) {
+                val clipped = viewport != null && (b.top <= viewport.top + 1 || b.bottom >= viewport.bottom - 1)
+                if (!clipped && (b.width() < 48 * density - 1 || b.height() < 48 * density - 1)) {
                     out += "MoreSheet | font 2.0 | portrait | small-target | \"${o.contentDescription ?: o.text}\" | %.0fx%.0f dp".format(b.width() / density, b.height() / density)
                 }
             }
