@@ -9,7 +9,6 @@ import android.media.MediaCodecInfo
 import android.media.MediaFormat
 import android.media.MediaMuxer
 import android.os.SystemClock
-import android.widget.Spinner
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -74,7 +73,7 @@ class StudioFlowTest{
     @Test fun sr1GpuExportsTwiceTheVideoResolution(){
         val file=syntheticVideo();val source=ClipInspector.inspect(context,MediaLedger.privateUri(context,file));assertEquals(source.toString(),30L,source.getLong("frames"));val old=MediaLedger.all(context).map{it.uri}.toSet()
         ActivityScenario.launch<ClipEditorActivity>(Intent(context,ClipEditorActivity::class.java).setData(MediaLedger.privateUri(context,file))).use{
-            val spinner=device.wait(Until.findObject(By.clazz(Spinner::class.java)),15000);assertNotNull(spinner);spinner.click()
+            val preset=device.wait(Until.findObject(By.textStartsWith("การแต่ง ·")),15000);assertNotNull(preset);preset.click()
             device.wait(Until.findObject(By.text("AI SR1 2× · SDR ≤1080p")),10000).click()
             val action=device.wait(Until.findObject(By.desc("ส่งออกคลิป")),10000)
             if(action==null){val dump=java.io.ByteArrayOutputStream();device.dumpWindowHierarchy(dump);android.util.Log.e("LumaUiTest",dump.toString("UTF-8"));fail("Export control was not accessible")}

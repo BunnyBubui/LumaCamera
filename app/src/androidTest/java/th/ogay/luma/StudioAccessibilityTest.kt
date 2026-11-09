@@ -24,7 +24,6 @@ import androidx.test.uiautomator.By
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.UiScrollable
 import androidx.test.uiautomator.UiSelector
-import androidx.test.uiautomator.Until
 import org.junit.After
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -154,9 +153,9 @@ class StudioAccessibilityTest {
         }
         report += moreSheetAtLargeFont()
         report.forEach { Log.i(TAG, it) }
-        // Report mode: findings are listed in docs/claude/UI_REVIEW_V03.md and fixed in a follow-up
-        // integration change, which switches this to assertTrue(findings.isEmpty()).
-        assertTrue("the audit visited no screen", report.size > 1)
+        // Every line after the display summary is a finding, except the sheet line that reports reachability.
+        val findings = report.drop(1).filterNot { it.contains("| reachable |") }
+        assertTrue("accessibility findings ‖ " + findings.joinToString(" ‖ "), findings.isEmpty())
     }
 
     /** Opens the "เพิ่มเติม" bottom sheet at font 2.0 and checks that its last action can be scrolled to. */
@@ -166,17 +165,24 @@ class StudioAccessibilityTest {
         val out = mutableListOf<String>()
         ActivityScenario.launch<CameraActivity>(Intent(context, CameraActivity::class.java)).use {
             SystemClock.sleep(3500)
-            // The mode strip scrolls horizontally; at large font "เพิ่มเติม" starts off screen.
-            runCatching { UiScrollable(UiSelector().scrollable(true).className("android.widget.HorizontalScrollView")).setAsHorizontalList().scrollIntoView(UiSelector().description("โหมด เพิ่มเติม")) }
-            val more = device.wait(Until.findObject(By.desc("โหมด เพิ่มเติม")), 5000)
-            if (more == null) { out += "MoreSheet | font 2.0 | portrait | missing | mode strip has no \"โหมด เพิ่มเติม\""; return out }
-            more.click(); SystemClock.sleep(1500)
+            // The mode strip scrolls horizontally and "เพิ่มเติม" can start off screen; press it directly.
+            var opened = false
+            it.onActivity { activity ->
+                val found = ArrayList<View>()
+                activity.window.decorView.findViewsWithText(found, "โหมด เพิ่มเติม", View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION)
+                opened = found.firstOrNull()?.performClick() == true
+            }
+            if (!opened) { out += "MoreSheet | font 2.0 | portrait | missing | mode strip has no \"โหมด เพิ่มเติม\""; return out }
+            SystemClock.sleep(1500)
             val reached = runCatching { UiScrollable(UiSelector().scrollable(true)).scrollTextIntoView("ตั้งค่าทั้งหมด") }.getOrDefault(false) ||
                 device.hasObject(By.text("ตั้งค่าทั้งหมด"))
             out += "MoreSheet | font 2.0 | portrait | ${if (reached) "reachable" else "unreachable"} | last action \"ตั้งค่าทั้งหมด\""
+            // Items cut by the sheet's scroll edge report only their visible part, so they are skipped.
+            val viewport = device.findObject(By.scrollable(true))?.visibleBounds
             device.findObjects(By.clickable(true)).forEach { o ->
                 val b = o.visibleBounds
-                if (b.width() < 48 * density - 1 || b.height() < 48 * density - 1) {
+                val clipped = viewport != null && (b.top <= viewport.top + 1 || b.bottom >= viewport.bottom - 1)
+                if (!clipped && (b.width() < 48 * density - 1 || b.height() < 48 * density - 1)) {
                     out += "MoreSheet | font 2.0 | portrait | small-target | \"${o.contentDescription ?: o.text}\" | %.0fx%.0f dp".format(b.width() / density, b.height() / density)
                 }
             }

@@ -82,7 +82,9 @@ zipalign -c -P 16 -v 4 app/build/outputs/apk/debug/app-debug.apk
 
 **ขนาด APK:** asset เพิ่มขึ้น 12.7 MB ถ้าบีบอัดด้วย deflate จะเหลือประมาณ 11.8 MB
 
-## วิธีเชื่อมกับ DocumentActivity (สำหรับ Codex)
+## วิธีเชื่อมกับ DocumentActivity
+
+สถานะ: เชื่อมแล้วใน PR #8 ปุ่ม "อ่านข้อความ" ในหน้าเอกสารเรียก `ThaiOcrEngine` แทน ML Kit Latin และลบ dependency `com.google.mlkit:text-recognition` ออกจาก Gradle เพราะโมเดลไทยอ่านภาษาอังกฤษได้ด้วย ตัวอย่างโค้ดด้านล่างเก็บไว้เป็นบันทึกการออกแบบ
 
 ปุ่ม "OCR Latin" ปัจจุบันเรียก ML Kit ใน `DocumentActivity.ocr()` ผมเสนอให้เพิ่มปุ่ม "อ่านข้อความไทย" ที่เรียกโมดูลนี้บน worker thread ด้วยภาพที่ผ่าน `rectify()` แล้ว เพราะภาพที่แก้มุมและครอปแล้วทำให้ตัวอักษรใหญ่ขึ้นเมื่อเทียบกับขนาดที่ตัวหากรอบรับ ตัวอย่างโค้ด:
 

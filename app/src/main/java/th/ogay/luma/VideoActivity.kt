@@ -55,32 +55,40 @@ class VideoActivity:ComponentActivity(){
     override fun onCreate(state:Bundle?){
         super.onCreate(state);mic=prefs.getBoolean("video_mic",true)
         sounds.load(MediaActionSound.START_VIDEO_RECORDING);sounds.load(MediaActionSound.STOP_VIDEO_RECORDING)
-        val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL};installRoot(root)
-        val head=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(dp(14),0,dp(12),0)}
-        head.addView(pill("‹ ภาพถ่าย"){if(recording==null&&!starting&&!finalizing)finish()},-2,dp(48));head.space()
-        config=pill("1080p · 30",::settings);head.addView(config,-2,dp(48));root.addView(head,-1,dp(60))
-        val frame=FrameLayout(this);root.addView(frame,LinearLayout.LayoutParams(-1,0,1f))
+        // Landscape puts the preview beside a scrolling control column; portrait stacks them.
+        val landscape=resources.configuration.orientation==android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        val root=LinearLayout(this).apply{orientation=if(landscape)LinearLayout.HORIZONTAL else LinearLayout.VERTICAL};installRoot(root)
+        val panel=if(landscape)LinearLayout(this).apply{orientation=LinearLayout.VERTICAL} else root
+        val head=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(dp(14),0,dp(12),0);minimumHeight=dp(60)}
+        head.addView(pill("‹ ภาพถ่าย"){if(recording==null&&!starting&&!finalizing)finish()},-2,-2);head.space()
+        config=pill("1080p · 30",::settings);head.addView(config,-2,-2);panel.addView(head,-1,-2)
+        val frame=FrameLayout(this);root.addView(frame,if(landscape)LinearLayout.LayoutParams(0,-1,1f) else LinearLayout.LayoutParams(-1,0,1f))
         preview=PreviewView(this).apply{implementationMode=PreviewView.ImplementationMode.COMPATIBLE;scaleType=PreviewView.ScaleType.FIT_CENTER};frame.addView(preview,-1,-1)
         val overlay=CompositionOverlay(this).apply{grid=prefs.getBoolean("grid",false);movie=kind=="MOVIE"};frame.addView(overlay,-1,-1)
-        status=label("กำลังเปิดกล้อง…",14f).apply{gravity=Gravity.CENTER;background=shape(0x88000000.toInt());setPadding(dp(10),0,dp(10),0)}
-        frame.addView(status,FrameLayout.LayoutParams(-2,dp(40),Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply{topMargin=dp(12)})
+        status=label("กำลังเปิดกล้อง…",14f).apply{gravity=Gravity.CENTER;background=shape(0x88000000.toInt());setPadding(dp(10),dp(4),dp(10),dp(4));minHeight=dp(40)}
+        frame.addView(status,FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply{topMargin=dp(12);leftMargin=dp(12);rightMargin=dp(12)})
         ruler=ZoomRuler(this){animator?.cancel();camera?.cameraControl?.setZoomRatio(it)}
         frame.addView(ruler,FrameLayout.LayoutParams(-1,dp(64),Gravity.BOTTOM).apply{leftMargin=dp(28);rightMargin=dp(28);bottomMargin=dp(16)})
         val tools=LinearLayout(this).apply{gravity=Gravity.CENTER}
-        tools.addView(pill(if(kind=="MOVIE")"MOVIE · PRO" else "PRO"){manual?.show()},0,dp(48));(tools.getChildAt(0).layoutParams as LinearLayout.LayoutParams).weight=1f
-        tools.addView(pill("ซูม A → B",::zoomPanel),LinearLayout.LayoutParams(0,dp(48),1f))
+        tools.addView(pill(if(kind=="MOVIE")"MOVIE · PRO" else "PRO"){manual?.show()},0,-2);(tools.getChildAt(0).layoutParams as LinearLayout.LayoutParams).weight=1f
+        tools.addView(pill("ซูม A → B",::zoomPanel),LinearLayout.LayoutParams(0,-2,1f))
         val lever=pill("◁ เลื่อนซูม ▷"){}
         lever.contentDescription="คันโยกซูมวิดีโอ";var origin=0f;var velocity=0f
+        // The lever only works by dragging; TalkBack gets zoom in/out actions instead of an empty click.
+        fun nudge(factor:Float){val z=camera?.cameraInfo?.zoomState?.value?:return;animator?.cancel();camera?.cameraControl?.setZoomRatio((z.zoomRatio*factor).coerceIn(z.minZoomRatio,z.maxZoomRatio))}
+        androidx.core.view.ViewCompat.addAccessibilityAction(lever,"ซูมเข้า"){_,_->nudge(1.25f);true}
+        androidx.core.view.ViewCompat.addAccessibilityAction(lever,"ซูมออก"){_,_->nudge(0.8f);true}
         val tick=object:Runnable{override fun run(){val state=camera?.cameraInfo?.zoomState?.value;if(state!=null&&velocity!=0f)camera?.cameraControl?.setZoomRatio((state.zoomRatio*exp(velocity*0.025f)).coerceIn(state.minZoomRatio,state.maxZoomRatio));handler.postDelayed(this,32)}}
         lever.setOnTouchListener{_,e->when(e.actionMasked){MotionEvent.ACTION_DOWN->{animator?.cancel();origin=e.x;handler.post(tick)};MotionEvent.ACTION_MOVE->{val d=e.x-origin;velocity=if(abs(d)<dp(10))0f else(d/dp(90)).coerceIn(-1f,1f)};MotionEvent.ACTION_UP,MotionEvent.ACTION_CANCEL->{velocity=0f;handler.removeCallbacks(tick);lever.performClick()}};true}
-        tools.addView(lever,LinearLayout.LayoutParams(0,dp(48),1f));root.addView(tools,-1,dp(52))
-        root.addView(label(when(kind){"DUAL"->"DUAL VIEW";"MOVIE"->"MOVIE · 2.39:1";else->"VIDEO"},16f,LIME).apply{gravity=Gravity.CENTER},-1,dp(42))
+        tools.addView(lever,LinearLayout.LayoutParams(0,-2,1f));panel.addView(tools,-1,-2)
+        panel.addView(label(when(kind){"DUAL"->"DUAL VIEW";"MOVIE"->"MOVIE · 2.39:1";else->"VIDEO"},16f,LIME).apply{gravity=Gravity.CENTER;minHeight=dp(42)},-1,-2)
         val actions=LinearLayout(this).apply{gravity=Gravity.CENTER};actions.space()
-        pause=pill("พัก"){val r=recording?:return@pill;if(paused)r.resume()else r.pause()}.apply{contentDescription="พักหรือต่อวิดีโอ";isEnabled=false};actions.addView(pause,dp(70),dp(52));actions.space()
+        pause=pill("พัก"){val r=recording?:return@pill;if(paused)r.resume()else r.pause()}.apply{contentDescription="พักหรือต่อวิดีโอ";isEnabled=false};pause.minWidth=dp(70);actions.addView(pause,-2,-2);actions.space()
         shutter=Glyph(this,"shutter","เริ่มบันทึกวิดีโอ"){if(recording!=null)stopRecording()else if(!starting&&!finalizing){if(mic&&ContextCompat.checkSelfPermission(this,Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED)audioPermission.launch(Manifest.permission.RECORD_AUDIO)else startRecording()}}.apply{video=true;isEnabled=false}
         actions.addView(shutter,dp(82),dp(82));actions.space()
-        actions.addView(Glyph(this,"flip","สลับกล้องวิดีโอ"){if(recording==null&&!starting&&!finalizing&&!dual){rear=!rear;bind()}},dp(56),dp(56));actions.space();root.addView(actions,-1,dp(112))
-        root.addView(pill("คลังวิดีโอ / แต่งคลิป"){if(recording==null&&!starting)startActivity(Intent(this,StudioLibraryActivity::class.java))},-1,dp(48))
+        actions.addView(Glyph(this,"flip","สลับกล้องวิดีโอ"){if(recording==null&&!starting&&!finalizing&&!dual){rear=!rear;bind()}},dp(56),dp(56));actions.space();panel.addView(actions,-1,dp(112))
+        panel.addView(pill("คลังวิดีโอ / แต่งคลิป"){if(recording==null&&!starting)startActivity(Intent(this,StudioLibraryActivity::class.java))},-1,-2)
+        if(landscape)root.addView(ScrollView(this).apply{isFillViewport=true;addView(panel)},LinearLayout.LayoutParams(dp(300),-1))
         val pinch=android.view.ScaleGestureDetector(this,object:android.view.ScaleGestureDetector.SimpleOnScaleGestureListener(){override fun onScale(d:android.view.ScaleGestureDetector):Boolean{val s=camera?.cameraInfo?.zoomState?.value?:return false;animator?.cancel();camera?.cameraControl?.setZoomRatio((s.zoomRatio*d.scaleFactor).coerceIn(s.minZoomRatio,s.maxZoomRatio));return true}})
         preview.setOnTouchListener{_,e->pinch.onTouchEvent(e);if(e.actionMasked==MotionEvent.ACTION_UP)preview.performClick();true}
         ProcessCameraProvider.getInstance(this).also{f->f.addListener({runCatching{provider=f.get();if(ContextCompat.checkSelfPermission(this,Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED)bind()else permission.launch(arrayOf(Manifest.permission.CAMERA))}.onFailure{status.text=it.localizedMessage}},main)}
@@ -126,7 +134,7 @@ class VideoActivity:ComponentActivity(){
     private fun settings(){if(recording!=null||starting||finalizing){notice("หยุดคลิปก่อนเปลี่ยนรูปแบบวิดีโอ");return}
         val i=info()?:return
         studioSheet("วิดีโอ"){box,d->
-            fun choose(title:String,items:List<String>,action:(Int)->Unit){box.addView(pill(title){AlertDialog.Builder(this).setTitle(title).setItems(items.toTypedArray()){_,n->action(n);d.dismiss();bind()}.setNegativeButton("ปิด",null).show()},-1,dp(52))}
+            fun choose(title:String,items:List<String>,action:(Int)->Unit){box.addView(pill(title){AlertDialog.Builder(this).setTitle(title).setItems(items.toTypedArray()){_,n->action(n);d.dismiss();bind()}.setNegativeButton("ปิด",null).show()},-1,-2)}
             val caps=Recorder.getVideoCapabilities(i);val qualities=caps.getSupportedQualities(dynamic)
             choose("ความละเอียด · ${qualityName(quality)}",qualities.map{qualityName(it)}){quality=qualities[it]}
             val frames=i.supportedFrameRateRanges.flatMap{r->listOf(24,25,30,50,60).filter{it in r.lower..r.upper}}.distinct().sorted()
@@ -134,21 +142,23 @@ class VideoActivity:ComponentActivity(){
             val ranges=listOf(DynamicRange.SDR,DynamicRange.HLG_10_BIT,DynamicRange.HDR10_10_BIT).filter{it in caps.supportedDynamicRanges}
             choose("SDR / HDR",ranges.map{when(it){DynamicRange.SDR->"SDR 8-bit";DynamicRange.HLG_10_BIT->"HLG10";else->"HDR10"}}){dynamic=ranges[it]}
             choose("Bitrate · ${bitrate/1_000_000} Mbps",listOf("8 Mbps","20 Mbps","40 Mbps","80 Mbps")){bitrate=listOf(8,20,40,80)[it]*1_000_000}
-            box.addView(label("Codec กล้องเลือกตามโปรไฟล์ · เลือก H.264/HEVC ได้ตอนส่งออกคลิป",13f,MUTED),-1,dp(52))
+            box.addView(label("Codec กล้องเลือกตามโปรไฟล์ · เลือก H.264/HEVC ได้ตอนส่งออกคลิป",13f,MUTED),-1,-2)
             if(caps.isStabilizationSupported)choose("กันสั่น EIS · $stabilization",listOf("ปิด","เปิด")){stabilization=it==1;prefs.edit().putBoolean("video_eis",stabilization).apply()}
             choose("ไมโครโฟน · ${if(mic)"เปิด" else "ปิด"}",listOf("ปิดไมค์","บันทึกเสียง")){mic=it==1;prefs.edit().putBoolean("video_mic",mic).apply()}
-            box.addView(pill("คืนค่าชุดพื้นฐาน 1080p30 SDR"){dynamic=DynamicRange.SDR;fps=30;quality=Quality.FHD;hevc=false;stabilization=false;d.dismiss();bind()},-1,dp(56))
-            box.addView(pill("รายงานความสามารถ"){Capabilities.show(this)},-1,dp(52))
+            box.addView(pill("คืนค่าชุดพื้นฐาน 1080p30 SDR"){dynamic=DynamicRange.SDR;fps=30;quality=Quality.FHD;hevc=false;stabilization=false;d.dismiss();bind()},-1,-2)
+            box.addView(pill("รายงานความสามารถ"){Capabilities.show(this)},-1,-2)
         }
     }
     private fun startRecording(){
         val r=recorder?:return;if(starting||finalizing||recording!=null)return
         if(filesDir.usableSpace<64L*1024*1024){notice("พื้นที่ว่างไม่พอเริ่มคลิป");return}
         starting=true;shutter.isEnabled=false;config.isEnabled=false
+        // Rotation would recreate the Activity and onPause would stop the clip, so hold the orientation until it finalises.
+        requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LOCKED
         val sound=prefs.getBoolean("video_sound",true)
         if(sound)sounds.play(MediaActionSound.START_VIDEO_RECORDING)
         handler.postDelayed({
-            if(!starting||isFinishing||isDestroyed){starting=false;return@postDelayed}
+            if(!starting||isFinishing||isDestroyed){starting=false;requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;return@postDelayed}
             try{
                 val name="LUMA_VIDEO_${System.currentTimeMillis()}.mp4"
                 val values=ContentValues().apply{put(MediaStore.Video.Media.DISPLAY_NAME,name);put(MediaStore.Video.Media.MIME_TYPE,"video/mp4");if(android.os.Build.VERSION.SDK_INT>=29)put(MediaStore.Video.Media.RELATIVE_PATH,"Movies/Luma/")}
@@ -156,11 +166,11 @@ class VideoActivity:ComponentActivity(){
                 var pending=r.prepareRecording(this,options)
                 if(mic&&ContextCompat.checkSelfPermission(this,Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED)pending=pending.withAudioEnabled()
                 recording=pending.start(main){event->when(event){
-                    is VideoRecordEvent.Start->{starting=false;shutter.isEnabled=true;shutter.recording=true;shutter.contentDescription="หยุดบันทึกวิดีโอ";pause.isEnabled=true}
+                    is VideoRecordEvent.Start->{status.announceForAccessibility("เริ่มบันทึกวิดีโอ");starting=false;shutter.isEnabled=true;shutter.recording=true;shutter.contentDescription="หยุดบันทึกวิดีโอ";pause.isEnabled=true}
                     is VideoRecordEvent.Status->{val seconds=event.recordingStats.recordedDurationNanos/1_000_000_000;status.text=String.format(Locale.US,"%02d:%02d  ·  %.1f MB%s",seconds/60,seconds%60,event.recordingStats.numBytesRecorded/1e6,if(paused)" · พัก" else "")}
                     is VideoRecordEvent.Pause->{paused=true;pause.text="ต่อ"}
                     is VideoRecordEvent.Resume->{paused=false;pause.text="พัก"}
-                    is VideoRecordEvent.Finalize->{recording=null;starting=false;finalizing=false;paused=false;shutter.recording=false;shutter.contentDescription="เริ่มบันทึกวิดีโอ";pause.isEnabled=false;pause.text="พัก";shutter.isEnabled=true;config.isEnabled=true
+                    is VideoRecordEvent.Finalize->{requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;recording=null;starting=false;finalizing=false;paused=false;shutter.recording=false;shutter.contentDescription="เริ่มบันทึกวิดีโอ";pause.isEnabled=false;pause.text="พัก";shutter.isEnabled=true;config.isEnabled=true
                         if(sound&&!isDestroyed)sounds.play(MediaActionSound.STOP_VIDEO_RECORDING)
                         val uri=event.outputResults.outputUri
                         if(uri!=Uri.EMPTY&&event.recordingStats.numBytesRecorded>0){
@@ -168,18 +178,19 @@ class VideoActivity:ComponentActivity(){
                             status.text=if(event.hasError())"เก็บคลิปที่ได้รับแล้ว · ${event.error}" else "บันทึกวิดีโอแล้ว"
                             luma.fileIo.execute{ClipInspector.record(this,uri,name)}
                         }else status.text="บันทึกไม่สำเร็จ · ${event.cause?.localizedMessage?:event.error}"
+                        status.announceForAccessibility(status.text)
                     }
                 }}
-            }catch(e:Exception){starting=false;recording=null;shutter.isEnabled=true;config.isEnabled=true;status.text="เริ่มบันทึกไม่ได้ · ${e.localizedMessage}"}
+            }catch(e:Exception){requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;starting=false;recording=null;shutter.isEnabled=true;config.isEnabled=true;status.text="เริ่มบันทึกไม่ได้ · ${e.localizedMessage}"}
         },if(sound)300 else 0)
     }
     private fun stopRecording(){animator?.cancel();finalizing=true;shutter.isEnabled=false;pause.isEnabled=false;status.text="กำลังปิดไฟล์…";recording?.stop()}
     private fun zoomPanel(){studioSheet("ซูมอัตโนมัติ A → B"){box,d->
-        box.addView(pill("กำหนด A ที่ระยะปัจจุบัน"){zoomA=camera?.cameraInfo?.zoomState?.value?.zoomRatio?:1f;notice("A = ${zoomText(zoomA)}")},-1,dp(52))
-        box.addView(pill("กำหนด B ที่ระยะปัจจุบัน"){zoomB=camera?.cameraInfo?.zoomState?.value?.zoomRatio?:3f;notice("B = ${zoomText(zoomB)}")},-1,dp(52))
-        val row=LinearLayout(this);listOf(2L,4L,8L).forEach{seconds->row.addView(pill("${seconds}s"){zoomDuration=seconds},LinearLayout.LayoutParams(0,dp(48),1f))};box.addView(row)
-        box.addView(Switch(this).apply{text="เริ่มและจบแบบนุ่ม";setTextColor(WHITE);isChecked=smooth;setOnCheckedChangeListener{_,v->smooth=v}},-1,dp(48))
-        box.addView(pill("เล่น ${zoomText(zoomA)} → ${zoomText(zoomB)}"){d.dismiss();val cam=camera?:return@pill;val z=cam.cameraInfo.zoomState.value?:return@pill;animator?.cancel();animator=ValueAnimator.ofFloat(ln(zoomA.coerceIn(z.minZoomRatio,z.maxZoomRatio)),ln(zoomB.coerceIn(z.minZoomRatio,z.maxZoomRatio))).apply{duration=zoomDuration*1000;interpolator=if(smooth)android.view.animation.AccelerateDecelerateInterpolator()else android.view.animation.LinearInterpolator();addUpdateListener{cam.cameraControl.setZoomRatio(exp(it.animatedValue as Float))};start()}},-1,dp(56))
+        box.addView(pill("กำหนด A ที่ระยะปัจจุบัน"){zoomA=camera?.cameraInfo?.zoomState?.value?.zoomRatio?:1f;notice("A = ${zoomText(zoomA)}")},-1,-2)
+        box.addView(pill("กำหนด B ที่ระยะปัจจุบัน"){zoomB=camera?.cameraInfo?.zoomState?.value?.zoomRatio?:3f;notice("B = ${zoomText(zoomB)}")},-1,-2)
+        val row=LinearLayout(this);listOf(2L,4L,8L).forEach{seconds->row.addView(pill("${seconds}s"){zoomDuration=seconds},LinearLayout.LayoutParams(0,-2,1f))};box.addView(row)
+        box.addView(Switch(this).apply{text="เริ่มและจบแบบนุ่ม";setTextColor(WHITE);isChecked=smooth;setOnCheckedChangeListener{_,v->smooth=v}},-1,-2)
+        box.addView(pill("เล่น ${zoomText(zoomA)} → ${zoomText(zoomB)}"){d.dismiss();val cam=camera?:return@pill;val z=cam.cameraInfo.zoomState.value?:return@pill;animator?.cancel();animator=ValueAnimator.ofFloat(ln(zoomA.coerceIn(z.minZoomRatio,z.maxZoomRatio)),ln(zoomB.coerceIn(z.minZoomRatio,z.maxZoomRatio))).apply{duration=zoomDuration*1000;interpolator=if(smooth)android.view.animation.AccelerateDecelerateInterpolator()else android.view.animation.LinearInterpolator();addUpdateListener{cam.cameraControl.setZoomRatio(exp(it.animatedValue as Float))};start()}},-1,-2)
     }}
     override fun onPause(){starting=false;animator?.cancel();handler.removeCallbacksAndMessages(null);recording?.stop();super.onPause()}
     override fun onDestroy(){sounds.release();super.onDestroy()}

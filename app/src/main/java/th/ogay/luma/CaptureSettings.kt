@@ -16,7 +16,7 @@ fun Context.showCaptureSettings(rawAvailable: Boolean, changed: () -> Unit) {
         setPadding(dp(22), dp(18), dp(22), dp(20))
         setBackgroundColor(BG)
     }
-    content.addView(label("ตั้งค่ากล้อง", 23f), -1, dp(52))
+    content.addView(label("ตั้งค่ากล้อง", 23f), -1, -2)
     fun toggle(title: String, key: String, default: Boolean) {
         val row = Switch(this).apply {
             text = title
@@ -35,7 +35,7 @@ fun Context.showCaptureSettings(rawAvailable: Boolean, changed: () -> Unit) {
         }
         content.addView(row, -1, -2)
     }
-    content.addView(label("AI รวมเฟรม", 17f, LIME), -1, dp(40))
+    content.addView(label("AI รวมเฟรม", 17f, LIME), -1, -2)
     val choices = LinearLayout(this)
     for (count in listOf(4, 8, 16, 32)) {
         choices.addView(pill("$count") {
@@ -50,14 +50,14 @@ fun Context.showCaptureSettings(rawAvailable: Boolean, changed: () -> Unit) {
         }, LinearLayout.LayoutParams(0, dp(48), 1f).apply { marginEnd = dp(4) })
     }
     content.addView(choices)
-    content.addView(label("16–32 เฟรมใช้เวลาถ่ายนานขึ้น เหมาะกับฉากนิ่ง", 13f, MUTED), -1, dp(44))
+    content.addView(label("16–32 เฟรมใช้เวลาถ่ายนานขึ้น เหมาะกับฉากนิ่ง", 13f, MUTED), -1, -2)
     toggle("เสียงชัตเตอร์", "sound", true)
     toggle("แรงสั่นเมื่อแตะ", "haptic", true)
     toggle("ลดการเคลื่อนไหว", "reduce_motion", false)
     toggle("เส้นกริด", "grid", false)
     toggle("AI อัตโนมัติในโหมด JPEG", "auto", true)
-    content.addView(label(if (rawAvailable) "กล้องนี้เปิดให้เก็บ RAW + JPEG ได้" else "กล้องนี้ยังไม่เปิด RAW + JPEG ให้แอป", 14f, MUTED), -1, dp(48))
-    content.addView(pill("ปิด") { dialog.dismiss() }, -1, dp(48))
+    content.addView(label(if (rawAvailable) "กล้องนี้เปิดให้เก็บ RAW + JPEG ได้" else "กล้องนี้ยังไม่เปิด RAW + JPEG ให้แอป", 14f, MUTED), -1, -2)
+    content.addView(pill("ปิด") { dialog.dismiss() }, -1, -2)
     dialog.setContentView(ScrollView(this).apply { addView(content) })
     dialog.window?.apply {
         setBackgroundDrawableResource(android.R.color.transparent)

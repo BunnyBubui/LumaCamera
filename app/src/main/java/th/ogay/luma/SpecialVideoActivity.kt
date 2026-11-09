@@ -33,12 +33,12 @@ class SpecialVideoActivity:ComponentActivity(){
     private val permissions=registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()){if(it[Manifest.permission.CAMERA]==true)open()else status.text="ต้องอนุญาตกล้องเพื่อใช้โหมดนี้"}
     override fun onCreate(state:Bundle?){super.onCreate(state)
         val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL};installRoot(root)
-        val row=LinearLayout(this);row.addView(pill("‹ กลับ"){if(!working&&!recording)finish()},LinearLayout.LayoutParams(0,dp(52),1f));row.addView(pill("ตัวเลือก",::settings),LinearLayout.LayoutParams(0,dp(52),1f));root.addView(row)
-        root.addView(label(if(slow)"SLOW MOTION" else "TIME-LAPSE",24f,LIME).apply{gravity=Gravity.CENTER},-1,dp(56))
-        status=label("กำลังตรวจกล้อง…",14f,MUTED).apply{gravity=Gravity.CENTER};root.addView(status,-1,dp(76))
+        val row=LinearLayout(this);row.addView(pill("‹ กลับ"){if(!working&&!recording)finish()},LinearLayout.LayoutParams(0,-2,1f));row.addView(pill("ตัวเลือก",::settings),LinearLayout.LayoutParams(0,-2,1f));root.addView(row,-1,-2)
+        root.addView(label(if(slow)"SLOW MOTION" else "TIME-LAPSE",24f,LIME).apply{gravity=Gravity.CENTER;minHeight=dp(56)},-1,-2)
+        status=label("กำลังตรวจกล้อง…",14f,MUTED).apply{gravity=Gravity.CENTER;minHeight=dp(76)};root.addView(status,-1,-2)
         texture=TextureView(this);root.addView(texture,LinearLayout.LayoutParams(-1,0,1f))
         texture.surfaceTextureListener=object:TextureView.SurfaceTextureListener{override fun onSurfaceTextureAvailable(s:SurfaceTexture,w:Int,h:Int){if(visible)open()};override fun onSurfaceTextureSizeChanged(s:SurfaceTexture,w:Int,h:Int){};override fun onSurfaceTextureUpdated(s:SurfaceTexture){};override fun onSurfaceTextureDestroyed(s:SurfaceTexture):Boolean{handler.post{close()};return true}}
-        root.addView(label(if(slow)"บันทึกเงียบ · เล่นที่ 30 fps" else "บันทึกเงียบ · ส่งออก 30 fps",14f,MUTED).apply{gravity=Gravity.CENTER},-1,dp(44))
+        root.addView(label(if(slow)"บันทึกเงียบ · เล่นที่ 30 fps" else "บันทึกเงียบ · ส่งออก 30 fps",14f,MUTED).apply{gravity=Gravity.CENTER;minHeight=dp(44)},-1,-2)
         shutter=Glyph(this,"shutter","เริ่มบันทึกโหมดพิเศษ"){if(!working){if(recording)stop()else start()}}.apply{video=true;isEnabled=false}
         val actions=FrameLayout(this);actions.addView(shutter,FrameLayout.LayoutParams(dp(82),dp(82),Gravity.CENTER));root.addView(actions,-1,dp(110))
         cameraId=manager.cameraIdList.firstOrNull{manager.getCameraCharacteristics(it).get(CameraCharacteristics.LENS_FACING)==CameraCharacteristics.LENS_FACING_BACK}?:manager.cameraIdList.firstOrNull().orEmpty()
@@ -67,7 +67,7 @@ class SpecialVideoActivity:ComponentActivity(){
     @Suppress("DEPRECATION")
     private fun preview(){try{val d=camera?:return;val target=surface();d.createCaptureSession(listOf(target),object:CameraCaptureSession.StateCallback(){override fun onConfigured(s:CameraCaptureSession){session=s;try{val req=d.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply{addTarget(target);set(CaptureRequest.CONTROL_MODE,CaptureRequest.CONTROL_MODE_AUTO)};s.setRepeatingRequest(req.build(),null,handler);runOnUiThread{working=false;shutter.isEnabled=true;status.text="${size} · "+if(slow)"${fps} fps → 30 fps" else "ทุก $interval วินาที"}}catch(e:Exception){showError(e.localizedMessage?:"เปิดพรีวิวไม่ได้")}};override fun onConfigureFailed(s:CameraCaptureSession){s.close();showError("ชุดพรีวิวนี้ไม่รองรับ")}},handler)}catch(e:Exception){showError(e.localizedMessage?:"เปิดพรีวิวไม่ได้")}}
     @Suppress("DEPRECATION")
-    private fun start(){if(camera==null||working)return;if(filesDir.usableSpace<96L*1024*1024){notice("พื้นที่ไม่พอ");return};working=true;shutter.isEnabled=false;status.text="กำลังเตรียมไฟล์…"
+    private fun start(){if(camera==null||working)return;if(filesDir.usableSpace<96L*1024*1024){notice("พื้นที่ไม่พอ");return};requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LOCKED;working=true;shutter.isEnabled=false;status.text="กำลังเตรียมไฟล์…"
         handler.post{try{
             session?.close();session=null
             val output=File(filesDir,"clips/LUMA_${if(slow)"SLOW" else "TIMELAPSE"}_${System.currentTimeMillis()}.mp4").apply{parentFile?.mkdirs()};file=output
@@ -92,9 +92,9 @@ class SpecialVideoActivity:ComponentActivity(){
         recording=false;recorder?.release();recorder=null;session?.close();session=null
         if(output!=null&&success&&output.length()>0)luma.fileIo.execute{runCatching{val uri=MediaLedger.publishVideo(this,output,output.name,"${if(slow)"Slow-motion $fps → 30 fps" else "Time-lapse ทุก $interval วินาที"} · เวลาถ่าย ${wall/1000}s");ClipInspector.record(this,uri,output.name);output.delete()}.onSuccess{runOnUiThread{status.text="บันทึกคลิปแล้ว"}}.onFailure{runOnUiThread{status.text="ไฟล์ยังอยู่ในแอป · ${it.localizedMessage}"};MediaLedger.rememberFile(this,output,"video/mp4")}}
         else{output?.delete();runOnUiThread{status.text="คลิปสั้นเกินไปหรือ recorder ไม่ส่งไฟล์ที่สมบูรณ์"}}
-        runOnUiThread{working=false;shutter.recording=false};if(visible)preview()else close()
+        runOnUiThread{working=false;shutter.recording=false;requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED};if(visible)preview()else close()
     }}
-    private fun showError(message:String){runOnUiThread{working=false;shutter.recording=false;shutter.isEnabled=false;status.text=message}}
+    private fun showError(message:String){runOnUiThread{working=false;requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;shutter.recording=false;shutter.isEnabled=false;status.text=message}}
     private fun close(){session?.close();session=null;camera?.close();camera=null;runCatching{recorder?.reset()};recorder?.release();recorder=null;previewSurface?.release();previewSurface=null}
     override fun onPause(){visible=false;if(recording&&!working)stop()else handler.post{close()};super.onPause()}
     override fun onDestroy(){handler.post{close();thread.quitSafely()};super.onDestroy()}
