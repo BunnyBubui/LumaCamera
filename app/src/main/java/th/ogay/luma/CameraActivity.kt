@@ -181,13 +181,13 @@ class CameraActivity : ComponentActivity() {
         head.addView(pill(prefs.getString("aspect","4:3")!!) {
             if(!busy){val values=listOf("4:3","1:1","16:9");val next=values[(values.indexOf(prefs.getString("aspect","4:3"))+1)%3];prefs.edit().putString("aspect",next).apply();buildScreen();bind()}
         },-2,dp(48))
-        head.addView(pill("HDR") { if(!busy)selectMode(if(mode==PhotoMode.HDR)PhotoMode.PHOTO else PhotoMode.HDR) }.apply{setTextColor(if(mode==PhotoMode.HDR)LIME else WHITE)},-2,dp(48))
+        head.addView(pill("HDR") { if(!busy)selectMode(if(mode==PhotoMode.HDR)PhotoMode.PHOTO else PhotoMode.HDR) }.apply{selectionStyle(mode==PhotoMode.HDR)},-2,dp(48))
         head.space()
         aiButton = pill("", ::toggleAi)
-        head.addView(aiButton,-2,dp(44))
+        head.addView(aiButton,-2,dp(48))
         head.addView(View(this),dp(6),1)
         flashButton = pill("",::toggleFlash)
-        head.addView(flashButton,-2,dp(44))
+        head.addView(flashButton,-2,dp(48))
         head.addView(Glyph(this,"menu","การตั้งค่ากล้อง",::showOptions),dp(48),dp(48))
         outputButtons = LinearLayout(this).apply { gravity = Gravity.CENTER }
         val outputScroll = HorizontalScrollView(this).apply {
@@ -195,7 +195,7 @@ class CameraActivity : ComponentActivity() {
             isFillViewport = true
             addView(outputButtons)
         }
-        root.addView(outputScroll, -1, dp(46))
+        root.addView(outputScroll, -1, dp(52))
         for (choice in CaptureOutput.entries) {
             val button = pill(choice.label) {
                 if (!busy) {
@@ -203,12 +203,12 @@ class CameraActivity : ComponentActivity() {
                     else if (choice != output) {
                         if(choice.needsRaw || (mode==PhotoMode.ULTRA_HDR && choice!=CaptureOutput.JPEG))mode=PhotoMode.PHOTO
                         output = choice
-                        prefs.edit().putString("output", choice.name).apply()
+                        prefs.edit().putString("output", choice.name).putString("photo_mode",mode.name).apply()
                         buildScreen();bind()
                     }
                 }
             }.apply { contentDescription = "รูปแบบ ${choice.label}" }
-            outputButtons.addView(button, LinearLayout.LayoutParams(-2, dp(44)).apply { setMargins(dp(3), 0, dp(3), 0) })
+            outputButtons.addView(button, LinearLayout.LayoutParams(-2, dp(48)).apply { setMargins(dp(3), 0, dp(3), 0) })
         }
         val body = LinearLayout(this).apply { orientation = if (landscape) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL }
         root.addView(body,LinearLayout.LayoutParams(-1,0,1f))
@@ -259,7 +259,7 @@ class CameraActivity : ComponentActivity() {
         ruler=ZoomRuler(this){zoomAnimation?.cancel();applyZoom(it)}.apply{visibility=View.GONE}
         stage.addView(ruler,FrameLayout.LayoutParams(-1,dp(58),Gravity.BOTTOM).apply{bottomMargin=dp(62);leftMargin=dp(22);rightMargin=dp(22)})
         currentZoom.setOnLongClickListener { ruler.visibility = if (ruler.visibility == View.VISIBLE) View.GONE else View.VISIBLE; true }
-        stage.addView(zooms,FrameLayout.LayoutParams(-2,dp(44),Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin=dp(12) })
+        stage.addView(zooms,FrameLayout.LayoutParams(-2,dp(48),Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin=dp(12) })
         viewfinderNotice = label("",14f).apply { gravity=Gravity.CENTER; visibility=View.GONE; setPadding(dp(12),dp(8),dp(12),dp(8)); background=shape(PANEL) }
         viewfinderNotice.setOnClickListener { burst?.cancel() }
         stage.addView(viewfinderNotice,FrameLayout.LayoutParams(-2,-2,Gravity.CENTER))
@@ -328,6 +328,7 @@ class CameraActivity : ComponentActivity() {
             val info=provider.availableCameraInfos.firstOrNull { it in baseSelector.filter(provider.availableCameraInfos) }
                 ?: throw IOException("ไม่พบกล้องที่เปิดใช้งานได้")
             rawAvailable = ImageCapture.getImageCaptureCapabilities(info).supportedOutputFormats.contains(ImageCapture.OUTPUT_FORMAT_RAW_JPEG)
+            if(output.needsRaw&&!rawAvailable){output=CaptureOutput.JPEG;prefs.edit().putString("output",output.name).apply();notice("กล้องนี้ไม่รองรับ RAW · เปลี่ยนเป็น JPEG แล้ว")}
             val cc=Camera2CameraInfo.from(info)
             val caps=cc.getCameraCharacteristic(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)
             val single=Build.VERSION.SDK_INT>=28 && caps!=null && !caps.contains(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_LOGICAL_MULTI_CAMERA)
@@ -409,13 +410,15 @@ class CameraActivity : ComponentActivity() {
         for (i in 0 until outputButtons.childCount) {
             val choice = CaptureOutput.entries[i]
             val button = outputButtons.getChildAt(i) as TextView
-            button.setTextColor(if (choice == output) LIME else WHITE)
+            button.selectionStyle(choice == output)
             button.alpha = if (choice.needsRaw && !rawAvailable) 0.4f else 1f
-            button.isEnabled = !busy
+            button.isEnabled = !busy && (!choice.needsRaw || rawAvailable)
+            button.visibility = if(choice.needsRaw&&!rawAvailable)View.GONE else View.VISIBLE
         }
-        aiButton.visibility = if (output == CaptureOutput.JPEG) View.VISIBLE else View.GONE
-        aiButton.text=if(auto) "AI ออโต้" else "AI ปิด"; aiButton.setTextColor(if(auto) LIME else MUTED)
-        flashButton.text=if(flash==ImageCapture.FLASH_MODE_ON) "แฟลช เปิด" else "แฟลช ปิด"
+        aiButton.visibility = if (output == CaptureOutput.JPEG && mode==PhotoMode.PHOTO) View.VISIBLE else View.GONE
+        aiButton.text="AI";aiButton.contentDescription=if(auto)"AI อัตโนมัติ เปิด"else "AI อัตโนมัติ ปิด";aiButton.selectionStyle(auto)
+        flashButton.text=when(flash){ImageCapture.FLASH_MODE_AUTO->"⚡ A";ImageCapture.FLASH_MODE_ON->"⚡ ON";else->"⚡ OFF"}
+        flashButton.contentDescription=when(flash){ImageCapture.FLASH_MODE_AUTO->"แฟลช อัตโนมัติ";ImageCapture.FLASH_MODE_ON->"แฟลช เปิด";else->"แฟลช ปิด"}
         flashButton.visibility=if(camera?.cameraInfo?.hasFlashUnit()==true) View.VISIBLE else View.GONE
         shutter.isEnabled=capture!=null && granted() && !busy && !zoomSettling && (!output.needsRaw || rawAvailable)
         shutter.alpha=if(shutter.isEnabled) 1f else 0.45f
@@ -433,7 +436,8 @@ class CameraActivity : ComponentActivity() {
                 zooms.addView(button,dp(49),-1)
             }
         }
-        for(i in stops.indices) (zooms.getChildAt(i) as TextView).setTextColor(if(abs(stops[i]-ratio)<0.08f) LIME else WHITE)
+        for(i in stops.indices) (zooms.getChildAt(i) as TextView).selectionStyle(abs(stops[i]-ratio)<0.08f)
+        preview.contentDescription="ช่องมองภาพ กล้อง${if(rear)"หลัง"else "หน้า"} ${zoomText(ratio)}"
         val zoomRange = range()
         if (zoomRange.second > zoomRange.first) {
             zoomSlider.progress = (1000 * kotlin.math.ln((ratio / zoomRange.first).toDouble()) /
@@ -444,7 +448,7 @@ class CameraActivity : ComponentActivity() {
     }
     private fun installGestures() {
         val scale=ScaleGestureDetector(this,object:ScaleGestureDetector.SimpleOnScaleGestureListener(){
-            override fun onScale(detector: ScaleGestureDetector):Boolean { applyZoom(ratio*detector.scaleFactor);return true }
+            override fun onScale(detector: ScaleGestureDetector):Boolean { ruler.visibility=View.VISIBLE;applyZoom(ratio*detector.scaleFactor);return true }
         })
         val taps=GestureDetector(this,object:GestureDetector.SimpleOnGestureListener(){
             override fun onDown(e:MotionEvent)=true
@@ -480,17 +484,19 @@ class CameraActivity : ComponentActivity() {
     private var hintVersion=0
     private fun hint(text:String,ms:Long=1500) {
         val version=++hintVersion
+        viewfinderNotice.accessibilityLiveRegion=View.ACCESSIBILITY_LIVE_REGION_POLITE
         viewfinderNotice.text=text;viewfinderNotice.visibility=View.VISIBLE
-        viewfinderNotice.postDelayed({if(version==hintVersion) viewfinderNotice.visibility=View.GONE},ms)
+        val delay=if(Build.VERSION.SDK_INT>=29)(getSystemService(ACCESSIBILITY_SERVICE) as android.view.accessibility.AccessibilityManager).getRecommendedTimeoutMillis(ms.toInt(),android.view.accessibility.AccessibilityManager.FLAG_CONTENT_TEXT).toLong()else ms
+        viewfinderNotice.postDelayed({if(version==hintVersion) viewfinderNotice.visibility=View.GONE},delay)
     }
     private fun toggleAi(){auto=!auto;prefs.edit().putBoolean("auto",auto).apply();refresh()}
     private fun toggleFlash(){
-        flash=if(flash==ImageCapture.FLASH_MODE_OFF) ImageCapture.FLASH_MODE_ON else ImageCapture.FLASH_MODE_OFF
+        flash=when(flash){ImageCapture.FLASH_MODE_OFF->ImageCapture.FLASH_MODE_AUTO;ImageCapture.FLASH_MODE_AUTO->ImageCapture.FLASH_MODE_ON;else->ImageCapture.FLASH_MODE_OFF}
         capture?.flashMode=flash;refresh()
     }
     private fun showOptions() {
         val modes=arrayOf("ซูมด้วยระบบกล้อง", "ครอปจากกล้องหลัก 1×", "ข้อมูลเครื่องและกล้อง", "ตั้งค่าเสียง / AI / การตอบสนอง", "ตั้งค่าทั้งหมด", "คลังวิดีโอและเอกสาร")
-        AlertDialog.Builder(this).setTitle("โหมดซูมกล้องหลัง").setSingleChoiceItems(modes,if(software) 1 else 0) { dialog,index ->
+        AlertDialog.Builder(this).setTitle("ตั้งค่าและโหมดซูม").setItems(modes) { dialog,index ->
             dialog.dismiss()
             if(index==5){showAllSettings()}
             else if(index==6){startActivity(Intent(this,StudioLibraryActivity::class.java))}
@@ -532,6 +538,7 @@ class CameraActivity : ComponentActivity() {
             started = { captureFeedback() },
             progress = { done, total ->
                 if (!isDestroyed) {
+                    viewfinderNotice.accessibilityLiveRegion=View.ACCESSIBILITY_LIVE_REGION_NONE
                     viewfinderNotice.text = "ถ่าย $done/$total เฟรม · แตะเพื่อหยุด"
                     viewfinderNotice.visibility = View.VISIBLE
                 }
@@ -583,6 +590,7 @@ class CameraActivity : ComponentActivity() {
         }else captureNow()
     }
     private fun captureNow() {
+        if(filesDir.usableSpace<32L*1024*1024){hint("พื้นที่ว่างไม่พอสำหรับถ่ายภาพ กรุณาคืนพื้นที่แล้วลองใหม่",5000);return}
         val useCase=capture ?: return
         if(mode==PhotoMode.HDR&&!activeExtension){takeHdr(useCase);return}
         if(mode==PhotoMode.ULTRA_HDR){takeUltra(useCase);return}
@@ -643,7 +651,7 @@ class CameraActivity : ComponentActivity() {
         busy=false
         if(!isDestroyed) {
             if(pendingBind) {pendingBind=false;bind()}
-            refresh();hint(msg,2200)
+            refresh();hint(msg,5000)
         }
     }
     private fun selectMode(next:PhotoMode){
@@ -669,14 +677,14 @@ class CameraActivity : ComponentActivity() {
     }}
     private val locationRequest=registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()){if(it.values.none{v->v}){prefs.edit().putBoolean("gps",false).apply();notice("ปิด GPS เพราะยังไม่ได้อนุญาตตำแหน่ง")}}
     private fun takeHdr(useCase:ImageCapture){val cam=camera?:return;busy=true;hintVersion++;refresh();captureFeedback()
-        hdr=HdrCapture(this,cam,useCase,{frame->hint("HDR · $frame/3 เฟรม",32000)},{file,error->hdr=null;if(file!=null)luma.fileIo.execute{runCatching{PhotoEffects.decorate(this,file,rear);publishSpecial(file,"HDR · Exposure fusion SDR")}.onSuccess{complete("บันทึก HDR แล้ว")}.onFailure{complete(it.localizedMessage?:"HDR ไม่สำเร็จ")}}else complete(error?:"HDR ไม่สำเร็จ")});hdr!!.start()
+        hdr=HdrCapture(this,cam,useCase,{frame->hint("HDR · $frame/3 เฟรม",32000)},{file,error->val used=hdr?.usedFrames?:1;val requested=hdr?.requestedFrames?:3;hdr=null;if(file!=null)luma.fileIo.execute{runCatching{PhotoEffects.decorate(this,file,rear);publishSpecial(file,"HDR EF1 · Exposure fusion SDR · ใช้ $used/$requested เฟรม",used,requested)}.onSuccess{complete("บันทึก HDR แล้ว")}.onFailure{complete(it.localizedMessage?:"HDR ไม่สำเร็จ")}}else complete(error?:"HDR ไม่สำเร็จ")});hdr!!.start()
     }
     private fun takeUltra(useCase:ImageCapture){busy=true;refresh();val file=File(cacheDir,"ultra-${System.currentTimeMillis()}.jpg");useCase.takePicture(ImageCapture.OutputFileOptions.Builder(file).build(),luma.fileIo,object:ImageCapture.OnImageSavedCallback{
         override fun onCaptureStarted(){runOnUiThread{captureFeedback()}}
         override fun onImageSaved(result:ImageCapture.OutputFileResults){try{publishSpecial(file,"Ultra HDR · gain map จากกล้อง");complete("บันทึก Ultra HDR แล้ว")}catch(e:Exception){complete(e.localizedMessage?:"บันทึกไม่ได้")}finally{file.delete()}}
         override fun onError(e:ImageCaptureException){complete(e.localizedMessage?:"ถ่ายไม่ได้");file.delete()}
     })}
-    private fun publishSpecial(file:File,note:String){val id=UUID.randomUUID().toString();val time=System.currentTimeMillis();val uri=PhotoMedia.publish(this,file,"LUMA_${time}_${id}.jpg",time);luma.shots.insert(Shot(id,time,uri,PhotoMedia.dimensions(file),ratio,rear,null,null,Decision.OFF,Stage.ORIGINAL,null,0,null,false,captureNote=note))}
+    private fun publishSpecial(file:File,note:String,used:Int=1,requested:Int=used){val id=UUID.randomUUID().toString();val time=System.currentTimeMillis();val uri=PhotoMedia.publish(this,file,"LUMA_${time}_${id}.jpg",time);luma.shots.insert(Shot(id,time,uri,PhotoMedia.dimensions(file),ratio,rear,null,null,Decision.OFF,Stage.ORIGINAL,null,0,null,false,frames=used,requestedFrames=requested,fusedFrames=used,captureNote=note))}
     private fun takeSequence(){val useCase=capture?:return;busy=true;refresh();SequentialPhotos(this,useCase,rear,ratio,{n->hint("ถ่ายต่อเนื่อง $n/10",3000)},{message->complete(message)},started={captureFeedback()}).start()}
     private fun finishPanorama(){if(busy)return;if(panoFiles.size<2){notice("ถ่ายอย่างน้อย 2 ภาพ โดยแต่ละภาพซ้อนทับกันประมาณครึ่งหนึ่ง");return};busy=true;refresh();hint("กำลังจับคู่และต่อภาพ…",120000)
         val input=panoFiles.toList();luma.fileIo.execute{runCatching{val result=PanoramaEngine.stitch(this,input);publishSpecial(result,"Panorama · ORB / homography");result.delete()}.onSuccess{input.forEach{it.delete()};runOnUiThread{panoFiles.clear();complete("บันทึกพาโนรามาแล้ว")}}.onFailure{complete("ต่อภาพไม่ได้ · ${it.localizedMessage} · เฟรมต้นฉบับยังอยู่")}}

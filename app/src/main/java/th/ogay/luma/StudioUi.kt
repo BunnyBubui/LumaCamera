@@ -52,11 +52,12 @@ fun Context.modeStrip(selected: PhotoMode, select: (PhotoMode) -> Unit): Horizon
         val v=label(mode.title,15f,if(mode==selected) LIME else MUTED).apply {
             gravity=Gravity.CENTER; setPadding(dp(16),0,dp(16),0); minHeight=dp(52)
             typeface=if(mode==selected) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT
+            selectionStyle(mode==selected)
             contentDescription="โหมด ${mode.title}"; isFocusable=true; setOnClickListener{select(mode)}; pressFeedback()
         }
         row.addView(v,-2,dp(52));if(mode==selected)active=v
     }
-    scroll.post { active?.let{scroll.smoothScrollTo((it.left-(scroll.width-it.width)/2).coerceAtLeast(0),0)} }
+    scroll.post { active?.let{if(getSharedPreferences("camera",0).getBoolean("reduce_motion",false))scroll.scrollTo((it.left-(scroll.width-it.width)/2).coerceAtLeast(0),0) else scroll.smoothScrollTo((it.left-(scroll.width-it.width)/2).coerceAtLeast(0),0)} }
     return scroll
 }
 
@@ -94,6 +95,11 @@ class ZoomRuler(context: Context, private val zoom: (Float)->Unit): View(context
             }
             MotionEvent.ACTION_UP->{performClick();parent.requestDisallowInterceptTouchEvent(false)}
         };return true
+    }
+    override fun getAccessibilityClassName():CharSequence="android.widget.SeekBar"
+    override fun onInitializeAccessibilityNodeInfo(info:android.view.accessibility.AccessibilityNodeInfo){super.onInitializeAccessibilityNodeInfo(info);info.rangeInfo=android.view.accessibility.AccessibilityNodeInfo.RangeInfo.obtain(android.view.accessibility.AccessibilityNodeInfo.RangeInfo.RANGE_TYPE_FLOAT,lo,hi,current);info.addAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_FORWARD);info.addAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)}
+    override fun performAccessibilityAction(action:Int,args:android.os.Bundle?):Boolean{
+        if(isEnabled&&(action==android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_FORWARD||action==android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD)){val sign=if(action==android.view.accessibility.AccessibilityNodeInfo.ACTION_SCROLL_FORWARD)1 else -1;zoom((current*exp(sign*ln(hi/lo)/20)).coerceIn(lo,hi));return true};return super.performAccessibilityAction(action,args)
     }
     override fun performClick():Boolean{super.performClick();return true}
 }

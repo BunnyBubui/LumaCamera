@@ -47,7 +47,7 @@ class ManualControls(private val context:Context, val camera:Camera, private val
         fun options(title:String,values:List<String>,selected:Int,choose:(Int)->Unit){
             box.addView(context.label(title,15f,LIME),-1,context.dp(36))
             val row=LinearLayout(context);val scroll=android.widget.HorizontalScrollView(context).apply{isHorizontalScrollBarEnabled=false;addView(row)}
-            values.forEachIndexed{i,v->row.addView(context.pill(v){choose(i);apply();for(j in 0 until row.childCount)(row.getChildAt(j) as android.widget.TextView).setTextColor(if(j==i)LIME else WHITE)}.apply{setTextColor(if(i==selected)LIME else WHITE)},-2,context.dp(48))};box.addView(scroll)
+            values.forEachIndexed{i,v->row.addView(context.pill(v){choose(i);apply();for(j in 0 until row.childCount)(row.getChildAt(j) as android.widget.TextView).selectionStyle(j==i)}.apply{selectionStyle(i==selected)},-2,context.dp(48))};box.addView(scroll)
         }
         if(canManual){
             val r=info.getCameraCharacteristic(CC.SENSOR_INFO_SENSITIVITY_RANGE)!!

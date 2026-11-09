@@ -28,8 +28,21 @@ fun Context.label(value: String, sp: Float, tint: Int = WHITE) = TextView(this).
     includeFontPadding = true
 }
 fun Context.pill(value: String, action: () -> Unit) = label(value,14f).apply {
-    gravity = Gravity.CENTER; minHeight = dp(44); setPadding(dp(14),0,dp(14),0)
+    gravity = Gravity.CENTER; minHeight = dp(48); setPadding(dp(14),dp(4),dp(14),dp(4))
     background = shape(PANEL, dp(22).toFloat()); isFocusable = true; setOnClickListener { action() }; pressFeedback()
+    ViewCompat.setAccessibilityDelegate(this, object: androidx.core.view.AccessibilityDelegateCompat(){
+        override fun onInitializeAccessibilityNodeInfo(host:View,info:androidx.core.view.accessibility.AccessibilityNodeInfoCompat){super.onInitializeAccessibilityNodeInfo(host,info);info.className="android.widget.Button"}
+    })
+}
+private val selectedStyles=java.util.WeakHashMap<TextView,Boolean>()
+fun TextView.selectionStyle(selected:Boolean){
+    if(selectedStyles[this]==selected)return
+    selectedStyles[this]=selected
+    isSelected=selected
+    background=shape(if(selected)LIME else PANEL,context.dp(22).toFloat())
+    setTextColor(if(selected)BG else WHITE)
+    typeface=if(selected)Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+    ViewCompat.setStateDescription(this,if(selected)"เลือกอยู่" else null)
 }
 fun LinearLayout.space(weight: Float = 1f) {
     val params = if (orientation == LinearLayout.HORIZONTAL) LinearLayout.LayoutParams(0,1,weight) else LinearLayout.LayoutParams(1,0,weight)
@@ -51,6 +64,7 @@ fun pixelsText(pixels: Long) = String.format(Locale.US,"%.2f MP",pixels/1e6)
 fun Context.notice(message: String) = Toast.makeText(this,message,Toast.LENGTH_LONG).show()
 
 class Glyph(context: Context, private val kind: String, desc: String, action: () -> Unit) : View(context) {
+    override fun getAccessibilityClassName():CharSequence="android.widget.Button"
     var video = false
         set(value) { field=value; invalidate() }
     var recording = false

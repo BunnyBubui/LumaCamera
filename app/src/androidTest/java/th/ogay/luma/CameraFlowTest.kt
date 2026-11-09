@@ -81,8 +81,8 @@ class CameraFlowTest {
             .contains(androidx.camera.core.ImageCapture.OUTPUT_FORMAT_RAW_JPEG)
         ActivityScenario.launch(CameraActivity::class.java).use {
             until(35000) { device.findObject(By.desc("ถ่ายภาพ"))?.isEnabled == true }
-            device.findObject(By.desc("รูปแบบ RAW")).click()
             if (supportsRaw) {
+                device.findObject(By.desc("รูปแบบ RAW")).click()
                 until(25000) { device.findObject(By.desc("ถ่ายภาพ"))?.isEnabled == true }
                 device.findObject(By.desc("ถ่ายภาพ")).click()
                 var shot: Shot? = null
@@ -97,6 +97,7 @@ class CameraFlowTest {
                     assertTrue(header[0] == 'I'.code.toByte() || header[0] == 'M'.code.toByte())
                 }
             } else {
+                assertNull(device.findObject(By.desc("รูปแบบ RAW")))
                 assertEquals("JPEG", context.getSharedPreferences("camera", Context.MODE_PRIVATE).getString("output", ""))
             }
         }

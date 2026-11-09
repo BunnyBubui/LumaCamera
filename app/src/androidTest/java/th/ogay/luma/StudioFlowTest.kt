@@ -72,14 +72,45 @@ class StudioFlowTest{
         }
     }
     @Test fun sr1GpuExportsTwiceTheVideoResolution(){
-        val file=syntheticVideo();val old=MediaLedger.all(context).map{it.uri}.toSet()
+        val file=syntheticVideo();val source=ClipInspector.inspect(context,MediaLedger.privateUri(context,file));assertEquals(source.toString(),30L,source.getLong("frames"));val old=MediaLedger.all(context).map{it.uri}.toSet()
         ActivityScenario.launch<ClipEditorActivity>(Intent(context,ClipEditorActivity::class.java).setData(MediaLedger.privateUri(context,file))).use{
             val spinner=device.wait(Until.findObject(By.clazz(Spinner::class.java)),15000);assertNotNull(spinner);spinner.click()
             device.wait(Until.findObject(By.text("AI SR1 2× · SDR ≤1080p")),10000).click()
-            device.wait(Until.findObject(By.desc("ส่งออกคลิป")),10000).click()
+            val action=device.wait(Until.findObject(By.desc("ส่งออกคลิป")),10000)
+            if(action==null){val dump=java.io.ByteArrayOutputStream();device.dumpWindowHierarchy(dump);android.util.Log.e("LumaUiTest",dump.toString("UTF-8"));fail("Export control was not accessible")}
+            action!!.click()
             until(120000){device.findObject(By.textContains("ส่งออกไม่ได้"))?.let{fail(it.text)};MediaLedger.all(context).any{it.mime=="video/mp4"&&it.uri !in old}}
             val item=MediaLedger.all(context).first{it.mime=="video/mp4"&&it.uri !in old};val report=ClipInspector.inspect(context,item.uri)
-            assertEquals(report.toString(),640,report.getInt("width"));assertEquals(480,report.getInt("height"));assertTrue(report.toString(),report.getLong("frames")>=28)
+            assertEquals(report.toString(),640,report.getInt("width"));assertEquals(480,report.getInt("height"));assertEquals(report.toString(),source.getLong("frames"),report.getLong("frames"));assertEquals(source.getLong("lastSampleUs"),report.getLong("lastSampleUs"))
+        }
+    }
+    @Test fun selectedFormatHasSemanticStateAndShutterHasButtonRole(){
+        context.getSharedPreferences("camera",0).edit().putString("photo_mode","PHOTO").putString("output","AI").putString("timer","0").commit()
+        ActivityScenario.launch<CameraActivity>(Intent(context,CameraActivity::class.java)).use{
+            until(35000){device.findObject(By.desc("ถ่ายภาพ"))?.isEnabled==true}
+            assertTrue(device.findObject(By.desc("รูปแบบ AI")).isSelected)
+            assertEquals("android.widget.Button",device.findObject(By.desc("ถ่ายภาพ")).className)
+            device.findObject(By.desc("รูปแบบ JPEG")).click()
+            until(10000){device.findObject(By.desc("รูปแบบ JPEG"))?.isSelected==true}
+            assertFalse(device.findObject(By.desc("รูปแบบ AI")).isSelected)
+        }
+    }
+    @Test fun softwareHdrBracketPublishesEf1AndFrameCounts(){
+        val provider=androidx.camera.lifecycle.ProcessCameraProvider.getInstance(context).get()
+        val info=androidx.camera.core.CameraSelector.DEFAULT_BACK_CAMERA.filter(provider.availableCameraInfos).first()
+        assumeTrue(info.exposureState.isExposureCompensationSupported)
+        val extensions=androidx.camera.extensions.ExtensionsManager.getInstanceAsync(context,provider).get()
+        assumeTrue(!extensions.isExtensionAvailable(androidx.camera.core.CameraSelector.DEFAULT_BACK_CAMERA,androidx.camera.extensions.ExtensionMode.HDR))
+        context.getSharedPreferences("camera",0).edit().putString("photo_mode","HDR").putString("output","JPEG").putString("aspect","4:3").putString("timer","0").putBoolean("watermark",false).putBoolean("gps",false).commit()
+        val old=context.luma.shots.all().map{it.id}.toSet()
+        ActivityScenario.launch<CameraActivity>(Intent(context,CameraActivity::class.java)).use{
+            until(35000){device.findObject(By.desc("ถ่ายภาพ"))?.isEnabled==true}
+            device.findObject(By.desc("ถ่ายภาพ")).click()
+            until(90000){context.luma.shots.all().any{it.id !in old&&it.captureNote?.contains("HDR EF1")==true}}
+            val shot=context.luma.shots.all().first{it.id !in old&&it.captureNote?.contains("HDR EF1")==true}
+            assertTrue(shot.frames in 1..3);assertEquals(shot.frames,shot.fusedFrames)
+            val software=context.contentResolver.openInputStream(shot.uri)!!.use{androidx.exifinterface.media.ExifInterface(it).getAttribute(androidx.exifinterface.media.ExifInterface.TAG_SOFTWARE)}
+            assertTrue(software.orEmpty().contains("HDR EF1"))
         }
     }
     private fun syntheticVideo():File{
