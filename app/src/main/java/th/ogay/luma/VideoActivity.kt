@@ -133,7 +133,7 @@ class VideoActivity:ComponentActivity(){
             val caps=capabilities(info)
             check(dynamic in caps.supportedDynamicRanges){"กล้องนี้ไม่รองรับ HDR ที่เลือก"}
             val supported=caps.getSupportedQualities(dynamic)
-            if(quality !in supported){quality=supported.firstOrNull{it==Quality.FHD}?:supported.firstOrNull()?:error("ไม่พบโปรไฟล์วิดีโอ")}
+            if(quality !in supported){val previous=qualityName(quality);quality=supported.firstOrNull{it==Quality.FHD}?:supported.firstOrNull()?:error("ไม่พบโปรไฟล์วิดีโอ");notice("ชุดนี้ไม่มี $previous · เปลี่ยนเป็น ${qualityName(quality)} แล้ว")}
             val modes=sessions.rates(info,quality,dynamic,stabilization,slow)
             boundConfig.put("sessionQuery",sessions.report(info,quality,dynamic,stabilization,slow))
             if(slow&&modes.isNotEmpty()&&modes.none{it.upper==fps}){val before=fps;fps=modes.minBy{it.upper}.upper;notice("ชุด $before fps ไม่รองรับ · เลือก $fps fps แล้ว")}
@@ -200,7 +200,7 @@ class VideoActivity:ComponentActivity(){
     private fun startRecording(){
         val r=recorder?:return;if(starting||finalizing||recording!=null)return
         if(filesDir.usableSpace<64L*1024*1024){notice("พื้นที่ว่างไม่พอเริ่มคลิป");return}
-        starting=true;diagnostics.reset();useCase?.targetRotation=targetRotation;shutter.isEnabled=false;config.isEnabled=false
+        starting=true;diagnostics.reset();useCase?.targetRotation=targetRotation;boundConfig.put("targetRotation",targetRotation);shutter.isEnabled=false;config.isEnabled=false
         // Rotation would recreate the Activity and onPause would stop the clip, so hold the orientation until it finalises.
         requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LOCKED
         val sound=prefs.getBoolean("video_sound",true)
