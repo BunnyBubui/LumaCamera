@@ -142,7 +142,25 @@ CER นับหลัง normalize (NFC, รวม ํ+า เป็น ำ, �
 
 `ThaiOcrDeviceTest` รันโมเดลจริงผ่าน OpenCV บน Android กับภาพชุดเดียวกัน และตรวจการยกเลิก, timeout, การปฏิเสธ main thread และ bitmap แบบ `RGB_565` / `HARDWARE` เกณฑ์ CER ในเทสต์ตั้งจากผล desktop บวกค่าเผื่อ เพื่อจับการถดถอย ไม่ได้เป็นตัวชี้คุณภาพบนภาพจริง ผลจาก CI อยู่ในหัวข้อถัดไป
 
-<!-- CI_RESULTS -->
+GitHub Actions รัน `ThaiOcrDeviceTest` บน emulator Android 11 (API 30, x86_64) ที่ commit `d093e70` ผ่านทั้ง 16 เทสต์ ร่วมกับเทสต์เดิมของแอปรวม 29 เทสต์ ([run 42557814945](https://github.com/BunnyBubui/luma-camera/actions/runs/42557814945) ใช้โค้ด OCR ชุดเดียวกัน ก่อนแก้ lint) ตัวเลขด้านล่างมาจาก commit ชั่วคราว `6ab68a1` ที่จงใจให้เทสต์ pooled ล้มเพื่อพิมพ์รายงานลง log ([run 42559452275](https://github.com/BunnyBubui/luma-camera/actions/runs/42559452275)) เพราะดาวน์โหลด artifact จากเครื่องที่ผมใช้ไม่ได้ commit ถัดมาเอาโค้ดรายงานออกแล้ว
+
+ผลบน emulator ตรงกับผล desktop ทุกภาพ: CER ของทุกภาพเท่ากับตารางด้านบน และ pooled CER เท่ากับ 0.0090 (ผิด 10 จาก 1,113 ตัวอักษร) แปลว่าโค้ด Kotlin บน OpenCV Android ทำงานเหมือน reference Python เวลาต่อภาพบน emulator อยู่ระหว่าง 0.21–0.61 วินาที แต่ emulator รันบน CPU x86 ของเครื่อง CI จึงใช้ประมาณเวลาบนมือถือไม่ได้
+
+| ภาพ | CER บน emulator | เวลา |
+|---|---|---|
+| sign_th | 0.000 | 255 ms |
+| document_th | 0.000 | 614 ms |
+| receipt_mixed | 0.007 | 481 ms |
+| english_ui | 0.000 | 206 ms |
+| thai_digits | 0.026 | 261 ms |
+| tone_marks_serif | 0.013 | 304 ms |
+| small_text | 0.013 | 402 ms |
+| low_contrast | 0.056 | 346 ms |
+| photo_skewed | 0.000 | 596 ms |
+| tilted_15deg | 0.000 | 346 ms |
+| blank_paper | คืน "" | 224 ms |
+
+เทสต์อื่นที่ผ่านบน emulator: timeout หยุดก่อนบรรทัดแรก, การยกเลิกหยุดที่ checkpoint ที่ 3 และ engine ยังใช้ต่อได้, เรียกบน main thread ถูกปฏิเสธด้วย `IllegalStateException`, และ bitmap แบบ `RGB_565` กับ `HARDWARE` อ่านได้
 
 ### สิ่งที่ยังไม่ได้ทดสอบ
 
