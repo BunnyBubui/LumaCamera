@@ -32,6 +32,7 @@ class SpecialVideoActivity:ComponentActivity(){
     private var previewSurface:Surface?=null
     private val permissions=registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()){if(it[Manifest.permission.CAMERA]==true)open()else status.text="ต้องอนุญาตกล้องเพื่อใช้โหมดนี้"}
     override fun onCreate(state:Bundle?){super.onCreate(state)
+        if(slow){startActivity(android.content.Intent(this,VideoActivity::class.java).putExtra("mode","SLOW"));finish();return}
         val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL};installRoot(root)
         val row=LinearLayout(this);row.addView(pill("‹ กลับ"){if(!working&&!recording)finish()},LinearLayout.LayoutParams(0,-2,1f));row.addView(pill("ตัวเลือก",::settings),LinearLayout.LayoutParams(0,-2,1f));root.addView(row,-1,-2)
         root.addView(label(if(slow)"SLOW MOTION" else "TIME-LAPSE",24f,LIME).apply{gravity=Gravity.CENTER;minHeight=dp(56)},-1,-2)
@@ -43,7 +44,7 @@ class SpecialVideoActivity:ComponentActivity(){
         val actions=FrameLayout(this);actions.addView(shutter,FrameLayout.LayoutParams(dp(82),dp(82),Gravity.CENTER));root.addView(actions,-1,dp(110))
         cameraId=manager.cameraIdList.firstOrNull{manager.getCameraCharacteristics(it).get(CameraCharacteristics.LENS_FACING)==CameraCharacteristics.LENS_FACING_BACK}?:manager.cameraIdList.firstOrNull().orEmpty()
     }
-    override fun onResume(){super.onResume();visible=true;if(texture.isAvailable)open()}
+    override fun onResume(){super.onResume();if(slow)return;visible=true;if(texture.isAvailable)open()}
     private fun settings(){if(recording||working)return
         if(slow){
             val choices=manager.cameraIdList.flatMap{id->Capabilities.highSpeed(this,id).map{Triple(id,it.first,it.second)}}.filter{(_,s,f)->MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.any{codec->codec.isEncoder&&codec.supportedTypes.contains("video/avc")&&runCatching{codec.getCapabilitiesForType("video/avc").videoCapabilities?.areSizeAndRateSupported(s.width,s.height,f.toDouble())==true}.getOrDefault(false)}}

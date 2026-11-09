@@ -84,6 +84,9 @@ class CameraActivity : ComponentActivity() {
     private var zoomTicket = 0
     private var binding = 0
     private var pendingBind = false
+    private var boundKey:List<Any?>?=null
+    private var boundPreview:Preview?=null
+    private val captureCaps=mutableMapOf<CameraInfo,Set<Int>>()
     private var targetRotation = Surface.ROTATION_0
     private var lastThumbUri: Uri? = null
     private lateinit var preview: PreviewView
@@ -138,7 +141,7 @@ class CameraActivity : ComponentActivity() {
                     provider = future.get()
                     if (granted()) bind() else showPermission()
                     val ex=ExtensionsManager.getInstanceAsync(this,provider!!)
-                    ex.addListener({runCatching{extensions=ex.get();if(!busy && granted())bind()}},main)
+                    ex.addListener({runCatching{extensions=ex.get();if(!isDestroyed&&!busy&&granted()&&mode in listOf(PhotoMode.NIGHT,PhotoMode.HDR,PhotoMode.PORTRAIT))bind()}},main)
                 }
                 catch (e: Exception) { cameraError("เปิดระบบกล้องไม่ได้ · ${e.cause?.localizedMessage ?: e.localizedMessage}") }
             }
@@ -225,7 +228,7 @@ class CameraActivity : ComponentActivity() {
             val h=(w/aspect).roundToInt()
             if(mask.layoutParams.width!=w || mask.layoutParams.height!=h) mask.layoutParams=FrameLayout.LayoutParams(w,h,Gravity.CENTER)
         }
-        preview = PreviewView(this).apply {
+        preview = (if(::preview.isInitialized)preview.also{(it.parent as? ViewGroup)?.removeView(it)}else PreviewView(this)).apply {
             implementationMode = PreviewView.ImplementationMode.COMPATIBLE; scaleType = PreviewView.ScaleType.FIT_CENTER
         }
         mask.addView(preview,-1,-1)
@@ -333,8 +336,17 @@ class CameraActivity : ComponentActivity() {
             val selected=if(activeExtension)extensions!!.getExtensionEnabledCameraSelector(baseSelector,extension) else baseSelector
             val info=provider.availableCameraInfos.firstOrNull { it in baseSelector.filter(provider.availableCameraInfos) }
                 ?: throw IOException("ไม่พบกล้องที่เปิดใช้งานได้")
-            rawAvailable = ImageCapture.getImageCaptureCapabilities(info).supportedOutputFormats.contains(ImageCapture.OUTPUT_FORMAT_RAW_JPEG)
+            val formats=captureCaps.getOrPut(info){ImageCapture.getImageCaptureCapabilities(info).supportedOutputFormats.toSet()}
+            rawAvailable = formats.contains(ImageCapture.OUTPUT_FORMAT_RAW_JPEG)
             if(output.needsRaw&&!rawAvailable){output=CaptureOutput.JPEG;prefs.edit().putString("output",output.name).apply();notice("กล้องนี้ไม่รองรับ RAW · เปลี่ยนเป็น JPEG แล้ว")}
+            val key=listOf(rear,activeExtension,if(activeExtension)extension else ExtensionMode.NONE,output.needsRaw,
+                mode==PhotoMode.HIRES,mode==PhotoMode.ULTRA_HDR,mode in listOf(PhotoMode.PRO,PhotoMode.HDR,PhotoMode.HIRES,PhotoMode.NIGHT),prefs.getString("aspect","4:3"),prefs.getString("jpeg_quality","95"))
+            if(key==boundKey&&capture?.let{provider.isBound(it)}==true){
+                boundPreview?.setSurfaceProvider(preview.surfaceProvider);capture?.targetRotation=targetRotation
+                manual=ManualControls(this,camera!!,false,mode==PhotoMode.PRO)
+                capture?.flashMode=if(info.hasFlashUnit())flash else ImageCapture.FLASH_MODE_OFF
+                applyZoom(ratio);refresh();return
+            }
             val cc=Camera2CameraInfo.from(info)
             val caps=cc.getCameraCharacteristic(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES)
             val single=Build.VERSION.SDK_INT>=28 && caps!=null && !caps.contains(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_LOGICAL_MULTI_CAMERA)
@@ -347,7 +359,7 @@ class CameraActivity : ComponentActivity() {
                 .setTargetRotation(targetRotation)
             if(mode==PhotoMode.HIRES)builder.setResolutionSelector(ResolutionSelector.Builder().setAllowedResolutionMode(ResolutionSelector.PREFER_HIGHER_RESOLUTION_OVER_CAPTURE_RATE).setResolutionStrategy(ResolutionStrategy.HIGHEST_AVAILABLE_STRATEGY).build())
             if(mode==PhotoMode.ULTRA_HDR){
-                check(ImageCapture.getImageCaptureCapabilities(info).supportedOutputFormats.contains(ImageCapture.OUTPUT_FORMAT_JPEG_ULTRA_HDR)){"กล้องนี้ไม่เปิดไฟล์ Ultra HDR ให้แอป"}
+                check(formats.contains(ImageCapture.OUTPUT_FORMAT_JPEG_ULTRA_HDR)){"กล้องนี้ไม่เปิดไฟล์ Ultra HDR ให้แอป"}
                 builder.setOutputFormat(ImageCapture.OUTPUT_FORMAT_JPEG_ULTRA_HDR)
             }else if (output.needsRaw && rawAvailable) builder.setOutputFormat(ImageCapture.OUTPUT_FORMAT_RAW_JPEG)
             Camera2Interop.Extender(builder).setSessionCaptureCallback(frames)
@@ -361,7 +373,7 @@ class CameraActivity : ComponentActivity() {
             manual=ManualControls(this,camera!!,false,mode==PhotoMode.PRO)
             if(mode==PhotoMode.NIGHT&&!activeExtension&&output==CaptureOutput.JPEG){output=CaptureOutput.AI}
 
-            capture=useCase;metadata=frames
+            boundKey=key;boundPreview=previewCase;capture=useCase;metadata=frames
             useCase.flashMode=if(info.hasFlashUnit()) flash else ImageCapture.FLASH_MODE_OFF
             val range=camera?.cameraInfo?.zoomState?.value
             ratio=if(software && rear) ratio.coerceIn(1f,8f) else ratio.coerceIn(range?.minZoomRatio ?: 1f,range?.maxZoomRatio ?: 1f)
@@ -662,7 +674,7 @@ class CameraActivity : ComponentActivity() {
         }
     }
     private fun selectMode(next:PhotoMode){
-        if(busy||timerRunning)return
+        if(busy||timerRunning||next==mode)return
         if(next==PhotoMode.MORE){showMore();return}
         if(next==PhotoMode.VIDEO){provider?.unbindAll();capture=null;startActivity(Intent(this,VideoActivity::class.java));return}
         if(panoFiles.isNotEmpty()&&next!=PhotoMode.PANORAMA){notice("ต่อภาพพาโนรามาหรือกลับมาถ่ายต่อได้ในโหมดพาโนรามา")}

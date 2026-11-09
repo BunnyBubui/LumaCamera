@@ -20,6 +20,9 @@ import android.util.Rational
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.OrientationEventListener
+import org.json.JSONObject
+import androidx.camera.camera2.interop.Camera2CameraInfo
 import android.widget.*
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
@@ -47,13 +50,29 @@ class VideoActivity:ComponentActivity(){
     private var animator:ValueAnimator?=null;private var manual:ManualControls?=null
     private lateinit var preview:PreviewView;private lateinit var status:TextView;private lateinit var config:TextView
     private lateinit var shutter:Glyph;private lateinit var pause:TextView;private lateinit var ruler:ZoomRuler
+    private val sessions=VideoSessions()
+    private val diagnostics=VideoDiagnostics()
+    private var boundConfig=JSONObject()
+    private var targetRotation=android.view.Surface.ROTATION_0
+    private lateinit var orientation:OrientationEventListener
+    private var rateLabel="30 fps"
     private val sounds=MediaActionSound()
     private val kind get()=intent.getStringExtra("mode")?:"VIDEO"
     private val dual get()=kind=="DUAL"
+    private val slow get()=kind=="SLOW"
+    private fun capabilities(info:CameraInfo)=if(slow)Recorder.getHighSpeedVideoCapabilities(info)?:error("กล้องนี้ไม่เปิด high-speed ให้แอป · ดูรายงานความสามารถ")else Recorder.getVideoCapabilities(info)
     private val permission=registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()){if(ContextCompat.checkSelfPermission(this,Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED)bind()else status.text="อนุญาตกล้องเพื่อเริ่มวิดีโอ"}
     private val audioPermission=registerForActivityResult(ActivityResultContracts.RequestPermission()){allowed->if(!allowed){mic=false;notice("ปิดไมค์สำหรับคลิปนี้ เพราะยังไม่ได้อนุญาตเสียง")};startRecording()}
     override fun onCreate(state:Bundle?){
         super.onCreate(state);mic=prefs.getBoolean("video_mic",true)
+        quality=when(prefs.getString("video_quality","FHD")){"UHD"->Quality.UHD;"HD"->Quality.HD;"SD"->Quality.SD;else->Quality.FHD}
+        fps=prefs.getInt("video_fps",30);bitrate=prefs.getInt("video_bitrate",20_000_000);stabilization=prefs.getBoolean("video_eis",false)
+        dynamic=when(prefs.getString("video_dynamic","SDR")){"HLG"->DynamicRange.HLG_10_BIT;"HDR10"->DynamicRange.HDR10_10_BIT;else->DynamicRange.SDR}
+        if(slow){mic=false;dynamic=DynamicRange.SDR;stabilization=false;fps=prefs.getInt("slow_fps",120);quality=when(prefs.getString("slow_quality","FHD")){"UHD"->Quality.UHD;"HD"->Quality.HD;"SD"->Quality.SD;else->Quality.FHD}}
+        targetRotation=windowManager.defaultDisplay.rotation
+        orientation=object:OrientationEventListener(this){override fun onOrientationChanged(degrees:Int){
+            VideoSessionPolicy.rotation(degrees)?.let{rotation->targetRotation=rotation;if(recording==null&&!starting&&!finalizing)useCase?.targetRotation=rotation}
+        }}
         sounds.load(MediaActionSound.START_VIDEO_RECORDING);sounds.load(MediaActionSound.STOP_VIDEO_RECORDING)
         // Landscape puts the preview beside a scrolling control column; portrait stacks them.
         val landscape=resources.configuration.orientation==android.content.res.Configuration.ORIENTATION_LANDSCAPE
@@ -81,7 +100,7 @@ class VideoActivity:ComponentActivity(){
         val tick=object:Runnable{override fun run(){val state=camera?.cameraInfo?.zoomState?.value;if(state!=null&&velocity!=0f)camera?.cameraControl?.setZoomRatio((state.zoomRatio*exp(velocity*0.025f)).coerceIn(state.minZoomRatio,state.maxZoomRatio));handler.postDelayed(this,32)}}
         lever.setOnTouchListener{_,e->when(e.actionMasked){MotionEvent.ACTION_DOWN->{animator?.cancel();origin=e.x;handler.post(tick)};MotionEvent.ACTION_MOVE->{val d=e.x-origin;velocity=if(abs(d)<dp(10))0f else(d/dp(90)).coerceIn(-1f,1f)};MotionEvent.ACTION_UP,MotionEvent.ACTION_CANCEL->{velocity=0f;handler.removeCallbacks(tick);lever.performClick()}};true}
         tools.addView(lever,LinearLayout.LayoutParams(0,-2,1f));panel.addView(tools,-1,-2)
-        panel.addView(label(when(kind){"DUAL"->"DUAL VIEW";"MOVIE"->"MOVIE · 2.39:1";else->"VIDEO"},16f,LIME).apply{gravity=Gravity.CENTER;minHeight=dp(42)},-1,-2)
+        panel.addView(label(when(kind){"DUAL"->"DUAL VIEW";"MOVIE"->"MOVIE · 2.39:1";"SLOW"->"SLOW MOTION · ไม่มีเสียง · เล่น 30 fps";else->"VIDEO"},16f,LIME).apply{gravity=Gravity.CENTER;minHeight=dp(42)},-1,-2)
         val actions=LinearLayout(this).apply{gravity=Gravity.CENTER};actions.space()
         pause=pill("พัก"){val r=recording?:return@pill;if(paused)r.resume()else r.pause()}.apply{contentDescription="พักหรือต่อวิดีโอ";isEnabled=false};pause.minWidth=dp(70);actions.addView(pause,-2,-2);actions.space()
         shutter=Glyph(this,"shutter","เริ่มบันทึกวิดีโอ"){if(recording!=null)stopRecording()else if(!starting&&!finalizing){if(mic&&ContextCompat.checkSelfPermission(this,Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED)audioPermission.launch(Manifest.permission.RECORD_AUDIO)else startRecording()}}.apply{video=true;isEnabled=false}
@@ -101,14 +120,24 @@ class VideoActivity:ComponentActivity(){
         val p=provider?:return;shutter.isEnabled=false;status.text="กำลังตรวจชุดวิดีโอ…"
         try{
             val info=info()?:error("ไม่พบกล้อง")
-            val caps=Recorder.getVideoCapabilities(info)
+            val caps=capabilities(info)
             check(dynamic in caps.supportedDynamicRanges){"กล้องนี้ไม่รองรับ HDR ที่เลือก"}
             val supported=caps.getSupportedQualities(dynamic)
             if(quality !in supported){quality=supported.firstOrNull{it==Quality.FHD}?:supported.firstOrNull()?:error("ไม่พบโปรไฟล์วิดีโอ")}
-            val rb=Recorder.Builder().setQualitySelector(QualitySelector.from(quality)).setTargetVideoEncodingBitRate(bitrate)
-            val r=rb.build();val b=VideoCapture.Builder(r).setDynamicRange(dynamic).setTargetFrameRate(Range(fps,fps)).setTargetRotation(windowManager.defaultDisplay.rotation)
+            val modes=sessions.rates(info,quality,dynamic,stabilization,slow)
+            if(slow&&modes.isNotEmpty()&&modes.none{it.upper==fps}){val before=fps;fps=modes.minBy{it.upper}.upper;notice("ชุด $before fps ไม่รองรับ · เลือก $fps fps แล้ว")}
+            val mode=modes.firstOrNull{it.upper==fps}?:error("${qualityName(quality)} ไม่รองรับ $fps fps ร่วมกับ HDR/กันสั่นที่เลือก · เลือกชุดใหม่")
+            rateLabel=sessions.label(mode)
+            boundConfig=JSONObject().put("cameraId",Camera2CameraInfo.from(info).cameraId).put("quality",qualityName(quality)).put("requestedFps",fps)
+                .put("advertisedRange",mode.range.toString()).put("source",mode.source).put("dynamicRange",dynamic.toString()).put("eis",stabilization)
+            val rb=Recorder.Builder().setVideoCapabilitiesSource(mode.source).setQualitySelector(QualitySelector.from(quality)).setTargetVideoEncodingBitRate(bitrate)
+            val r=rb.build();val b=VideoCapture.Builder(r).setDynamicRange(dynamic).setTargetRotation(targetRotation)
             if(stabilization){check(caps.isStabilizationSupported){"กันสั่นวิดีโอไม่รองรับบนกล้องนี้"};b.setVideoStabilizationEnabled(true)}
-            val v=b.build();val previewCase=Preview.Builder().build().apply{setSurfaceProvider(preview.surfaceProvider)}
+            if(dual)b.setTargetFrameRate(mode.range)
+            val v=b.build();val pb=Preview.Builder()
+            Camera2Interop.Extender(pb).setSessionCaptureCallback(diagnostics)
+            val previewCase=pb.build().apply{setSurfaceProvider(preview.surfaceProvider)}
+            camera?.cameraInfo?.zoomState?.removeObservers(this)
             p.unbindAll()
             if(dual){
                 val pair=p.availableConcurrentCameraInfos.firstOrNull{set->set.any{it.lensFacing==CameraSelector.LENS_FACING_FRONT}&&set.any{it.lensFacing==CameraSelector.LENS_FACING_BACK}}?:error("เครื่องนี้ไม่เปิดกล้องหน้าและหลังพร้อมกันให้แอป")
@@ -120,80 +149,33 @@ class VideoActivity:ComponentActivity(){
                     ConcurrentCamera.SingleCameraConfig(select(front),group,CompositionSettings.Builder().setScale(0.32f,0.32f).setOffset(0.63f,-0.6f).build(),this)))
                 camera=concurrent.cameras.first()
             }else{
-                val group=UseCaseGroup.Builder().addUseCase(previewCase).addUseCase(v)
-                if(kind=="MOVIE")group.setViewPort(ViewPort.Builder(Rational(239,100),windowManager.defaultDisplay.rotation).build())
-                camera=p.bindToLifecycle(this,selector(),group.build())
+                val session=if(slow)HighSpeedVideoSessionConfig.Builder(v).setPreview(previewCase).setFrameRateRange(mode.range).setSlowMotionEnabled(true).build() else {
+                    val group=SessionConfig.Builder(previewCase,v).setFrameRateRange(mode.range)
+                    if(kind=="MOVIE")group.setViewPort(ViewPort.Builder(Rational(239,100),targetRotation).build())
+                    group.build()
+                }
+                camera=p.bindToLifecycle(this,selector(),session)
             }
             recorder=r;useCase=v;manual=ManualControls(this,camera!!,true,true,fps)
             camera!!.cameraInfo.zoomState.observe(this){ruler.update(it.minZoomRatio,it.maxZoomRatio,it.zoomRatio)}
-            config.text="${qualityName(quality)} · $fps${if(dynamic!=DynamicRange.SDR)" HDR" else ""}"
+            saveSettings()
+            config.text="${qualityName(quality)} · $rateLabel${if(dynamic!=DynamicRange.SDR)" HDR" else ""}"
             status.text=if(dual)"หน้า + หลัง · ตรวจไฟล์หลังอัด" else "${if(mic)"ไมค์เปิด" else "ไมค์ปิด"} · ${if(stabilization)"กันสั่นเปิด" else "พร้อมบันทึก"}"
             shutter.isEnabled=true
-        }catch(e:Exception){recorder=null;useCase=null;status.text="ชุดนี้ใช้ไม่ได้ · ${e.localizedMessage}\nแตะค่าด้านบนเพื่อเปลี่ยน"}
+        }catch(e:Exception){VideoDiagnostics.save(this,"normal-bind",boundConfig,e);recorder=null;useCase=null;status.text="ชุดนี้ใช้ไม่ได้ · ${e.localizedMessage}\nแตะค่าด้านบนเพื่อเปลี่ยน"}
     }
     private fun settings(){if(recording!=null||starting||finalizing){notice("หยุดคลิปก่อนเปลี่ยนรูปแบบวิดีโอ");return}
         val i=info()?:return
+        if(slow&&Recorder.getHighSpeedVideoCapabilities(i)==null){Capabilities.show(this);return}
         studioSheet("วิดีโอ"){box,d->
             fun choose(title:String,items:List<String>,action:(Int)->Unit){box.addView(pill(title){AlertDialog.Builder(this).setTitle(title).setItems(items.toTypedArray()){_,n->action(n);d.dismiss();bind()}.setNegativeButton("ปิด",null).show()},-1,-2)}
-            val caps=Recorder.getVideoCapabilities(i);val qualities=caps.getSupportedQualities(dynamic)
+            val caps=capabilities(i);val qualities=caps.getSupportedQualities(dynamic)
             choose("ความละเอียด · ${qualityName(quality)}",qualities.map{qualityName(it)}){quality=qualities[it]}
-            val frames=i.supportedFrameRateRanges.flatMap{r->listOf(24,25,30,50,60).filter{it in r.lower..r.upper}}.distinct().sorted()
-            choose("FPS · $fps",frames.map{"$it fps · ต้องตรวจชุดร่วมกับความละเอียด"}){fps=frames[it]}
+            val frames=sessions.rates(i,quality,dynamic,stabilization,slow)
+            choose("FPS · $fps",frames.map{sessions.label(it)}){fps=frames[it].upper}
             val ranges=listOf(DynamicRange.SDR,DynamicRange.HLG_10_BIT,DynamicRange.HDR10_10_BIT).filter{it in caps.supportedDynamicRanges}
-            choose("SDR / HDR",ranges.map{when(it){DynamicRange.SDR->"SDR 8-bit";DynamicRange.HLG_10_BIT->"HLG10";else->"HDR10"}}){dynamic=ranges[it]}
+            if(!slow)choose("SDR / HDR",ranges.map{when(it){DynamicRange.SDR->"SDR 8-bit";DynamicRange.HLG_10_BIT->"HLG10";else->"HDR10"}}){dynamic=ranges[it]}
             choose("Bitrate · ${bitrate/1_000_000} Mbps",listOf("8 Mbps","20 Mbps","40 Mbps","80 Mbps")){bitrate=listOf(8,20,40,80)[it]*1_000_000}
             box.addView(label("Codec กล้องเลือกตามโปรไฟล์ · เลือก H.264/HEVC ได้ตอนส่งออกคลิป",13f,MUTED),-1,-2)
-            if(caps.isStabilizationSupported)choose("กันสั่น EIS · $stabilization",listOf("ปิด","เปิด")){stabilization=it==1;prefs.edit().putBoolean("video_eis",stabilization).apply()}
-            choose("ไมโครโฟน · ${if(mic)"เปิด" else "ปิด"}",listOf("ปิดไมค์","บันทึกเสียง")){mic=it==1;prefs.edit().putBoolean("video_mic",mic).apply()}
-            box.addView(pill("คืนค่าชุดพื้นฐาน 1080p30 SDR"){dynamic=DynamicRange.SDR;fps=30;quality=Quality.FHD;hevc=false;stabilization=false;d.dismiss();bind()},-1,-2)
-            box.addView(pill("รายงานความสามารถ"){Capabilities.show(this)},-1,-2)
-        }
-    }
-    private fun startRecording(){
-        val r=recorder?:return;if(starting||finalizing||recording!=null)return
-        if(filesDir.usableSpace<64L*1024*1024){notice("พื้นที่ว่างไม่พอเริ่มคลิป");return}
-        starting=true;shutter.isEnabled=false;config.isEnabled=false
-        // Rotation would recreate the Activity and onPause would stop the clip, so hold the orientation until it finalises.
-        requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LOCKED
-        val sound=prefs.getBoolean("video_sound",true)
-        if(sound)sounds.play(MediaActionSound.START_VIDEO_RECORDING)
-        handler.postDelayed({
-            if(!starting||isFinishing||isDestroyed){starting=false;requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;return@postDelayed}
-            try{
-                val name="LUMA_VIDEO_${System.currentTimeMillis()}.mp4"
-                val values=ContentValues().apply{put(MediaStore.Video.Media.DISPLAY_NAME,name);put(MediaStore.Video.Media.MIME_TYPE,"video/mp4");if(android.os.Build.VERSION.SDK_INT>=29)put(MediaStore.Video.Media.RELATIVE_PATH,"Movies/Luma/")}
-                val options=MediaStoreOutputOptions.Builder(contentResolver,MediaStore.Video.Media.EXTERNAL_CONTENT_URI).setContentValues(values).setFileSizeLimit((filesDir.usableSpace-32L*1024*1024).coerceAtLeast(1)).build()
-                var pending=r.prepareRecording(this,options)
-                if(mic&&ContextCompat.checkSelfPermission(this,Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED)pending=pending.withAudioEnabled()
-                recording=pending.start(main){event->when(event){
-                    is VideoRecordEvent.Start->{status.announceForAccessibility("เริ่มบันทึกวิดีโอ");starting=false;shutter.isEnabled=true;shutter.recording=true;shutter.contentDescription="หยุดบันทึกวิดีโอ";pause.isEnabled=true}
-                    is VideoRecordEvent.Status->{val seconds=event.recordingStats.recordedDurationNanos/1_000_000_000;status.text=String.format(Locale.US,"%02d:%02d  ·  %.1f MB%s",seconds/60,seconds%60,event.recordingStats.numBytesRecorded/1e6,if(paused)" · พัก" else "")}
-                    is VideoRecordEvent.Pause->{paused=true;pause.text="ต่อ"}
-                    is VideoRecordEvent.Resume->{paused=false;pause.text="พัก"}
-                    is VideoRecordEvent.Finalize->{requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;recording=null;starting=false;finalizing=false;paused=false;shutter.recording=false;shutter.contentDescription="เริ่มบันทึกวิดีโอ";pause.isEnabled=false;pause.text="พัก";shutter.isEnabled=true;config.isEnabled=true
-                        if(sound&&!isDestroyed)sounds.play(MediaActionSound.STOP_VIDEO_RECORDING)
-                        val uri=event.outputResults.outputUri
-                        if(uri!=Uri.EMPTY&&event.recordingStats.numBytesRecorded>0){
-                            MediaLedger.add(this,uri,name,"video/mp4",if(event.hasError())"คลิปจบบางส่วน · รหัส ${event.error}" else "${qualityName(quality)} · เป้าหมาย $fps fps · ${if(dynamic==DynamicRange.SDR)"SDR" else "HDR"}")
-                            status.text=if(event.hasError())"เก็บคลิปที่ได้รับแล้ว · ${event.error}" else "บันทึกวิดีโอแล้ว"
-                            luma.fileIo.execute{ClipInspector.record(this,uri,name)}
-                        }else status.text="บันทึกไม่สำเร็จ · ${event.cause?.localizedMessage?:event.error}"
-                        status.announceForAccessibility(status.text)
-                    }
-                }}
-            }catch(e:Exception){requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;starting=false;recording=null;shutter.isEnabled=true;config.isEnabled=true;status.text="เริ่มบันทึกไม่ได้ · ${e.localizedMessage}"}
-        },if(sound)300 else 0)
-    }
-    private fun stopRecording(){animator?.cancel();finalizing=true;shutter.isEnabled=false;pause.isEnabled=false;status.text="กำลังปิดไฟล์…";recording?.stop()}
-    private fun zoomPanel(){studioSheet("ซูมอัตโนมัติ A → B"){box,d->
-        box.addView(pill("กำหนด A ที่ระยะปัจจุบัน"){zoomA=camera?.cameraInfo?.zoomState?.value?.zoomRatio?:1f;notice("A = ${zoomText(zoomA)}")},-1,-2)
-        box.addView(pill("กำหนด B ที่ระยะปัจจุบัน"){zoomB=camera?.cameraInfo?.zoomState?.value?.zoomRatio?:3f;notice("B = ${zoomText(zoomB)}")},-1,-2)
-        val row=LinearLayout(this);listOf(2L,4L,8L).forEach{seconds->row.addView(pill("${seconds}s"){zoomDuration=seconds},LinearLayout.LayoutParams(0,-2,1f))};box.addView(row)
-        box.addView(Switch(this).apply{text="เริ่มและจบแบบนุ่ม";setTextColor(WHITE);isChecked=smooth;setOnCheckedChangeListener{_,v->smooth=v}},-1,-2)
-        box.addView(pill("เล่น ${zoomText(zoomA)} → ${zoomText(zoomB)}"){d.dismiss();val cam=camera?:return@pill;val z=cam.cameraInfo.zoomState.value?:return@pill;animator?.cancel();animator=ValueAnimator.ofFloat(ln(zoomA.coerceIn(z.minZoomRatio,z.maxZoomRatio)),ln(zoomB.coerceIn(z.minZoomRatio,z.maxZoomRatio))).apply{duration=zoomDuration*1000;interpolator=if(smooth)android.view.animation.AccelerateDecelerateInterpolator()else android.view.animation.LinearInterpolator();addUpdateListener{cam.cameraControl.setZoomRatio(exp(it.animatedValue as Float))};start()}},-1,-2)
-    }}
-    override fun onPause(){starting=false;animator?.cancel();handler.removeCallbacksAndMessages(null);recording?.stop();super.onPause()}
-    override fun onDestroy(){sounds.release();super.onDestroy()}
-    override fun onKeyDown(keyCode:Int,event:KeyEvent):Boolean{if(keyCode==KeyEvent.KEYCODE_VOLUME_DOWN||keyCode==KeyEvent.KEYCODE_VOLUME_UP){if(event.repeatCount==0)shutter.performClick();return true};return super.onKeyDown(keyCode,event)}
-    private fun qualityName(q:Quality)=when(q){Quality.UHD->"4K";Quality.FHD->"1080p";Quality.HD->"720p";else->"SD"}
-}
+            if(!slow&&caps.isStabilizationSupported)choose("กันสั่น EIS · $stabilization",listOf("ปิด","เปิด")){stabilization=it==1;prefs.edit().putBoolean("video_eis",stabilization).apply()}
+            choose("ไมโครโฟ

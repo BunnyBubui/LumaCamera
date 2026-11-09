@@ -19,8 +19,11 @@ object ClipInspector{
             return json
         }finally{ex.release()}
     }
-    fun record(c:Context,uri:Uri,name:String){runCatching{
-        val report=inspect(c,uri);val file=File(c.filesDir,"reports/$name.json");file.parentFile?.mkdirs();file.writeText(report.toString(2));MediaLedger.rememberFile(c,file,"application/json","ผลตรวจไฟล์วิดีโอจริง")
+    fun record(c:Context,uri:Uri,name:String,requestedFps:Int?=null,sensor:JSONObject?=null,playbackFps:Int?=requestedFps){runCatching{
+        val report=inspect(c,uri)
+        if(requestedFps!=null){report.put("requestedCaptureFps",requestedFps).put("expectedPlaybackFps",playbackFps);report.put("matchesRequestedPlaybackRate",playbackFps!=null&&kotlin.math.abs(report.optDouble("measuredFps")-playbackFps)<playbackFps*0.1)}
+        if(sensor!=null)report.put("sensorTiming",sensor)
+        val file=File(c.filesDir,"reports/$name.json");file.parentFile?.mkdirs();file.writeText(report.toString(2));MediaLedger.rememberFile(c,file,"application/json","ผลตรวจไฟล์วิดีโอจริง")
         MediaLedger.add(c,uri,name,"video/mp4","${report.optInt("width")}×${report.optInt("height")} · %.1f fps · %s".format(java.util.Locale.US,report.optDouble("measuredFps"),if(report.optBoolean("audio"))"มีเสียง" else "ไม่มีเสียง"))
     }}
 }
