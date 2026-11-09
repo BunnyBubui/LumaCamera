@@ -75,7 +75,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install OpenCV for the desktop test
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake g++ libopencv-core-dev libopencv-imgproc-dev libopencv-photo-dev
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends cmake g++ libopencv-dev
       - name: Build and run the native HDR pipeline test
         run: |
           cmake -S app/src/test/cpp -B build/hdr-test -DCMAKE_BUILD_TYPE=Release
