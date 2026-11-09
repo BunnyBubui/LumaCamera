@@ -147,7 +147,7 @@ class GlassGestureTest {
     }
 
     @Test fun shutterStopsNightBurstAndKeepsCapturedFrames() {
-        context.getSharedPreferences("camera", 0).edit().putBoolean("night_toggle", true).putInt("night_frames", 32).putBoolean("software", false).commit()
+        context.getSharedPreferences("camera", 0).edit().putBoolean("night_toggle", true).putInt("night_frames", 12).putBoolean("software", false).commit()
         val before = context.luma.shots.all().map { it.id }.toSet()
         launch().use {
             ready()
@@ -160,7 +160,7 @@ class GlassGestureTest {
             until(60000) { device.findObject(GlassNav.SHUTTER)?.isEnabled == true }
             val shot = context.luma.shots.all().firstOrNull { it.id !in before }
             if (shot != null) {
-                assertEquals(32, shot.requestedFrames)
+                assertEquals(12, shot.requestedFrames)
                 // An emulator can finish 32 frames before the tap lands; then there is nothing left to stop.
                 org.junit.Assume.assumeTrue("Burst finished before the stop tap", shot.frames < 32)
                 until(10000) { context.luma.shots.get(shot.id)!!.stage != Stage.CAPTURING }

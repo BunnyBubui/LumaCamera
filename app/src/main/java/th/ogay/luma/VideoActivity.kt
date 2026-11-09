@@ -59,7 +59,7 @@ class VideoActivity:ComponentActivity(){
     private var category=0;private var openChip:String?=null;private var zoomStops:List<Float> = emptyList()
     private val rebind=Runnable{bind()}
     private val sounds=MediaActionSound()
-    private val kind get()=intent.getStringExtra("mode")?:"VIDEO"
+    private val kind get()=(intent.getStringExtra("mode")?:"VIDEO").let{k->if(CameraActivity.ALL.any{it.key==k})k else "VIDEO"}
     private val dual get()=kind=="DUAL"
     private val slow get()=kind=="SLOW"
     // Core session state (codex/video-session-recovery).
