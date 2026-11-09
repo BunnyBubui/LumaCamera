@@ -1,5 +1,9 @@
 # Luma Camera — งานรอบถัดไปสำหรับ Claude
 
+> **แผนรอบปัจจุบัน:** [VIDEO_STABILITY_PLAN.md](VIDEO_STABILITY_PLAN.md) — Ogay ให้ Claude ดูแล UI ที่กำลังทำต่อ ส่วน Codex ดูแล rotation/FPS/Slow-motion/session performance กติกา D แบบ read-only ด้านล่างเป็นของรอบก่อน ไม่จำกัดงาน UI ที่ผู้ใช้มอบหมายล่าสุด
+>
+> เนื้อหาด้านล่างเป็น snapshot ก่อนรวม PR #8 (OCR/UI integration) สถานะ A/D เดิมไม่ใช่รายการค้างปัจจุบัน ให้ตรวจ source ของ `v0.3-studio` ล่าสุดก่อนทำซ้ำ
+
 ปรับปรุง 9 พฤศจิกายน 2569 · เริ่มจาก `v0.3-studio` ล่าสุด · เครื่องเป้าหมาย Reno15 / CPH2825
 
 ## จุดเริ่มต้นที่ยืนยันแล้ว
