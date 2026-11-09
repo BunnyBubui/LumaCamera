@@ -52,6 +52,7 @@ fun Activity.installRoot(root: View) {
     WindowCompat.setDecorFitsSystemWindows(window,false)
     root.background = Glass.page()
     preferFastestRefresh()
+    Sounds.init(this)
     ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
         val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
         v.setPadding(bars.left,bars.top,bars.right,bars.bottom)

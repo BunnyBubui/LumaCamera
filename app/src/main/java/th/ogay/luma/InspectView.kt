@@ -83,6 +83,14 @@ class InspectView(context: Context) : View(context) {
             var ratio=1f
             val next=try {
                 val resolver=context.contentResolver
+                // DNG cannot be region-decoded: decode it whole, sampled to the screen (Android reads DNG since 7.0).
+                val type=resolver.getType(uri)?:""
+                if(type.contains("dng")||uri.toString().endsWith(".dng",true)){
+                    val bounds=BitmapFactory.Options().apply{inJustDecodeBounds=true}
+                    resolver.openInputStream(uri)?.use{BitmapFactory.decodeStream(it,null,bounds)}
+                    var sample=1;while(bounds.outWidth/(sample*2)>=w&&bounds.outHeight/(sample*2)>=h)sample*=2
+                    resolver.openInputStream(uri)?.use{BitmapFactory.decodeStream(it,null,BitmapFactory.Options().apply{inSampleSize=sample})}?.let{b->ratio=b.width.toFloat()/b.height;Tile(b,box(w,h,ratio,z,x,y))}
+                } else {
                 val rotation=resolver.openInputStream(uri)?.use { ExifInterface(it).rotationDegrees } ?: 0
                 resolver.openInputStream(uri)?.use { input ->
                     val decoder=BitmapRegionDecoder.newInstance(input,false) ?: return@use null
@@ -106,6 +114,7 @@ class InspectView(context: Context) : View(context) {
                         val dst=RectF(r);transform.mapRect(dst)
                         Tile(bitmap,dst)
                     } finally {decoder.recycle()}
+                }
                 }
             } catch(_:Exception){null} catch(_:OutOfMemoryError){null}
             post {

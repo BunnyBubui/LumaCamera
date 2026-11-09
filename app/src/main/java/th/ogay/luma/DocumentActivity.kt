@@ -25,22 +25,37 @@ class DocumentActivity:ComponentActivity(){
     private val project by lazy{File(filesDir,"documents/${UUID.randomUUID()}").apply{mkdirs()}}
     private var image:Bitmap?=null;private val pages=mutableListOf<File>();private lateinit var editor:PageCorners;private lateinit var status:TextView
     private var bw=false;private var busy=false
+    private lateinit var pageCount:TextView;private var colorLabel:TextView?=null
     @Volatile private var ocrCancelled=false
     private val addPage=registerForActivityResult(ActivityResultContracts.OpenDocument()){uri->if(uri!=null)load(uri)}
     override fun onCreate(state:Bundle?){super.onCreate(state)
-        val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(12),0,dp(12),0)};installRoot(root)
-        root.addView(pill("‹ กลับ"){finish()},-1,-2);root.addView(label("เอกสาร",26f).apply{minHeight=dp(54)},-1,-2)
-        status=label("ลากจุดมุมทั้ง 4 เพื่อแก้ perspective",14f,MUTED).apply{minHeight=dp(52)};root.addView(status,-1,-2)
-        editor=PageCorners(this);root.addView(editor,LinearLayout.LayoutParams(-1,0,1f))
-        fun cell()=LinearLayout.LayoutParams(0,-2,1f).apply{setMargins(dp(2),dp(2),dp(2),dp(2))}
-        val row=LinearLayout(this)
-        row.addView(pill("ตรวจขอบ"){detect()},cell())
-        row.addView(pill("สี / ขาวดำ"){bw=!bw;status.text=if(bw)"ส่งออกแบบขาวดำ" else "ส่งออกแบบสี"},cell())
-        row.addView(pill("เก็บหน้านี้"){savePage()},cell());root.addView(row,-1,-2)
-        val more=LinearLayout(this)
-        more.addView(pill("เพิ่มภาพ"){if(!busy)addPage.launch(arrayOf("image/*"))},cell())
-        more.addView(pill("อ่านข้อความ"){ocr()}.apply{contentDescription="อ่านข้อความไทยและอังกฤษบนเครื่อง"},cell())
-        more.addView(pill("สร้าง PDF"){pdf()},cell());root.addView(more,-1,-2)
+        // Scanner layout like a phone camera's document mode: a slim top bar, the page as large as possible,
+        // round tools with labels, then the two main actions.
+        val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL};installRoot(root)
+        val top=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(dp(14),dp(10),dp(14),dp(6))}
+        top.addView(FrameLayout(this).apply{background=glass(22,0x40ffffff);contentDescription="ย้อนกลับ";isClickable=true;glassTouch();setOnClickListener{finish()}
+            addView(IconView(this@DocumentActivity,Icons.CHEVRON_LEFT,2.1f),FrameLayout.LayoutParams(dp(20),dp(20),Gravity.CENTER))},dp(48),dp(48))
+        top.addView(text("สแกนเอกสาร",20f,Color.WHITE,true).apply{setPadding(dp(12),0,0,0)},LinearLayout.LayoutParams(0,-2,1f))
+        pageCount=text("0 หน้า",13f,Glass.ACCENT,true).apply{gravity=Gravity.CENTER;background=glass(18,Glass.ACCENT_SOFT);setPadding(dp(14),0,dp(14),0);minHeight=dp(40)}
+        top.addView(pageCount,-2,-2);root.addView(top,-1,-2)
+        status=text("ลากจุดมุมทั้ง 4 เพื่อแก้ perspective",13f,Glass.TEXT2).apply{gravity=Gravity.CENTER;maxLines=3;setPadding(dp(16),dp(4),dp(16),dp(8))};root.addView(status,-1,-2)
+        editor=PageCorners(this);root.addView(editor,LinearLayout.LayoutParams(-1,0,1f).apply{setMargins(dp(12),0,dp(12),0)})
+        val tools=LinearLayout(this).apply{gravity=Gravity.CENTER;setPadding(dp(8),dp(12),dp(8),dp(4))}
+        fun tool(icon:String,label:String,desc:String=label,act:()->Unit)=LinearLayout(this).apply{
+            orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER_HORIZONTAL;isClickable=true;contentDescription=desc;setOnClickListener{act()}
+            addView(FrameLayout(this@DocumentActivity).apply{background=glass(26);addView(IconView(this@DocumentActivity,icon,2f),FrameLayout.LayoutParams(dp(22),dp(22),Gravity.CENTER))},dp(52),dp(52))
+            addView(text(label,12f,Glass.TEXT2).apply{gravity=Gravity.CENTER;setPadding(0,dp(6),0,0)},-2,-2);glassTouch()
+        }.also{tools.addView(it,LinearLayout.LayoutParams(0,-2,1f))}
+        tool(Icons.FRAME,"ตรวจขอบ"){detect()}
+        val colorTool=tool(Icons.SUN,"สี","สลับสีและขาวดำ"){bw=!bw;colorLabel?.text=if(bw)"ขาวดำ" else "สี";status.text=if(bw)"ส่งออกแบบขาวดำ" else "ส่งออกแบบสี"}
+        colorLabel=colorTool.getChildAt(1) as TextView
+        tool(Icons.ALBUM,"เพิ่มภาพ"){if(!busy)addPage.launch(arrayOf("image/*"))}
+        tool(Icons.DOC,"อ่านข้อความ","อ่านข้อความไทยและอังกฤษบนเครื่อง"){ocr()}
+        root.addView(tools,-1,-2)
+        val actions=LinearLayout(this).apply{setPadding(dp(14),dp(8),dp(14),dp(14))}
+        actions.addView(text("เก็บหน้านี้",15f,Color.WHITE,true).apply{gravity=Gravity.CENTER;background=glass(24,0x33ffffff);isClickable=true;glassTouch();setOnClickListener{savePage()}},LinearLayout.LayoutParams(0,dp(52),1f).apply{rightMargin=dp(10)})
+        actions.addView(text("สร้าง PDF",15f,Glass.ON_ACCENT,true).apply{gravity=Gravity.CENTER;background=glass(24,Glass.ACCENT);isClickable=true;glassTouch();setOnClickListener{pdf()}},LinearLayout.LayoutParams(0,dp(52),1f))
+        root.addView(actions,-1,-2)
         intent.data?.let{load(it)}?:addPage.launch(arrayOf("image/*"))
     }
     private fun load(uri:Uri){if(busy)return;busy=true;status.text="กำลังอ่านภาพ…";luma.fileIo.execute{runCatching{
@@ -63,7 +78,7 @@ class DocumentActivity:ComponentActivity(){
         canvas.drawBitmap(b,matrix,paint);return output
     }
     private fun savePage():Boolean{if(busy||image==null)return false
-        return try{val b=rectify();val file=File(project,"page-${pages.size+1}.jpg");PhotoEffects.write(b,file);b.recycle();pages+=file;MediaLedger.rememberFile(this,file,"image/jpeg","เอกสารแก้ perspective หน้า ${pages.size}");status.text="เก็บ ${pages.size} หน้าแล้ว · เพิ่มภาพหรือสร้าง PDF";true}catch(e:Exception){status.text=e.localizedMessage;false}
+        return try{val b=rectify();val file=File(project,"page-${pages.size+1}.jpg");PhotoEffects.write(b,file);b.recycle();pages+=file;runOnUiThread{pageCount.text="${pages.size} หน้า"};MediaLedger.rememberFile(this,file,"image/jpeg","เอกสารแก้ perspective หน้า ${pages.size}");status.text="เก็บ ${pages.size} หน้าแล้ว · เพิ่มภาพหรือสร้าง PDF";true}catch(e:Exception){status.text=e.localizedMessage;false}
     }
     /** Thai + English OCR on the device (th.ogay.luma.ocr); the rectified page never leaves the phone. */
     private fun ocr(){if(busy)return;val bitmap=runCatching{rectify()}.getOrElse{status.text=it.localizedMessage;return};busy=true;ocrCancelled=false

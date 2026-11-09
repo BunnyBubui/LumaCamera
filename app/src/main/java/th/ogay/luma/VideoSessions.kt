@@ -55,8 +55,10 @@ class VideoSessions {
         if (ae.none { it.upper >= 60 }) return@runCatching false
         val map = c.getCameraCharacteristic(android.hardware.camera2.CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP) ?: return@runCatching false
         val (w, h) = when (quality) { Quality.UHD -> 3840 to 2160; Quality.FHD -> 1920 to 1080; Quality.HD -> 1280 to 720; else -> 720 to 480 }
-        val size = map.getOutputSizes(android.media.MediaCodec::class.java)?.firstOrNull { it.width == w && it.height == h } ?: return@runCatching false
-        map.getOutputMinFrameDuration(android.media.MediaCodec::class.java, size) in 1..16_700_000L
+        // Only a size the camera lists and says is too slow rules 60 out; otherwise try it and measure the file.
+        val size = (map.getOutputSizes(android.media.MediaRecorder::class.java) ?: map.getOutputSizes(android.graphics.SurfaceTexture::class.java))?.firstOrNull { it.width == w && it.height == h } ?: return@runCatching true
+        val d = map.getOutputMinFrameDuration(android.media.MediaRecorder::class.java, size)
+        d <= 0L || d <= 16_700_000L
     }.getOrDefault(false)
     fun label(mode: Mode): String { val range = mode.range; return (if (range.lower == range.upper) "${range.upper} fps" else "สูงสุด ${range.upper} fps (${range.lower}–${range.upper})") + if (mode.source == Recorder.VIDEO_CAPABILITIES_SOURCE_CODEC_CAPABILITIES) " · ตรวจไฟล์จริง" else "" }
 }

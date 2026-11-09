@@ -448,9 +448,12 @@ class ModalScope(private val host: FrameLayout) {
 }
 
 /** Frame that stops taking touches once it starts closing, so a fading layer never swallows the next tap. */
-class LayerFrame(context: Context) : FrameLayout(context) {
+open class LayerFrame(context: Context) : FrameLayout(context) {
     var closing = false
+    /** Take every touch before the children, so a finger can slide across rows (the rows stay clickable for TalkBack). */
+    var scrub = false
     override fun dispatchTouchEvent(e: MotionEvent): Boolean = if (closing) false else super.dispatchTouchEvent(e)
+    override fun onInterceptTouchEvent(e: MotionEvent): Boolean = scrub || super.onInterceptTouchEvent(e)
 }
 
 /**
@@ -459,21 +462,36 @@ class LayerFrame(context: Context) : FrameLayout(context) {
  */
 class SwipeColumn(context: Context) : LinearLayout(context) {
     var onSwipeUp: () -> Unit = {}
+    /** When set, the swipe is interactive: [onSwipeUp] opens, [onDrag] gets the distance and [onRelease] the end (distance, velocity). */
+    var onDrag: ((Float) -> Unit)? = null
+    var onRelease: ((Float, Float) -> Unit)? = null
     private val slop = ViewConfiguration.get(context).scaledTouchSlop
     private var downX = 0f; private var downY = 0f; private var fired = false
+    private var tracker: android.view.VelocityTracker? = null
     init { orientation = VERTICAL }
     override fun onInterceptTouchEvent(e: MotionEvent): Boolean {
         when (e.actionMasked) {
-            MotionEvent.ACTION_DOWN -> { downX = e.x; downY = e.y; fired = false }
-            MotionEvent.ACTION_MOVE -> { val dy = downY - e.y; if (dy > slop && dy > abs(e.x - downX) * 1.2f) return true }
+            MotionEvent.ACTION_DOWN -> { downX = e.rawX; downY = e.rawY; fired = false }
+            MotionEvent.ACTION_MOVE -> { val dy = downY - e.rawY; if (dy > slop && dy > abs(e.rawX - downX) * 1.2f) return true }
         }
         return false
     }
     override fun onTouchEvent(e: MotionEvent): Boolean {
+        if (tracker == null) tracker = android.view.VelocityTracker.obtain()
+        tracker?.addMovement(e)
+        val dy = downY - e.rawY
         when (e.actionMasked) {
-            MotionEvent.ACTION_DOWN -> { downX = e.x; downY = e.y; fired = false; return true }
-            MotionEvent.ACTION_MOVE -> { parent?.requestDisallowInterceptTouchEvent(true); if (!fired && downY - e.y > context.px(36f)) { fired = true; onSwipeUp() } }
-            MotionEvent.ACTION_UP -> { if (!fired && downY - e.y > context.px(20f)) { fired = true; onSwipeUp() } }
+            MotionEvent.ACTION_DOWN -> { downX = e.rawX; downY = e.rawY; fired = false; return true }
+            MotionEvent.ACTION_MOVE -> {
+                parent?.requestDisallowInterceptTouchEvent(true)
+                if (onDrag != null) { if (!fired && dy > slop) { fired = true; onSwipeUp() }; if (fired) onDrag?.invoke(dy) }
+                else if (!fired && dy > context.px(36f)) { fired = true; onSwipeUp() }
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                tracker?.computeCurrentVelocity(1000); val v = -(tracker?.yVelocity ?: 0f); tracker?.recycle(); tracker = null
+                if (onDrag != null) { if (fired) onRelease?.invoke(dy, v) }
+                else if (e.actionMasked == MotionEvent.ACTION_UP && !fired && dy > context.px(20f)) { fired = true; onSwipeUp() }
+            }
         }
         return true
     }
@@ -586,6 +604,8 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
                     MotionEvent.ACTION_CANCEL -> moveHi(current, false)
                 }
             }
+            // The rows are clickable children and would swallow the touch; the card intercepts so dragging scrubs the highlight.
+            menu.scrub = true
             menu.setOnTouchListener { _, e -> handle(e.actionMasked, e.y); true }
             // A finger that opened the menu by holding the anchor keeps going: slide over a row and lift to pick it.
             // Lifting outside the card leaves the menu open for a normal tap.
@@ -628,15 +648,42 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
 fun View.pressMenu(menu: GlassMenu, open: (View) -> Unit) {
     val v = this; var opened = false; var sx = 0f; var sy = 0f
     val slop = android.view.ViewConfiguration.get(context).scaledTouchSlop
-    val hold = Runnable { if (v.isAttachedToWindow && v.isPressed) { opened = true; v.isPressed = false; Glass.tick(v, HapticFeedbackConstants.LONG_PRESS); open(v) } }
+    val hold = Runnable { if (v.isAttachedToWindow) { opened = true; v.isPressed = false; Glass.tick(v, HapticFeedbackConstants.LONG_PRESS); open(v) } }
     setOnClickListener { open(it) }
     glassTouch { e ->
         when (e.actionMasked) {
-            MotionEvent.ACTION_DOWN -> { opened = false; sx = e.rawX; sy = e.rawY; v.postDelayed(hold, 280); false }
+            MotionEvent.ACTION_DOWN -> { opened = false; sx = e.rawX; sy = e.rawY; v.postDelayed(hold, 150); false }
             MotionEvent.ACTION_MOVE -> { if (opened) { menu.track(e); true } else { if (abs(e.rawX - sx) > slop || abs(e.rawY - sy) > slop) v.removeCallbacks(hold); false } }
             MotionEvent.ACTION_UP -> { v.removeCallbacks(hold); if (opened) { menu.track(e); opened = false; true } else false }
             else -> { v.removeCallbacks(hold); val was = opened; opened = false; was }
         }
+    }
+}
+
+/** Sheet card that can be pulled down from anywhere once its list is scrolled to the top. */
+class SheetFrame(context: Context) : LayerFrame(context) {
+    var scroll: ScrollView? = null
+    var onPull: (Float) -> Unit = {}
+    var onLetGo: (Float, Float) -> Unit = { _, _ -> }
+    private val slop = ViewConfiguration.get(context).scaledTouchSlop
+    private var y0 = 0f; private var x0 = 0f; private var pulling = false
+    private var tracker: android.view.VelocityTracker? = null
+    override fun onInterceptTouchEvent(e: MotionEvent): Boolean {
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> { y0 = e.rawY; x0 = e.rawX; pulling = false }
+            MotionEvent.ACTION_MOVE -> { val dy = e.rawY - y0; if (!scrub && (scroll?.scrollY ?: 0) == 0 && dy > slop && dy > abs(e.rawX - x0) * 1.3f) { pulling = true; return true } }
+        }
+        return super.onInterceptTouchEvent(e)
+    }
+    override fun onTouchEvent(e: MotionEvent): Boolean {
+        if (!pulling) return super.onTouchEvent(e)
+        if (tracker == null) tracker = android.view.VelocityTracker.obtain()
+        tracker?.addMovement(e)
+        when (e.actionMasked) {
+            MotionEvent.ACTION_MOVE -> onPull(e.rawY - y0)
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { tracker?.computeCurrentVelocity(1000); val v = tracker?.yVelocity ?: 0f; tracker?.recycle(); tracker = null; pulling = false; onLetGo(e.rawY - y0, v) }
+        }
+        return true
     }
 }
 
@@ -651,14 +698,33 @@ class GlassSheet(private val host: FrameLayout, private val pivotYFromBottom: ()
     private val modal = ModalScope(host)
     var onClosed: () -> Unit = {}
     val showing get() = card != null
-    fun open(build: (LinearLayout, GlassSheet) -> Unit) {
+    private var dragged = 0f
+    /** Follows a finger that is opening the sheet from the dock (see [open] with interactive = true). */
+    fun follow(dy: Float) { val sheet = card ?: return; dragged = dy; if (sheet.height == 0) return; sheet.translationY = (sheet.height - dy).coerceIn(0f, sheet.height.toFloat()); pushBack(progress(sheet)) }
+    private fun progress(sheet: View) = if (sheet.height == 0) 1f else (1 - sheet.translationY / sheet.height).coerceIn(0f, 1f)
+    /** Ends a finger-driven open or pull: past about a third (or a quick flick) it finishes, otherwise it returns. */
+    fun release(opening: Boolean, velocity: Float) {
+        val sheet = card ?: return
+        val p = progress(sheet)
+        val keep = if (opening) p > 0.3f || velocity > 900 else p > 0.7f && velocity < 1200
+        if (keep) settle(sheet) else close()
+    }
+    private fun settle(sheet: View) {
+        val from = progress(sheet)
+        sheet.animate().translationY(0f).setInterpolator(Glass.SPRING).setDuration(460).setUpdateListener { pushBack(from + (1 - from) * it.animatedFraction) }.withEndAction { pushBack(1f) }.start()
+    }
+    fun open(build: (LinearLayout, GlassSheet) -> Unit) = open(false, build)
+    fun open(interactive: Boolean, build: (LinearLayout, GlassSheet) -> Unit) {
         if (card != null) return
         val c = host.context; val d = c.resources.displayMetrics.density
         modal.hide()
         val s = View(c).apply { setBackgroundColor(0x52000000); alpha = 0f; isClickable = true; contentDescription = "ปิดแผง"; elevation = 14 * d; outlineProvider = null; setOnClickListener { close() } }
         host.addView(s, FrameLayout.LayoutParams(-1, -1)); s.animate().alpha(1f).setDuration(300).start()
-        val sheet = LayerFrame(c).apply { background = c.glass(34, Glass.FILL_STRONG); elevation = 16 * d }
+        val sheet = SheetFrame(c).apply { background = c.glass(34, Glass.FILL_STRONG); elevation = 16 * d }
         val scroll = ScrollView(c).apply { isVerticalScrollBarEnabled = false; overScrollMode = View.OVER_SCROLL_NEVER; clipToPadding = false }
+        sheet.scroll = scroll
+        sheet.onPull = { dy -> sheet.translationY = if (dy > 0) dy else dy * 0.2f; pushBack(progress(sheet)) }
+        sheet.onLetGo = { _, v -> release(false, -v) }
         val b = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL; setPadding(c.dp(16), c.dp(4), c.dp(16), c.dp(20)) }
         val handle = FrameLayout(c).apply { contentDescription = "ปัดลงหรือแตะเพื่อปิด"; isClickable = true; isFocusable = true }
         handle.addView(View(c).apply { background = GlassDrawable(0x52ffffff, c.dp(3).toFloat(), d) }, FrameLayout.LayoutParams(c.dp(40), c.dp(5), Gravity.CENTER))
@@ -667,7 +733,7 @@ class GlassSheet(private val host: FrameLayout, private val pivotYFromBottom: ()
         handle.setOnTouchListener { _, e ->
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> { startY = e.rawY; t0 = e.eventTime }
-                MotionEvent.ACTION_MOVE -> { val dy = e.rawY - startY; sheet.translationY = if (dy > 0) dy else dy * 0.2f; pushBack((1 - sheet.translationY / host.height).coerceIn(0f, 1f)) }
+                MotionEvent.ACTION_MOVE -> { val dy = e.rawY - startY; sheet.translationY = if (dy > 0) dy else dy * 0.2f; pushBack(progress(sheet)) }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     val dy = e.rawY - startY
                     if (e.actionMasked == MotionEvent.ACTION_UP && (dy > c.dp(80) || (dy > c.dp(24) && e.eventTime - t0 < 250) || abs(dy) < c.dp(4))) close()
@@ -682,9 +748,17 @@ class GlassSheet(private val host: FrameLayout, private val pivotYFromBottom: ()
         scroll.addView(b)
         sheet.addView(scroll, -1, -2)
         host.addView(sheet, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply { setMargins(c.dp(8), c.dp(24), c.dp(8), c.dp(8)) })
-        shade = s; card = sheet; body = b; builder = build; pushBack(1f)
-        sheet.alpha = 0f
-        sheet.post { Liquid.show(sheet, sheet.width / 2f, sheet.height - pivotYFromBottom(), true) }
+        shade = s; card = sheet; body = b; builder = build
+        Sounds.play(c, Sounds.Kind.OPEN)
+        if (interactive) {
+            // Opened by a finger on the dock: the sheet rises with it instead of popping in.
+            dragged = 0f; sheet.visibility = View.INVISIBLE; pushBack(0.01f)
+            sheet.post { sheet.translationY = (sheet.height - dragged).coerceIn(0f, sheet.height.toFloat()); sheet.visibility = View.VISIBLE; pushBack(progress(sheet)) }
+        } else {
+            pushBack(1f)
+            sheet.alpha = 0f
+            sheet.post { Liquid.show(sheet, sheet.width / 2f, sheet.height - pivotYFromBottom(), true) }
+        }
     }
     /** Softens the sheet while a menu sits on top of it, the way the prototype blurs what is behind a menu. */
     fun recede(on: Boolean) {
@@ -700,6 +774,7 @@ class GlassSheet(private val host: FrameLayout, private val pivotYFromBottom: ()
         val s = shade; val sheet = card; shade = null; card = null; body = null; builder = null
         if (sheet == null) { end?.invoke(); return }
         sheet.closing = true
+        Sounds.play(host.context, Sounds.Kind.CLOSE)
         modal.restore()
         pushBack(0f)
         s?.let { it.isClickable = false; it.setOnClickListener(null); it.animate().alpha(0f).setDuration(300).withEndAction { host.removeView(it) }.start() }

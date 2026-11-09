@@ -27,6 +27,7 @@
             <meta-data android:name="androidx.work.WorkManagerInitializer" android:value="androidx.startup" tools:node="remove"/>
         </provider>
         <activity android:name=".GalleryActivity" android:exported="false"/>
+        <activity android:name=".VideoPlayerActivity" android:exported="false"/>
         <activity android:name=".CameraActivity" android:exported="true" android:configChanges="orientation|screenSize|screenLayout|keyboardHidden">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/>

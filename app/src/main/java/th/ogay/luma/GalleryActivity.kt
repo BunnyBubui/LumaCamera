@@ -58,6 +58,8 @@ class GalleryActivity : ComponentActivity() {
     private lateinit var status: TextView
     private var readVersion = 0
     private val thumbs = Executors.newFixedThreadPool(3)
+    /** Decoded thumbnails, so scrolling back up shows them at once instead of decoding again (about 1/8 of the heap). */
+    private val cache = object : android.util.LruCache<String, Bitmap>((Runtime.getRuntime().maxMemory() / 8 / 1024).toInt()) { override fun sizeOf(k: String, v: Bitmap) = v.byteCount / 1024 }
     private var peek: View? = null
     private val prefs by lazy { getSharedPreferences("camera", MODE_PRIVATE) }
     private val mediaPermissions get() = when {
@@ -267,7 +269,11 @@ class GalleryActivity : ComponentActivity() {
         val gridHead = sectionHead("", ""); header.addView(gridHead)
         val gridTitle = gridHead.getChildAt(0) as TextView
 
-        val grid = GridView(this).apply { numColumns = 3; horizontalSpacing = dp(3); verticalSpacing = dp(3); setPadding(dp(3), 0, dp(3), dp(3)); clipToPadding = false; selector = android.graphics.drawable.ColorDrawable(0) }
+        val grid = GridView(this).apply {
+            numColumns = 3; horizontalSpacing = dp(5); verticalSpacing = dp(5); setPadding(dp(8), 0, dp(8), dp(8)); clipToPadding = false; selector = android.graphics.drawable.ColorDrawable(0)
+            // Longer, softer flings.
+            setFriction(android.view.ViewConfiguration.getScrollFriction() * 0.75f); isVerticalScrollBarEnabled = false; overScrollMode = View.OVER_SCROLL_ALWAYS
+        }
         val empty = text("", 15f, Glass.TEXT2).apply { gravity = Gravity.CENTER; visibility = View.GONE }
         // GridView cannot hold a header, so the header sits above it in a column that shares the space.
         val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; addView(header, -1, -2); addView(FrameLayout(this@GalleryActivity).apply { addView(grid, -1, -1); addView(empty, -1, -1) }, LinearLayout.LayoutParams(-1, 0, 1f)) }
@@ -317,7 +323,7 @@ class GalleryActivity : ComponentActivity() {
     /** One grid cell. A thumbnail that cannot be decoded keeps a visible placeholder instead of an empty hole. */
     private fun cell(previous: FrameLayout?, item: Item, gridWidth: Int): View {
         val cell = previous ?: FrameLayout(this).apply {
-            rounded(this, 8)
+            rounded(this, 14)
             addView(View(this@GalleryActivity).apply { background = android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0xff1b2747.toInt(), 0xff0d1428.toInt())) }, -1, -1)
             addView(IconView(this@GalleryActivity, Icons.ALBUM, 1.6f).apply { tint = 0x66ffffff }, FrameLayout.LayoutParams(dp(26), dp(26), Gravity.CENTER))
             addView(ImageView(this@GalleryActivity).apply { scaleType = ImageView.ScaleType.CENTER_CROP }, -1, -1)
@@ -331,9 +337,14 @@ class GalleryActivity : ComponentActivity() {
         val caption = cell.getChildAt(5) as TextView; caption.text = if (item.file) item.name else ""; caption.visibility = if (item.file) View.VISIBLE else View.GONE
         placeholder.path = if (item.file) Icons.DOC else if (item.video) Icons.VIDEO else Icons.ALBUM; placeholder.visibility = View.VISIBLE
         image.tag = item.key; image.setImageDrawable(null); image.animate().cancel(); image.alpha = 1f
-        cell.layoutParams = AbsListView.LayoutParams(-1, (gridWidth / 3).coerceAtLeast(dp(92)))
+        cell.layoutParams = AbsListView.LayoutParams(-1, ((gridWidth - dp(26)) / 3).coerceAtLeast(dp(92)))
         cell.contentDescription = "${if (item.video) "วิดีโอ" else if (item.file) "ไฟล์ ${item.name}" else "รูป"} ${formatTime(item.time)} แตะค้างเพื่อดูตัวอย่าง"
-        if (!item.file) thumbs.execute {
+        val cached = cache.get(item.key + 320)
+        if (cached != null) { placeholder.visibility = View.GONE; image.setImageBitmap(cached) }
+        else if (!item.file) {
+            // New cells rise in slightly as they scroll into view.
+            if (!Glass.reduced(this)) { cell.scaleX = 0.93f; cell.scaleY = 0.93f; cell.alpha = 0.5f; cell.animate().scaleX(1f).scaleY(1f).alpha(1f).setInterpolator(Glass.EASE).setDuration(260).start() }
+            thumbs.execute {
             val bitmap = thumbnail(item, 320)
             runOnUiThread {
                 if (!isDestroyed && image.tag == item.key && bitmap != null) {
@@ -341,6 +352,7 @@ class GalleryActivity : ComponentActivity() {
                     if (!Glass.reduced(this)) { image.alpha = 0f; image.animate().alpha(1f).setDuration(160).start() }
                 }
             }
+        }
         }
         return cell
     }
@@ -406,6 +418,7 @@ class GalleryActivity : ComponentActivity() {
     }
     /** Thumbnail with fallbacks: the system thumbnail, Luma's own decoder, a sampled decode, then a video frame. */
     private fun thumbnail(item: Item, size: Int): Bitmap? {
+        cache.get(item.key + size)?.let { return it }
         fun system() = if (Build.VERSION.SDK_INT >= 29) runCatching { contentResolver.loadThumbnail(item.uri, Size(size, size), null) }.getOrNull() else null
         fun own() = runCatching { PhotoMedia.thumbnail(this, item.uri, size) }.getOrNull()
         fun sampled() = runCatching {
@@ -415,10 +428,19 @@ class GalleryActivity : ComponentActivity() {
             contentResolver.openInputStream(item.uri)?.use { BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = s }) }
         }.getOrNull()
         fun frame() = runCatching { MediaMetadataRetriever().let { r -> try { r.setDataSource(this, item.uri); r.getFrameAtTime(0)?.let { b -> val k = size.toFloat() / maxOf(b.width, b.height); if (k < 1f) Bitmap.createScaledBitmap(b, (b.width * k).roundToInt().coerceAtLeast(1), (b.height * k).roundToInt().coerceAtLeast(1), true).also { if (it !== b) b.recycle() } else b } } finally { r.release() } } }.getOrNull()
-        return if (item.video) system() ?: frame() else if (item.shot != null) own() ?: system() ?: sampled() else system() ?: own() ?: sampled()
+        // RAW: the DNG itself when its preview JPEG is gone or the item is a DNG file.
+        fun raw() = (item.shot?.raw ?: item.uri.takeIf { item.mime.contains("dng") || item.uri.toString().endsWith(".dng", true) })?.let { u -> runCatching {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            contentResolver.openInputStream(u)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+            var s = 1; while (bounds.outWidth / (s * 2) >= size && bounds.outHeight / (s * 2) >= size) s *= 2
+            contentResolver.openInputStream(u)?.use { BitmapFactory.decodeStream(it, null, BitmapFactory.Options().apply { inSampleSize = s }) }
+        }.getOrNull() }
+        val bitmap = if (item.video) system() ?: frame() else if (item.shot != null) own() ?: system() ?: sampled() ?: raw() else system() ?: own() ?: sampled() ?: raw()
+        return bitmap?.let { cache.put(item.key + size, it); it }
     }
     private fun open(item: Item) {
         if (item.file) { MediaLedger.view(this, item.uri, item.mime); return }
+        if (item.video && item.key.startsWith("device:")) { VideoPlayerActivity.open(this, item.uri); return }
         selected = item.shot?.id ?: item.key; useAi = false; reload()
     }
     /** Next or previous item of the last grid, for swiping in the viewer. */
@@ -474,7 +496,7 @@ class GalleryActivity : ComponentActivity() {
         if (!video) inspect.show(uri)
         toggle = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(dp(8), dp(8), dp(8), dp(14)) }
         root.addView(toggle, -1, -2)
-        if (video) chip("เปิดวิดีโอ", false, Icons.VIDEO) { runCatching { startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "video/*").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)) } }
+        if (video) chip("เล่นวิดีโอ", false, Icons.VIDEO) { VideoPlayerActivity.open(this, uri) }
         chip("แชร์", false, Icons.SHARE) { startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType(contentResolver.getType(uri) ?: "image/*").putExtra(Intent.EXTRA_STREAM, uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), "แชร์")) }
         if (!Glass.reduced(this)) { inspect.alpha = 0f; inspect.animate().alpha(1f).setDuration(260).start() }
     }
@@ -488,7 +510,7 @@ class GalleryActivity : ComponentActivity() {
         val still = ImageView(this).apply { scaleType = ImageView.ScaleType.FIT_CENTER }
         frame.addView(still, -1, -1)
         frame.addView(FrameLayout(this).apply { background = glass(36, 0x40ffffff); contentDescription = "เล่นวิดีโอ"; isClickable = true; glassTouch()
-            addView(IconView(this@GalleryActivity, "M9 6.5v11l9-5.5z", 2f), FrameLayout.LayoutParams(dp(30), dp(30), Gravity.CENTER)); setOnClickListener { MediaLedger.view(this@GalleryActivity, item.uri, item.mime) } },
+            addView(IconView(this@GalleryActivity, "M9 6.5v11l9-5.5z", 2f), FrameLayout.LayoutParams(dp(30), dp(30), Gravity.CENTER)); setOnClickListener { VideoPlayerActivity.open(this@GalleryActivity, item.uri) } },
             FrameLayout.LayoutParams(dp(72), dp(72), Gravity.CENTER))
         // Swipe sideways on the still to move between items, like the photo viewer.
         val swipe = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {

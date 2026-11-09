@@ -21,11 +21,6 @@ class ManualControls(private val context:Context, val camera:Camera, private val
     var locked=false;private set
     val canManual get()=info.getCameraCharacteristic(CC.REQUEST_AVAILABLE_CAPABILITIES)?.contains(CC.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR)==true
     private val key="manual.${info.cameraId}.${if(video)"video" else "photo"}."
-    init {
-        if(persistent){iso=prefs.getInt(key+"iso",-1).takeIf{it>0};ns=prefs.getLong(key+"ns",-1).takeIf{it>0};wb=prefs.getInt(key+"wb",CR.CONTROL_AWB_MODE_AUTO);focus=prefs.getFloat(key+"focus",-1f).takeIf{it>=0}}
-        tint=prefs.getInt(key+"tint",0);edge=prefs.getInt(key+"edge",-1).takeIf{it>=0};nr=prefs.getInt(key+"nr",-1).takeIf{it>=0};contrast=prefs.getInt(key+"contrast",0)
-        apply()
-    }
     fun apply(){
         if(persistent)prefs.edit().putInt(key+"iso",iso?:-1).putLong(key+"ns",ns?:-1).putInt(key+"wb",wb).putFloat(key+"focus",focus?:-1f).apply()
         prefs.edit().putInt(key+"tint",tint).putInt(key+"edge",edge?:-1).putInt(key+"nr",nr?:-1).putInt(key+"contrast",contrast).apply()
@@ -34,17 +29,33 @@ class ManualControls(private val context:Context, val camera:Camera, private val
             val r=info.getCameraCharacteristic(CC.SENSOR_INFO_SENSITIVITY_RANGE)!!
             val e=info.getCameraCharacteristic(CC.SENSOR_INFO_EXPOSURE_TIME_RANGE)!!
             b.setCaptureRequestOption(CR.CONTROL_AE_MODE,CR.CONTROL_AE_MODE_OFF)
-            b.setCaptureRequestOption(CR.SENSOR_SENSITIVITY,iso!!.coerceIn(r.lower,r.upper))
-            b.setCaptureRequestOption(CR.SENSOR_EXPOSURE_TIME,(ns?:16_666_666L).coerceIn(e.lower,minOf(e.upper,if(video)(1_000_000_000L/videoFps) else e.upper)))
+            val real=(ns?:16_666_666L).coerceIn(e.lower,minOf(e.upper,if(video)(1_000_000_000L/videoFps) else e.upper))
+            // Live view stops at 1/13 s so it stays fluid; the gain goes up by the same factor so brightness matches.
+            // The real (longer) time is used only for the picture itself, see longExposure().
+            val shown=if(!video&&!longActive&&real>PREVIEW_MAX_NS)PREVIEW_MAX_NS else real
+            val gain=real.toDouble()/shown
+            b.setCaptureRequestOption(CR.SENSOR_SENSITIVITY,(iso!!*gain).toInt().coerceIn(r.lower,r.upper))
+            b.setCaptureRequestOption(CR.SENSOR_EXPOSURE_TIME,shown)
         }
-        if(wb>=KELVIN_MIN&&canKelvin){
+        if(wb>=KELVIN_MIN&&canKelvin&&!kelvinRejected){
             // Manual white balance: AWB off, gains and colour matrix for this temperature from the sensor calibration.
             val (gains,ccm)=kelvinColor(wb.toDouble(),tint.toDouble())
             b.setCaptureRequestOption(CR.CONTROL_AWB_MODE,CR.CONTROL_AWB_MODE_OFF)
             b.setCaptureRequestOption(CR.COLOR_CORRECTION_MODE,CR.COLOR_CORRECTION_MODE_TRANSFORM_MATRIX)
             b.setCaptureRequestOption(CR.COLOR_CORRECTION_GAINS,gains)
             b.setCaptureRequestOption(CR.COLOR_CORRECTION_TRANSFORM,ccm)
-        }else b.setCaptureRequestOption(CR.CONTROL_AWB_MODE,if(wb>=KELVIN_MIN)CR.CONTROL_AWB_MODE_AUTO else wb)
+            checkKelvin()
+        }else b.setCaptureRequestOption(CR.CONTROL_AWB_MODE,if(wb>=KELVIN_MIN)nearestPreset(wb) else wb)
+        // Faces: report them for the overlay, and when exposure, white balance and focus are all automatic let the
+        // camera weight them (scene mode FACE_PRIORITY), in every photo and video mode.
+        val fd=(info.getCameraCharacteristic(CC.STATISTICS_INFO_AVAILABLE_FACE_DETECT_MODES)?:intArrayOf()).toList()
+        if(prefs.getBoolean("face_detect",true)&&fd.any{it!=CR.STATISTICS_FACE_DETECT_MODE_OFF}){
+            b.setCaptureRequestOption(CR.STATISTICS_FACE_DETECT_MODE,if(CR.STATISTICS_FACE_DETECT_MODE_SIMPLE in fd)CR.STATISTICS_FACE_DETECT_MODE_SIMPLE else fd.max())
+            val scenes=(info.getCameraCharacteristic(CC.CONTROL_AVAILABLE_SCENE_MODES)?:intArrayOf()).toList()
+            if(iso==null&&wb==CR.CONTROL_AWB_MODE_AUTO&&focus==null&&CR.CONTROL_SCENE_MODE_FACE_PRIORITY in scenes){
+                b.setCaptureRequestOption(CR.CONTROL_MODE,CR.CONTROL_MODE_USE_SCENE_MODE);b.setCaptureRequestOption(CR.CONTROL_SCENE_MODE,CR.CONTROL_SCENE_MODE_FACE_PRIORITY)
+            }
+        }
         edge?.let{if(it in edgeModes)b.setCaptureRequestOption(CR.EDGE_MODE,it)}
         nr?.let{if(it in nrModes)b.setCaptureRequestOption(CR.NOISE_REDUCTION_MODE,it)}
         if(contrast!=0&&canCurve){b.setCaptureRequestOption(CR.TONEMAP_MODE,CR.TONEMAP_MODE_CONTRAST_CURVE);val pts=ToneCurves.contrast(contrast);b.setCaptureRequestOption(CR.TONEMAP_CURVE,android.hardware.camera2.params.TonemapCurve(pts,pts,pts))}
@@ -99,7 +110,40 @@ class ManualControls(private val context:Context, val camera:Camera, private val
     fun setNr(v:Int?){nr=v;apply()}
     fun setContrast(v:Int){contrast=v.coerceIn(-3,3);apply()}
     /** AUTO, then Kelvin 2000–10000 in 50 K steps when manual WB is possible, otherwise the camera's presets. Values ≥ [KELVIN_MIN] are Kelvin. */
-    val wbValues get()=if(canKelvin)listOf("AUTO" to CR.CONTROL_AWB_MODE_AUTO)+(2000..10000 step 50).map{"${it}K" to it}
+    var onNotice:((String)->Unit)?=null
+    private var longActive=false
+    private val realNs get()=ns?:0L
+    /** Turns the real long shutter on for one picture (true when it was needed), or back to the live-view cap. */
+    fun longExposure(on:Boolean):Boolean{
+        if(video||iso==null||(on&&realNs<=PREVIEW_MAX_NS)||longActive==on)return false
+        longActive=on;apply();return true
+    }
+    /** Time for the sensor to run a couple of frames at the long shutter before the picture is taken. */
+    val settleMs get()=(realNs/1_000_000L*2+250).coerceAtMost(8000)
+    val shutterLabel get()=shutterValues.firstOrNull{it.second==ns}?.first?:"${realNs/1_000_000} ms"
+    private val awbModes get()=(info.getCameraCharacteristic(CC.CONTROL_AWB_AVAILABLE_MODES)?:intArrayOf()).toList()
+    /** Camera presets with their usual colour temperatures, for cameras that ignore manual gains. */
+    private val presetKelvin=listOf(CR.CONTROL_AWB_MODE_INCANDESCENT to 2850,CR.CONTROL_AWB_MODE_WARM_FLUORESCENT to 3200,CR.CONTROL_AWB_MODE_FLUORESCENT to 4000,CR.CONTROL_AWB_MODE_DAYLIGHT to 5500,CR.CONTROL_AWB_MODE_CLOUDY_DAYLIGHT to 6500,CR.CONTROL_AWB_MODE_SHADE to 7500)
+    private fun nearestPreset(k:Int)=presetKelvin.filter{it.first in awbModes}.minByOrNull{kotlin.math.abs(it.second-k)}?.first?:CR.CONTROL_AWB_MODE_AUTO
+    private var kelvinRejected=prefs.getBoolean("kelvin_rejected."+info.cameraId,false)
+    private val main=android.os.Handler(android.os.Looper.getMainLooper())
+    /**
+     * Some HALs accept AWB off and the gains without error but keep running auto white balance, so the picture never
+     * changes. A moment after a Kelvin value is set, the latest frame's AWB mode tells; if auto is still on, this camera
+     * switches to the nearest preset from then on.
+     */
+    private fun checkKelvin(){
+        val before=CameraState.frames
+        main.removeCallbacksAndMessages(null)
+        main.postDelayed({
+            if(CameraState.frames>before+3&&CameraState.awbMode!=CR.CONTROL_AWB_MODE_OFF&&wb>=KELVIN_MIN&&!kelvinRejected){
+                kelvinRejected=true;prefs.edit().putBoolean("kelvin_rejected."+info.cameraId,true).apply();apply()
+                onNotice?.invoke("กล้องนี้ไม่รับค่า K โดยตรง · ใช้พรีเซ็ตที่ใกล้ที่สุดแทน")
+            }
+        },900)
+    }
+    /** Kelvin values whenever the camera can either take manual gains or has presets to approximate them. */
+    val wbValues get()=if(canKelvin||presetKelvin.count{it.first in awbModes}>=2)listOf("AUTO" to CR.CONTROL_AWB_MODE_AUTO)+(2000..10000 step 50).map{"${it}K" to it}
         else (info.getCameraCharacteristic(CC.CONTROL_AWB_AVAILABLE_MODES)?:intArrayOf()).let{m->listOf("AUTO" to CR.CONTROL_AWB_MODE_AUTO,"แดด" to CR.CONTROL_AWB_MODE_DAYLIGHT,"เมฆ" to CR.CONTROL_AWB_MODE_CLOUDY_DAYLIGHT,"ร่ม" to CR.CONTROL_AWB_MODE_SHADE,"หลอดไฟ" to CR.CONTROL_AWB_MODE_INCANDESCENT,"ฟลูออเรสเซนต์" to CR.CONTROL_AWB_MODE_FLUORESCENT,"วอร์มฟลูออเรสเซนต์" to CR.CONTROL_AWB_MODE_WARM_FLUORESCENT,"พลบค่ำ" to CR.CONTROL_AWB_MODE_TWILIGHT).filter{it.second in m}}
     /** Manual focus: AUTO, then 48 steps from infinity to the closest distance, labelled in metres/centimetres. */
     val focusValues:List<Pair<String,Float?>> get(){
@@ -116,6 +160,8 @@ class ManualControls(private val context:Context, val camera:Camera, private val
     /** Diopters: 0 = infinity, [minFocus] = closest. Null returns to autofocus. */
     fun setFocus(v:Float?){focus=v?.coerceIn(0f,minFocus);apply()}
     companion object {
+        /** Longest exposure the live view uses (1/13 s). */
+        const val PREVIEW_MAX_NS=76_923_077L
         const val KELVIN_MIN=1000
         val ISO_THIRDS=listOf(25,32,40,50,64,80,100,125,160,200,250,320,400,500,640,800,1000,1250,1600,2000,2500,3200,4000,5000,6400,8000,10000,12800,16000,20000,25600)
         val SHUTTER_THIRDS:List<Pair<String,Long>> = listOf(8000,6400,5000,4000,3200,2500,2000,1600,1250,1000,800,640,500,400,320,250,200,160,125,100,80,60,50,40,30,25,20,15,13,10,8,6,5,4,3).map{"1/$it" to 1_000_000_000L/it}+
@@ -161,5 +207,11 @@ class ManualControls(private val context:Context, val camera:Camera, private val
         toggle("Histogram จากภาพพรีวิว","histogram");toggle("Focus peaking จากภาพพรีวิว","peaking");toggle("Zebra ส่วนสว่างบนพรีวิว","zebra")
         box.addView(context.pill("คืนค่า AUTO"){reset();context.notice("ใช้ค่าแสงและโฟกัสอัตโนมัติแล้ว")},-1,-2)
     }}
+    // Runs last so every property above (presets, the Kelvin check) is initialised before the first apply().
+    init {
+        if(persistent){iso=prefs.getInt(key+"iso",-1).takeIf{it>0};ns=prefs.getLong(key+"ns",-1).takeIf{it>0};wb=prefs.getInt(key+"wb",CR.CONTROL_AWB_MODE_AUTO);focus=prefs.getFloat(key+"focus",-1f).takeIf{it>=0}}
+        tint=prefs.getInt(key+"tint",0);edge=prefs.getInt(key+"edge",-1).takeIf{it>=0};nr=prefs.getInt(key+"nr",-1).takeIf{it>=0};contrast=prefs.getInt(key+"contrast",0)
+        apply()
+    }
 }
 

@@ -54,8 +54,10 @@ object Glass {
         c.getSharedPreferences("camera", 0).getBoolean("reduce_motion", false) ||
             (Build.VERSION.SDK_INT >= 26 && !ValueAnimator.areAnimatorsEnabled())
 
+    /** Haptic plus a matching soft click: detents tick, taps click, long presses open. */
     fun tick(v: View, type: Int = HapticFeedbackConstants.CLOCK_TICK) {
         if (v.context.getSharedPreferences("camera", 0).getBoolean("haptic", true)) v.performHapticFeedback(type)
+        Sounds.play(v.context, when (type) { HapticFeedbackConstants.CLOCK_TICK -> Sounds.Kind.DETENT; HapticFeedbackConstants.LONG_PRESS -> Sounds.Kind.OPEN; else -> Sounds.Kind.TAP })
     }
 
     /** Damped spring step response, 0 → 1 with overshoot. */
@@ -414,3 +416,21 @@ object Liquid {
     interface ScrollAware
 }
 
+
+/**
+ * Turns icons upright when the phone is held sideways while the layout stays portrait (like a camera app should):
+ * buttons stay where the thumb expects them and only their contents rotate. Snaps with a 25° dead band.
+ */
+class IconTurner {
+    var angle = 0f; private set
+    fun update(degrees: Int, views: () -> List<View>, reduced: Boolean) {
+        if (degrees < 0) return
+        val snapped = listOf(0, 90, 180, 270, 360).minBy { kotlin.math.abs(it - degrees) } % 360
+        if (kotlin.math.abs(((degrees - snapped + 540) % 360) - 180) > 20) return
+        val target = when (snapped) { 90 -> -90f; 270 -> 90f; 180 -> 180f; else -> 0f }
+        if (target == angle) return
+        angle = target
+        views().forEach { v -> var to = target; val cur = v.rotation; while (to - cur > 180) to -= 360; while (to - cur < -180) to += 360; if (reduced) v.rotation = to else v.animate().rotation(to).setInterpolator(Glass.SPRING).setDuration(420).start() }
+    }
+    fun apply(views: List<View>) { views.forEach { it.rotation = angle } }
+}
