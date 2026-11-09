@@ -28,9 +28,10 @@ object GlassNav {
 
     /** Finds a view inside the open sheet, scrolling the sheet when it is below the fold. */
     fun inPanel(device: UiDevice, selector: BySelector): UiObject2? {
-        device.findObject(selector)?.let { if (it.visibleBounds.height() > 0) return it }
-        return device.findObject(PANEL_SCROLL)?.scrollUntil(Direction.DOWN, Until.findObject(selector))
-            ?: device.findObject(selector)
+        // Search inside the sheet only: the status row behind it can carry the same description (e.g. "รูปแบบไฟล์ AI").
+        val panel = device.findObject(PANEL_SCROLL) ?: return null
+        panel.findObject(selector)?.let { if (it.visibleBounds.height() > 0) return it }
+        return panel.scrollUntil(Direction.DOWN, Until.findObject(selector)) ?: panel.findObject(selector)
     }
 
     /** Compact list of what is on screen, for failure messages: desc/text and enabled state of each node. */
@@ -42,7 +43,7 @@ object GlassNav {
             fun attr(k: String) = Regex("$k=\"([^\"]*)\"").find(n)?.groupValues?.get(1).orEmpty()
             val label = attr("content-desc").ifEmpty { attr("text") }
             if (label.isEmpty()) null else label.take(40) + (if (attr("enabled") == "false") "(off)" else "") + (if (attr("selected") == "true") "(sel)" else "")
-        }.joinToString(" | ").take(1800)
+        }.joinToString(" | ").takeLast(2500)
     }
 
     fun closeLayers(device: UiDevice) {
@@ -55,8 +56,11 @@ object GlassNav {
         val tile = inPanel(device, By.descStartsWith("รูปแบบไฟล์"))
         assertNotNull("Format tile is missing", tile); tile!!.click()
         val row = device.wait(Until.findObject(menuRow(label)), 5000)
-        assertNotNull("Format $label is not offered", row); row.click()
+        assertNotNull("Format $label is not offered · ${dump(device)}", row); row.click()
         SystemClock.sleep(600)
+        val prefs = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext.getSharedPreferences("camera", 0)
+        val want = CaptureOutput.entries.first { it.label == label }.name
+        org.junit.Assert.assertEquals("Format $label was not applied · ${dump(device)}", want, prefs.getString("output", ""))
         closeLayers(device)
     }
 

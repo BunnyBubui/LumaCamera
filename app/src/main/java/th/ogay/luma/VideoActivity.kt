@@ -208,7 +208,9 @@ class VideoActivity:ComponentActivity(){
             }catch(e:Exception){VideoDiagnostics.save(this,if(slow)"high-speed-start"else "normal-start",boundConfig,e);requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;starting=false;recording=null;shutter.isEnabled=true;config.isEnabled=true;status.text="เริ่มบันทึกไม่ได้ · ${e.localizedMessage}"}
         },if(sound)300 else 0)
     }
-    private fun stopRecording(){animator?.cancel();finalizing=true;shutter.isEnabled=false;pause.isEnabled=false;status.text="กำลังปิดไฟล์…";recording?.stop()}
+    /** Who asked to stop, for device tests that see a clip stop before it starts. */
+    @androidx.annotation.VisibleForTesting var stopTrace:String?=null
+    private fun stopRecording(){stopTrace=Throwable().stackTrace.drop(1).take(6).joinToString(" < "){"${it.methodName}:${it.lineNumber}"};animator?.cancel();finalizing=true;shutter.isEnabled=false;pause.isEnabled=false;status.text="กำลังปิดไฟล์…";recording?.stop()}
     private fun zoomPanel(){studioSheet("ซูมอัตโนมัติ A → B"){box,d->
         box.addView(pill("กำหนด A ที่ระยะปัจจุบัน"){zoomA=camera?.cameraInfo?.zoomState?.value?.zoomRatio?:1f;notice("A = ${zoomText(zoomA)}")},-1,dp(52))
         box.addView(pill("กำหนด B ที่ระยะปัจจุบัน"){zoomB=camera?.cameraInfo?.zoomState?.value?.zoomRatio?:3f;notice("B = ${zoomText(zoomB)}")},-1,dp(52))
@@ -234,8 +236,8 @@ class VideoActivity:ComponentActivity(){
         val head=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(dp(14),dp(8),dp(14),dp(6))}
         head.addView(roundButton(IconView(this,Icons.CHEVRON_LEFT,2.2f),48,"กลับไปถ่ายภาพ"){if(!busy())finish()},dp(48),dp(48))
         head.addView(text(when(kind){"DUAL"->"Dual-view";"MOVIE"->"วิดีโอโปร";"SLOW"->"Slow-motion\nไม่มีเสียง";else->"วิดีโอ"},16f,WHITE,true).apply{gravity=Gravity.CENTER;maxLines=3;ellipsize=null},LinearLayout.LayoutParams(0,-2,1f))
-        config=text(if(slow)"SLOW · ตัวเลือก" else "1080p · 30",13f,WHITE,true).apply{gravity=Gravity.CENTER;background=glass(22);setPadding(dp(14),0,dp(14),0);isClickable=true;contentDescription="รายละเอียดวิดีโอทั้งหมด";glassTouch();setOnClickListener{settings()}}
-        head.addView(config,-2,dp(48));column.addView(head,-1,-2)
+        config=text(if(slow)"SLOW · ตัวเลือก" else "1080p · 30",13f,WHITE,true).apply{gravity=Gravity.CENTER;maxWidth=dp(150);maxLines=2;ellipsize=null;minHeight=dp(48);background=glass(22);setPadding(dp(14),0,dp(14),0);isClickable=true;contentDescription="รายละเอียดวิดีโอทั้งหมด";glassTouch();setOnClickListener{settings()}}
+        head.addView(config,-2,-2);column.addView(head,-1,-2)
         // Landscape keeps the dock beside the preview instead of under it.
         val body=LinearLayout(this).apply{orientation=if(landscape)LinearLayout.HORIZONTAL else LinearLayout.VERTICAL};column.addView(body,LinearLayout.LayoutParams(-1,0,1f))
         stage=FrameLayout(this);body.addView(stage,if(landscape)LinearLayout.LayoutParams(0,-1,1f) else LinearLayout.LayoutParams(-1,0,1f))
