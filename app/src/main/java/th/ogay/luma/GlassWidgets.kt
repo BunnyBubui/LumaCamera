@@ -231,13 +231,16 @@ class GlassSlider(context: Context) : View(context) {
     override fun getAccessibilityClassName(): CharSequence = "android.widget.SeekBar"
     override fun onInitializeAccessibilityNodeInfo(info: AccessibilityNodeInfo) {
         super.onInitializeAccessibilityNodeInfo(info)
-        info.rangeInfo = AccessibilityNodeInfo.RangeInfo.obtain(AccessibilityNodeInfo.RangeInfo.RANGE_TYPE_INT, lo.toFloat(), (values.size - 1).toFloat(), index.toFloat())
-        info.stateDescription = values.getOrNull(index)
-        info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_FORWARD); info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_BACKWARD)
+        if (values.isNotEmpty()) {
+            val low = lo.coerceIn(0, values.lastIndex)
+            info.rangeInfo = AccessibilityNodeInfo.RangeInfo.obtain(AccessibilityNodeInfo.RangeInfo.RANGE_TYPE_INT, low.toFloat(), values.lastIndex.toFloat(), index.coerceIn(low, values.lastIndex).toFloat())
+            info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_FORWARD); info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_BACKWARD)
+        }
+        androidx.core.view.accessibility.AccessibilityNodeInfoCompat.wrap(info).stateDescription = values.getOrNull(index)
     }
     override fun performAccessibilityAction(action: Int, args: Bundle?): Boolean {
         val d = when (action) { AccessibilityNodeInfo.ACTION_SCROLL_FORWARD -> 1; AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD -> -1; else -> 0 }
-        if (d != 0) { val base = if (index < lo) lo - 1 else index; index = (base + d).coerceIn(lo, values.size - 1); onChange(index); return true }
+        if (d != 0 && isEnabled && values.isNotEmpty()) { val low = lo.coerceIn(0, values.lastIndex); val base = if (index < low) low - 1 else index; index = (base + d).coerceIn(low, values.lastIndex); onChange(index); return true }
         return super.performAccessibilityAction(action, args)
     }
 }
