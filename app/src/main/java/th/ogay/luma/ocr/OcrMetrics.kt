@@ -12,12 +12,12 @@ import java.text.Normalizer
  * phrase gaps fall. WER splits on whitespace, so it is meaningful for English and phrase-level for Thai.
  */
 object OcrMetrics {
-    private val zeroWidth = Regex("[​‌‍﻿]")
+    private val zeroWidth = Regex("[\\u200B\\u200C\\u200D\\uFEFF]")
     private val spaces = Regex("\\s+")
 
     fun normalize(text: String): String =
         Normalizer.normalize(text, Normalizer.Form.NFC)
-            .replace("ํา", "ำ")
+            .replace("\u0E4D\u0E32", "\u0E33")
             .replace(zeroWidth, "")
             .replace(spaces, " ")
             .trim()

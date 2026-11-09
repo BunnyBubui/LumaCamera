@@ -88,8 +88,8 @@ class ThaiOcrLayoutTest {
     }
 
     @Test fun metricsNormaliseThaiAndIgnoreSpacesForCer() {
-        assertEquals("น้ำ", OcrMetrics.normalize("น้ํา"))
-        assertEquals("a b", OcrMetrics.normalize("  a​ \n b "))
+        assertEquals("น้ำ", OcrMetrics.normalize("น้\u0E4D\u0E32"))
+        assertEquals("a b", OcrMetrics.normalize("  a\u200B \n b "))
         assertEquals(0.0, OcrMetrics.cer("สวัสดี ครับ", "สวัสดีครับ"), 0.0)
         // 10 code points, one deletion.
         assertEquals(0.1, OcrMetrics.cer("สวัสดีครับ", "สวัสดีคับ"), 1e-9)
