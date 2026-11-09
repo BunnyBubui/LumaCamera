@@ -74,12 +74,12 @@ class ThaiOcrDeviceTest {
     @Test fun pooledCharacterErrorRate() {
         var errors = 0
         var chars = 0
-        val report = StringBuilder("OCR REPORT ${android.os.Build.MODEL} API ${android.os.Build.VERSION.SDK_INT}\n")
+        val report = StringBuilder("OCR REPORT ${android.os.Build.MODEL} API ${android.os.Build.VERSION.SDK_INT} ‖ ")
         for (name in truth.keys()) {
             val expected = truth.getString(name)
             val start = SystemClock.elapsedRealtime()
             val text = read(name)
-            report.append("%s CER %.3f WER %.3f %d ms | %s\n".format(name, OcrMetrics.cer(expected, text), OcrMetrics.wer(expected, text), SystemClock.elapsedRealtime() - start, text.replace("\n", " / ")))
+            report.append("%s CER %.3f WER %.3f %d ms | %s".format(name, OcrMetrics.cer(expected, text), OcrMetrics.wer(expected, text), SystemClock.elapsedRealtime() - start, text.replace("\n", " / ")) + " ‖ ")
             errors += OcrMetrics.characterErrors(expected, text)
             chars += OcrMetrics.characterCount(expected)
         }
