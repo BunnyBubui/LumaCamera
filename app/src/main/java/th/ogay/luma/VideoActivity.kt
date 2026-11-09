@@ -151,7 +151,7 @@ class VideoActivity:ComponentActivity(){
             }else{
                 val session=if(slow||highRt)HighSpeedVideoSessionConfig.Builder(v).setPreview(previewCase).setFrameRateRange(mode.range).setSlowMotionEnabled(slow).build() else {
                     val group=SessionConfig.Builder(previewCase,v).also{if(!forced60)it.setFrameRateRange(mode.range)}
-                    if(kind=="MOVIE")group.setViewPort(ViewPort.Builder(Rational(239,100),targetRotation).build())
+                    videoRatio()?.let{group.setViewPort(ViewPort.Builder(Rational((it*1000).roundToInt(),1000),targetRotation).build())}
                     group.build()
                 }
                 camera=p.bindToLifecycle(this,selector(),session)
@@ -159,13 +159,18 @@ class VideoActivity:ComponentActivity(){
             selectedCameraId=Camera2CameraInfo.from(info).cameraId;rear=info.lensFacing==CameraSelector.LENS_FACING_BACK
             recorder=r;useCase=v;manual=if(slow||highRt)null else ManualControls(this,camera!!,true,true,fps).also{it.onNotice={t->notice(t)}}
             camera!!.cameraInfo.zoomState.observe(this){refreshZoom()}
-            faces.streamAspect=when{kind=="MOVIE"->2.39f;quality==Quality.SD->4f/3f;else->16f/9f};configureFaces(faces,camera!!,null)
+            faces.streamAspect=videoRatio()?:if(quality==Quality.SD)4f/3f else 16f/9f;configureFaces(faces,camera!!,null)
             saveSettings()
             config.text="${qualityName(quality)} · ${if(mode.lower<mode.upper)"≤"else ""}$fps${if(dynamic!=DynamicRange.SDR)" HDR" else ""}"
             status.text=if(dual)"หน้า + หลัง · ตรวจไฟล์หลังอัด" else "${if(mic)"ไมค์เปิด" else "ไมค์ปิด"} · ${if(stabilization)"กันสั่นเปิด" else "พร้อมบันทึก"}"
             shutter.isEnabled=true;shutter.alpha=1f;refreshChips()
         }catch(e:Exception){VideoDiagnostics.save(this,if(slow)"high-speed-bind"else "normal-bind",boundConfig,e);recorder=null;useCase=null;status.text="ชุดนี้ใช้ไม่ได้ · ${e.localizedMessage}\nแตะค่าด้านบนเพื่อเปลี่ยน"}
     }
+    /** Frame shape chosen for the clip; null keeps the sensor's own shape. Movie mode defaults to cinema 2.39. */
+    private val V_ASPECTS=listOf("auto","16:9","4:3","3:2","1:1","2:1","21:9","2.39")
+    private fun aspectLabel(k:String)=when(k){"auto"->"ตามเซนเซอร์";"2.39"->"2.39:1";else->k}
+    private fun videoRatio():Float?{val k=prefs.getString("video_aspect","auto")?:"auto"
+        return when(k){"16:9"->16f/9f;"4:3"->4f/3f;"3:2"->1.5f;"1:1"->1f;"2:1"->2f;"21:9"->21f/9f;"2.39"->2.39f;else->if(kind=="MOVIE")2.39f else null}}
     private fun settings(){if(recording!=null||starting||finalizing){notice("หยุดคลิปก่อนเปลี่ยนรูปแบบวิดีโอ");return}
         val i=info()?:return
         if(slow&&Recorder.getHighSpeedVideoCapabilities(i)==null){Capabilities.show(this);return}
@@ -175,6 +180,8 @@ class VideoActivity:ComponentActivity(){
             choose("กล้อง / เลนส์ · ${Camera2CameraInfo.from(i).cameraId}",candidates.map{"กล้อง ${Camera2CameraInfo.from(it).cameraId} · ${if(it.lensFacing==CameraSelector.LENS_FACING_BACK)"หลัง"else "หน้า"}"}){selectedCameraId=Camera2CameraInfo.from(candidates[it]).cameraId}
             val caps=capabilities(i);val qualities=caps.getSupportedQualities(dynamic)
             choose("ความละเอียด · ${qualityName(quality)}",qualities.map{qualityName(it)}){quality=qualities[it]}
+            val aspects=listOf("auto","16:9","4:3","3:2","1:1","2:1","21:9","2.39")
+            choose("ขนาดภาพ · ${aspectLabel(prefs.getString("video_aspect","auto")?:"auto")}",aspects.map{aspectLabel(it)}){prefs.edit().putString("video_aspect",aspects[it]).apply()}
             val frames=offered(i)
             choose("FPS · $fps",frames.map{rateName(it)}){fps=frames[it].upper}
             val ranges=listOf(DynamicRange.SDR,DynamicRange.HLG_10_BIT,DynamicRange.HDR10_10_BIT).filter{it in caps.supportedDynamicRanges}
@@ -295,7 +302,7 @@ class VideoActivity:ComponentActivity(){
         srow.addView(slider,LinearLayout.LayoutParams(0,dp(56),1f))
         srow.addView(roundButton(IconView(this,Icons.PLUS,2.2f),48,"เพิ่มหนึ่งขั้น"){nudge(1)},dp(48),dp(48))
         dial.addView(srow,-1,-2)
-        stage.addView(dial,FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM).apply{setMargins(dp(16),0,dp(16),dp(66))})
+        stage.addView(dial,FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM).apply{setMargins(dp(16),0,dp(16),dp(54))})
 
         val dock=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER_VERTICAL};if(landscape)body.addView(dock,dp(320),-1) else body.addView(dock,-1,-2)
         if(kind=="MOVIE"){
@@ -328,7 +335,7 @@ class VideoActivity:ComponentActivity(){
         flip=roundButton(flipIcon,56,"สลับกล้องวิดีโอ"){if(!busy()&&!dual){flipIcon.animate().rotationBy(180f).setInterpolator(Glass.EASE).setDuration(420).start();rear=!rear;bind()}}
         if(dual)flip.alpha=0.35f
         actions.addView(flip,dp(56),dp(56));dock.addView(actions,-1,dp(104))
-        val pinch=android.view.ScaleGestureDetector(this,object:android.view.ScaleGestureDetector.SimpleOnScaleGestureListener(){override fun onScale(d:android.view.ScaleGestureDetector):Boolean{val s=camera?.cameraInfo?.zoomState?.value?:return false;animator?.cancel();camera?.cameraControl?.setZoomRatio((s.zoomRatio*d.scaleFactor).coerceIn(s.minZoomRatio,s.maxZoomRatio));return true}})
+        val pinch=android.view.ScaleGestureDetector(this,object:android.view.ScaleGestureDetector.SimpleOnScaleGestureListener(){override fun onScale(d:android.view.ScaleGestureDetector):Boolean{if(zoomLocked())return true;val s=camera?.cameraInfo?.zoomState?.value?:return false;animator?.cancel();camera?.cameraControl?.setZoomRatio((s.zoomRatio*d.scaleFactor).coerceIn(s.minZoomRatio,s.maxZoomRatio));return true}})
         preview.setOnTouchListener{_,e->pinch.onTouchEvent(e);if(e.actionMasked==MotionEvent.ACTION_UP){if(openChip!=null)closeDial();preview.performClick()};true}
         refreshChips()
     }
@@ -361,7 +368,10 @@ class VideoActivity:ComponentActivity(){
             (t.background as? GlassDrawable)?.let{it.fill=if(on)0x8c000000.toInt() else 0x1affffff;it.invalidateSelf()}}
         wheel.minZoom=z.minZoomRatio;wheel.maxZoom=z.maxZoomRatio;wheel.lenses=stops;wheel.zoom=z.zoomRatio
     }
+    /** Zoom pauses while an adjuster is open so a stray pinch never fights with it. */
+    private fun zoomLocked()=openChip!=null
     private fun animateZoom(target:Float){
+        if(zoomLocked())return
         val cam=camera?:return;val z=cam.cameraInfo.zoomState.value?:return;animator?.cancel()
         if(Glass.reduced(this)){cam.cameraControl.setZoomRatio(target);return}
         animator=ValueAnimator.ofFloat(ln(z.zoomRatio),ln(target)).apply{duration=280;interpolator=Glass.EASE;addUpdateListener{cam.cameraControl.setZoomRatio(exp(it.animatedValue as Float))};start()}
@@ -369,8 +379,8 @@ class VideoActivity:ComponentActivity(){
     private val hideWheel=Runnable{wheel.show(false);zooms.animate().alpha(1f).setDuration(200).start()}
     private var dragZoom0=1f
     private fun installZoomDrag(){
-        fun start(){dragZoom0=camera?.cameraInfo?.zoomState?.value?.zoomRatio?:1f;wheel.removeCallbacks(hideWheel);animator?.cancel();zooms.animate().alpha(0f).setDuration(200).start();wheel.show(true)}
-        fun move(dx:Float){val z=camera?.cameraInfo?.zoomState?.value?:return
+        fun start(){if(zoomLocked())return;dragZoom0=camera?.cameraInfo?.zoomState?.value?.zoomRatio?:1f;wheel.removeCallbacks(hideWheel);animator?.cancel();zooms.animate().alpha(0f).setDuration(200).start();wheel.show(true)}
+        fun move(dx:Float){if(zoomLocked())return;val z=camera?.cameraInfo?.zoomState?.value?:return
             var t=(dragZoom0*2f.pow(-dx/dp(95))).coerceIn(z.minZoomRatio,z.maxZoomRatio)
             zoomStops.firstOrNull{abs(ln(t/it)/ln(2f))<0.075f}?.let{lens->if(abs(z.zoomRatio-lens)>0.001f)Glass.tick(wheel);t=lens}
             camera?.cameraControl?.setZoomRatio(t);wheel.zoom=t}
@@ -386,11 +396,11 @@ class VideoActivity:ComponentActivity(){
     // ---------- Chips and dial ----------
     private fun chipKeys():List<String>{
         // Slow-motion is SDR, silent and without EIS, so those chips are not offered there.
-        val quality=if(slow)listOf("RES","FPS","RATE") else listOf("RES","FPS","HDR","LOG","RATE","EIS","MIC")
+        val quality=if(slow)listOf("RES","FPS","RATE") else listOf("RES","ASP","FPS","HDR","LOG","RATE","EIS","MIC")
         val adjust=buildList{val m=manual;add("ALL");if(m!=null&&m.canManual){add("ISO");add("S")};add("WB");if((m?.minFocus?:0f)>0f)add("AF");add("EV")}
         return if(kind=="MOVIE"&&category==0)adjust else quality
     }
-    private fun chipTitle(k:String)=when(k){"ALL"->"ทั้งหมด";"RES"->"ความละเอียด";"FPS"->"FPS";"HDR"->"ช่วงไดนามิก";"RATE"->"Bitrate";"LOG"->"โปรไฟล์";"EIS"->"กันสั่น";"MIC"->"ไมค์";"ISO"->"ISO";"S"->"ชัตเตอร์";"WB"->"WB";"AF"->"โฟกัส";else->"EV"}
+    private fun chipTitle(k:String)=when(k){"ALL"->"ทั้งหมด";"RES"->"ความละเอียด";"ASP"->"ขนาดภาพ";"FPS"->"FPS";"HDR"->"ช่วงไดนามิก";"RATE"->"Bitrate";"LOG"->"โปรไฟล์";"EIS"->"กันสั่น";"MIC"->"ไมค์";"ISO"->"ISO";"S"->"ชัตเตอร์";"WB"->"WB";"AF"->"โฟกัส";else->"EV"}
     private fun caps()=info()?.let{runCatching{capabilities(it)}.getOrNull()}
     /** Every quality either the maker's profiles or the device's encoders allow (the second list is often longer). */
     private fun qualities()=info()?.let{allQualities(it)}?.takeIf{it.isNotEmpty()}?:listOf(quality)
@@ -423,7 +433,7 @@ class VideoActivity:ComponentActivity(){
     private fun evValues():List<Float>{val st=camera?.cameraInfo?.exposureState?:return listOf(0f);if(!st.isExposureCompensationSupported)return listOf(0f);val step=st.exposureCompensationStep.toFloat();val r=st.exposureCompensationRange;return(r.lower..r.upper).map{it*step}.filter{abs(it)<=4.01f}}
     private fun chipValues(k:String):List<String>{val m=manual
         return when(k){
-            "ALL"->listOf("AUTO");"RES"->qualities().map{qualityName(it)};"FPS"->rateModes().let{m->if(m.isEmpty())listOf("$fps") else m.map{x->when(x.source){NEEDS_SDR->"60 SDR";FORCED->"60 ทดลอง";HIGH_SPEED->"${x.upper} HS";else->if(x.lower<x.upper)"≤${x.upper}" else "${x.upper}"}}};"HDR"->ranges().map{when(it){DynamicRange.SDR->"SDR";DynamicRange.HLG_10_BIT->"HLG10";else->"HDR10"}}
+            "ALL"->listOf("AUTO");"ASP"->V_ASPECTS.map{aspectLabel(it)};"RES"->qualities().map{qualityName(it)};"FPS"->rateModes().let{m->if(m.isEmpty())listOf("$fps") else m.map{x->when(x.source){NEEDS_SDR->"60 SDR";FORCED->"60 ทดลอง";HIGH_SPEED->"${x.upper} HS";else->if(x.lower<x.upper)"≤${x.upper}" else "${x.upper}"}}};"HDR"->ranges().map{when(it){DynamicRange.SDR->"SDR";DynamicRange.HLG_10_BIT->"HLG10";else->"HDR10"}}
             "RATE"->listOf("8","20","40","80").map{"$it Mbps"};"LOG"->if(info()?.let{logSupported(it)}==true)LogProfile.entries.map{it.label} else listOf("มาตรฐาน");"EIS"->listOf("ปิด","เปิด");"MIC"->listOf("ปิด","เปิด")
             "ISO"->listOf("AUTO")+(m?.isoValues?:emptyList()).map{"$it"};"S"->listOf("AUTO")+(m?.shutterValues?:emptyList()).map{it.first}
             "WB"->(m?.wbValues?:listOf("AUTO" to 1)).map{it.first};"AF"->(m?.focusValues?:listOf("AUTO" to null)).map{it.first}
@@ -431,7 +441,7 @@ class VideoActivity:ComponentActivity(){
         }}
     private fun chipIndex(k:String):Int{val m=manual
         return when(k){
-            "ALL"->0;"RES"->qualities().indexOf(quality).coerceAtLeast(0);"FPS"->frameRates().indexOf(fps).coerceAtLeast(0);"HDR"->ranges().indexOf(dynamic).coerceAtLeast(0)
+            "ALL"->0;"ASP"->V_ASPECTS.indexOf(prefs.getString("video_aspect","auto")).coerceAtLeast(0);"RES"->qualities().indexOf(quality).coerceAtLeast(0);"FPS"->frameRates().indexOf(fps).coerceAtLeast(0);"HDR"->ranges().indexOf(dynamic).coerceAtLeast(0)
             "RATE"->listOf(8,20,40,80).indexOf(bitrate/1_000_000).coerceAtLeast(0);"LOG"->if(info()?.let{logSupported(it)}==true)logProfile.ordinal else 0;"EIS"->if(stabilization)1 else 0;"MIC"->if(mic)1 else 0
             "ISO"->m?.currentIso?.let{(m.isoValues.indexOf(it)+1).coerceAtLeast(0)}?:0
             "S"->m?.currentShutter?.let{s->(m.shutterValues.indexOfFirst{it.second==s}+1).coerceAtLeast(0)}?:0
@@ -444,7 +454,7 @@ class VideoActivity:ComponentActivity(){
         "S"->intArrayOf(0xff64d2ff.toInt(),0xffbf9bff.toInt(),Glass.ACCENT,0xffff9f0a.toInt())
         "WB"->intArrayOf(0xffff9a3d.toInt(),0xffffd9a8.toInt(),WHITE,0xffcfe5ff.toInt(),0xff7db8ff.toInt())
         "AF"->intArrayOf(0xff8e8e93.toInt(),0xffbbf0ff.toInt(),0xff5ac8fa.toInt())
-        "RES","RATE","FPS"->intArrayOf(0xff8e8e93.toInt(),WHITE,Glass.ACCENT)
+        "ASP","RES","RATE","FPS"->intArrayOf(0xff8e8e93.toInt(),WHITE,Glass.ACCENT)
         else->intArrayOf(0xff8e8e93.toInt(),WHITE)}
     private fun refreshChips(){
         if(!::chips.isInitialized)return
@@ -459,7 +469,7 @@ class VideoActivity:ComponentActivity(){
     private fun styleChips(live:Int){val keys=chipKeys();chipTexts.forEachIndexed{i,(t,v)->val on=i==live;t.setTextColor(if(on)WHITE else Glass.TEXT3);v.text=chipValues(keys[i]).getOrElse(chipIndex(keys[i])){"–"}}}
     private fun openDial(k:String){
         if(k=="ALL"){closeDial();manual?.reset();camera?.cameraControl?.setExposureCompensationIndex(0);notice("ทุกค่ากลับเป็น AUTO");refreshChips();return}
-        val quality=k in listOf("RES","FPS","HDR","LOG","RATE","EIS","MIC")
+        val quality=k in listOf("RES","ASP","FPS","HDR","LOG","RATE","EIS","MIC")
         if(quality&&busy()){notice("หยุดคลิปก่อนเปลี่ยนรูปแบบวิดีโอ");return}
         val first=openChip==null;openChip=k
         dialTitle.text=chipTitle(k);slider.lo=if(k in listOf("ISO","S","AF"))1 else 0;slider.values=chipValues(k);slider.grad=chipGrad(k);slider.index=chipIndex(k);dialValue.text=chipValues(k).getOrElse(chipIndex(k)){"–"}
@@ -470,6 +480,7 @@ class VideoActivity:ComponentActivity(){
     private fun applyChip(k:String,i:Int){
         val m=manual
         when(k){
+            "ASP"->prefs.edit().putString("video_aspect",V_ASPECTS.getOrElse(i){"auto"}).apply()
             "RES"->qualities().getOrNull(i)?.let{quality=it};"FPS"->frameRates().getOrNull(i)?.let{fps=it};"HDR"->ranges().getOrNull(i)?.let{dynamic=it}
             "RATE"->bitrate=listOf(8,20,40,80)[i.coerceIn(0,3)]*1_000_000
             "LOG"->{logProfile=LogProfile.entries.getOrElse(i){LogProfile.STANDARD};prefs.edit().putString("video_log_profile",logProfile.key).putBoolean("video_log",logProfile!=LogProfile.STANDARD).apply();if(logProfile!=LogProfile.STANDARD)notice(logProfile.note)}
@@ -482,7 +493,7 @@ class VideoActivity:ComponentActivity(){
             else->evValues().getOrNull(i)?.let{v->val st=camera?.cameraInfo?.exposureState;if(st!=null&&st.isExposureCompensationSupported)camera?.cameraControl?.setExposureCompensationIndex((v/st.exposureCompensationStep.toFloat()).roundToInt())}
         }
         dialValue.text=chipValues(k).getOrElse(i){"–"};styleChips(chips.selected)
-        if(k in listOf("RES","FPS","HDR","RATE","EIS","LOG")){configPending();handler.removeCallbacks(rebind);handler.postDelayed(rebind,450)}
+        if(k in listOf("RES","ASP","FPS","HDR","RATE","EIS","LOG")){configPending();handler.removeCallbacks(rebind);handler.postDelayed(rebind,450)}
         else if(k=="MIC")status.text=if(mic)"ไมค์เปิด" else "ไมค์ปิด"
     }
     // ---------- Luma Log ----------

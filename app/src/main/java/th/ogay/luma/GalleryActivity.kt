@@ -474,8 +474,15 @@ class GalleryActivity : ComponentActivity() {
         val i = visible.indexOfFirst { (it.shot?.id ?: it.key) == selected }
         val next = visible.getOrNull(i + dir) ?: return
         selected = next.shot?.id ?: next.key; useAi = false
-        if (!Glass.reduced(this)) root.animate().translationX(-dir * dp(24).toFloat()).alpha(0.6f).setDuration(90).withEndAction { root.translationX = dir * dp(24).toFloat(); reload(); root.animate().translationX(0f).alpha(1f).setDuration(180).start() }.start()
-        else reload()
+        // Only the picture slides; the bars stay still. The next picture glides in from the opposite side.
+        val moving = if (::inspect.isInitialized && inspect.parent === root) inspect else null
+        if (moving != null && !Glass.reduced(this)) {
+            val d = dp(70).toFloat()
+            moving.animate().translationX(-dir * d).alpha(0f).setDuration(110).setInterpolator(Glass.EASE).withEndAction {
+                reload()
+                if (::inspect.isInitialized && inspect.parent === root) { inspect.translationX = dir * d; inspect.alpha = 0f; inspect.animate().translationX(0f).alpha(1f).setDuration(240).setInterpolator(Glass.EASE).start() }
+            }.start()
+        } else reload()
     }
     /** Viewer top bar: back to the grid, plus a grid button so the full library is always one tap away. */
     private fun viewerBar(title: String): LinearLayout {

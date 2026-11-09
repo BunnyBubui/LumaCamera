@@ -127,6 +127,11 @@ class InspectView(context: Context) : View(context) {
             }
         }
     }
-    override fun onDraw(c:Canvas){super.onDraw(c);tile?.let {c.drawBitmap(it.image,null,it.area,paint)}}
+    private val fade=Paint()
+    /** Soft top and bottom edges so the picture melts into the page instead of ending in a hard line. */
+    override fun onDraw(c:Canvas){super.onDraw(c);tile?.let {c.drawBitmap(it.image,null,it.area,paint)}
+        val e=30*resources.displayMetrics.density;val bg=th.ogay.luma.Glass.NAVY_DEEP;val clear=bg and 0x00ffffff
+        fade.shader=android.graphics.LinearGradient(0f,0f,0f,e,bg,clear,android.graphics.Shader.TileMode.CLAMP);c.drawRect(0f,0f,width.toFloat(),e,fade)
+        fade.shader=android.graphics.LinearGradient(0f,height-e,0f,height.toFloat(),clear,bg,android.graphics.Shader.TileMode.CLAMP);c.drawRect(0f,height-e,width.toFloat(),height.toFloat(),fade)}
     override fun onDetachedFromWindow(){dead=true;io.shutdown();tile?.image?.recycle();tile=null;super.onDetachedFromWindow()}
 }

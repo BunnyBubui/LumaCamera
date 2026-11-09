@@ -356,7 +356,7 @@ class CameraActivity : ComponentActivity() {
         dockView = dock
         androidx.core.view.ViewCompat.addAccessibilityAction(dock, "เปิดตัวเลือกกล้อง") { _, _ -> openPanel(); true }
         if (landscape) { dock.gravity = Gravity.CENTER_VERTICAL; column.addView(dock, dp(320), -1) } else column.addView(dock, -1, -2)
-        handle = IconView(this, Icons.CHEVRON_UP, 2f).apply { tint = Glass.TEXT2; contentDescription = "ตัวเลือกกล้อง ปัดขึ้นหรือแตะเพื่อเปิด"; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES; isClickable = true; isFocusable = true; setPadding(0, dp(12), 0, dp(12)); setOnClickListener { openPanel() } }
+        handle = IconView(this, Icons.CHEVRON_UP, 1.6f).apply { tint = Glass.TEXT3; contentDescription = "ตัวเลือกกล้อง ปัดขึ้นหรือแตะเพื่อเปิด"; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES; isClickable = true; isFocusable = true; setPadding(dp(46), dp(19), dp(46), dp(19)); setOnClickListener { openPanel() } }
         dock.addView(handle, LinearLayout.LayoutParams(dp(120), dp(48)).apply { gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = -dp(10) })
         nudge()
         modeStrip = CenterStrip(this).apply { onSelect = { i -> pickBar(i) }; onLive = { i -> styleModes(i) }; contentDescription = "แถบโหมด" }
@@ -1037,7 +1037,7 @@ class CameraActivity : ComponentActivity() {
             val inBar = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = glass(22, 0x08ffffff); setPadding(dp(6), dp(6), dp(6), dp(6)) }
             val more = GridLayout(this).apply { columnCount = 2 }
             fun render() {
-                inBar.removeAllViews(); more.removeAllViews()
+                inBar.removeAllViews(); more.removeAllViews(); inBar.clipChildren = false
                 val bar = barList().toMutableList()
                 bar.forEachIndexed { i, k ->
                     val m = ALL.first { it.key == k }
@@ -1050,8 +1050,8 @@ class CameraActivity : ComponentActivity() {
                     var startY = 0f
                     grip.setOnTouchListener { _, e ->
                         when (e.actionMasked) {
-                            MotionEvent.ACTION_DOWN -> { startY = e.rawY; row.elevation = dp(8).toFloat(); row.animate().scaleX(1.03f).scaleY(1.03f).setDuration(120).start(); inBar.parent.requestDisallowInterceptTouchEvent(true) }
-                            MotionEvent.ACTION_MOVE -> row.translationY = e.rawY - startY
+                            MotionEvent.ACTION_DOWN -> { startY = e.rawY; row.elevation = dp(8).toFloat(); row.animate().alpha(0.92f).setDuration(120).start(); grip.parent.requestDisallowInterceptTouchEvent(true) }
+                            MotionEvent.ACTION_MOVE -> row.translationY = (e.rawY - startY).coerceIn(-i * dp(58).toFloat(), (bar.size - 1 - i) * dp(58).toFloat())
                             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                                 val to = (i + (row.translationY / dp(58)).roundToInt()).coerceIn(0, bar.size - 1)
                                 if (to != i) { bar.removeAt(i); bar.add(to, k); saveBar(bar); Glass.tick(row) }

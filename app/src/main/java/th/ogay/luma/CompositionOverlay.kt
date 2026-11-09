@@ -29,7 +29,7 @@ class CompositionOverlay(context: Context) : View(context), SensorEventListener 
     override fun onAttachedToWindow(){super.onAttachedToWindow();sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)?.let{sensorManager.registerListener(this,it,SensorManager.SENSOR_DELAY_UI)};post(poll)}
     override fun onDetachedFromWindow(){removeCallbacks(poll);sensorManager.unregisterListener(this);super.onDetachedFromWindow()}
     override fun onAccuracyChanged(sensor:Sensor?,accuracy:Int){}
-    override fun onSensorChanged(e:SensorEvent){if(prefs.getBoolean("level",false)){roll=Math.toDegrees(kotlin.math.atan2(-e.values[0].toDouble(),e.values[1].toDouble())).toFloat();if(resources.configuration.orientation==android.content.res.Configuration.ORIENTATION_LANDSCAPE)roll+=90;invalidate()}}
+    override fun onSensorChanged(e:SensorEvent){if(prefs.getBoolean("level",false)){val raw=Math.toDegrees(kotlin.math.atan2(-e.values[0].toDouble(),e.values[1].toDouble())).toFloat();var d=raw-roll;while(d>180)d-=360;while(d<-180)d+=360;val next=roll+d*0.25f;if(kotlin.math.abs(next-roll)>0.05f){roll=next;invalidate()}}}
     var grid = false
         set(value) {
             field = value
@@ -48,8 +48,14 @@ class CompositionOverlay(context: Context) : View(context), SensorEventListener 
         val density=resources.displayMetrics.density
         if(movie){paint.style=Paint.Style.FILL;paint.color=0xaa000000.toInt();val h=(height-width/2.39f)/2;canvas.drawRect(0f,0f,width.toFloat(),h,paint);canvas.drawRect(0f,height-h,width.toFloat(),height.toFloat(),paint)}
         if(prefs.getBoolean("level",false)){
-            paint.style=Paint.Style.STROKE;paint.strokeWidth=2*density;paint.color=if(kotlin.math.abs(roll%180)<2)LIME else WHITE
-            canvas.save();canvas.rotate(-roll,width/2f,height/2f);canvas.drawLine(width/2f-40*density,height/2f,width/2f+40*density,height/2f,paint);canvas.restore()
+            // Minimal level: two small fixed ticks mark the horizon; one thin line tilts with the phone and joins them when level.
+            var r=((roll%90)+90)%90;if(r>45)r-=90   // nearest horizontal or vertical axis
+            val level=kotlin.math.abs(r)<1.2f;val cx=width/2f;val cy=height/2f
+            paint.style=Paint.Style.STROKE;paint.strokeCap=Paint.Cap.ROUND;paint.strokeWidth=1.6f*density
+            paint.color=if(level)0xffffd60a.toInt() else 0xb3ffffff.toInt()
+            if(!level){canvas.drawLine(cx-86*density,cy,cx-70*density,cy,paint);canvas.drawLine(cx+70*density,cy,cx+86*density,cy,paint)}
+            if(kotlin.math.abs(r)<30f){canvas.save();canvas.rotate(-r,cx,cy);canvas.drawLine(cx-(if(level)86 else 44)*density,cy,cx+(if(level)86 else 44)*density,cy,paint);canvas.restore()}
+            paint.strokeCap=Paint.Cap.BUTT
         }
         if(focusX>=0){paint.style=Paint.Style.STROKE;paint.color=LIME;paint.strokeWidth=1.5f*density;canvas.drawRoundRect(focusX-28*density,focusY-28*density,focusX+28*density,focusY+28*density,5*density,5*density,paint);if(locked){paint.textSize=12*density;paint.style=Paint.Style.FILL;canvas.drawText("AE/AF LOCK",focusX-28*density,focusY-34*density,paint)}}
         if(prefs.getBoolean("histogram",false)){
