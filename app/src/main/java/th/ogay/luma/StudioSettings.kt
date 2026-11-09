@@ -163,3 +163,4 @@ fun Activity.showStudioSettings(rawAvailable: Boolean, changed: () -> Unit) {
     dialog.show()
     if (!Glass.reduced(this)) { column.translationX = dp(40).toFloat(); column.alpha = 0f; column.animate().translationX(0f).alpha(1f).setInterpolator(Glass.EASE).setDuration(380).start() }
 }
+

@@ -1232,3 +1232,4 @@ class CameraActivity : ComponentActivity() {
         }
     }
 }
+

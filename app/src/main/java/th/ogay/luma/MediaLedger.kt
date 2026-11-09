@@ -56,12 +56,12 @@ class StudioLibraryActivity:ComponentActivity(){
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     private fun render(){
         val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(18),0,dp(18),0)};installRoot(root)
-        root.addView(pill("‹  กลับหน้ากล้อง"){finish()},-1,dp(52))
-        root.addView(label("คลัง Luma",28f),-1,dp(64))
-        root.addView(pill("ภาพถ่ายและเปรียบเทียบ AI"){startActivity(Intent(this,GalleryActivity::class.java))},-1,dp(52))
+        root.addView(pill("‹  กลับหน้ากล้อง"){finish()},-1,-2)
+        root.addView(label("คลัง Luma",28f).apply{minHeight=dp(64)},-1,-2)
+        root.addView(pill("ภาพถ่ายและเปรียบเทียบ AI"){startActivity(Intent(this,GalleryActivity::class.java))},-1,-2)
         val scroll=ScrollView(this);val list=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL};scroll.addView(list);root.addView(scroll,-1,0);(scroll.layoutParams as LinearLayout.LayoutParams).weight=1f
         val media=MediaLedger.all(this)
-        if(media.isEmpty())list.addView(label("วิดีโอ เอกสาร และไฟล์ทดลองที่บันทึกจะแสดงที่นี่",15f,MUTED),-1,dp(100))
+        if(media.isEmpty())list.addView(label("วิดีโอ เอกสาร และไฟล์ทดลองที่บันทึกจะแสดงที่นี่",15f,MUTED).apply{minHeight=dp(100)},-1,-2)
         media.forEach{item->
             val box=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(12),dp(16),dp(12),dp(12));background=shape(PANEL,dp(18).toFloat())}
             box.addView(label(item.title,15f),-1,-2)

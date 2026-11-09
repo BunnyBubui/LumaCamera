@@ -26,17 +26,23 @@ class ClipEditorActivity:ComponentActivity(){
     override fun onCreate(state:Bundle?){super.onCreate(state)
         preset=state?.getInt("preset")?:0;speed=state?.getFloat("speed")?:1f;crop=state?.getBoolean("crop")?:false
         val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(14),0,dp(14),0)};installRoot(root)
-        root.addView(pill("‹ กลับ"){cancel();finish()},-1,dp(48));root.addView(label("แต่งคลิป",26f),-1,dp(56))
-        player=VideoView(this);root.addView(player,LinearLayout.LayoutParams(-1,0,1f));intent.data?.let{player.setVideoURI(it);player.seekTo(1)}
-        status=label("พรีวิวต้นฉบับ · ผลแต่งอยู่ในไฟล์ส่งออก\nSR1 รายเฟรมยังไม่มีการแก้ความสม่ำเสมอข้ามเฟรม",13f,MUTED);root.addView(status,-1,dp(80))
-        root.addView(pill("▶ เล่น / พักพรีวิว"){if(player.isPlaying)player.pause()else player.start()},-1,dp(48))
-        val choices=Spinner(this);choices.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,listOf("ต้นฉบับ / เปลี่ยน codec","AI SR1 2× · SDR ≤1080p","Movie LUT","Luma Log · แปลงจาก SDR","LUT .cube ที่นำเข้า"));choices.setSelection(preset);choices.onItemSelectedListener=object:android.widget.AdapterView.OnItemSelectedListener{override fun onNothingSelected(p:android.widget.AdapterView<*>?){};override fun onItemSelected(p:android.widget.AdapterView<*>?,v:android.view.View?,position:Int,id:Long){if(transformer==null)preset=position}};root.addView(choices,-1,dp(52))
+        root.addView(pill("‹ กลับ"){cancel();finish()},-1,-2);root.addView(label("แต่งคลิป",26f).apply{minHeight=dp(56)},-1,-2)
+        player=VideoView(this);player.minimumHeight=dp(120);root.addView(player,LinearLayout.LayoutParams(-1,0,1f));intent.data?.let{player.setVideoURI(it);player.seekTo(1)}
+        // Controls scroll on short screens or large fonts; the preview keeps at least 120 dp.
+        val controls=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL};root.addView(ScrollView(this).apply{addView(controls)},LinearLayout.LayoutParams(-1,0,1f))
+        status=label("พรีวิวต้นฉบับ · ผลแต่งอยู่ในไฟล์ส่งออก\nSR1 รายเฟรมยังไม่มีการแก้ความสม่ำเสมอข้ามเฟรม",13f,MUTED).apply{minHeight=dp(80)};controls.addView(status,-1,-2)
+        controls.addView(pill("▶ เล่น / พักพรีวิว"){if(player.isPlaying)player.pause()else player.start()},-1,-2)
+        val presets=listOf("ต้นฉบับ / เปลี่ยน codec","AI SR1 2× · SDR ≤1080p","Movie LUT","Luma Log · แปลงจาก SDR","LUT .cube ที่นำเข้า")
+        // A pill plus a dialog instead of a Spinner: the label wraps at large font and TalkBack hears what is being chosen.
+        lateinit var choice:TextView
+        choice=pill("การแต่ง · ${presets[preset]}"){if(transformer==null)android.app.AlertDialog.Builder(this).setTitle("การแต่งคลิป").setSingleChoiceItems(presets.toTypedArray(),preset){d,i->preset=i;choice.text="การแต่ง · ${presets[i]}";d.dismiss()}.show()}
+        controls.addView(choice,-1,-2)
         val options=LinearLayout(this)
-        options.addView(pill("นำเข้า .cube"){if(transformer==null)pickLut.launch(arrayOf("*/*"))},LinearLayout.LayoutParams(0,dp(48),1f))
-        options.addView(pill("H.264 / HEVC"){if(transformer==null){codec=if(codec=="video/avc")"video/hevc"else "video/avc";status.text="Codec ส่งออก $codec"}},LinearLayout.LayoutParams(0,dp(48),1f))
-        options.addView(pill("ความเร็ว"){if(transformer==null)android.app.AlertDialog.Builder(this).setItems(arrayOf("0.25×","0.5×","1×","2×","4×")){_,i->speed=listOf(.25f,.5f,1f,2f,4f)[i];status.text="ความเร็ว $speed× · ปรับเสียงตามเวลา"}.show()},LinearLayout.LayoutParams(0,dp(48),1f));root.addView(options)
-        root.addView(Switch(this).apply{text="ครอป Movie 2.39:1 ตอนส่งออก";setTextColor(WHITE);isChecked=crop;setOnCheckedChangeListener{_,v->if(transformer==null)crop=v}},-1,dp(48))
-        export=pill("ส่งออกเป็นไฟล์ใหม่"){if(transformer==null)start()else cancel()}.apply{contentDescription="ส่งออกคลิป"};root.addView(export,-1,dp(60))
+        options.addView(pill("นำเข้า .cube"){if(transformer==null)pickLut.launch(arrayOf("*/*"))},LinearLayout.LayoutParams(0,-2,1f))
+        options.addView(pill("H.264 / HEVC"){if(transformer==null){codec=if(codec=="video/avc")"video/hevc"else "video/avc";status.text="Codec ส่งออก $codec"}},LinearLayout.LayoutParams(0,-2,1f))
+        options.addView(pill("ความเร็ว"){if(transformer==null)android.app.AlertDialog.Builder(this).setItems(arrayOf("0.25×","0.5×","1×","2×","4×")){_,i->speed=listOf(.25f,.5f,1f,2f,4f)[i];status.text="ความเร็ว $speed× · ปรับเสียงตามเวลา"}.show()},LinearLayout.LayoutParams(0,-2,1f));controls.addView(options,-1,-2)
+        controls.addView(Switch(this).apply{text="ครอป Movie 2.39:1 ตอนส่งออก";setTextColor(WHITE);isChecked=crop;setOnCheckedChangeListener{_,v->if(transformer==null)crop=v}}.apply{minHeight=dp(48)},-1,-2)
+        export=pill("ส่งออกเป็นไฟล์ใหม่"){if(transformer==null)start()else cancel()}.apply{contentDescription="ส่งออกคลิป"};export.minHeight=dp(60);root.addView(export,-1,-2)
     }
     private fun start(){val uri=intent.data?:return;if(filesDir.usableSpace<128L*1024*1024){notice("พื้นที่ว่างไม่พอเริ่มส่งออก");return};if(preset==4&&lut==null){notice("นำเข้า .cube ก่อน");return}
         val id=System.currentTimeMillis();val dir=File(filesDir,"video-exports/$id").apply{mkdirs()};val file=File(dir,"LUMA_EDIT_$id.mp4");output=file;job=File(dir,"job.json")

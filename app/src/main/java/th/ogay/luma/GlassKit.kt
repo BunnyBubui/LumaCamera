@@ -372,3 +372,4 @@ object Liquid {
     /** Marker for a wrapper whose own children should not be faded individually. */
     interface ScrollAware
 }
+

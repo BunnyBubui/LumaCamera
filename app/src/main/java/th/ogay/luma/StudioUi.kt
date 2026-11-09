@@ -31,8 +31,10 @@ fun Context.studioSheet(title: String, build: (LinearLayout, Dialog) -> Unit): D
             MotionEvent.ACTION_UP -> { if(e.rawY-down>dp(60)) dialog.dismiss() else container.animate().translationY(0f).setInterpolator(Glass.SPRING).setDuration(320).start(); handle.performClick() }
         }; true
     }
+    // TalkBack cannot drag; a double tap on the handle closes the sheet instead.
+    androidx.core.view.ViewCompat.replaceAccessibilityAction(handle, androidx.core.view.accessibility.AccessibilityNodeInfoCompat.AccessibilityActionCompat.ACTION_CLICK, "ปิดแผง") { _, _ -> dialog.dismiss(); true }
     container.addView(handle, -1, dp(26))
-    container.addView(label(title, 22f).apply { typeface=android.graphics.Typeface.DEFAULT_BOLD }, -1, dp(54))
+    container.addView(label(title, 22f).apply { typeface=android.graphics.Typeface.DEFAULT_BOLD; minHeight=dp(54) }, -1, -2)
     build(container, dialog)
     val scroll = ScrollView(this).apply { isFillViewport = true; addView(container) }
     dialog.setContentView(scroll)
@@ -57,7 +59,7 @@ fun Context.modeStrip(selected: PhotoMode, select: (PhotoMode) -> Unit): Horizon
             selectionStyle(mode==selected)
             contentDescription="โหมด ${mode.title}"; isFocusable=true; setOnClickListener{select(mode)}; pressFeedback()
         }
-        row.addView(v,-2,dp(52));if(mode==selected)active=v
+        row.addView(v,-2,-2);if(mode==selected)active=v
     }
     scroll.post { active?.let{if(getSharedPreferences("camera",0).getBoolean("reduce_motion",false))scroll.scrollTo((it.left-(scroll.width-it.width)/2).coerceAtLeast(0),0) else scroll.smoothScrollTo((it.left-(scroll.width-it.width)/2).coerceAtLeast(0),0)} }
     return scroll
@@ -72,7 +74,7 @@ class ZoomRuler(context: Context, private val zoom: (Float)->Unit): View(context
     fun update(minimum:Float,maximum:Float,value:Float){lo=minimum;hi=maximum;current=value;invalidate()}
     override fun onDraw(c:Canvas){
         val density=resources.displayMetrics.density
-        p.textAlign=Paint.Align.CENTER;p.textSize=11*density;p.strokeWidth=density
+        p.textAlign=Paint.Align.CENTER;p.textSize=android.util.TypedValue.applyDimension(android.util.TypedValue.COMPLEX_UNIT_SP,11f,resources.displayMetrics);p.strokeWidth=density
         val unit=width/3f
         for(i in -60..60){
             val log=i/12f; val value=exp(log.toDouble()).toFloat()
@@ -105,3 +107,4 @@ class ZoomRuler(context: Context, private val zoom: (Float)->Unit): View(context
     }
     override fun performClick():Boolean{super.performClick();return true}
 }
+

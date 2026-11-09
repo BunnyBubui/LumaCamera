@@ -127,10 +127,11 @@ class VideoActivity:ComponentActivity(){
         val r=recorder?:return;if(starting||finalizing||recording!=null)return
         if(filesDir.usableSpace<64L*1024*1024){notice("พื้นที่ว่างไม่พอเริ่มคลิป");return}
         starting=true;shutter.isEnabled=false;config.isEnabled=false
+        requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LOCKED
         val sound=prefs.getBoolean("video_sound",true)
         if(sound)sounds.play(MediaActionSound.START_VIDEO_RECORDING)
         handler.postDelayed({
-            if(!starting||isFinishing||isDestroyed){starting=false;return@postDelayed}
+            if(!starting||isFinishing||isDestroyed){starting=false;requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;return@postDelayed}
             try{
                 val name="LUMA_VIDEO_${System.currentTimeMillis()}.mp4"
                 val values=ContentValues().apply{put(MediaStore.Video.Media.DISPLAY_NAME,name);put(MediaStore.Video.Media.MIME_TYPE,"video/mp4");if(android.os.Build.VERSION.SDK_INT>=29)put(MediaStore.Video.Media.RELATIVE_PATH,"Movies/Luma/")}
@@ -138,11 +139,11 @@ class VideoActivity:ComponentActivity(){
                 var pending=r.prepareRecording(this,options)
                 if(mic&&ContextCompat.checkSelfPermission(this,Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED)pending=pending.withAudioEnabled()
                 recording=pending.start(main){event->when(event){
-                    is VideoRecordEvent.Start->{starting=false;shutter.isEnabled=true;shutter.recording=true;shutter.contentDescription="หยุดบันทึกวิดีโอ";pause.isEnabled=true;recordingUi(true)}
+                    is VideoRecordEvent.Start->{status.announceForAccessibility("เริ่มบันทึกวิดีโอ");starting=false;shutter.isEnabled=true;shutter.recording=true;shutter.contentDescription="หยุดบันทึกวิดีโอ";pause.isEnabled=true;recordingUi(true)}
                     is VideoRecordEvent.Status->{val seconds=event.recordingStats.recordedDurationNanos/1_000_000_000;status.text=String.format(Locale.US,"%02d:%02d  ·  %.1f MB%s",seconds/60,seconds%60,event.recordingStats.numBytesRecorded/1e6,if(paused)" · พัก" else "")}
                     is VideoRecordEvent.Pause->{paused=true;pauseIcon.path=Icons.VIDEO;pause.contentDescription="ต่อการบันทึก"}
                     is VideoRecordEvent.Resume->{paused=false;pauseIcon.path=PAUSE;pause.contentDescription="พักการบันทึก"}
-                    is VideoRecordEvent.Finalize->{recording=null;starting=false;finalizing=false;paused=false;shutter.recording=false;shutter.contentDescription="เริ่มบันทึกวิดีโอ";pause.isEnabled=false;pauseIcon.path=PAUSE;shutter.isEnabled=true;config.isEnabled=true;recordingUi(false)
+                    is VideoRecordEvent.Finalize->{requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;recording=null;starting=false;finalizing=false;paused=false;shutter.recording=false;shutter.contentDescription="เริ่มบันทึกวิดีโอ";pause.isEnabled=false;pauseIcon.path=PAUSE;shutter.isEnabled=true;config.isEnabled=true;recordingUi(false)
                         if(sound&&!isDestroyed)sounds.play(MediaActionSound.STOP_VIDEO_RECORDING)
                         val uri=event.outputResults.outputUri
                         if(uri!=Uri.EMPTY&&event.recordingStats.numBytesRecorded>0){
@@ -150,9 +151,10 @@ class VideoActivity:ComponentActivity(){
                             status.text=if(event.hasError())"เก็บคลิปที่ได้รับแล้ว · ${event.error}" else "บันทึกวิดีโอแล้ว"
                             luma.fileIo.execute{ClipInspector.record(this,uri,name)}
                         }else status.text="บันทึกไม่สำเร็จ · ${event.cause?.localizedMessage?:event.error}"
+                        status.announceForAccessibility(status.text)
                     }
                 }}
-            }catch(e:Exception){starting=false;recording=null;shutter.isEnabled=true;config.isEnabled=true;status.text="เริ่มบันทึกไม่ได้ · ${e.localizedMessage}"}
+            }catch(e:Exception){requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;starting=false;recording=null;shutter.isEnabled=true;config.isEnabled=true;status.text="เริ่มบันทึกไม่ได้ · ${e.localizedMessage}"}
         },if(sound)300 else 0)
     }
     private fun stopRecording(){animator?.cancel();finalizing=true;shutter.isEnabled=false;pause.isEnabled=false;status.text="กำลังปิดไฟล์…";recording?.stop()}
@@ -355,3 +357,4 @@ class VideoActivity:ComponentActivity(){
     }
     private fun qualityName(q:Quality)=when(q){Quality.UHD->"4K";Quality.FHD->"1080p";Quality.HD->"720p";else->"SD"}
 }
+

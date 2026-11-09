@@ -11,9 +11,8 @@ import android.view.View
 import android.widget.*
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.text.TextRecognition
-import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import th.ogay.luma.ocr.ThaiOcrEngine
+import th.ogay.luma.ocr.ThaiOcrException
 import org.opencv.android.OpenCVLoader
 import org.opencv.android.Utils
 import org.opencv.core.*
@@ -26,20 +25,22 @@ class DocumentActivity:ComponentActivity(){
     private val project by lazy{File(filesDir,"documents/${UUID.randomUUID()}").apply{mkdirs()}}
     private var image:Bitmap?=null;private val pages=mutableListOf<File>();private lateinit var editor:PageCorners;private lateinit var status:TextView
     private var bw=false;private var busy=false
+    @Volatile private var ocrCancelled=false
     private val addPage=registerForActivityResult(ActivityResultContracts.OpenDocument()){uri->if(uri!=null)load(uri)}
     override fun onCreate(state:Bundle?){super.onCreate(state)
         val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(12),0,dp(12),0)};installRoot(root)
-        root.addView(pill("‹ กลับ"){finish()},-1,dp(48));root.addView(label("เอกสาร",26f),-1,dp(54))
-        status=label("ลากจุดมุมทั้ง 4 เพื่อแก้ perspective",14f,MUTED);root.addView(status,-1,dp(52))
+        root.addView(pill("‹ กลับ"){finish()},-1,-2);root.addView(label("เอกสาร",26f).apply{minHeight=dp(54)},-1,-2)
+        status=label("ลากจุดมุมทั้ง 4 เพื่อแก้ perspective",14f,MUTED).apply{minHeight=dp(52)};root.addView(status,-1,-2)
         editor=PageCorners(this);root.addView(editor,LinearLayout.LayoutParams(-1,0,1f))
+        fun cell()=LinearLayout.LayoutParams(0,-2,1f).apply{setMargins(dp(2),dp(2),dp(2),dp(2))}
         val row=LinearLayout(this)
-        row.addView(pill("ตรวจขอบ"){detect()},LinearLayout.LayoutParams(0,dp(52),1f))
-        row.addView(pill("สี / ขาวดำ"){bw=!bw;status.text=if(bw)"ส่งออกแบบขาวดำ" else "ส่งออกแบบสี"},LinearLayout.LayoutParams(0,dp(52),1f))
-        row.addView(pill("เก็บหน้านี้"){savePage()},LinearLayout.LayoutParams(0,dp(52),1f));root.addView(row)
+        row.addView(pill("ตรวจขอบ"){detect()},cell())
+        row.addView(pill("สี / ขาวดำ"){bw=!bw;status.text=if(bw)"ส่งออกแบบขาวดำ" else "ส่งออกแบบสี"},cell())
+        row.addView(pill("เก็บหน้านี้"){savePage()},cell());root.addView(row,-1,-2)
         val more=LinearLayout(this)
-        more.addView(pill("เพิ่มภาพ"){if(!busy)addPage.launch(arrayOf("image/*"))},LinearLayout.LayoutParams(0,dp(52),1f))
-        more.addView(pill("OCR Latin"){ocr()},LinearLayout.LayoutParams(0,dp(52),1f))
-        more.addView(pill("สร้าง PDF"){pdf()},LinearLayout.LayoutParams(0,dp(52),1f));root.addView(more)
+        more.addView(pill("เพิ่มภาพ"){if(!busy)addPage.launch(arrayOf("image/*"))},cell())
+        more.addView(pill("อ่านข้อความ"){ocr()}.apply{contentDescription="อ่านข้อความไทยและอังกฤษบนเครื่อง"},cell())
+        more.addView(pill("สร้าง PDF"){pdf()},cell());root.addView(more,-1,-2)
         intent.data?.let{load(it)}?:addPage.launch(arrayOf("image/*"))
     }
     private fun load(uri:Uri){if(busy)return;busy=true;status.text="กำลังอ่านภาพ…";luma.fileIo.execute{runCatching{
@@ -64,18 +65,31 @@ class DocumentActivity:ComponentActivity(){
     private fun savePage():Boolean{if(busy||image==null)return false
         return try{val b=rectify();val file=File(project,"page-${pages.size+1}.jpg");PhotoEffects.write(b,file);b.recycle();pages+=file;MediaLedger.rememberFile(this,file,"image/jpeg","เอกสารแก้ perspective หน้า ${pages.size}");status.text="เก็บ ${pages.size} หน้าแล้ว · เพิ่มภาพหรือสร้าง PDF";true}catch(e:Exception){status.text=e.localizedMessage;false}
     }
-    private fun ocr(){if(busy)return;val bitmap=runCatching{rectify()}.getOrElse{status.text=it.localizedMessage;return};busy=true;status.text="กำลังอ่านข้อความ Latin / อังกฤษ…"
-        val recognizer=TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-        recognizer.process(InputImage.fromBitmap(bitmap,0)).addOnSuccessListener{result->
-            val file=File(project,"ocr-${System.currentTimeMillis()}.txt");file.writeText(result.text);MediaLedger.rememberFile(this,file,"text/plain","OCR Latin · ตรวจทานข้อความก่อนใช้")
-            val text=TextView(this).apply{setPadding(dp(18),dp(16),dp(18),dp(16));this.text=result.text.ifBlank{"ไม่พบข้อความ Latin · โมเดลนี้ยังไม่รองรับ OCR ภาษาไทย"};setTextIsSelectable(true)}
-            AlertDialog.Builder(this).setTitle("ข้อความ OCR").setView(ScrollView(this).apply{addView(text)}).setPositiveButton("ส่งออก"){_,_->MediaLedger.share(this,MediaLedger.privateUri(this,file),"text/plain")}.setNegativeButton("ปิด",null).show();status.text="อ่านข้อความแล้ว"
-        }.addOnFailureListener{status.text="OCR ไม่สำเร็จ · ${it.localizedMessage}"}.addOnCompleteListener{bitmap.recycle();recognizer.close();busy=false}
+    /** Thai + English OCR on the device (th.ogay.luma.ocr); the rectified page never leaves the phone. */
+    private fun ocr(){if(busy)return;val bitmap=runCatching{rectify()}.getOrElse{status.text=it.localizedMessage;return};busy=true;ocrCancelled=false
+        status.text="กำลังอ่านข้อความไทย/อังกฤษบนเครื่อง…"
+        Thread{
+            val result=runCatching{thaiOcr.recognize(this,bitmap,60_000){ocrCancelled||isDestroyed}}
+            bitmap.recycle()
+            runOnUiThread{
+                busy=false
+                if(isDestroyed)return@runOnUiThread
+                result.onSuccess{text->
+                    val file=File(project,"ocr-${System.currentTimeMillis()}.txt");file.writeText(text);MediaLedger.rememberFile(this,file,"text/plain","OCR ไทย/อังกฤษบนเครื่อง · ตรวจทานข้อความก่อนใช้")
+                    val view=TextView(this).apply{setPadding(dp(18),dp(16),dp(18),dp(16));this.text=text.ifBlank{"ไม่พบข้อความในภาพ ลองถ่ายให้ใกล้ขึ้นหรือเพิ่มแสง"};setTextIsSelectable(true)}
+                    val footer=label("อ่านบนเครื่อง ไม่ส่งภาพออกไป · ตรวจทานข้อความก่อนใช้",12f,MUTED).apply{setPadding(dp(18),0,dp(18),dp(12))}
+                    val body=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;addView(view);addView(footer)}
+                    AlertDialog.Builder(this).setTitle("ข้อความที่อ่านได้").setView(ScrollView(this).apply{addView(body)}).setPositiveButton("ส่งออก"){_,_->MediaLedger.share(this,MediaLedger.privateUri(this,file),"text/plain")}.setNegativeButton("ปิด",null).show()
+                    status.text=if(text.isBlank())"ไม่พบข้อความ" else "อ่านข้อความแล้ว"
+                }.onFailure{e->status.text=(e as? ThaiOcrException)?.message?:"อ่านข้อความไม่สำเร็จ · ${e.localizedMessage}"}
+            }
+        }.apply{name="luma-ocr"}.start()
     }
     private fun pdf(){if(busy)return;if(pages.isEmpty()&&!savePage())return;busy=true;status.text="กำลังสร้าง PDF ${pages.size} หน้า…";luma.fileIo.execute{runCatching{
         val document=PdfDocument();try{pages.forEachIndexed{i,file->val b=PhotoEffects.read(file,4_000_000);val page=document.startPage(PdfDocument.PageInfo.Builder(595,842,i+1).create());page.canvas.drawColor(Color.WHITE);val scale=min(555f/b.width,802f/b.height);val w=b.width*scale;val h=b.height*scale;page.canvas.drawBitmap(b,null,RectF((595-w)/2,(842-h)/2,(595+w)/2,(842+h)/2),Paint(Paint.FILTER_BITMAP_FLAG));document.finishPage(page);b.recycle()};val file=File(project,"Luma-Document-${System.currentTimeMillis()}.pdf");file.outputStream().use{document.writeTo(it)};MediaLedger.rememberFile(this,file,"application/pdf","${pages.size} หน้า");file}finally{document.close()}
     }.onSuccess{file->runOnUiThread{busy=false;status.text="สร้าง PDF แล้ว · ${pages.size} หน้า";MediaLedger.view(this,MediaLedger.privateUri(this,file),"application/pdf")}}.onFailure{runOnUiThread{busy=false;status.text="สร้าง PDF ไม่สำเร็จ · ${it.localizedMessage}"}}}}
-    override fun onDestroy(){editor.bitmap=null;image?.recycle();super.onDestroy()}
+    override fun onDestroy(){ocrCancelled=true;editor.bitmap=null;image?.recycle();super.onDestroy()}
+    private companion object { val thaiOcr = ThaiOcrEngine() }
 }
 
 private class PageCorners(c:android.content.Context):View(c){

@@ -367,3 +367,4 @@ class GalleryActivity : ComponentActivity() {
         AlertDialog.Builder(this).setTitle("ข้อมูลภาพ").setMessage(text).setPositiveButton("ปิด", null).show()
     }
 }
+

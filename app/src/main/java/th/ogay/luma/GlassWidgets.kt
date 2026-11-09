@@ -503,3 +503,4 @@ class GlassSheet(private val host: FrameLayout, private val pivotYFromBottom: ()
         Liquid.hide(sheet, sheet.width / 2f, sheet.height - pivotYFromBottom(), true) { host.removeView(sheet); end?.invoke() }
     }
 }
+

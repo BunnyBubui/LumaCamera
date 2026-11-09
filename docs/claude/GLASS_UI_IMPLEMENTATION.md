@@ -34,3 +34,4 @@
 - สไตล์ภาพ ความสว่าง และความอุ่น ใช้กับภาพพรีวิวเท่านั้น ยังไม่ใส่ลงไฟล์
 - ชีตย่อยที่ยังใช้ `pill()` เดิม (ซูม A→B, ManualControls.show, CaptureSettings) อยู่บนพื้น glass แล้วแต่ปุ่มข้างในยังเป็นแบบเก่า
 - `CameraActivity`, `StudioUi.kt`, `ManualControls.kt`, `VideoActivity.kt` เป็นไฟล์ที่ Codex ดูแลตาม `docs/CLAUDE_NEXT_TASKS.md` ต้องแจ้งก่อน merge
+
