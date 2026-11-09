@@ -21,7 +21,7 @@ class VideoSessionDeviceTest {
     private val device get() = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
     private fun waitFor(condition: () -> Boolean) {
         val until = SystemClock.elapsedRealtime() + 40000
-        while (SystemClock.elapsedRealtime() < until) { if (condition()) return; SystemClock.sleep(200) }
+        while (SystemClock.elapsedRealtime() < until) { val ready = try { condition() } catch (_: androidx.test.uiautomator.StaleObjectException) { false }; if (ready) return; SystemClock.sleep(200) }
         assertTrue("Video session did not finish discovery", condition())
     }
     @Test fun sixtyFpsIsRetainedAcrossRecreateOrExplicitlyRejected() {
@@ -48,7 +48,7 @@ class VideoSessionDeviceTest {
             assertNotNull(device.findObject(By.textContains("ไม่มีเสียง")))
             val ready = device.findObject(By.desc("เริ่มบันทึกวิดีโอ"))!!.isEnabled
             if (!ready) assertNotNull(device.findObject(By.textContains("high-speed")))
-            device.findObject(By.textContains("Slow-motion · ตัวเลือก"))?.click()
+            device.findObject(By.textContains("SLOW · ตัวเลือก"))?.click()
             // Unsupported high-speed still exposes the diagnostic dialog, never a microphone prompt.
             assertNull(device.findObject(By.textContains("Allow Luma")))
         }
@@ -60,11 +60,30 @@ class VideoSessionDeviceTest {
         val nativeNight = extensions.isExtensionAvailable(selector, androidx.camera.extensions.ExtensionMode.NIGHT)
         val prefs = context.getSharedPreferences("camera", 0)
         prefs.edit().putString("photo_mode", "HDR").putString("output", "JPEG").putString("timer", "0").commit()
-        ActivityScenario.launch<CameraActivity>(Intent(context, CameraActivity::class.java)).use {
+        ActivityScenario.launch<CameraActivity>(Intent(context, CameraActivity::class.java)).use { scenario ->
             waitFor { device.findObject(By.desc("ถ่ายภาพ"))?.isEnabled == true }
-            device.findObject(By.text("กลางคืน")).click()
-            waitFor { device.findObject(By.desc("ถ่ายภาพ"))?.isEnabled == true && device.findObject(By.textStartsWith("กลางคืน  ·")) != null }
-            if (!nativeNight) assertTrue("Software Night must route through AI after a compatible HDR bind", device.findObject(By.desc("รูปแบบ AI")).isSelected)
+            // Perform the user-facing mode action on the UI thread; the strip is rebuilt after selection.
+            scenario.onActivity { activity ->
+                val matches = ArrayList<android.view.View>()
+                activity.window.decorView.findViewsWithText(matches, "โหมด กลางคืน", android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION)
+                assertTrue("Night mode action must exist", matches.firstOrNull()?.performClick() == true)
+            }
+            var settled = false
+            waitFor {
+                scenario.onActivity { activity ->
+                    val labels = ArrayList<android.view.View>()
+                    activity.window.decorView.findViewsWithText(labels, "กลางคืน  ·", android.view.View.FIND_VIEWS_WITH_TEXT)
+                    val shutter = ArrayList<android.view.View>()
+                    activity.window.decorView.findViewsWithText(shutter, "ถ่ายภาพ", android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION)
+                    settled = labels.isNotEmpty() && shutter.any { it.contentDescription == "ถ่ายภาพ" && it.isEnabled }
+                }
+                settled
+            }
+            if (!nativeNight) scenario.onActivity { activity ->
+                val formats = ArrayList<android.view.View>()
+                activity.window.decorView.findViewsWithText(formats, "รูปแบบ AI", android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION)
+                assertTrue("Software Night must route through AI after a compatible HDR bind", formats.any { it.contentDescription == "รูปแบบ AI" && it.isSelected })
+            }
         }
     }
 }

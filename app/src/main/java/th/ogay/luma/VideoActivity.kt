@@ -81,8 +81,8 @@ class VideoActivity:ComponentActivity(){
         val root=LinearLayout(this).apply{orientation=if(landscape)LinearLayout.HORIZONTAL else LinearLayout.VERTICAL};installRoot(root)
         val panel=if(landscape)LinearLayout(this).apply{orientation=LinearLayout.VERTICAL} else root
         val head=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(dp(14),0,dp(12),0);minimumHeight=dp(60)}
-        head.addView(pill("‹ ภาพถ่าย"){if(recording==null&&!starting&&!finalizing)finish()},-2,-2);head.space()
-        config=pill(if(slow)"Slow-motion · ตัวเลือก"else "1080p · 30",::settings);head.addView(config,-2,-2);panel.addView(head,-1,-2)
+        head.addView(pill("‹ ภาพถ่าย"){if(recording==null&&!starting&&!finalizing)finish()},LinearLayout.LayoutParams(0,-2,1f))
+        config=pill(if(slow)"SLOW · ตัวเลือก"else "1080p · 30",::settings);head.addView(config,LinearLayout.LayoutParams(0,-2,1f));panel.addView(head,-1,-2)
         val frame=FrameLayout(this);root.addView(frame,if(landscape)LinearLayout.LayoutParams(0,-1,1f) else LinearLayout.LayoutParams(-1,0,1f))
         preview=PreviewView(this).apply{implementationMode=PreviewView.ImplementationMode.COMPATIBLE;scaleType=PreviewView.ScaleType.FIT_CENTER};frame.addView(preview,-1,-1)
         val overlay=CompositionOverlay(this).apply{grid=prefs.getBoolean("grid",false);movie=kind=="MOVIE"};frame.addView(overlay,-1,-1)
@@ -101,8 +101,8 @@ class VideoActivity:ComponentActivity(){
         androidx.core.view.ViewCompat.addAccessibilityAction(lever,"ซูมออก"){_,_->nudge(0.8f);true}
         val tick=object:Runnable{override fun run(){val state=camera?.cameraInfo?.zoomState?.value;if(state!=null&&velocity!=0f)camera?.cameraControl?.setZoomRatio((state.zoomRatio*exp(velocity*0.025f)).coerceIn(state.minZoomRatio,state.maxZoomRatio));handler.postDelayed(this,32)}}
         lever.setOnTouchListener{_,e->when(e.actionMasked){MotionEvent.ACTION_DOWN->{animator?.cancel();origin=e.x;handler.post(tick)};MotionEvent.ACTION_MOVE->{val d=e.x-origin;velocity=if(abs(d)<dp(10))0f else(d/dp(90)).coerceIn(-1f,1f)};MotionEvent.ACTION_UP,MotionEvent.ACTION_CANCEL->{velocity=0f;handler.removeCallbacks(tick);lever.performClick()}};true}
-        tools.addView(lever,LinearLayout.LayoutParams(0,-2,1f));panel.addView(tools,-1,-2)
-        panel.addView(label(when(kind){"DUAL"->"DUAL VIEW";"MOVIE"->"MOVIE · 2.39:1";"SLOW"->"SLOW MOTION · ไม่มีเสียง · เล่น 30 fps";else->"VIDEO"},16f,LIME).apply{gravity=Gravity.CENTER;minHeight=dp(42)},-1,-2)
+        tools.addView(lever,LinearLayout.LayoutParams(0,-2,1f));if(slow)tools.visibility=android.view.View.GONE;panel.addView(tools,-1,-2)
+        panel.addView(label(when(kind){"DUAL"->"DUAL VIEW";"MOVIE"->"MOVIE · 2.39:1";"SLOW"->"SLOW MOTION · ไม่มีเสียง";else->"VIDEO"},16f,LIME).apply{gravity=Gravity.CENTER;minHeight=dp(42)},-1,-2)
         val actions=LinearLayout(this).apply{gravity=Gravity.CENTER};actions.space()
         pause=pill("พัก"){val r=recording?:return@pill;if(paused)r.resume()else r.pause()}.apply{contentDescription="พักหรือต่อวิดีโอ";isEnabled=false};pause.minWidth=dp(70);actions.addView(pause,-2,-2);actions.space()
         shutter=Glyph(this,"shutter","เริ่มบันทึกวิดีโอ"){if(recording!=null)stopRecording()else if(!starting&&!finalizing){if(mic&&ContextCompat.checkSelfPermission(this,Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED)audioPermission.launch(Manifest.permission.RECORD_AUDIO)else startRecording()}}.apply{video=true;isEnabled=false}
