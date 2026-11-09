@@ -10,7 +10,7 @@ import android.widget.*
 fun Activity.showStudioSettings(rawAvailable:Boolean, changed:()->Unit) {
     val prefs=getSharedPreferences("camera",0)
     studioSheet("ตั้งค่ากล้อง"){box,dialog->
-        fun heading(text:String){box.addView(label(text,16f,LIME),-1,dp(44))}
+        fun heading(text:String){box.addView(label(text,16f,LIME),-1,-2)}
         fun toggle(title:String,key:String,default:Boolean=false){
             box.addView(Switch(this).apply{text=title;setTextColor(WHITE);textSize=15f;minHeight=dp(52);isChecked=prefs.getBoolean(key,default)
                 if(key=="sound"&&androidx.camera.core.CameraInfo.mustPlayShutterSound()){isChecked=true;isEnabled=false;text="เสียงชัตเตอร์ · ระบบกำหนดให้เปิด"}

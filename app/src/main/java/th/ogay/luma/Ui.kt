@@ -28,7 +28,7 @@ fun Context.label(value: String, sp: Float, tint: Int = WHITE) = TextView(this).
     includeFontPadding = true
 }
 fun Context.pill(value: String, action: () -> Unit) = label(value,14f).apply {
-    gravity = Gravity.CENTER; minHeight = dp(48); setPadding(dp(14),dp(4),dp(14),dp(4))
+    gravity = Gravity.CENTER; minHeight = dp(48); minWidth = dp(48); setPadding(dp(14),dp(4),dp(14),dp(4))
     background = shape(PANEL, dp(22).toFloat()); isFocusable = true; setOnClickListener { action() }; pressFeedback()
     ViewCompat.setAccessibilityDelegate(this, object: androidx.core.view.AccessibilityDelegateCompat(){
         override fun onInitializeAccessibilityNodeInfo(host:View,info:androidx.core.view.accessibility.AccessibilityNodeInfoCompat){super.onInitializeAccessibilityNodeInfo(host,info);info.className="android.widget.Button"}

@@ -154,9 +154,9 @@ class StudioAccessibilityTest {
         }
         report += moreSheetAtLargeFont()
         report.forEach { Log.i(TAG, it) }
-        // Report mode: findings are listed in docs/claude/UI_REVIEW_V03.md and fixed in a follow-up
-        // integration change, which switches this to assertTrue(findings.isEmpty()).
-        assertTrue("the audit visited no screen", report.size > 1)
+        // Every line after the display summary is a finding, except the sheet line that reports reachability.
+        val findings = report.drop(1).filterNot { it.contains("| reachable |") }
+        assertTrue("accessibility findings ‖ " + findings.joinToString(" ‖ "), findings.isEmpty())
     }
 
     /** Opens the "เพิ่มเติม" bottom sheet at font 2.0 and checks that its last action can be scrolled to. */

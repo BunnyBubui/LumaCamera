@@ -177,17 +177,19 @@ class CameraActivity : ComponentActivity() {
         val head = LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16),0,dp(10),0)
         }
-        root.addView(head,-1,dp(60))
+        head.minimumHeight=dp(60)
+        // At large font sizes the header can be wider than the screen; it scrolls instead of pushing buttons off.
+        root.addView(HorizontalScrollView(this).apply{isHorizontalScrollBarEnabled=false;isFillViewport=true;addView(head,ViewGroup.LayoutParams(-1,-2))},-1,-2)
         head.addView(pill(prefs.getString("aspect","4:3")!!) {
             if(!busy){val values=listOf("4:3","1:1","16:9");val next=values[(values.indexOf(prefs.getString("aspect","4:3"))+1)%3];prefs.edit().putString("aspect",next).apply();buildScreen();bind()}
-        },-2,dp(48))
-        head.addView(pill("HDR") { if(!busy)selectMode(if(mode==PhotoMode.HDR)PhotoMode.PHOTO else PhotoMode.HDR) }.apply{selectionStyle(mode==PhotoMode.HDR)},-2,dp(48))
+        },-2,-2)
+        head.addView(pill("HDR") { if(!busy)selectMode(if(mode==PhotoMode.HDR)PhotoMode.PHOTO else PhotoMode.HDR) }.apply{selectionStyle(mode==PhotoMode.HDR)},-2,-2)
         head.space()
         aiButton = pill("", ::toggleAi)
-        head.addView(aiButton,-2,dp(48))
+        head.addView(aiButton,-2,-2)
         head.addView(View(this),dp(6),1)
         flashButton = pill("",::toggleFlash)
-        head.addView(flashButton,-2,dp(48))
+        head.addView(flashButton,-2,-2)
         head.addView(Glyph(this,"menu","การตั้งค่ากล้อง",::showOptions),dp(48),dp(48))
         outputButtons = LinearLayout(this).apply { gravity = Gravity.CENTER }
         val outputScroll = HorizontalScrollView(this).apply {
@@ -195,7 +197,7 @@ class CameraActivity : ComponentActivity() {
             isFillViewport = true
             addView(outputButtons)
         }
-        root.addView(outputScroll, -1, dp(52))
+        root.addView(outputScroll, -1, -2)
         for (choice in CaptureOutput.entries) {
             val button = pill(choice.label) {
                 if (!busy) {
@@ -208,7 +210,7 @@ class CameraActivity : ComponentActivity() {
                     }
                 }
             }.apply { contentDescription = "รูปแบบ ${choice.label}" }
-            outputButtons.addView(button, LinearLayout.LayoutParams(-2, dp(48)).apply { setMargins(dp(3), 0, dp(3), 0) })
+            outputButtons.addView(button, LinearLayout.LayoutParams(-2, -2).apply { setMargins(dp(3), dp(2), dp(3), dp(2)) })
         }
         val body = LinearLayout(this).apply { orientation = if (landscape) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL }
         root.addView(body,LinearLayout.LayoutParams(-1,0,1f))
@@ -232,9 +234,9 @@ class CameraActivity : ComponentActivity() {
         overlay.monitor(preview)
         currentZoom = label("",14f,WHITE).apply {
             gravity=Gravity.CENTER; setPadding(dp(9),0,dp(9),0)
-            background=shape(0xbb1c231c.toInt(),dp(12).toFloat())
+            background=shape(0xbb1c231c.toInt(),dp(12).toFloat()); minHeight=dp(32)
         }
-        stage.addView(currentZoom,FrameLayout.LayoutParams(-2,dp(32),Gravity.TOP or Gravity.START).apply { setMargins(dp(14),dp(14),0,0) })
+        stage.addView(currentZoom,FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.START).apply { setMargins(dp(14),dp(14),0,0) })
         zooms=LinearLayout(this).apply { gravity=Gravity.CENTER; background=shape(0xcc1c231c.toInt(),dp(24).toFloat()) }
         zoomSlider = SeekBar(this).apply {
             max = 1000
@@ -259,7 +261,7 @@ class CameraActivity : ComponentActivity() {
         ruler=ZoomRuler(this){zoomAnimation?.cancel();applyZoom(it)}.apply{visibility=View.GONE}
         stage.addView(ruler,FrameLayout.LayoutParams(-1,dp(58),Gravity.BOTTOM).apply{bottomMargin=dp(62);leftMargin=dp(22);rightMargin=dp(22)})
         currentZoom.setOnLongClickListener { ruler.visibility = if (ruler.visibility == View.VISIBLE) View.GONE else View.VISIBLE; true }
-        stage.addView(zooms,FrameLayout.LayoutParams(-2,dp(48),Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin=dp(12) })
+        stage.addView(zooms,FrameLayout.LayoutParams(-2,-2,Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin=dp(12) })
         viewfinderNotice = label("",14f).apply { gravity=Gravity.CENTER; visibility=View.GONE; setPadding(dp(12),dp(8),dp(12),dp(8)); background=shape(PANEL) }
         viewfinderNotice.setOnClickListener { burst?.cancel() }
         stage.addView(viewfinderNotice,FrameLayout.LayoutParams(-2,-2,Gravity.CENTER))
@@ -271,12 +273,14 @@ class CameraActivity : ComponentActivity() {
         aux=pill(if(mode==PhotoMode.PANORAMA)"ต่อภาพ (${panoFiles.size})" else "ISO · S · WB · AF · EV") {
             if(mode==PhotoMode.PANORAMA)finishPanorama() else manual?.show()
         }.apply{visibility=if(mode in listOf(PhotoMode.PRO,PhotoMode.PANORAMA))View.VISIBLE else View.GONE}
-        if(!landscape){body.addView(aux,-1,dp(44));body.addView(modeStrip(mode,::selectMode),-1,dp(52))}
-        else root.addView(modeStrip(mode,::selectMode),-1,dp(52))
+        if(!landscape){body.addView(aux,-1,-2);body.addView(modeStrip(mode,::selectMode),-1,-2)}
+        else root.addView(modeStrip(mode,::selectMode),-1,-2)
         val actions = LinearLayout(this).apply {
             orientation=if (landscape) LinearLayout.VERTICAL else LinearLayout.HORIZONTAL; gravity=Gravity.CENTER
         }
-        body.addView(actions,if (landscape) LinearLayout.LayoutParams(dp(92),-1) else LinearLayout.LayoutParams(-1,dp(102)))
+        // In landscape on short screens the side column scrolls rather than clipping the album and flip buttons.
+        if (landscape) body.addView(ScrollView(this).apply{isFillViewport=true;isVerticalScrollBarEnabled=false;addView(actions,ViewGroup.LayoutParams(-1,-2))},LinearLayout.LayoutParams(dp(92),-1))
+        else body.addView(actions,LinearLayout.LayoutParams(-1,dp(102)))
         actions.space()
         val album=FrameLayout(this)
         val openAlbum = { startActivity(Intent(this,GalleryActivity::class.java)); Unit }
@@ -286,10 +290,12 @@ class CameraActivity : ComponentActivity() {
             contentDescription="เปิดรูปถ่ายล่าสุด"; setOnClickListener { openAlbum() }; setOnLongClickListener{startActivity(Intent(this@CameraActivity,StudioLibraryActivity::class.java));true}; visibility=View.GONE
         }
         lastThumbUri=null
-        album.addView(thumb,FrameLayout.LayoutParams(dp(44),dp(44),Gravity.CENTER))
+        album.addView(thumb,FrameLayout.LayoutParams(dp(48),dp(48),Gravity.CENTER))
+        androidx.core.view.ViewCompat.replaceAccessibilityAction(thumb,androidx.core.view.accessibility.AccessibilityNodeInfoCompat.AccessibilityActionCompat.ACTION_LONG_CLICK,"เปิดคลัง",null)
         actions.addView(album,dp(52),dp(52)); actions.space()
         shutter=Glyph(this,"shutter","ถ่ายภาพ",::takePhoto)
         shutter.setOnLongClickListener { if(!busy&&!timerRunning){if(output==CaptureOutput.JPEG&&mode==PhotoMode.PHOTO)takeSequence() else notice("เลือก JPEG ในโหมดภาพถ่ายเพื่อถ่ายต่อเนื่อง 10 ภาพ")};true }
+        androidx.core.view.ViewCompat.replaceAccessibilityAction(shutter,androidx.core.view.accessibility.AccessibilityNodeInfoCompat.AccessibilityActionCompat.ACTION_LONG_CLICK,"ถ่ายต่อเนื่อง",null)
         actions.addView(shutter,dp(76),dp(76)); actions.space()
         flip=Glyph(this,"flip","สลับกล้องหน้าและหลัง") { if (!busy) { rear=!rear;ratio=1f;bind() } }
         actions.addView(flip,dp(52),dp(52));actions.space()
@@ -433,7 +439,8 @@ class CameraActivity : ComponentActivity() {
             zooms.removeAllViews();renderedZooms=stops
             stops.forEach { v ->
                 val button=label(zoomText(v),14f).apply {gravity=Gravity.CENTER;isFocusable=true;contentDescription="ซูม ${zoomText(v)}";setOnClickListener {animateZoom(v)}; pressFeedback(); setOnLongClickListener { ruler.visibility = View.VISIBLE; true }}
-                zooms.addView(button,dp(49),-1)
+                button.minWidth=dp(48);button.minHeight=dp(48);button.setPadding(dp(4),0,dp(4),0)
+                zooms.addView(button,-2,-2)
             }
         }
         for(i in stops.indices) (zooms.getChildAt(i) as TextView).selectionStyle(abs(stops[i]-ratio)<0.08f)
@@ -667,7 +674,7 @@ class CameraActivity : ComponentActivity() {
     private fun showMore(){studioSheet("เพิ่มเติม"){box,d->
         val options=listOf("HDR" to {selectMode(PhotoMode.HDR)},"Ultra HDR" to {selectMode(PhotoMode.ULTRA_HDR)},"ความละเอียดสูง" to {selectMode(PhotoMode.HIRES)},"เอกสาร / PDF / OCR" to {selectMode(PhotoMode.DOCUMENT)},"พาโนรามา" to {selectMode(PhotoMode.PANORAMA)},"Time-lapse" to {openSpecial("TIMELAPSE")},"Slow-motion" to {openSpecial("SLOW")},"Dual-view" to {openVideo("DUAL")},"Movie / PRO Video" to {openVideo("MOVIE")},"RAW Video / RAW AI ทดลอง" to {provider?.unbindAll();capture=null;startActivity(Intent(this,RawLabActivity::class.java))},"คลัง / แต่งคลิป / AI Video" to {startActivity(Intent(this,StudioLibraryActivity::class.java))})
         options.chunked(2).forEach{pair->val row=LinearLayout(this);pair.forEach{(name,action)->row.addView(pill(name){d.dismiss();action()},LinearLayout.LayoutParams(0,dp(72),1f).apply{setMargins(dp(3),dp(3),dp(3),dp(3))})};box.addView(row)}
-        box.addView(pill("ตั้งค่าทั้งหมด"){d.dismiss();showAllSettings()},-1,dp(54))
+        box.addView(pill("ตั้งค่าทั้งหมด"){d.dismiss();showAllSettings()},-1,-2)
     }}
     private fun openVideo(kind:String){provider?.unbindAll();capture=null;startActivity(Intent(this,VideoActivity::class.java).putExtra("mode",kind))}
     private fun openSpecial(kind:String){provider?.unbindAll();capture=null;startActivity(Intent(this,SpecialVideoActivity::class.java).putExtra("mode",kind))}
