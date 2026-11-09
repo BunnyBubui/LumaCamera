@@ -36,7 +36,9 @@ class StudioFlowTest{
             until(40000){device.findObject(By.desc("เริ่มบันทึกวิดีโอ"))?.isEnabled==true}
             device.findObject(By.desc("เริ่มบันทึกวิดีโอ")).click()
             // The glass pause button changes its description when CameraX reports Pause and Resume.
-            until(15000){device.findObject(By.desc("พักการบันทึก"))?.isEnabled==true}
+            val end=SystemClock.elapsedRealtime()+15000
+            while(SystemClock.elapsedRealtime()<end&&device.findObject(By.desc("พักการบันทึก"))?.isEnabled!=true)SystemClock.sleep(250)
+            assertTrue("Pause button not ready · "+GlassNav.dump(device),device.findObject(By.desc("พักการบันทึก"))?.isEnabled==true)
             SystemClock.sleep(2500);device.findObject(By.desc("พักการบันทึก")).click()
             assertNotNull(device.wait(Until.findObject(By.desc("ต่อการบันทึก")),10000));SystemClock.sleep(500)
             device.findObject(By.desc("ต่อการบันทึก")).click();assertNotNull(device.wait(Until.findObject(By.desc("พักการบันทึก")),10000))
@@ -91,7 +93,9 @@ class StudioFlowTest{
             assertEquals("android.widget.Button",device.findObject(By.desc("ถ่ายภาพ")).className)
             GlassNav.openPanel(device)
             GlassNav.inPanel(device,By.descStartsWith("รูปแบบไฟล์"))!!.click()
-            assertTrue(device.wait(Until.findObject(GlassNav.menuRow("AI")),5000).isSelected)
+            val aiRow=device.wait(Until.findObject(GlassNav.menuRow("AI")),5000)
+            assertNotNull("AI row missing · "+GlassNav.dump(device),aiRow)
+            assertTrue(aiRow.isSelected)
             device.findObject(GlassNav.menuRow("JPEG")).click()
             until(10000){context.getSharedPreferences("camera",0).getString("output","")=="JPEG"}
             SystemClock.sleep(600)

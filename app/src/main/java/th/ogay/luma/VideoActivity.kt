@@ -233,7 +233,7 @@ class VideoActivity:ComponentActivity(){
         val column=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL};host.addView(column,-1,-1)
         val head=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(dp(14),dp(8),dp(14),dp(6))}
         head.addView(roundButton(IconView(this,Icons.CHEVRON_LEFT,2.2f),48,"กลับไปถ่ายภาพ"){if(!busy())finish()},dp(48),dp(48))
-        head.addView(text(when(kind){"DUAL"->"Dual-view";"MOVIE"->"วิดีโอโปร";"SLOW"->"Slow-motion · ไม่มีเสียง";else->"วิดีโอ"},16f,WHITE,true).apply{gravity=Gravity.CENTER},LinearLayout.LayoutParams(0,-2,1f))
+        head.addView(text(when(kind){"DUAL"->"Dual-view";"MOVIE"->"วิดีโอโปร";"SLOW"->"Slow-motion\nไม่มีเสียง";else->"วิดีโอ"},16f,WHITE,true).apply{gravity=Gravity.CENTER;maxLines=3;ellipsize=null},LinearLayout.LayoutParams(0,-2,1f))
         config=text(if(slow)"SLOW · ตัวเลือก" else "1080p · 30",13f,WHITE,true).apply{gravity=Gravity.CENTER;background=glass(22);setPadding(dp(14),0,dp(14),0);isClickable=true;contentDescription="รายละเอียดวิดีโอทั้งหมด";glassTouch();setOnClickListener{settings()}}
         head.addView(config,-2,dp(48));column.addView(head,-1,-2)
         // Landscape keeps the dock beside the preview instead of under it.
@@ -241,7 +241,7 @@ class VideoActivity:ComponentActivity(){
         stage=FrameLayout(this);body.addView(stage,if(landscape)LinearLayout.LayoutParams(0,-1,1f) else LinearLayout.LayoutParams(-1,0,1f))
         preview=PreviewView(this).apply{implementationMode=PreviewView.ImplementationMode.COMPATIBLE;scaleType=PreviewView.ScaleType.FIT_CENTER};stage.addView(preview,-1,-1)
         val overlay=CompositionOverlay(this).apply{grid=prefs.getBoolean("grid",false);movie=kind=="MOVIE"};stage.addView(overlay,-1,-1)
-        status=text("กำลังเปิดกล้อง…",13f).apply{gravity=Gravity.CENTER;background=glass(18);setPadding(dp(14),dp(7),dp(14),dp(7));maxLines=3;accessibilityLiveRegion=android.view.View.ACCESSIBILITY_LIVE_REGION_POLITE}
+        status=text("กำลังเปิดกล้อง…",13f).apply{gravity=Gravity.CENTER;background=glass(18);setPadding(dp(14),dp(7),dp(14),dp(7));maxLines=8;ellipsize=null;accessibilityLiveRegion=android.view.View.ACCESSIBILITY_LIVE_REGION_POLITE}
         stage.addView(status,FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply{topMargin=dp(10)})
         wheel=ZoomWheel(this).apply{alpha=0f};stage.addView(wheel,FrameLayout.LayoutParams(-1,dp(150),Gravity.BOTTOM).apply{bottomMargin=dp(4)})
         zooms=ZoomCapsule(this).apply{background=glass(28);setPadding(dp(4),dp(4),dp(4),dp(4));contentDescription="ระยะเลนส์ ลากซ้ายขวาเพื่อซูมละเอียด"}

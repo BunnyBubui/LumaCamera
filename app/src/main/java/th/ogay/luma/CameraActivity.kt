@@ -291,7 +291,7 @@ class CameraActivity : ComponentActivity() {
         stage.addView(statusRow, FrameLayout.LayoutParams(-2, dp(48), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(6), dp(12), 0) })
         banner = text("ล็อก AE/AF", 13f, Glass.ACCENT, true).apply { background = glass(16); setPadding(dp(14), dp(6), dp(14), dp(6)); visibility = View.GONE }
         stage.addView(banner, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = dp(12) })
-        viewfinderNotice = text("", 13f).apply { maxLines = 3; gravity = Gravity.CENTER; minHeight = dp(48); background = glass(18); setPadding(dp(16), dp(8), dp(16), dp(8)); visibility = View.GONE }
+        viewfinderNotice = text("", 13f).apply { maxLines = 6; ellipsize = null; gravity = Gravity.CENTER; minHeight = dp(48); background = glass(18); setPadding(dp(16), dp(8), dp(16), dp(8)); visibility = View.GONE }
         viewfinderNotice.setOnClickListener { burst?.cancel() }
         stage.addView(viewfinderNotice, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = dp(60) })
         permissionPanel = LinearLayout(this).apply { gravity = Gravity.CENTER; orientation = LinearLayout.VERTICAL; setPadding(dp(18), dp(14), dp(18), dp(14)); background = glass(24, Glass.FILL_STRONG); visibility = View.GONE }
@@ -408,7 +408,7 @@ class CameraActivity : ComponentActivity() {
         nightCard.addView(IconView(this, "M12 4v16 M4 12h16 M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z", 1.6f).apply { tint = Glass.ACCENT }, dp(56), dp(56))
         nightCard.addView(nightCount, -2, -2)
         nightCard.addView(text("ถือกล้องให้นิ่ง", 13f, Color.WHITE, true), -2, -2)
-        nightCard.addView(text("กำลังรวมแสงกลางคืน · แตะชัตเตอร์เพื่อหยุด", 11.5f, Glass.TEXT2), -2, -2)
+        nightCard.addView(text("กำลังรวมแสงกลางคืน · แตะชัตเตอร์เพื่อหยุด", 11.5f, Glass.TEXT2).apply { maxLines = 3; ellipsize = null; gravity = Gravity.CENTER }, -2, -2)
         stage.addView(nightCard, FrameLayout.LayoutParams(dp(230), -2, Gravity.CENTER))
     }
     private fun buildMiniMap() {
@@ -809,7 +809,7 @@ class CameraActivity : ComponentActivity() {
             box.addView(looks, -1, dp(108))
             box.addView(lookSlider("ความสว่าง", Icons.SUN, "look_bright"))
             box.addView(lookSlider("ความอุ่น", Icons.THERMO, "look_warm"))
-            box.addView(text("โทนนี้แสดงบนภาพพรีวิว ยังไม่ได้ใส่ลงไฟล์ที่บันทึก", 11.5f, Glass.TEXT3).apply { setPadding(dp(2), dp(2), 0, dp(10)) })
+            box.addView(text("โทนนี้แสดงบนภาพพรีวิว ยังไม่ได้ใส่ลงไฟล์ที่บันทึก", 11.5f, Glass.TEXT3).apply { maxLines = 3; ellipsize = null; setPadding(dp(2), dp(2), 0, dp(10)) })
 
             val links = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = glass(20) }
             fun link(title: String, icon: String, act: () -> Unit) {
@@ -872,7 +872,7 @@ class CameraActivity : ComponentActivity() {
             head.addView(text("ปรับแต่งแถบโหมด", 20f, Color.WHITE, true), LinearLayout.LayoutParams(0, -2, 1f))
             head.addView(text("เสร็จ", 14f, 0xff1a1400.toInt(), true).apply { gravity = Gravity.CENTER; background = glass(22, Glass.ACCENT); setPadding(dp(16), 0, dp(16), 0); isClickable = true; glassTouch(); setOnClickListener { sheet.close() } }, -2, dp(48))
             box.addView(head, -1, dp(52))
-            box.addView(text("ลากที่จับเพื่อเรียงใหม่ แตะ + หรือ − เพื่อเพิ่มหรือนำออก แตะชื่อโหมดเพิ่มเติมเพื่อใช้ทันที ภาพถ่ายต้องอยู่ในแถบเสมอ", 13f, Glass.TEXT2).apply { maxLines = 4; setPadding(0, dp(4), 0, dp(12)) })
+            box.addView(text("ลากที่จับเพื่อเรียงใหม่ แตะ + หรือ − เพื่อเพิ่มหรือนำออก แตะชื่อโหมดเพิ่มเติมเพื่อใช้ทันที ภาพถ่ายต้องอยู่ในแถบเสมอ", 13f, Glass.TEXT2).apply { maxLines = 8; ellipsize = null; setPadding(0, dp(4), 0, dp(12)) })
             val inBar = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = glass(22, 0x08ffffff); setPadding(dp(6), dp(6), dp(6), dp(6)) }
             val more = GridLayout(this).apply { columnCount = 2 }
             fun render() {

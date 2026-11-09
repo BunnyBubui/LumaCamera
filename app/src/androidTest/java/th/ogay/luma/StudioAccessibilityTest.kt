@@ -181,9 +181,12 @@ class StudioAccessibilityTest {
             out += "MoreSheet | font 2.0 | portrait | ${if (reached) "reachable" else "unreachable"} | last action \"ตั้งค่าทั้งหมด\""
             // Items cut by the sheet's scroll edge report only their visible part, so they are skipped.
             val viewport = device.findObject(By.clazz("android.widget.ScrollView").scrollable(true))?.visibleBounds
+            // Horizontal scrollers inside the panel (style strip) cut their edge items the same way.
+            val strips = device.findObjects(By.clazz("android.widget.HorizontalScrollView")).map { it.visibleBounds }
             device.findObjects(By.clickable(true)).forEach { o ->
                 val b = o.visibleBounds
-                val clipped = viewport != null && (b.top <= viewport.top + 1 || b.bottom >= viewport.bottom - 1)
+                val clipped = viewport != null && (b.top <= viewport.top + 1 || b.bottom >= viewport.bottom - 1) ||
+                    strips.any { r -> Rect.intersects(r, b) && (b.left <= r.left + 1 || b.right >= r.right - 1) }
                 if (!clipped && (b.width() < 48 * density - 1 || b.height() < 48 * density - 1)) {
                     out += "MoreSheet | font 2.0 | portrait | small-target | \"${o.contentDescription ?: o.text}\" | %.0fx%.0f dp".format(b.width() / density, b.height() / density)
                 }

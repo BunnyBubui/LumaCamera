@@ -189,6 +189,8 @@ class GlassSlider(context: Context) : View(context) {
     var grad = intArrayOf(Color.WHITE, Color.WHITE); set(v) { field = v; invalidate() }
     var onChange: (Int) -> Unit = {}
     var onDrag: (Boolean) -> Unit = {}
+    private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+    private var downX = 0f; private var downY = 0f
     private var p = 0f; private var over = 0f; private var stretch = 1f; private var tail = 0f; private var pressing = false; private var dragging = false
     private var lastX = 0f; private var lastT = 0L
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -224,10 +226,16 @@ class GlassSlider(context: Context) : View(context) {
     override fun onTouchEvent(e: MotionEvent): Boolean {
         if (!isEnabled) return false
         val left = pad(); val w = width - 2 * pad()
+        // The slider claims the gesture only once it moves sideways, so a vertical swipe that starts on it
+        // still scrolls the sheet around it. A tap without movement sets the value at the finger.
         when (e.actionMasked) {
-            MotionEvent.ACTION_DOWN -> { relax?.cancel(); parent?.requestDisallowInterceptTouchEvent(true); pressing = true; dragging = true; lastX = e.x; lastT = e.eventTime; onDrag(true); move(e.x, left, w); }
-            MotionEvent.ACTION_MOVE -> move(e.x, left, w)
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { dragging = false; pressing = false; onDrag(false); relaxTo(pos(index)); performClick() }
+            MotionEvent.ACTION_DOWN -> { relax?.cancel(); downX = e.x; downY = e.y; pressing = true; dragging = false; lastX = e.x; lastT = e.eventTime }
+            MotionEvent.ACTION_MOVE -> {
+                if (!dragging && abs(e.x - downX) > touchSlop && abs(e.x - downX) > abs(e.y - downY)) { dragging = true; parent?.requestDisallowInterceptTouchEvent(true); onDrag(true) }
+                if (dragging) move(e.x, left, w)
+            }
+            MotionEvent.ACTION_UP -> { if (!dragging && abs(e.x - downX) <= touchSlop) move(e.x, left, w); val was = dragging; dragging = false; pressing = false; if (was) onDrag(false); relaxTo(pos(index)); performClick() }
+            MotionEvent.ACTION_CANCEL -> { val was = dragging; dragging = false; pressing = false; if (was) onDrag(false); relaxTo(pos(index)) }
         }
         return true
     }
@@ -423,6 +431,18 @@ class GlassSwitch(context: Context) : View(context) {
     }
 }
 
+/**
+ * Hides everything already in [host] from accessibility while a modal layer is open, like a dialog window would,
+ * so TalkBack and UI tests only reach the open layer. [restore] puts back the previous values.
+ */
+class ModalScope(private val host: FrameLayout) {
+    private val saved = ArrayList<Pair<View, Int>>()
+    fun hide() {
+        for (i in 0 until host.childCount) { val v = host.getChildAt(i); if (v.importantForAccessibility != View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS) { saved += v to v.importantForAccessibility; v.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS } }
+    }
+    fun restore() { saved.forEach { (v, value) -> v.importantForAccessibility = value }; saved.clear() }
+}
+
 /** Frame that stops taking touches once it starts closing, so a fading layer never swallows the next tap. */
 class LayerFrame(context: Context) : FrameLayout(context) {
     var closing = false
@@ -496,6 +516,7 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
     class Option(val label: String, val icon: String = "", val note: String = "", val inner: String = "")
     var over: () -> Boolean = { false }
     private var overlay: View? = null; private var card: LayerFrame? = null; private var dimmed = false
+    private val modal = ModalScope(host)
     fun show(anchor: View, title: String, options: List<Option>, selected: Int, pick: (Int) -> Unit) {
         dismiss(false)
         if (options.isEmpty() || !anchor.isAttachedToWindow) return
@@ -512,6 +533,7 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
         val up = below + h > host.height - padB
         val y = (if (up) above else below).coerceIn(padT, max(padT, host.height - padB - h))
         val quiet = over()
+        modal.hide()
         val shade = View(c).apply { setBackgroundColor(if (quiet) 0 else 0x29000000); alpha = 0f; isClickable = true; contentDescription = "ปิดเมนู"; setOnClickListener { dismiss(true) } }
         host.addView(shade, FrameLayout.LayoutParams(-1, -1)); shade.animate().alpha(1f).setDuration(320).start()
         val menu = LayerFrame(c).apply { background = c.glass(22, if (quiet) 0xf5222225.toInt() else Glass.FILL_POP); setPadding(c.dp(6), c.dp(6), c.dp(6), c.dp(6)); elevation = 12 * d }
@@ -572,6 +594,7 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
         val o = overlay; val m = card; overlay = null; card = null
         if (o == null && m == null) return
         if (dimmed) dim(false); dimmed = false
+        modal.restore()
         o?.let { it.isClickable = false; it.setOnClickListener(null); it.animate().alpha(0f).setDuration(if (animate) 260 else 0).withEndAction { host.removeView(it) }.start() }
         if (m != null) { m.closing = true; if (animate) Liquid.hide(m, m.pivotX, m.pivotY, false) { host.removeView(m) } else host.removeView(m) }
     }
@@ -586,11 +609,13 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
 class GlassSheet(private val host: FrameLayout, private val pivotYFromBottom: () -> Float, private val pushBack: (Float) -> Unit = {}) {
     private var shade: View? = null; private var card: LayerFrame? = null
     private var body: LinearLayout? = null; private var builder: ((LinearLayout, GlassSheet) -> Unit)? = null
+    private val modal = ModalScope(host)
     var onClosed: () -> Unit = {}
     val showing get() = card != null
     fun open(build: (LinearLayout, GlassSheet) -> Unit) {
         if (card != null) return
         val c = host.context; val d = c.resources.displayMetrics.density
+        modal.hide()
         val s = View(c).apply { setBackgroundColor(0x52000000); alpha = 0f; isClickable = true; contentDescription = "ปิดแผง"; setOnClickListener { close() } }
         host.addView(s, FrameLayout.LayoutParams(-1, -1)); s.animate().alpha(1f).setDuration(300).start()
         val sheet = LayerFrame(c).apply { background = c.glass(34, Glass.FILL_STRONG); elevation = 16 * d }
@@ -636,6 +661,7 @@ class GlassSheet(private val host: FrameLayout, private val pivotYFromBottom: ()
         val s = shade; val sheet = card; shade = null; card = null; body = null; builder = null
         if (sheet == null) { end?.invoke(); return }
         sheet.closing = true
+        modal.restore()
         pushBack(0f)
         s?.let { it.isClickable = false; it.setOnClickListener(null); it.animate().alpha(0f).setDuration(300).withEndAction { host.removeView(it) }.start() }
         Liquid.hide(sheet, sheet.width / 2f, sheet.height - pivotYFromBottom(), true) { host.removeView(sheet); end?.invoke() }

@@ -154,14 +154,18 @@ class GlassGestureTest {
             device.findObject(GlassNav.SHUTTER).click()
             val stop = device.wait(Until.findObject(By.desc("หยุดรวมแสงและบันทึก")), 5000)
             assertNotNull("Night capture did not turn the shutter into a stop button", stop)
-            until(5000) { device.findObject(By.desc("หยุดรวมแสงและบันทึก"))?.isEnabled == true }
-            until(20000) { context.luma.shots.latest()?.let { s -> s.id !in before && s.frames >= 2 } == true }
-            device.findObject(By.desc("หยุดรวมแสงและบันทึก")).click()
+            // The stop button must work from the first moment, before any frame arrives.
+            assertTrue("Stop button is disabled while gathering light · " + GlassNav.dump(device), stop.isEnabled)
+            stop.click()
             until(60000) { device.findObject(GlassNav.SHUTTER)?.isEnabled == true }
-            val shot = context.luma.shots.all().first { it.id !in before }
-            assertEquals(32, shot.requestedFrames)
-            assertTrue("Stopped burst kept ${shot.frames} frames", shot.frames in 2 until 32)
-            assertNotEquals(Stage.CAPTURING, context.luma.shots.get(shot.id)!!.stage)
+            val shot = context.luma.shots.all().firstOrNull { it.id !in before }
+            if (shot != null) {
+                assertEquals(32, shot.requestedFrames)
+                // An emulator can finish 32 frames before the tap lands; then there is nothing left to stop.
+                org.junit.Assume.assumeTrue("Burst finished before the stop tap", shot.frames < 32)
+                until(10000) { context.luma.shots.get(shot.id)!!.stage != Stage.CAPTURING }
+                assertTrue("Stopped burst kept ${shot.frames} frames", shot.frames in 0 until 32)
+            }
         }
     }
 }

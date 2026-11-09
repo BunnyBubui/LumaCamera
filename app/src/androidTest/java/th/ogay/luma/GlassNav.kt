@@ -33,6 +33,18 @@ object GlassNav {
             ?: device.findObject(selector)
     }
 
+    /** Compact list of what is on screen, for failure messages: desc/text and enabled state of each node. */
+    fun dump(device: UiDevice): String {
+        val out = java.io.ByteArrayOutputStream(); runCatching { device.dumpWindowHierarchy(out) }
+        val xml = out.toString("UTF-8")
+        return Regex("<node [^>]*>").findAll(xml).mapNotNull { m ->
+            val n = m.value
+            fun attr(k: String) = Regex("$k=\"([^\"]*)\"").find(n)?.groupValues?.get(1).orEmpty()
+            val label = attr("content-desc").ifEmpty { attr("text") }
+            if (label.isEmpty()) null else label.take(40) + (if (attr("enabled") == "false") "(off)" else "") + (if (attr("selected") == "true") "(sel)" else "")
+        }.joinToString(" | ").take(1800)
+    }
+
     fun closeLayers(device: UiDevice) {
         repeat(3) { if (device.hasObject(By.desc("ปิดเมนู")) || device.hasObject(By.desc("ปิดแผง"))) { device.pressBack(); SystemClock.sleep(500) } }
     }
