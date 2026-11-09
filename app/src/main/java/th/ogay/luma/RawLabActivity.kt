@@ -36,6 +36,7 @@ class RawLabActivity:ComponentActivity(){
     @Volatile private var running=false;private var finishing=false;private var ai=false;private var requestedFrames=8;private var requestedFps=10;private var mic=false
     private var frames=0;private var received=0;private var dropped=0;private var throttled=0;private var attempts=0
     private var sensorRotation=0
+    private var firstSavedSensor=0L;private var lastSavedSensor=0L
     private var firstSensor=0L;private var lastSensor=0L;private var lastWritten=0L
     private var directory:File?=null;private var audio:PcmAudio?=null;private var fusion:LinearRawFusion?=null
     private val images=linkedMapOf<Long,Image>();private val metadata=linkedMapOf<Long,TotalCaptureResult>()
@@ -106,7 +107,7 @@ class RawLabActivity:ComponentActivity(){
     private fun rawRequest():CaptureRequest{val d=device?:error("กล้องยังไม่พร้อม");return d.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply{addTarget(reader!!.surface);addTarget(previewSurface!!);setTag("RAW");set(CaptureRequest.CONTROL_MODE,CaptureRequest.CONTROL_MODE_AUTO)}.build()}
     private fun begin(){if(running||finishing||session==null)return
         if(filesDir.usableSpace<128L*1024*1024){notice("ควรมีพื้นที่อย่างน้อย 128 MB เพื่อเริ่มทดลอง");return}
-        running=true;frames=0;received=0;dropped=0;throttled=0;attempts=0;firstSensor=0;lastSensor=0;lastWritten=0;fusion=null
+        running=true;frames=0;received=0;dropped=0;throttled=0;attempts=0;firstSensor=0;lastSensor=0;firstSavedSensor=0;lastSavedSensor=0;lastWritten=0;fusion=null
         val dir=File(filesDir,"raw-sessions/${System.currentTimeMillis()}").apply{mkdirs()};directory=dir
         val cc=manager.getCameraCharacteristics(cameraId)
         @Suppress("DEPRECATION") val display=when(windowManager.defaultDisplay.rotation){Surface.ROTATION_90->90;Surface.ROTATION_180->180;Surface.ROTATION_270->270;else->0}
@@ -131,11 +132,12 @@ class RawLabActivity:ComponentActivity(){
                 val partial=File(dir,"%06d.part".format(java.util.Locale.US,index));val complete=File(dir,"%06d.dng".format(java.util.Locale.US,index));val cc=manager.getCameraCharacteristics(cameraId)
                 DngCreator(cc,result).use{creator->creator.setOrientation(when(sensorRotation){90->6;180->3;270->8;else->1});partial.outputStream().use{creator.writeImage(it,image)}}
                 check(partial.renameTo(complete)){"ปิดไฟล์ DNG ไม่ได้"}
-                if(ai){val linear=RawBayer.sample(image,result,cc);val f=fusion;if(f==null)fusion=LinearRawFusion(linear.width,linear.height,linear.rgb)else f.add(linear.rgb)}
                 File(dir,"frames.jsonl").appendText(JSONObject().put("index",index).put("file",complete.name).put("sensorNs",ts).put("frameNumber",result.frameNumber).put("exposureNs",result.get(CaptureResult.SENSOR_EXPOSURE_TIME)).put("iso",result.get(CaptureResult.SENSOR_SENSITIVITY)).toString()+"\n")
                 frames++
+                if(firstSavedSensor==0L)firstSavedSensor=ts;lastSavedSensor=ts
+                if(ai){val linear=RawBayer.sample(image,result,cc);val f=fusion;if(f==null)fusion=LinearRawFusion(linear.width,linear.height,linear.rgb)else f.add(linear.rgb)}
                 runOnUiThread{status.text="${if(ai)"RAW AI $frames/$requestedFrames"else "DNG $frames เฟรม"}\nทิ้งเพราะเขียนไม่ทัน $dropped · เว้นตามเป้าหมาย $throttled"}
-            }catch(e:Exception){handler.post{stop();fail("RAW หยุด · ${e.localizedMessage}")}}
+            }catch(e:OutOfMemoryError){handler.post{stop();fail("หน่วยความจำไม่พอ · เก็บ DNG ที่ปิดไฟล์แล้วไว้")}}catch(e:Exception){handler.post{stop();fail("RAW หยุด · ${e.localizedMessage}")}}
             finally{image.close();writing.set(false);handler.post{if(ai&&running)nextAi()}}
         }
     }
@@ -147,7 +149,7 @@ class RawLabActivity:ComponentActivity(){
             runCatching{
                 val manifest=JSONObject(File(dir,"manifest.json").readText());val audioInfo=audio?.stop();audio=null
                 manifest.put("state",if(frames>0)"complete"else "empty").put("frames",frames).put("received",received).put("droppedBusy",dropped).put("throttled",throttled)
-                    .put("firstSensorNs",firstSensor).put("lastSensorNs",lastSensor).put("measuredWrittenFps",if(lastSensor>firstSensor)(frames-1).coerceAtLeast(0)*1e9/(lastSensor-firstSensor)else 0.0).put("audio",audioInfo?:JSONObject.NULL)
+                    .put("firstSensorNs",firstSensor).put("lastSensorNs",lastSensor).put("firstSavedSensorNs",firstSavedSensor).put("lastSavedSensorNs",lastSavedSensor).put("measuredWrittenFps",if(lastSavedSensor>firstSavedSensor)(frames-1).coerceAtLeast(0)*1e9/(lastSavedSensor-firstSavedSensor)else 0.0).put("audio",audioInfo?:JSONObject.NULL)
                 File(dir,"manifest.json").writeText(manifest.toString(2));MediaLedger.rememberFile(this,File(dir,"manifest.json"),"application/json","RAW $frames เฟรม · dropped $dropped")
                 if(ai&&fusion!=null&&frames>0){
                     val f=fusion!!;val bitmap=Bitmap.createBitmap(f.finish(),f.width(),f.height(),Bitmap.Config.ARGB_8888);val merged=File(dir,"RAW_LINEAR_FUSION.jpg");PhotoEffects.write(bitmap,merged);PhotoMedia.tag(merged,sensorRotation);bitmap.recycle()

@@ -12,22 +12,30 @@ import androidx.camera.camera2.interop.ExperimentalCamera2Interop
 import androidx.camera.core.Camera
 
 @ExperimentalCamera2Interop
-class ManualControls(private val context:Context, val camera:Camera, private val video:Boolean=false) {
+class ManualControls(private val context:Context, val camera:Camera, private val video:Boolean=false, private val persistent:Boolean=video, private val videoFps:Int=30) {
     private val info=Camera2CameraInfo.from(camera.cameraInfo)
     private val prefs=context.getSharedPreferences("camera",0)
     private var iso:Int?=null;private var ns:Long?=null;private var wb=CR.CONTROL_AWB_MODE_AUTO;private var focus:Float?=null
     var locked=false;private set
     val canManual get()=info.getCameraCharacteristic(CC.REQUEST_AVAILABLE_CAPABILITIES)?.contains(CC.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR)==true
+    private val key="manual.${info.cameraId}.${if(video)"video" else "photo"}."
+    init {
+        if(persistent){iso=prefs.getInt(key+"iso",-1).takeIf{it>0};ns=prefs.getLong(key+"ns",-1).takeIf{it>0};wb=prefs.getInt(key+"wb",CR.CONTROL_AWB_MODE_AUTO);focus=prefs.getFloat(key+"focus",-1f).takeIf{it>=0}}
+        apply()
+    }
     fun apply(){
+        if(persistent)prefs.edit().putInt(key+"iso",iso?:-1).putLong(key+"ns",ns?:-1).putInt(key+"wb",wb).putFloat(key+"focus",focus?:-1f).apply()
         val b=CaptureRequestOptions.Builder()
         if(canManual&&iso!=null){
             val r=info.getCameraCharacteristic(CC.SENSOR_INFO_SENSITIVITY_RANGE)!!
             val e=info.getCameraCharacteristic(CC.SENSOR_INFO_EXPOSURE_TIME_RANGE)!!
             b.setCaptureRequestOption(CR.CONTROL_AE_MODE,CR.CONTROL_AE_MODE_OFF)
             b.setCaptureRequestOption(CR.SENSOR_SENSITIVITY,iso!!.coerceIn(r.lower,r.upper))
-            b.setCaptureRequestOption(CR.SENSOR_EXPOSURE_TIME,(ns?:16_666_666L).coerceIn(e.lower,minOf(e.upper,if(video)33_333_333L else e.upper)))
+            b.setCaptureRequestOption(CR.SENSOR_EXPOSURE_TIME,(ns?:16_666_666L).coerceIn(e.lower,minOf(e.upper,if(video)(1_000_000_000L/videoFps) else e.upper)))
         }
         b.setCaptureRequestOption(CR.CONTROL_AWB_MODE,wb)
+        val ois=info.getCameraCharacteristic(CC.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION)?:intArrayOf()
+        if(CR.LENS_OPTICAL_STABILIZATION_MODE_ON in ois && (!video || !prefs.getBoolean("video_eis",false)))b.setCaptureRequestOption(CR.LENS_OPTICAL_STABILIZATION_MODE,if(prefs.getBoolean("ois",true))CR.LENS_OPTICAL_STABILIZATION_MODE_ON else CR.LENS_OPTICAL_STABILIZATION_MODE_OFF)
         if(focus!=null){b.setCaptureRequestOption(CR.CONTROL_AF_MODE,CR.CONTROL_AF_MODE_OFF);b.setCaptureRequestOption(CR.LENS_FOCUS_DISTANCE,focus!!)}
         if(locked&&info.getCameraCharacteristic(CC.CONTROL_AE_LOCK_AVAILABLE)==true)b.setCaptureRequestOption(CR.CONTROL_AE_LOCK,true)
         if(locked&&info.getCameraCharacteristic(CC.CONTROL_AWB_LOCK_AVAILABLE)==true)b.setCaptureRequestOption(CR.CONTROL_AWB_LOCK,true)
@@ -39,14 +47,14 @@ class ManualControls(private val context:Context, val camera:Camera, private val
         fun options(title:String,values:List<String>,selected:Int,choose:(Int)->Unit){
             box.addView(context.label(title,15f,LIME),-1,context.dp(36))
             val row=LinearLayout(context);val scroll=android.widget.HorizontalScrollView(context).apply{isHorizontalScrollBarEnabled=false;addView(row)}
-            values.forEachIndexed{i,v->row.addView(context.pill(v){choose(i);apply()}.apply{setTextColor(if(i==selected)LIME else WHITE)},-2,context.dp(48))};box.addView(scroll)
+            values.forEachIndexed{i,v->row.addView(context.pill(v){choose(i);apply();for(j in 0 until row.childCount)(row.getChildAt(j) as android.widget.TextView).setTextColor(if(j==i)LIME else WHITE)}.apply{setTextColor(if(i==selected)LIME else WHITE)},-2,context.dp(48))};box.addView(scroll)
         }
         if(canManual){
             val r=info.getCameraCharacteristic(CC.SENSOR_INFO_SENSITIVITY_RANGE)!!
             val values=listOf(50,100,200,400,800,1600,3200,6400).filter{it in r.lower..r.upper}
-            options("ISO",listOf("AUTO")+values.map{it.toString()},0){i->iso=if(i==0)null else values[i-1]}
+            options("ISO",listOf("AUTO")+values.map{it.toString()},if(iso==null)0 else values.indexOf(iso)+1){i->iso=if(i==0)null else values[i-1]}
             val range=info.getCameraCharacteristic(CC.SENSOR_INFO_EXPOSURE_TIME_RANGE)!!
-            val shutter=listOf("1/8000" to 125_000L,"1/1000" to 1_000_000L,"1/250" to 4_000_000L,"1/60" to 16_666_666L,"1/30" to 33_333_333L,"1/8" to 125_000_000L,"1/2" to 500_000_000L,"1s" to 1_000_000_000L).filter{it.second>=range.lower&&it.second<=minOf(range.upper,if(video)33_333_333L else range.upper)}
+            val shutter=listOf("1/8000" to 125_000L,"1/1000" to 1_000_000L,"1/250" to 4_000_000L,"1/60" to 16_666_666L,"1/30" to 33_333_333L,"1/8" to 125_000_000L,"1/2" to 500_000_000L,"1s" to 1_000_000_000L).filter{it.second>=range.lower&&it.second<=minOf(range.upper,if(video)(1_000_000_000L/videoFps) else range.upper)}
             options("ชัตเตอร์ · เลือกแล้วใช้ค่าแสงแบบ Manual",shutter.map{it.first},-1){i->ns=shutter[i].second;if(iso==null)iso=100.coerceIn(r.lower,r.upper)}
         }else box.addView(context.label("กล้องนี้ไม่เปิด Manual sensor ให้แอป",14f,MUTED),-1,context.dp(48))
         val modes=info.getCameraCharacteristic(CC.CONTROL_AWB_AVAILABLE_MODES)?:intArrayOf()
@@ -68,7 +76,8 @@ class ManualControls(private val context:Context, val camera:Camera, private val
                 override fun onProgressChanged(b:SeekBar,p:Int,user:Boolean){if(user&&iso==null)camera.cameraControl.setExposureCompensationIndex(p+r.lower)}
             })},-1,context.dp(52))
         }
-        fun toggle(title:String,key:String){val sw=android.widget.Switch(context).apply{text=title;setTextColor(WHITE);isChecked=prefs.getBoolean(key,false);setOnCheckedChangeListener{_,v->prefs.edit().putBoolean(key,v).apply()}};box.addView(sw,-1,context.dp(48))}
+        fun toggle(title:String,key:String){val sw=android.widget.Switch(context).apply{text=title;setTextColor(WHITE);isChecked=prefs.getBoolean(key,false);setOnCheckedChangeListener{_,v->prefs.edit().putBoolean(key,v).apply();apply()}};box.addView(sw,-1,context.dp(48))}
+        if((info.getCameraCharacteristic(CC.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION)?:intArrayOf()).contains(CR.LENS_OPTICAL_STABILIZATION_MODE_ON))toggle("กันสั่นเลนส์ OIS เมื่อไม่ใช้ EIS","ois")
         toggle("Histogram จากภาพพรีวิว","histogram");toggle("Focus peaking จากภาพพรีวิว","peaking");toggle("Zebra ส่วนสว่างบนพรีวิว","zebra")
         box.addView(context.pill("คืนค่า AUTO"){reset();context.notice("ใช้ค่าแสงและโฟกัสอัตโนมัติแล้ว")},-1,context.dp(52))
     }}

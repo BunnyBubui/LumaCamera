@@ -116,7 +116,7 @@ class VideoActivity:ComponentActivity(){
                 if(kind=="MOVIE")group.setViewPort(ViewPort.Builder(Rational(239,100),windowManager.defaultDisplay.rotation).build())
                 camera=p.bindToLifecycle(this,selector(),group.build())
             }
-            recorder=r;useCase=v;manual=ManualControls(this,camera!!,true)
+            recorder=r;useCase=v;manual=ManualControls(this,camera!!,true,true,fps)
             camera!!.cameraInfo.zoomState.observe(this){ruler.update(it.minZoomRatio,it.maxZoomRatio,it.zoomRatio)}
             config.text="${qualityName(quality)} · $fps${if(dynamic!=DynamicRange.SDR)" HDR" else ""}"
             status.text=if(dual)"หน้า + หลัง · ตรวจไฟล์หลังอัด" else "${if(mic)"ไมค์เปิด" else "ไมค์ปิด"} · ${if(stabilization)"กันสั่นเปิด" else "พร้อมบันทึก"}"
@@ -135,7 +135,7 @@ class VideoActivity:ComponentActivity(){
             choose("SDR / HDR",ranges.map{when(it){DynamicRange.SDR->"SDR 8-bit";DynamicRange.HLG_10_BIT->"HLG10";else->"HDR10"}}){dynamic=ranges[it]}
             choose("Bitrate · ${bitrate/1_000_000} Mbps",listOf("8 Mbps","20 Mbps","40 Mbps","80 Mbps")){bitrate=listOf(8,20,40,80)[it]*1_000_000}
             box.addView(label("Codec กล้องเลือกตามโปรไฟล์ · เลือก H.264/HEVC ได้ตอนส่งออกคลิป",13f,MUTED),-1,dp(52))
-            if(caps.isStabilizationSupported)choose("กันสั่น EIS · $stabilization",listOf("ปิด","เปิด")){stabilization=it==1}
+            if(caps.isStabilizationSupported)choose("กันสั่น EIS · $stabilization",listOf("ปิด","เปิด")){stabilization=it==1;prefs.edit().putBoolean("video_eis",stabilization).apply()}
             choose("ไมโครโฟน · ${if(mic)"เปิด" else "ปิด"}",listOf("ปิดไมค์","บันทึกเสียง")){mic=it==1;prefs.edit().putBoolean("video_mic",mic).apply()}
             box.addView(pill("คืนค่าชุดพื้นฐาน 1080p30 SDR"){dynamic=DynamicRange.SDR;fps=30;quality=Quality.FHD;hevc=false;stabilization=false;d.dismiss();bind()},-1,dp(56))
             box.addView(pill("รายงานความสามารถ"){Capabilities.show(this)},-1,dp(52))
@@ -161,7 +161,7 @@ class VideoActivity:ComponentActivity(){
                     is VideoRecordEvent.Pause->{paused=true;pause.text="ต่อ"}
                     is VideoRecordEvent.Resume->{paused=false;pause.text="พัก"}
                     is VideoRecordEvent.Finalize->{recording=null;starting=false;finalizing=false;paused=false;shutter.recording=false;shutter.contentDescription="เริ่มบันทึกวิดีโอ";pause.isEnabled=false;pause.text="พัก";shutter.isEnabled=true;config.isEnabled=true
-                        if(sound)sounds.play(MediaActionSound.STOP_VIDEO_RECORDING)
+                        if(sound&&!isDestroyed)sounds.play(MediaActionSound.STOP_VIDEO_RECORDING)
                         val uri=event.outputResults.outputUri
                         if(uri!=Uri.EMPTY&&event.recordingStats.numBytesRecorded>0){
                             MediaLedger.add(this,uri,name,"video/mp4",if(event.hasError())"คลิปจบบางส่วน · รหัส ${event.error}" else "${qualityName(quality)} · เป้าหมาย $fps fps · ${if(dynamic==DynamicRange.SDR)"SDR" else "HDR"}")

@@ -23,7 +23,7 @@ object RawBayer {
         fun value(x:Int,y:Int):Float{val raw=buf.getShort(y*plane.rowStride+x*plane.pixelStride).toInt()and 65535;val b=black.getOffsetForIndex(x%2,y%2);return((raw-b)/(white-b)).coerceAtLeast(0f)}
         val greens=(0..3).filter{it!=locations[0]&&it!=locations[1]}
         val gr=gains?.red?:1f;val gg0=gains?.greenEven?:1f;val gg1=gains?.greenOdd?:1f;val gb=gains?.blue?:1f
-        val matrix=FloatArray(9){i->transform?.getElement(i/3,i%3)?.toFloat()?:if(i%4==0)1f else 0f}
+        val matrix=FloatArray(9){i->transform?.getElement(i%3,i/3)?.toFloat()?:if(i%4==0)1f else 0f}
         for(y in 0 until height)for(x in 0 until width){val xx=x*2*step;val yy=y*2*step
             val r=value(xx+locations[0]%2,yy+locations[0]/2)*gr
             val b=value(xx+locations[1]%2,yy+locations[1]/2)*gb

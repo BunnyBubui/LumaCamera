@@ -17,7 +17,7 @@ import java.io.File
 
 @UnstableApi
 class ClipEditorActivity:ComponentActivity(){
-    private lateinit var status:TextView;private lateinit var export:TextView;private lateinit var player:VideoView
+    private lateinit var status:TextView;private lateinit var export:TextView;private lateinit var player:VideoView;private var controller:MediaController?=null
     private var transformer:Transformer?=null;private var preset=0;private var codec="video/avc";private var speed=1f;private var crop=false
     private var lut:Array<Array<IntArray>>?=null;private var job:File?=null;private var output:File?=null
     private val handler=Handler(Looper.getMainLooper());private val progress=ProgressHolder()
@@ -27,7 +27,7 @@ class ClipEditorActivity:ComponentActivity(){
         preset=state?.getInt("preset")?:0;speed=state?.getFloat("speed")?:1f;crop=state?.getBoolean("crop")?:false
         val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(14),0,dp(14),0)};installRoot(root)
         root.addView(pill("‹ กลับ"){cancel();finish()},-1,dp(48));root.addView(label("แต่งคลิป",26f),-1,dp(56))
-        player=VideoView(this);root.addView(player,LinearLayout.LayoutParams(-1,0,1f));intent.data?.let{player.setVideoURI(it);player.setMediaController(MediaController(this).also{c->c.setAnchorView(player)});player.seekTo(1)}
+        player=VideoView(this);root.addView(player,LinearLayout.LayoutParams(-1,0,1f));intent.data?.let{player.setVideoURI(it);player.setMediaController(MediaController(this).also{c->controller=c;c.setAnchorView(player)});player.seekTo(1)}
         status=label("พรีวิวต้นฉบับ · ผลแต่งอยู่ในไฟล์ส่งออก\nSR1 รายเฟรมยังไม่มีการแก้ความสม่ำเสมอข้ามเฟรม",13f,MUTED);root.addView(status,-1,dp(80))
         val choices=Spinner(this);choices.adapter=ArrayAdapter(this,android.R.layout.simple_spinner_dropdown_item,listOf("ต้นฉบับ / เปลี่ยน codec","AI SR1 2× · SDR ≤1080p","Movie LUT","Luma Log · แปลงจาก SDR","LUT .cube ที่นำเข้า"));choices.setSelection(preset);choices.onItemSelectedListener=object:android.widget.AdapterView.OnItemSelectedListener{override fun onNothingSelected(p:android.widget.AdapterView<*>?){};override fun onItemSelected(p:android.widget.AdapterView<*>?,v:android.view.View?,position:Int,id:Long){if(transformer==null)preset=position}};root.addView(choices,-1,dp(52))
         val options=LinearLayout(this)
@@ -35,7 +35,7 @@ class ClipEditorActivity:ComponentActivity(){
         options.addView(pill("H.264 / HEVC"){if(transformer==null){codec=if(codec=="video/avc")"video/hevc"else "video/avc";status.text="Codec ส่งออก $codec"}},LinearLayout.LayoutParams(0,dp(48),1f))
         options.addView(pill("ความเร็ว"){if(transformer==null)android.app.AlertDialog.Builder(this).setItems(arrayOf("0.25×","0.5×","1×","2×","4×")){_,i->speed=listOf(.25f,.5f,1f,2f,4f)[i];status.text="ความเร็ว $speed× · ปรับเสียงตามเวลา"}.show()},LinearLayout.LayoutParams(0,dp(48),1f));root.addView(options)
         root.addView(Switch(this).apply{text="ครอป Movie 2.39:1 ตอนส่งออก";setTextColor(WHITE);isChecked=crop;setOnCheckedChangeListener{_,v->if(transformer==null)crop=v}},-1,dp(48))
-        export=pill("ส่งออกเป็นไฟล์ใหม่"){if(transformer==null)start()else cancel()};root.addView(export,-1,dp(60))
+        export=pill("ส่งออกเป็นไฟล์ใหม่"){if(transformer==null)start()else cancel()}.apply{contentDescription="ส่งออกคลิป"};root.addView(export,-1,dp(60))
     }
     private fun start(){val uri=intent.data?:return;if(filesDir.usableSpace<128L*1024*1024){notice("พื้นที่ว่างไม่พอเริ่มส่งออก");return};if(preset==4&&lut==null){notice("นำเข้า .cube ก่อน");return}
         val id=System.currentTimeMillis();val dir=File(filesDir,"video-exports/$id").apply{mkdirs()};val file=File(dir,"LUMA_EDIT_$id.mp4");output=file;job=File(dir,"job.json")
@@ -60,6 +60,7 @@ class ClipEditorActivity:ComponentActivity(){
     }
     private fun cancel(){if(transformer==null)return;transformer?.cancel();transformer=null;handler.removeCallbacks(poll);output?.delete();job?.let{runCatching{val m=JSONObject(it.readText());m.put("state","cancelled");it.writeText(m.toString(2))}};status.text="ยกเลิกแล้ว · ต้นฉบับยังอยู่";export.text="ลองส่งออกใหม่"}
     override fun onSaveInstanceState(out:Bundle){out.putInt("preset",preset);out.putFloat("speed",speed);out.putBoolean("crop",crop);super.onSaveInstanceState(out)}
-    override fun onStop(){cancel();player.pause();super.onStop()}
-    override fun onDestroy(){player.stopPlayback();super.onDestroy()}
+    override fun onStart(){super.onStart();player.setMediaController(controller)}
+    override fun onStop(){cancel();controller?.hide();player.setMediaController(null);player.pause();super.onStop()}
+    override fun onDestroy(){controller?.hide();player.stopPlayback();controller=null;super.onDestroy()}
 }

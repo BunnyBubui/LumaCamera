@@ -53,6 +53,7 @@ object MediaLedger {
 class StudioLibraryActivity:ComponentActivity(){
     override fun onCreate(state:android.os.Bundle?){super.onCreate(state);render()}
     override fun onResume(){super.onResume();render()}
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     private fun render(){
         val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(18),0,dp(18),0)};installRoot(root)
         root.addView(pill("‹  กลับหน้ากล้อง"){finish()},-1,dp(52))

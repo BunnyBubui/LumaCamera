@@ -351,7 +351,7 @@ class CameraActivity : ComponentActivity() {
             val aspect=when(prefs.getString("aspect","4:3")){"1:1"->Rational(1,1);"16:9"->Rational(16,9);else->Rational(4,3)}
             if(aspect!=Rational(4,3)&&!activeExtension)group.setViewPort(ViewPort.Builder(aspect,targetRotation).build())
             camera=provider.bindToLifecycle(this,selected,group.build())
-            manual=ManualControls(this,camera!!)
+            manual=ManualControls(this,camera!!,false,mode==PhotoMode.PRO)
             if(mode==PhotoMode.NIGHT&&!activeExtension&&output==CaptureOutput.JPEG){output=CaptureOutput.AI}
 
             capture=useCase;metadata=frames
@@ -556,10 +556,12 @@ class CameraActivity : ComponentActivity() {
             options.setCaptureRequestOption(CaptureRequest.CONTROL_AWB_LOCK, true)
         }
         val locked = Camera2CameraControl.from(active.cameraControl).setCaptureRequestOptions(options.build())
-        locked.addListener({
-            runCatching { locked.get() }
-            burst?.start()
-        }, main)
+        val pendingBurst=burst
+        val launched=java.util.concurrent.atomic.AtomicBoolean()
+        fun launchBurst(){if(burst===pendingBurst && launched.compareAndSet(false,true))pendingBurst?.start()}
+        locked.addListener({runCatching{locked.get()};launchBurst()},main)
+        // Some camera HALs never acknowledge a 3A lock after a session switch.
+        shutter.postDelayed({launchBurst()},1500)
     }
 
     private fun takePhoto() {
@@ -675,7 +677,7 @@ class CameraActivity : ComponentActivity() {
         override fun onError(e:ImageCaptureException){complete(e.localizedMessage?:"ถ่ายไม่ได้");file.delete()}
     })}
     private fun publishSpecial(file:File,note:String){val id=UUID.randomUUID().toString();val time=System.currentTimeMillis();val uri=PhotoMedia.publish(this,file,"LUMA_${time}_${id}.jpg",time);luma.shots.insert(Shot(id,time,uri,PhotoMedia.dimensions(file),ratio,rear,null,null,Decision.OFF,Stage.ORIGINAL,null,0,null,false,captureNote=note))}
-    private fun takeSequence(){val useCase=capture?:return;busy=true;refresh();SequentialPhotos(this,useCase,rear,ratio,{n->hint("ถ่ายต่อเนื่อง $n/10",3000)},{message->complete(message)}).start()}
+    private fun takeSequence(){val useCase=capture?:return;busy=true;refresh();SequentialPhotos(this,useCase,rear,ratio,{n->hint("ถ่ายต่อเนื่อง $n/10",3000)},{message->complete(message)},started={captureFeedback()}).start()}
     private fun finishPanorama(){if(busy)return;if(panoFiles.size<2){notice("ถ่ายอย่างน้อย 2 ภาพ โดยแต่ละภาพซ้อนทับกันประมาณครึ่งหนึ่ง");return};busy=true;refresh();hint("กำลังจับคู่และต่อภาพ…",120000)
         val input=panoFiles.toList();luma.fileIo.execute{runCatching{val result=PanoramaEngine.stitch(this,input);publishSpecial(result,"Panorama · ORB / homography");result.delete()}.onSuccess{input.forEach{it.delete()};runOnUiThread{panoFiles.clear();complete("บันทึกพาโนรามาแล้ว")}}.onFailure{complete("ต่อภาพไม่ได้ · ${it.localizedMessage} · เฟรมต้นฉบับยังอยู่")}}
     }

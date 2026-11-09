@@ -76,8 +76,8 @@ class StudioFlowTest{
         ActivityScenario.launch<ClipEditorActivity>(Intent(context,ClipEditorActivity::class.java).setData(MediaLedger.privateUri(context,file))).use{
             val spinner=device.wait(Until.findObject(By.clazz(Spinner::class.java)),15000);assertNotNull(spinner);spinner.click()
             device.wait(Until.findObject(By.text("AI SR1 2× · SDR ≤1080p")),10000).click()
-            device.findObject(By.text("ส่งออกเป็นไฟล์ใหม่")).click()
-            until(120000){MediaLedger.all(context).any{it.mime=="video/mp4"&&it.uri !in old}}
+            device.wait(Until.findObject(By.desc("ส่งออกคลิป")),10000).click()
+            until(120000){device.findObject(By.textContains("ส่งออกไม่ได้"))?.let{fail(it.text)};MediaLedger.all(context).any{it.mime=="video/mp4"&&it.uri !in old}}
             val item=MediaLedger.all(context).first{it.mime=="video/mp4"&&it.uri !in old};val report=ClipInspector.inspect(context,item.uri)
             assertEquals(report.toString(),640,report.getInt("width"));assertEquals(480,report.getInt("height"));assertTrue(report.toString(),report.getLong("frames")>=28)
         }
