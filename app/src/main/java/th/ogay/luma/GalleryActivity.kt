@@ -110,7 +110,7 @@ class GalleryActivity : ComponentActivity() {
         }
         toggle.removeAllViews()
         fun chip(text:String,active:Boolean=false,click:()->Unit) {
-            toggle.addView(pill(text,click).apply {if(active)setTextColor(LIME)},LinearLayout.LayoutParams(-2,dp(44)).apply{setMargins(dp(2),0,dp(2),0)})
+            toggle.addView(pill(text,click).apply {selectionStyle(active)},LinearLayout.LayoutParams(-2,dp(48)).apply{setMargins(dp(2),0,dp(2),0)})
         }
         if (s.raw != null) {
             chip("เปิด DNG") {

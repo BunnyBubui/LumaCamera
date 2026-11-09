@@ -16,11 +16,11 @@ import androidx.core.view.WindowInsetsCompat
 import java.util.Locale
 import kotlin.math.roundToInt
 
-val BG = 0xff121613.toInt()
-val PANEL = 0xff222822.toInt()
-val WHITE = 0xfff4f5ec.toInt()
-val MUTED = 0xffb4bcae.toInt()
-val LIME = 0xffdaee8d.toInt()
+val BG = 0xff000000.toInt()
+val PANEL = 0xff202023.toInt()
+val WHITE = 0xffffffff.toInt()
+val MUTED = 0xffa7a7ad.toInt()
+val LIME = 0xffffd447.toInt()
 fun Context.dp(x: Int) = (resources.displayMetrics.density*x).roundToInt()
 fun shape(color: Int, radius: Float = 32f) = GradientDrawable().apply { setColor(color); cornerRadius = radius }
 fun Context.label(value: String, sp: Float, tint: Int = WHITE) = TextView(this).apply {
@@ -28,8 +28,21 @@ fun Context.label(value: String, sp: Float, tint: Int = WHITE) = TextView(this).
     includeFontPadding = true
 }
 fun Context.pill(value: String, action: () -> Unit) = label(value,14f).apply {
-    gravity = Gravity.CENTER; minHeight = dp(44); setPadding(dp(14),0,dp(14),0)
+    gravity = Gravity.CENTER; minHeight = dp(48); setPadding(dp(14),dp(4),dp(14),dp(4))
     background = shape(PANEL, dp(22).toFloat()); isFocusable = true; setOnClickListener { action() }; pressFeedback()
+    ViewCompat.setAccessibilityDelegate(this, object: androidx.core.view.AccessibilityDelegateCompat(){
+        override fun onInitializeAccessibilityNodeInfo(host:View,info:androidx.core.view.accessibility.AccessibilityNodeInfoCompat){super.onInitializeAccessibilityNodeInfo(host,info);info.className="android.widget.Button"}
+    })
+}
+private val selectedStyles=java.util.WeakHashMap<TextView,Boolean>()
+fun TextView.selectionStyle(selected:Boolean){
+    if(selectedStyles[this]==selected)return
+    selectedStyles[this]=selected
+    isSelected=selected
+    background=shape(if(selected)LIME else PANEL,context.dp(22).toFloat())
+    setTextColor(if(selected)BG else WHITE)
+    typeface=if(selected)Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+    ViewCompat.setStateDescription(this,if(selected)"เลือกอยู่" else null)
 }
 fun LinearLayout.space(weight: Float = 1f) {
     val params = if (orientation == LinearLayout.HORIZONTAL) LinearLayout.LayoutParams(0,1,weight) else LinearLayout.LayoutParams(1,0,weight)
@@ -51,6 +64,11 @@ fun pixelsText(pixels: Long) = String.format(Locale.US,"%.2f MP",pixels/1e6)
 fun Context.notice(message: String) = Toast.makeText(this,message,Toast.LENGTH_LONG).show()
 
 class Glyph(context: Context, private val kind: String, desc: String, action: () -> Unit) : View(context) {
+    override fun getAccessibilityClassName():CharSequence="android.widget.Button"
+    var video = false
+        set(value) { field=value; invalidate() }
+    var recording = false
+        set(value) { field=value; invalidate() }
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
     init {
         contentDescription = desc; isFocusable = true; isClickable = true
@@ -60,12 +78,12 @@ class Glyph(context: Context, private val kind: String, desc: String, action: ()
     override fun onDraw(c: Canvas) {
         val size = minOf(width,height).toFloat()
         c.save(); c.translate((width-size)/2,(height-size)/2); c.scale(size/48,size/48)
-        p.style = Paint.Style.FILL; p.color = if (kind=="shutter") BG else PANEL
+        p.style = Paint.Style.FILL; p.color = if (kind=="shutter") BG else android.graphics.Color.TRANSPARENT
         c.drawCircle(24f,24f,22f,p)
-        p.style=Paint.Style.STROKE; p.color=if (kind=="shutter") LIME else WHITE
+        p.style=Paint.Style.STROKE; p.color=WHITE
         p.strokeWidth = if (kind=="shutter") 1.8f else 1.7f; p.strokeCap=Paint.Cap.ROUND; p.strokeJoin=Paint.Join.ROUND
         when(kind) {
-            "shutter" -> { c.drawCircle(24f,24f,21f,p); p.style=Paint.Style.FILL; p.color=WHITE; c.drawCircle(24f,24f,17.5f,p) }
+            "shutter" -> { c.drawCircle(24f,24f,21f,p); p.style=Paint.Style.FILL; p.color=if(video) 0xfffa4b56.toInt() else WHITE; if(recording)c.drawRoundRect(15f,15f,33f,33f,4f,4f,p) else c.drawCircle(24f,24f,17.5f,p) }
             "flip" -> {
                 c.drawArc(13f,14f,35f,32f,190f,150f,false,p); c.drawLine(34f,17f,34f,22f,p); c.drawLine(29f,22f,34f,22f,p)
                 c.drawArc(13f,16f,35f,34f,10f,150f,false,p); c.drawLine(14f,31f,14f,26f,p); c.drawLine(14f,26f,19f,26f,p)

@@ -87,3 +87,12 @@ Exposure fusion มักทำให้ภาพดูแบนลง (คอ�
 ถ้าภาพอ้างอิงเบลอจากการสั่น ภาพรวมก็จะเบลอตาม เพราะทุกบริเวณที่ไม่ผ่านการเทียบจะถอยไปใช้ภาพอ้างอิง ควรเลือกภาพที่คมที่สุดเป็น frame 0
 
 ถ้าวัตถุเคลื่อนที่กินพื้นที่มากกว่าครึ่งภาพ intensity mapping จาก histogram จะเพี้ยน และการปฏิเสธการเคลื่อนไหวจะไม่แม่น ควรทดสอบกรณีนี้บนเครื่องจริง
+
+
+## การเชื่อมใน Studio 0.3 (Codex integration)
+
+`HdrCapture` เรียก histogram matching ก่อน translation search, ตัดเฟรมที่ alignment error เกินเกณฑ์, ใช้ exposure×ISO จาก EXIF เมื่อมีครบ (fallback เป็นค่าชดเชยแสงที่ร้องขอพร้อมระบุใน metadata), ลดขนาดอินพุตตาม heap ที่เหลือ และตั้ง scratch budget แยก ภาพผลลัพธ์ติด Software `Luma HDR EF1 · exposure fusion SDR` พร้อมจำนวนเฟรมที่ใช้จริง
+
+เพิ่ม overload cancellation ผ่าน `HdrFusionQuality.Cancellation` เพื่อรองรับ Android API 23 โดยไม่ต้องเพิ่ม core-library desugaring และปฏิเสธ budget ที่เล็กกว่าขั้นต่ำของแถบ แทนการจัดสรรเกิน budget ที่ร้องขอ ผล stripe/whole-frame เท่ากันตาม fixture เมื่อใช้ pyramid depth เดียวกัน หากลด depth เพื่อให้พอดีงบ ผลอาจต่างจาก whole-frame ที่ใช้ depth มากกว่า
+
+ผล desktop ด้านบนยังเป็นผลของ Claude การเพิ่ม guard และการเชื่อม capture ต้องยืนยันด้วย Gradle/lint/emulator และ Reno15 แยกจากผลนั้น ดูสถานะล่าสุดที่ PR #3

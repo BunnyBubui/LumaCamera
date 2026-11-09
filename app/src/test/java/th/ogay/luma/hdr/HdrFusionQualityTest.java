@@ -315,6 +315,19 @@ public class HdrFusionQualityTest {
         assertNotEquals(0, out[0] >>> 24);
     }
 
+    @Test
+    public void rejectsBudgetThatCannotFitAMinimumStrip() {
+        int[] frame = new int[64*64];
+        expectInvalid(() -> HdrFusionQuality.merge(new int[][]{frame,frame},64,64,new int[2],new int[2],new float[2],1));
+    }
+
+    @Test(expected=java.util.concurrent.CancellationException.class)
+    public void cooperativelyCancelsBetweenPyramidFrames() {
+        int[] frame = render(ROOM,0,0,0,1);
+        java.util.concurrent.atomic.AtomicInteger checks = new java.util.concurrent.atomic.AtomicInteger();
+        HdrFusionQuality.merge(new int[][]{frame,frame},W,H,new int[2],new int[2],new float[2],8L<<20,() -> checks.incrementAndGet()>2);
+    }
+
     private static void expectInvalid(Runnable call) {
         try {
             call.run();

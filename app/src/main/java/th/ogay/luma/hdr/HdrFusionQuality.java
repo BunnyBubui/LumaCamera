@@ -43,6 +43,10 @@ public final class HdrFusionQuality {
         }
     }
 
+    /** API-23-compatible cooperative cancellation callback. */
+    @FunctionalInterface
+    public interface Cancellation { boolean isStopped(); }
+
     private HdrFusionQuality() {
     }
 
@@ -65,6 +69,14 @@ public final class HdrFusionQuality {
     /** Same as {@link #merge(int[][], int, int, int[], int[], float[])} with an explicit memory ceiling. */
     public static int[] merge(int[][] frames, int width, int height, int[] dx, int[] dy, float[] exposureEv,
                               long workingBytes) {
+        return merge(frames, width, height, dx, dy, exposureEv, workingBytes, () -> false);
+    }
+
+    /** Cooperative cancellation between strips and pyramid frames; partial output is never returned. */
+    public static int[] merge(int[][] frames, int width, int height, int[] dx, int[] dy, float[] exposureEv,
+                              long workingBytes, Cancellation stopped) {
+        if (stopped == null) throw new IllegalArgumentException("Cancellation callback is required");
+        checkStopped(stopped);
         validate(frames, width, height, dx, dy, exposureEv, workingBytes);
         int count = frames.length;
         int[] out = new int[width * height];
@@ -81,9 +93,15 @@ public final class HdrFusionQuality {
             int y1 = Math.min(height, y0 + plan.interior);
             int r0 = Math.max(0, y0 - plan.halo);
             int r1 = Math.min(height, y1 + plan.halo);
-            fuseRegion(frames, width, height, dx, dy, exposureEv, mapping, plan.levels, r0, r1, y0, y1, out);
+            checkStopped(stopped);
+            fuseRegion(frames, width, height, dx, dy, exposureEv, mapping, plan.levels, r0, r1, y0, y1, out, stopped);
         }
+        checkStopped(stopped);
         return out;
+    }
+
+    private static void checkStopped(Cancellation stopped) {
+        if (stopped.isStopped()) throw new java.util.concurrent.CancellationException("HDR fusion cancelled");
     }
 
     /**
@@ -170,12 +188,14 @@ public final class HdrFusionQuality {
      * Chooses strip height and pyramid depth so that a strip fits the budget. The whole frame is one strip
      * when it fits; strips then reproduce whole-frame output except for float rounding. Otherwise the depth drops until each strip is at least twice as tall as the halo on
      * one side, which keeps recomputed halo rows at no more than half of the work. A budget too small for
-     * a 32-row strip at depth 1 is exceeded rather than failing.
+     * a 32-row strip at depth 1 is rejected with IllegalArgumentException.
      */
     static Plan plan(int width, int height, long budget) {
         int levels = levelsFor(width, height);
         long rowBytes = (long) width * BYTES_PER_REGION_PIXEL;
         if (rowBytes * height <= budget) return new Plan(levels, height, 0);
+        if (budget < rowBytes * Math.min(height, MIN_INTERIOR_ROWS + 2L * haloFor(1)))
+            throw new IllegalArgumentException("Working budget cannot fit the minimum strip; reduce input size");
         long rows = budget / rowBytes;
         while (true) {
             int halo = haloFor(levels);
@@ -236,7 +256,7 @@ public final class HdrFusionQuality {
     }
 
     private static void fuseRegion(int[][] frames, int width, int height, int[] dx, int[] dy, float[] ev,
-                                   int[][] mapping, int levels, int r0, int r1, int y0, int y1, int[] out) {
+                                   int[][] mapping, int levels, int r0, int r1, int y0, int y1, int[] out, Cancellation stopped) {
         int rows = r1 - r0;
         int area = width * rows;
         int[] w = new int[levels];
@@ -254,6 +274,7 @@ public final class HdrFusionQuality {
         }
         float[] sum = new float[area];
         for (int i = 0; i < frames.length; i++) {
+            checkStopped(stopped);
             float[] weight = weights(frames, i, width, height, dx[i], dy[i], ev, mapping[i], refLuma, r0, rows);
             if (weight == null) continue;
             for (int p = 0; p < area; p++) sum[p] += weight[p];
@@ -261,6 +282,7 @@ public final class HdrFusionQuality {
         float[][][] acc = new float[3][levels][];
         for (int c = 0; c < 3; c++) for (int l = 0; l < levels; l++) acc[c][l] = new float[w[l] * h[l]];
         for (int i = 0; i < frames.length; i++) {
+            checkStopped(stopped);
             float[] weight = weights(frames, i, width, height, dx[i], dy[i], ev, mapping[i], refLuma, r0, rows);
             if (weight == null) continue;
             for (int p = 0; p < area; p++) weight[p] /= sum[p];
