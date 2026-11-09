@@ -162,9 +162,9 @@ class GlassGestureTest {
             if (shot != null) {
                 assertEquals(12, shot.requestedFrames)
                 // An emulator can finish 32 frames before the tap lands; then there is nothing left to stop.
-                org.junit.Assume.assumeTrue("Burst finished before the stop tap", shot.frames < 32)
+                org.junit.Assume.assumeTrue("Burst finished before the stop tap", shot.frames < 12)
                 until(10000) { context.luma.shots.get(shot.id)!!.stage != Stage.CAPTURING }
-                assertTrue("Stopped burst kept ${shot.frames} frames", shot.frames in 0 until 32)
+                assertTrue("Stopped burst kept ${shot.frames} frames", shot.frames in 0 until 12)
             }
         }
     }

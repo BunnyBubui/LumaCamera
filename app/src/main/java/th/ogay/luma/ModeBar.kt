@@ -16,7 +16,7 @@ object ModeBar {
     fun keys(a: Activity, kind: String): List<String> {
         val saved = a.getSharedPreferences("camera", 0).getString("mode_bar", CameraActivity.DEFAULT_BAR) ?: CameraActivity.DEFAULT_BAR
         val bar = saved.split(',').filter { k -> CameraActivity.ALL.any { it.key == k } }.let { if ("PHOTO" in it) it else listOf("PHOTO") + it }
-        return if (kind in bar) bar else bar + kind
+        return if (kind in bar || CameraActivity.ALL.none { it.key == kind }) bar else bar + kind
     }
     /** Fills [strip] and styles the live item; [pick] returns false to stay (the strip then snaps back). */
     fun fill(a: Activity, strip: CenterStrip, kind: String, pick: (String) -> Boolean) {
