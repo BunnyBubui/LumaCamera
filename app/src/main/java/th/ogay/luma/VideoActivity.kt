@@ -319,9 +319,11 @@ class VideoActivity:ComponentActivity(){
             tabs=FrameLayout(this).apply{background=glass(20,0x1fffffff)}
             knob=android.view.View(this).apply{background=glass(17,0x38ffffff)};tabs.addView(knob,FrameLayout.LayoutParams(0,-1).apply{setMargins(dp(3),dp(3),dp(3),dp(3))})
             val row=LinearLayout(this);tabLabels.clear()
-            listOf("ปรับแต่งวิดีโอ","คุณภาพวิดีโอ").forEachIndexed{i,t->val l=text(t,13.5f,if(i==category)WHITE else Glass.TEXT2,true).apply{gravity=Gravity.CENTER;isClickable=true;contentDescription=t;setOnClickListener{if(category!=i){category=i;slideKnob(true);closeDial();refreshChips()}}};tabLabels+=l;row.addView(l,LinearLayout.LayoutParams(0,-1,1f))}
+            listOf("ปรับแต่ง" to "ปรับแต่งวิดีโอ","คุณภาพ" to "คุณภาพวิดีโอ").forEachIndexed{i,(t,desc)->val l=text(t,13.5f,if(i==category)WHITE else Glass.TEXT2,true).apply{gravity=Gravity.CENTER;isClickable=true;contentDescription=desc;maxLines=1;ellipsize=null;setOnClickListener{if(category!=i){category=i;slideKnob(true);closeDial();refreshChips()}}};tabLabels+=l;row.addView(l,LinearLayout.LayoutParams(0,-1,1f))}
             tabs.addView(row,-1,-1);tabs.post{slideKnob(false)}
-            dock.addView(tabs,LinearLayout.LayoutParams(-1,dp(48)).apply{setMargins(dp(16),dp(8),dp(16),dp(4))})
+            // Landscape has no room in the side dock, so the tabs float over the viewfinder there.
+            if(landscape)stage.addView(tabs,FrameLayout.LayoutParams(dp(260),dp(48),Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply{bottomMargin=dp(72)})
+            else dock.addView(tabs,LinearLayout.LayoutParams(-1,dp(48)).apply{setMargins(dp(16),dp(8),dp(16),dp(4))})
         }
         chipFrame=FrameLayout(this).apply{background=glass(24)}
         chips=CenterStrip(this).apply{capsuleHeightDp=44;onSelect={i->chipKeys().getOrNull(i)?.let{k->if(openChip==k)closeDial() else openDial(k)}};onLive={i->styleChips(i)}}
