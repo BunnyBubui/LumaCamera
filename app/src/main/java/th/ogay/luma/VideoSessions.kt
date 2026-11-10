@@ -43,14 +43,14 @@ class VideoSessions {
             JSONObject().put("range", it.range.toString()).put("capabilitySource", it.source)
         })).put("queryErrors", JSONArray(errors[Key(info, quality, dynamic, eis, slow)].orEmpty()))
     }
+    /** Set after a [60,60] clip measured below 50 fps; then the 120 fps conversion path is offered instead. */
+    @Volatile var failed60 = false
     /**
      * Whether the camera's own Camera2 tables allow 60 fps at this recording size even when CameraX lists no 60 fps
      * session for it: an AE target range reaching 60 and a minimum frame duration of at most 1/60 s for the encoder
      * surface. A clip recorded this way is experimental; ClipInspector measures what the file really holds.
      */
     @androidx.annotation.OptIn(androidx.camera.camera2.interop.ExperimentalCamera2Interop::class)
-    /** Set after a [60,60] clip measured below 50 fps; then the 120 fps conversion path is offered instead. */
-    @Volatile var failed60 = false
     fun camera2Allows60(info: CameraInfo, quality: Quality): Boolean = runCatching {
         val c = androidx.camera.camera2.interop.Camera2CameraInfo.from(info)
         val ae = c.getCameraCharacteristic(android.hardware.camera2.CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES) ?: return@runCatching false
