@@ -16,3 +16,7 @@ Not done: OPPO CameraUnit (needs OPPO partner approval), root-only vendor whitel
 - The phone exposes OPPO/Qualcomm request keys to apps (EnableXCFAOptimization, EnableInsensorZoom, EnableIdealRAW, com.oplus.video.stabilization.mode …). The scan now tests whether any of them lets the camera accept a bigger JPEG stream.
 - 50 MP mode: shoots the largest size offered and the on-device AI enlarges it ×2 (≈50 MP). Setting "ความละเอียดสูง: ขยายด้วย AI" turns it off.
 - Scan fixed: each test reopens the camera (a failed high-speed test used to close it and spoil the rest); the broken high-speed measurement was dropped.
+
+## Second scan (after the first fixes)
+- Main (id 2) and tele (id 4) hold 60.0 fps with a plain [60,60] request; the ultra-wide (id 3) delivers only 30 fps. The logical camera 0 gave 60 earlier but 0 frames in this run (the oversized sessions upset the camera service afterwards).
+- Sessions with undeclared JPEG sizes (8192×6144 … 7680×4320) report "configured" on every back camera, with and without the maker's switches. That alone proves nothing, so the scan now really shoots at those sizes, last, and records the size of the JPEG that comes back. A real result larger than the listed maximum is saved and used by the high-resolution mode.

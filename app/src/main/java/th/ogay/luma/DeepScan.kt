@@ -115,20 +115,6 @@ object DeepScan {
                 }
                 t.put("stills", stills)
 
-                // Sizes the camera does not list: does the session accept them anyway (with and without the maker's switches)?
-                progress("กล้อง $id: ลองขนาดที่ไม่ได้ประกาศ…")
-                val undeclared = JSONArray()
-                val vendor = vendorSwitches(ch)
-                for (size in listOf(Size(8192, 6144), Size(8160, 6120), Size(8000, 6000), Size(7680, 4320))) {
-                    for (use in listOf<Pair<String, CaptureRequest.Key<Any>?>?>(null) + vendor.map { it.first to it.second }) {
-                        val r = withDevice(cm, id, handler) { stillConfigured(it, size, use?.second, handler) }.put("size", size.toString()).put("switch", use?.first ?: "none")
-                        undeclared.put(r)
-                        if (r.optBoolean("configured")) lines += "  ขนาดไม่ประกาศ ${size.width}×${size.height} ${use?.first?.let { "+ $it" } ?: ""}: กล้องรับชุดนี้!"
-                    }
-                }
-                t.put("undeclaredSizes", undeclared)
-                if (undeclared.let { a -> (0 until a.length()).none { a.getJSONObject(it).optBoolean("configured") } }) lines += "  ขนาดที่ไม่ได้ประกาศ (50 MP แบบ 8192×6144 ฯลฯ): กล้องปฏิเสธทุกแบบ รวมถึงเมื่อเปิดสวิตช์ของผู้ผลิต ${vendor.size} ตัว"
-
                 // 60 fps in an ordinary session, asked for even when the list does not offer it.
                 progress("กล้อง $id: ลอง 60 fps…")
                 val ae = ch.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)?.toList().orEmpty()
@@ -152,6 +138,34 @@ object DeepScan {
                 }
                 tests.put(t)
             }
+            // 5. Last, because an oversized request can upset the camera service: really shoot at sizes the camera does not list
+            //    and read the size of the JPEG that comes back (a session that merely "configures" proves nothing).
+            val big = JSONArray()
+            val sizes = listOf(Size(8192, 6144), Size(8160, 6120), Size(8000, 6000), Size(7680, 4320))
+            for (id in listed) {
+                val ch = info[id] ?: continue
+                if (ch.get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_FRONT) continue
+                val normal = biggest(ch.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)?.getOutputSizes(ImageFormat.JPEG))
+                val vendor = vendorSwitches(ch)
+                var won = false
+                for (size in sizes) {
+                    for (use in listOf<Pair<String, CaptureRequest.Key<Any>?>?>(null) + vendor.map { it.first to it.second }) {
+                        // With a switch, only the first size: the switches are the long shot.
+                        if (use != null && size != sizes[0]) continue
+                        progress("กล้อง $id: ถ่ายจริงที่ ${size.width}×${size.height}${use?.let { " + ${it.first}" } ?: ""}…")
+                        val r = withDevice(cm, id, handler) { still(it, size, false, handler, use?.second) }.put("cameraId", id).put("switch", use?.first ?: "none")
+                        big.put(r)
+                        if (r.optBoolean("ok")) {
+                            lines += "ถ่ายจริงกล้อง $id ที่ขอ ${size.width}×${size.height}: ได้ภาพ ${r.optInt("width")}×${r.optInt("height")} (${mp(Size(r.optInt("width"), r.optInt("height")))})${use?.let { " เมื่อเปิด ${it.first}" } ?: ""}"
+                            if (r.optLong("pixels") > bestPixels && r.optLong("pixels") > pixels(normal)) { bestPixels = r.optLong("pixels"); best = Still(id, Size(r.optInt("width"), r.optInt("height")), false) }
+                            won = true
+                        } else lines += "ถ่ายจริงกล้อง $id ที่ ${size.width}×${size.height}${use?.let { " + ${it.first}" } ?: ""}: ไม่ได้ (${r.optString("error")})"
+                        if (won) break
+                    }
+                    if (won) break
+                }
+            }
+            out.put("undeclaredShots", big)
             out.put("tests", tests)
             val prefs = context.getSharedPreferences("camera", 0).edit()
             best?.let { b ->
@@ -181,32 +195,6 @@ object DeepScan {
         return runCatching {
             ch.availableCaptureRequestKeys.filter { k -> wanted.any { k.name.endsWith(it) } }.map { it.name.substringAfterLast('.') to (it as CaptureRequest.Key<Any>) }
         }.getOrDefault(emptyList())
-    }
-
-    /** Only asks whether a session with a big JPEG stream (and optionally one switch set) is accepted; no picture is taken. */
-    private fun stillConfigured(device: CameraDevice, size: Size, key: CaptureRequest.Key<Any>?, handler: Handler): JSONObject {
-        val r = JSONObject().put("configured", false)
-        val jpeg = try { ImageReader.newInstance(size.width, size.height, ImageFormat.JPEG, 1) } catch (e: Throwable) { return r.put("error", e.javaClass.simpleName) }
-        var s: CameraCaptureSession? = null
-        try {
-            val params = key?.let { k ->
-                // The key's value type is not published; try a whole number, then a single byte.
-                listOf<Any>(1, 1.toByte()).firstNotNullOfOrNull { v -> runCatching { device.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply { set(k, v) }.build() }.getOrNull() }
-            }
-            val latch = CountDownLatch(1)
-            var ok = false
-            var error = "หมดเวลา"
-            val config = SessionConfiguration(SessionConfiguration.SESSION_REGULAR, listOf(OutputConfiguration(jpeg.surface)), { handler.post(it) }, object : CameraCaptureSession.StateCallback() {
-                override fun onConfigured(session: CameraCaptureSession) { s = session; ok = true; latch.countDown() }
-                override fun onConfigureFailed(session: CameraCaptureSession) { error = "กล้องไม่รับชุดนี้"; latch.countDown() }
-            })
-            if (params != null) config.sessionParameters = params
-            device.createCaptureSession(config)
-            latch.await(5, TimeUnit.SECONDS)
-            r.put("configured", ok); if (!ok) r.put("error", error)
-        } catch (e: Exception) { r.put("error", e.message ?: e.javaClass.simpleName) }
-        finally { runCatching { s?.close() }; SystemClock.sleep(100); runCatching { jpeg.close() } }
-        return r
     }
 
     private fun fpsText(r: JSONObject) = if (r.optInt("frames") > 0) String.format(Locale.US, "ได้จริง %.1f fps", r.optDouble("fps")) else "ไม่ได้ (${r.optString("error", "ไม่มีเฟรม")})"
@@ -267,7 +255,7 @@ object DeepScan {
         return device to error
     }
 
-    private fun session(device: CameraDevice, outputs: List<OutputConfiguration>, highSpeed: Boolean, handler: Handler): Pair<CameraCaptureSession?, String> {
+    private fun session(device: CameraDevice, outputs: List<OutputConfiguration>, highSpeed: Boolean, handler: Handler, params: CaptureRequest? = null): Pair<CameraCaptureSession?, String> {
         val latch = CountDownLatch(1)
         var session: CameraCaptureSession? = null
         var error = "หมดเวลา"
@@ -276,7 +264,7 @@ object DeepScan {
                 object : CameraCaptureSession.StateCallback() {
                     override fun onConfigured(s: CameraCaptureSession) { session = s; error = ""; latch.countDown() }
                     override fun onConfigureFailed(s: CameraCaptureSession) { error = "กล้องไม่รับชุดสตรีมนี้"; latch.countDown() }
-                }))
+                }).apply { if (params != null) sessionParameters = params })
         } catch (e: Exception) { return null to (e.message ?: e.javaClass.simpleName) }
         latch.await(6, TimeUnit.SECONDS)
         return session to error
@@ -323,7 +311,7 @@ object DeepScan {
     }
 
     /** One still at [size]; reports the size the JPEG really has. */
-    private fun still(device: CameraDevice, size: Size, maxMode: Boolean, handler: Handler): JSONObject {
+    private fun still(device: CameraDevice, size: Size, maxMode: Boolean, handler: Handler, key: CaptureRequest.Key<Any>? = null): JSONObject {
         val r = JSONObject().put("requested", size.toString()).put("maxMode", maxMode).put("ok", false)
         val jpeg = ImageReader.newInstance(size.width, size.height, ImageFormat.JPEG, 1)
         val live = ImageReader.newInstance(640, 480, ImageFormat.YUV_420_888, 2)
@@ -335,7 +323,8 @@ object DeepScan {
         var s: CameraCaptureSession? = null
         try {
             val big = OutputConfiguration(jpeg.surface).apply { if (maxMode && Build.VERSION.SDK_INT >= 31) addSensorPixelModeUsed(CameraMetadata.SENSOR_PIXEL_MODE_MAXIMUM_RESOLUTION) }
-            val (session, err) = session(device, listOf(OutputConfiguration(live.surface), big), false, handler)
+            val params = key?.let { k -> listOf<Any>(1, 1.toByte()).firstNotNullOfOrNull { v -> runCatching { device.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply { set(k, v) }.build() }.getOrNull() } }
+            val (session, err) = session(device, listOf(OutputConfiguration(live.surface), big), false, handler, params)
             if (session == null) return r.put("error", err)
             s = session
             session.setRepeatingRequest(device.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply { addTarget(live.surface) }.build(), null, handler)
