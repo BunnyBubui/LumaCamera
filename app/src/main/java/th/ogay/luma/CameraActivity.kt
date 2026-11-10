@@ -66,11 +66,11 @@ class CameraActivity : ComponentActivity() {
         fun blurWord(f: Float) = when { f <= 1.4f -> "เบลอมากที่สุด"; f <= 2.8f -> "เบลอชัด"; f <= 5.6f -> "เบลอพอดี"; else -> "เบลอน้อย" }
         val APERTURES = listOf(1.2f, 1.4f, 1.8f, 2f, 2.8f, 4f, 5.6f, 8f, 11f, 16f)
         val ALL = listOf(
-            BarMode("NIGHT", "กลางคืน", Icons.NIGHT), BarMode("PORTRAIT", "บุคคล", Icons.PORTRAIT), BarMode("PHOTO", "ภาพถ่าย", Icons.PHOTO),
-            BarMode("VIDEO", "วิดีโอ", Icons.VIDEO), BarMode("PRO", "โปร", Icons.PRO), BarMode("MOVIE", "วิดีโอโปร", Icons.MOVIE),
+            BarMode("PORTRAIT", "บุคคล", Icons.PORTRAIT), BarMode("PHOTO", "ภาพถ่าย", Icons.PHOTO),
+            BarMode("VIDEO", "วิดีโอ", Icons.VIDEO), BarMode("PRO", "โปร", Icons.PRO),
             BarMode("HDR", "HDR", Icons.HDR), BarMode("HIRES", "ความละเอียดสูง", Icons.HIRES),
-            BarMode("FLASH_NIGHT", "แฟลชเร็ว", Icons.FLASH), BarMode("FILM", "ฟิล์ม", Icons.FILM), BarMode("SPORT", "ถ่ายเร็ว", Icons.FLASH))
-        const val DEFAULT_BAR = "NIGHT,PORTRAIT,PHOTO,VIDEO,PRO"
+            BarMode("FLASH_NIGHT", "แฟลชเร็ว", Icons.FLASH), BarMode("FLASH_FAST", "แฟลชไว", Icons.FLASH), BarMode("FILM", "ฟิล์ม", Icons.FILM), BarMode("SPORT", "ถ่ายเร็ว", Icons.FLASH))
+        const val DEFAULT_BAR = "PORTRAIT,PHOTO,VIDEO,PRO"
         val LOOKS = listOf("มาตรฐาน", "สดใส", "อบอุ่น", "เย็น", "ฟิล์ม", "ขาวดำ")
         val NIGHT_FRAMES = listOf(6, 9, 12)
     }
@@ -105,6 +105,7 @@ class CameraActivity : ComponentActivity() {
     private var flash = ImageCapture.FLASH_MODE_OFF
     private var busy = false
     private var zoomSettling = false
+    private var lastZoomSent = 0L
     private var zoomTicket = 0
     private var binding = 0
     private var pendingBind = false
@@ -206,10 +207,11 @@ class CameraActivity : ComponentActivity() {
         if (output.enhance) output = CaptureOutput.JPEG
         if (prefs.getInt("night_frames", 6) > 12 || prefs.getInt("night_frames", 6) < 6) prefs.edit().putInt("night_frames", 6).apply()
         mode = runCatching { PhotoMode.valueOf(prefs.getString("photo_mode", "PHOTO")!!) }.getOrDefault(PhotoMode.PHOTO)
+        if (ALL.none { it.key == mode.name }) mode = PhotoMode.PHOTO   // a mode that no longer exists (night, pro video) falls back to photo
         if(ALL.none { it.key == mode.name })mode=PhotoMode.PHOTO
         shutterSound.load(MediaActionSound.SHUTTER_CLICK)
         auto = false; cropFrom = cropPref(); software = cropFrom > 0f
-        nightOn = prefs.getBoolean("night_toggle", false)
+        nightOn = false   // the night toggle was removed from the UI
         rear = state?.getBoolean("rear",true) ?: true
         ratio = state?.getFloat("zoom",1f) ?: 1f
         buildScreen()
@@ -287,7 +289,7 @@ class CameraActivity : ComponentActivity() {
     private fun buildScreen() {
         host = FrameLayout(this)
         installRoot(host)
-        menu = GlassMenu(host) { on -> if (panel.showing || editor.showing || lookSheet.showing) { panel.recede(on); editor.recede(on); lookSheet.recede(on) } else pushBack(if (on) 1f else 0f) }
+        menu = GlassMenu(host) { on -> if (panel.showing || editor.showing || lookSheet.showing) { panel.recede(on); editor.recede(on); lookSheet.recede(on) } else pushBackSmooth(on) }
         panel = GlassSheet(host, { handlePivot() }) { pushBack(it) }
         editor = GlassSheet(host, { handlePivot() }) { pushBack(it) }
         lookSheet = GlassSheet(host, { handlePivot() }) { pushBack(it) }
@@ -307,15 +309,15 @@ class CameraActivity : ComponentActivity() {
         stage.addView(mask, FrameLayout.LayoutParams(-1, -1, Gravity.TOP or Gravity.CENTER_HORIZONTAL))
         stage.addOnLayoutChangeListener { _, left, top, right, bottom, _, _, _, _ -> layoutMask(right - left, bottom - top) }
         // The PreviewView survives a rebuilt screen (rotation) so a reused session keeps its surface.
-        preview = (if (::preview.isInitialized) preview.also { (it.parent as? ViewGroup)?.removeView(it) } else PreviewView(this)).apply { implementationMode = PreviewView.ImplementationMode.COMPATIBLE; scaleType = PreviewView.ScaleType.FIT_CENTER }
+        preview = (if (::preview.isInitialized) preview.also { (it.parent as? ViewGroup)?.removeView(it) } else PreviewView(this)).apply { implementationMode = PreviewView.ImplementationMode.COMPATIBLE; scaleType = PreviewView.ScaleType.FILL_CENTER }
         mask.addView(preview, -1, -1)
-        overlay = CompositionOverlay(this).apply { grid = prefs.getBoolean("grid", false) }
+        overlay = CompositionOverlay(this).apply { gridKind = Grids.kind(prefs) }
         mask.addView(overlay, -1, -1)
         overlay.monitor(preview)
         faces = FaceOverlay(this); mask.addView(faces, -1, -1)
         frozen = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP; alpha = 0f; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
         mask.addView(frozen, -1, -1)
-        if (!previewObserved) { previewObserved = true; preview.previewStreamState.observe(this) { if (it == PreviewView.StreamState.STREAMING && !pushedBack) unfreeze() } }
+        if (!previewObserved) { previewObserved = true; preview.previewStreamState.observe(this) { if (it == PreviewView.StreamState.STREAMING) unfreeze() } }
 
         expRail = EdgeRail(this, false); stage.addView(expRail, FrameLayout.LayoutParams(dp(150), -1, Gravity.START))
         focusRail = EdgeRail(this, true); stage.addView(focusRail, FrameLayout.LayoutParams(dp(170), -1, Gravity.END))
@@ -351,7 +353,7 @@ class CameraActivity : ComponentActivity() {
         stage.addView(nightButton, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.BOTTOM or Gravity.END).apply { setMargins(0, 0, dp(14), dp(12)) })
         // Look button sits above the night button with a small gap; it opens the colour / film sheet.
         lookButton = glassButton(IconView(this, Icons.FILM), 48, "ปรับแต่งภาพและฟิล์ม") { openLookSheet() }
-        stage.addView(lookButton, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.BOTTOM or Gravity.END).apply { setMargins(0, 0, dp(14), dp(12 + 48 + 10)) })
+        stage.addView(lookButton, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.BOTTOM or Gravity.END).apply { setMargins(0, 0, dp(14), dp(12)) })
 
         chipFrame = FrameLayout(this).apply { background = glass(24); visibility = View.GONE }
         chips = CenterStrip(this).apply { capsuleHeightDp = 44; onSelect = { i -> chipSelected(i) }; onLive = { i -> styleChips(i) } }
@@ -364,6 +366,7 @@ class CameraActivity : ComponentActivity() {
             onDrag = { dy -> if (panel.showing) panel.follow(dy) }; onRelease = { _, v -> if (panel.showing) panel.release(true, v) }
         }
         dockView = dock
+        dock.addOnLayoutChangeListener { _, _, t, _, b, _, ot, _, ob -> if (b - t != ob - ot) dock.post { applyStageShape() } }
         androidx.core.view.ViewCompat.addAccessibilityAction(dock, "เปิดตัวเลือกกล้อง") { _, _ -> openPanel(); true }
         if (landscape) { dock.gravity = Gravity.CENTER_VERTICAL; column.addView(dock, dp(320), -1) } else column.addView(dock, -1, -2)
         handle = IconView(this, Icons.CHEVRON_UP, 1.6f).apply { tint = Glass.TEXT3; contentDescription = "ตัวเลือกกล้อง ปัดขึ้นหรือแตะเพื่อเปิด"; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES; isClickable = true; isFocusable = true; setPadding(dp(46), dp(19), dp(46), dp(19)); setOnClickListener { openPanel() } }
@@ -396,6 +399,19 @@ class CameraActivity : ComponentActivity() {
     /** Rows that hold two lines of text grow with the font scale (1.0 → 1, 2.0 → 1.5). */
     private fun grow(): Float = ((resources.configuration.fontScale + 1f) / 2f).coerceAtLeast(1f)
     private fun dp(x: Float) = (resources.displayMetrics.density * x).roundToInt()
+    /** Tall shapes (16:9 and longer) run edge to edge under the control dock, like the phone's own camera. */
+    private fun applyStageShape() {
+        val dock = dockView ?: return
+        if (!::stage.isInitialized || resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE) return
+        val tall = Aspects.value(prefs.getString("aspect", "4:3") ?: "4:3", false) < 0.6f && dock.height > 0
+        val lp = dock.layoutParams as LinearLayout.LayoutParams
+        val want = if (tall) -dock.height else 0
+        if (lp.topMargin != want) { lp.topMargin = want; dock.layoutParams = lp }
+        dock.setBackgroundColor(if (tall) 0x66070b16 else BG)
+        stage.clipToPadding = false
+        val pad = if (tall) dock.height else 0
+        if (stage.paddingBottom != pad) stage.setPadding(0, 0, 0, pad)
+    }
     private fun layoutMask(w0: Int, h0: Int) {
         val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         val format = prefs.getString("aspect", "4:3")
@@ -443,27 +459,30 @@ class CameraActivity : ComponentActivity() {
     private fun pushBack(f: Float) {
         if (!::mask.isInitialized) return
         if (mask.scaleX != 1f || maskRadius != 0f) { mask.scaleX = 1f; mask.scaleY = 1f; maskRadius = 0f; mask.invalidateOutline() }
-        val b = backdrop ?: ImageView(this).apply {
-            scaleType = ImageView.ScaleType.CENTER_CROP; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
-            setColorFilter(0x8c070b16.toInt(), android.graphics.PorterDuff.Mode.SRC_ATOP); visibility = View.GONE
+        val b = backdrop ?: View(this).apply {
+            setBackgroundColor(0xff070b16.toInt()); alpha = 0f; visibility = View.GONE; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             host.addView(this, host.indexOfChild(columnView) + 1, FrameLayout.LayoutParams(-1, -1)); backdrop = this
         }
-        if (f > 0.001f) {
-            if (b.visibility != View.VISIBLE) {
-                // One small still is enough: the blur hides any lack of detail.
-                val still = runCatching { preview.bitmap?.let { full -> Bitmap.createScaledBitmap(full, (full.width / 6).coerceAtLeast(1), (full.height / 6).coerceAtLeast(1), true).also { if (it !== full) full.recycle() } } }.getOrNull()
-                if (still != null) b.setImageBitmap(still) else b.setImageDrawable(Glass.page())
-                Glass.blur(b, 26f); b.alpha = 0f; b.visibility = View.VISIBLE; pushedBack = true
-            }
-            b.animate().cancel(); b.alpha = f.coerceIn(0f, 1f)
+        val k = f.coerceIn(0f, 1f)
+        if (k > 0.001f) {
+            if (b.visibility != View.VISIBLE) { b.visibility = View.VISIBLE; pushedBack = true }
+            // The live view keeps playing behind the sheet; it is only dimmed and softened a little.
+            b.animate().cancel(); b.alpha = 0.4f * k
+            columnView?.let { Glass.blur(it, 6f * k) }
         } else if (pushedBack) {
             pushedBack = false
-            // A rebind that finished while the sheet was open left the frozen frame up: lift it now.
-            preview.post { unfreeze() }
-            b.animate().alpha(0f).setDuration(if (Glass.reduced(this)) 0 else 280).withEndAction { if (!pushedBack) { b.visibility = View.GONE; b.setImageDrawable(null) } }.start()
+            columnView?.let { Glass.blur(it, 0f) }
+            b.animate().alpha(0f).setDuration(if (Glass.reduced(this)) 0 else 200).withEndAction { if (!pushedBack) b.visibility = View.GONE }.start()
         }
     }
-    private var backdrop: ImageView? = null
+    private var pushAnim: android.animation.ValueAnimator? = null
+    /** Menus without a sheet fade the backdrop in and out instead of snapping. */
+    private fun pushBackSmooth(on: Boolean) {
+        pushAnim?.cancel()
+        if (Glass.reduced(this)) { pushBack(if (on) 1f else 0f); return }
+        pushAnim = android.animation.ValueAnimator.ofFloat(if (on) 0f else 1f, if (on) 1f else 0f).apply { duration = 220; interpolator = Glass.EASE; addUpdateListener { pushBack(it.animatedValue as Float) }; start() }
+    }
+    private var backdrop: View? = null
     private var columnView: View? = null
     private var pushedBack = false
     /** Covers the preview with a downscaled, blurred still (rebinds, sheets). [scale] 3 for rebinds, 8 behind sheets. */
@@ -566,7 +585,6 @@ class CameraActivity : ComponentActivity() {
         if (aeLock || pressLock) statusIcon(Icons.LOCK, after = "AE", name = "ล็อกความสว่าง")
         if (macro) statusIcon(Icons.FLOWER, name = "มาโคร เปิด")
         if (nightActive()) statusIcon(Icons.NIGHT, after = listOf("2s", "3s", "5s")[nightIndex()], name = "กลางคืน · " + if (activeExtension) "ระบบกล้อง" else "AI รวมเฟรม")
-        if (auto && output == CaptureOutput.JPEG && mode == PhotoMode.PHOTO) statusIcon(Icons.AI, name = "AI อัตโนมัติ เปิด")
         statusRow.contentDescription = "สิ่งที่เปิดอยู่: " + (0 until statusRow.childCount).joinToString(", ") { statusRow.getChildAt(it).contentDescription }
     }
     private fun nightIndex() = NIGHT_FRAMES.indexOf(prefs.getInt("night_frames", 6)).coerceAtLeast(0)
@@ -906,7 +924,7 @@ class CameraActivity : ComponentActivity() {
                 val aspects = Aspects.available(prefs); val aspect = prefs.getString("aspect", "4:3") ?: "4:3"
                 tile("สัดส่วนภาพ", Icons.FRAME, aspect, aspect != "4:3", aspect, true) { v ->
                     menu.show(v, "สัดส่วนภาพ", aspects.map { GlassMenu.Option(it, Icons.FRAME, Aspects.note(it), it) }, aspects.indexOf(aspect)) { i ->
-                        if (!busy) { prefs.edit().putString("aspect", aspects[i]).apply(); layoutMask(stage.width, stage.height); freezeFrame(); bind() }; reopen()
+                        if (!busy) { prefs.edit().putString("aspect", aspects[i]).apply(); applyStageShape(); layoutMask(stage.width, stage.height); freezeFrame(); bind() }; reopen()
                     }
                 }
                 val outs = CaptureOutput.entries.filter { !it.enhance && (!it.needsRaw || rawAvailable) }
@@ -919,8 +937,10 @@ class CameraActivity : ComponentActivity() {
                         prefs.edit().putString("crop_from", crops[i]).apply(); cropFrom = crops[i].toFloat(); software = cropFrom > 0f; if (!busy) { boundKey = null; applyZoom(ratio) }; reopen()
                     }
                 }
-                val grid0 = prefs.getBoolean("grid", false)
-                tile("เส้นกริด", Icons.GRID, if (grid0) "เปิด" else "ปิด", grid0, isMenu = false) { prefs.edit().putBoolean("grid", !grid0).apply(); overlay.grid = !grid0; reopen() }
+                val grid0 = Grids.kind(prefs)
+                tile("เส้นกริด", Icons.GRID, Grids.names[grid0], grid0 > 0, isMenu = true) { v ->
+                    menu.show(v, "เส้นกริด", Grids.names.mapIndexed { i, n -> GlassMenu.Option(n, Icons.GRID, Grids.notes[i]) }, grid0) { i -> Grids.set(prefs, i); overlay.gridKind = i; reopen() }
+                }
             }
             fill(); reopen = { fill() }
             box.addView(grid, -1, -2)
@@ -939,93 +959,78 @@ class CameraActivity : ComponentActivity() {
     }
     /** Preview thumbnail source: one small still of the live view, so every look shows real colours. */
     private var lookSampleCache: Bitmap? = null
-    private var lookSegPos = -1f
+    private val lookImages = mutableListOf<ImageView>()
+    /** A small still of the live view, read before any colour filter, so every thumbnail starts from the camera's own colour. */
+    private fun grabLookSample(): Bitmap? = runCatching { preview.bitmap?.let { f -> Bitmap.createScaledBitmap(f, 132, (132f * f.height / f.width).toInt().coerceAtLeast(1), true).also { if (it !== f) f.recycle() } } }.getOrNull()
+    /** While the sheet is open the thumbnails follow the live view, a few times a second. */
+    private val lookTicker = object : Runnable { override fun run() {
+        if (!lookSheet.showing || isDestroyed) return
+        if (!busy) grabLookSample()?.let { b -> val old = lookSampleCache; lookSampleCache = b; lookImages.forEach { it.setImageBitmap(b) }; if (old !== b) old?.recycle() }
+        preview.postDelayed(this, 400)
+    } }
     private fun openLookSheet() {
-        lookSegPos = -1f
-        // One clean still of the live view (never the filtered one) so every thumbnail starts from the camera's own colour.
-        lookSampleCache = runCatching { preview.bitmap?.let { f -> Bitmap.createScaledBitmap(f, 120, (120f * f.height / f.width).toInt().coerceAtLeast(1), true).also { if (it !== f) f.recycle() } } }.getOrNull() ?: lookSampleCache
+        lookSampleCache = grabLookSample() ?: lookSampleCache
+        val film = mode == PhotoMode.FILM
         lookSheet.open { box, sheet ->
-            val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(6), 0, dp(6)) }
-            head.addView(text("ปรับแต่งภาพ", 18f, Color.WHITE, true), LinearLayout.LayoutParams(0, -2, 1f))
+            val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(6), 0, dp(8)) }
+            head.addView(text(if (film) "ฟิล์มและกล้องเก่า" else "ปรับแต่งภาพ", 18f, Color.WHITE, true), LinearLayout.LayoutParams(0, -2, 1f))
             head.addView(text("คืนค่า", 12f).apply { gravity = Gravity.CENTER; background = glass(16, 0x1affffff); setPadding(dp(14), 0, dp(14), 0); minWidth = dp(48); isClickable = true; glassTouch()
-                setOnClickListener { prefs.edit().putInt("look", 0).putInt("look_bright", 0).putInt("look_warm", 0).remove("film").putString("look_kind", "basic").apply(); applyLook(); sheet.refresh() } }, -2, dp(48))
+                setOnClickListener { prefs.edit().putInt("look", 0).putInt("look_bright", 0).putInt("look_warm", 0).remove("film").apply(); applyLook(); sheet.refresh() } }, -2, dp(48))
             box.addView(head)
-            val lookBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            val lookBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
             box.addView(lookBox, -1, -2)
             buildLookSection(lookBox)
-            box.addView(text("โทนที่เลือกจะใส่ลงไฟล์ภาพที่บันทึกด้วย", 11.5f, Glass.TEXT3).apply { maxLines = 3; ellipsize = null; setPadding(dp(2), dp(2), 0, dp(10)) })
+            box.addView(text(if (film) "สีเป็นการเลียนแบบตามลักษณะของกล้องและฟิล์มแต่ละรุ่น และจะใส่ลงไฟล์ภาพที่บันทึกด้วย" else "โทนที่เลือกจะใส่ลงไฟล์ภาพที่บันทึกด้วย", 11.5f, Glass.TEXT3).apply { maxLines = 3; ellipsize = null; setPadding(dp(2), dp(4), 0, dp(10)) })
         }
+        preview.removeCallbacks(lookTicker); preview.postDelayed(lookTicker, 400)
     }
-    private fun lookSample(): Bitmap? = lookSampleCache ?: lookSample0()
-    private fun lookSample0(): Bitmap? = runCatching { preview.bitmap?.let { f -> Bitmap.createScaledBitmap(f, 120, (120f * f.height / f.width).toInt().coerceAtLeast(1), true).also { if (it !== f) f.recycle() } } }.getOrNull()
-    private fun lookThumb(sample: Bitmap?, m: ColorMatrix, label: String, selected: Boolean, onTap: () -> Unit): View {
+    private class LookCell(val frame: View, val label: TextView, val key: String)
+    private fun lookThumb(m: ColorMatrix, label: String, key: String, cells: MutableList<LookCell>, onTap: () -> Unit): View {
         val cell = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; isClickable = true; contentDescription = label; setOnClickListener { onTap() }; glassTouch() }
-        val frame = FrameLayout(this).apply { background = glass(18, if (selected) 0xebffffff.toInt() else 0x14ffffff); setPadding(dp(3), dp(3), dp(3), dp(3)) }
-        val img = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP; if (sample != null) setImageBitmap(sample) else setBackgroundColor(0xff34506a.toInt()); colorFilter = ColorMatrixColorFilter(m); clipToOutline = true; outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: android.graphics.Outline) { o.setRoundRect(0, 0, v.width, v.height, dp(15).toFloat()) } } }
+        val frame = FrameLayout(this).apply { setPadding(dp(3), dp(3), dp(3), dp(3)) }
+        val img = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP; lookSampleCache?.let { setImageBitmap(it) } ?: setBackgroundColor(0xff34506a.toInt()); colorFilter = ColorMatrixColorFilter(m); clipToOutline = true; outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: android.graphics.Outline) { o.setRoundRect(0, 0, v.width, v.height, dp(15).toFloat()) } } }
+        lookImages += img
         frame.addView(img, -1, -1)
-        cell.addView(frame, dp(72), dp(72)); cell.addView(text(label, 11.5f, if (selected) Color.WHITE else Glass.TEXT2).apply { gravity = Gravity.CENTER; maxLines = 1; setPadding(0, dp(6), 0, 0) }, dp(76), -2)
+        val name = text(label, 11f, Glass.TEXT2).apply { gravity = Gravity.CENTER; maxLines = 2; ellipsize = null; setPadding(0, dp(6), 0, 0) }
+        cell.addView(frame, dp(72), dp(72)); cell.addView(name, dp(84), -2)
+        cells += LookCell(frame, name, key)
         return cell
     }
+    private fun markLook(cells: List<LookCell>, chosen: String) = cells.forEach { c -> val on = c.key == chosen
+        c.frame.background = glass(18, if (on) 0xebffffff.toInt() else 0x14ffffff); c.label.setTextColor(if (on) Color.WHITE else Glass.TEXT2)
+        c.label.typeface = if (on) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT }
+    /** Photo modes show the plain colour styles; the film mode shows old-camera and film-stock looks. */
     private fun buildLookSection(host: LinearLayout) {
-        host.removeAllViews()
-        val kind = if (mode == PhotoMode.FILM) "film" else prefs.getString("look_kind", "basic")
-        val sample = lookSample()
-        if (mode != PhotoMode.FILM) {
-            // Sliding pill: it glides to the chosen side, and a finger can drag it across and let go to choose.
-            val seg = FrameLayout(this).apply { background = glass(18, 0x14ffffff); setPadding(dp(3), dp(3), dp(3), dp(3)); clipChildren = false }
-            val knob = View(this).apply { background = glass(15, 0xebffffff.toInt()) }
-            seg.addView(knob, FrameLayout.LayoutParams(0, -1))
-            val labels = LinearLayout(this)
-            val names = listOf("basic" to "ปรับแต่งทั่วไป", "film" to "ฟิล์ม")
-            val tvs = names.map { (k, t) -> text(t, 13.5f, if (kind == k) Color.BLACK else Glass.TEXT2, true).apply { gravity = Gravity.CENTER; isClickable = false }.also { labels.addView(it, LinearLayout.LayoutParams(0, -1, 1f)) } }
-            seg.addView(labels, FrameLayout.LayoutParams(-1, -1))
-            fun half() = (seg.width - dp(6)) / 2f
-            seg.post {
-                knob.layoutParams = (knob.layoutParams as FrameLayout.LayoutParams).apply { width = half().toInt() }
-                val from = if (lookSegPos >= 0f) lookSegPos else (if (kind == "film") 1f else 0f)
-                val to = if (kind == "film") 1f else 0f
-                knob.translationX = from * half(); lookSegPos = to
-                if (from != to) knob.animate().translationX(to * half()).setInterpolator(Glass.SPRING).setDuration(420).start()
-            }
-            var dragging = false; var downX = 0f
-            fun colorFor(pos: Float) { tvs.forEachIndexed { i, t -> t.setTextColor(if ((pos > 0.5f) == (i == 1)) Color.BLACK else Glass.TEXT2) } }
-            seg.setOnTouchListener { v, e ->
-                val pos = ((e.x - dp(3) - half() / 2) / half()).coerceIn(0f, 1f)
-                when (e.actionMasked) {
-                    MotionEvent.ACTION_DOWN -> { downX = e.x; dragging = false; v.parent.requestDisallowInterceptTouchEvent(true) }
-                    MotionEvent.ACTION_MOVE -> { if (abs(e.x - downX) > dp(6)) dragging = true; if (dragging) { knob.animate().cancel(); knob.translationX = pos * half(); colorFor(pos) } }
-                    MotionEvent.ACTION_UP -> { val pick = if (pos > 0.5f) 1 else 0; val nk = names[pick].first
-                        knob.animate().translationX(pick * half()).setInterpolator(Glass.SPRING).setDuration(360).start(); lookSegPos = pick.toFloat(); colorFor(pick.toFloat()); Glass.tick(seg)
-                        if (nk != kind) { prefs.edit().putString("look_kind", nk).apply(); applyLook(); seg.postDelayed({ buildLookSection(host) }, 260) } }
-                    MotionEvent.ACTION_CANCEL -> { knob.animate().translationX((if (kind == "film") 1f else 0f) * half()).start(); colorFor(if (kind == "film") 1f else 0f) }
-                }
-                true
-            }
-            host.addView(seg, LinearLayout.LayoutParams(-1, dp(54)).apply { bottomMargin = dp(8) })
-        }
-        val row = LinearLayout(this).apply { gravity = Gravity.CENTER_HORIZONTAL; setPadding(dp(4), dp(4), dp(4), dp(4)); clipChildren = false; clipToPadding = false }
-        val scroll = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; clipChildren = false; clipToPadding = false; addView(row) }
-        if (kind == "film") {
-            val cur = Films.byId(prefs.getString("film", null))
-            var group = cur?.group ?: Films.groups[0]
-            val groups = LinearLayout(this).apply { setPadding(dp(4), 0, dp(4), dp(6)) }
-            val gs = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(groups) }
+        host.removeAllViews(); lookImages.clear()
+        val row = LinearLayout(this).apply { setPadding(dp(4), dp(6), dp(4), dp(6)); clipChildren = false; clipToPadding = false }
+        val scroll = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; clipChildren = false; clipToPadding = false; addView(row, -2, -2) }
+        val cells = mutableListOf<LookCell>()
+        if (mode == PhotoMode.FILM) {
+            val note = text("", 12.5f, Glass.TEXT2).apply { maxLines = 2; ellipsize = null; setPadding(dp(4), dp(2), dp(4), dp(8)) }
+            fun current() = Films.byId(prefs.getString("film", null)) ?: Films.all.first()
+            fun describe() { val f = current(); note.text = "${f.name} · ${f.note}" }
+            var group = current().group
+            val groups = LinearLayout(this).apply { setPadding(dp(4), dp(4), dp(4), dp(4)); clipChildren = false; clipToPadding = false }
+            val gs = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; clipChildren = false; clipToPadding = false; addView(groups, -2, -2) }
             fun fillFilms() {
-                row.removeAllViews()
+                row.removeAllViews(); cells.clear(); lookImages.clear(); scroll.scrollTo(0, 0)
                 Films.inGroup(group).forEach { f ->
-                    row.addView(lookThumb(sample, Films.matrix(f), f.name, prefs.getString("film", null) == f.id) { prefs.edit().putString("film", f.id).putString("look_kind", "film").apply(); applyLook(); buildLookSection(host) }, LinearLayout.LayoutParams(dp(80), -2).apply { rightMargin = dp(6) })
+                    row.addView(lookThumb(Films.matrix(f), f.name, f.id, cells) { prefs.edit().putString("film", f.id).apply(); applyLook(); markLook(cells, f.id); describe(); Glass.tick(row) }, LinearLayout.LayoutParams(dp(88), -2))
                 }
+                markLook(cells, current().id)
             }
             Films.groups.forEach { g ->
-                groups.addView(text(g, 12.5f, if (g == group) Color.BLACK else Glass.TEXT2).apply { gravity = Gravity.CENTER; setPadding(dp(14), 0, dp(14), 0); isClickable = true; background = glass(16, if (g == group) 0xebffffff.toInt() else 0x14ffffff)
-                    setOnClickListener { group = g; for (i in 0 until groups.childCount) { val t = groups.getChildAt(i) as TextView; val on = t.text == g; t.setTextColor(if (on) Color.BLACK else Glass.TEXT2); t.background = glass(16, if (on) 0xebffffff.toInt() else 0x14ffffff) }; fillFilms() } }, LinearLayout.LayoutParams(-2, dp(48)).apply { rightMargin = dp(6) })
+                groups.addView(text(g, 12.5f, if (g == group) Color.BLACK else Glass.TEXT2, g == group).apply { gravity = Gravity.CENTER; setPadding(dp(14), 0, dp(14), 0); isClickable = true; background = glass(18, if (g == group) 0xebffffff.toInt() else 0x14ffffff)
+                    setOnClickListener { group = g; for (i in 0 until groups.childCount) { val t = groups.getChildAt(i) as TextView; val on = t.text == g; t.setTextColor(if (on) Color.BLACK else Glass.TEXT2); t.background = glass(18, if (on) 0xebffffff.toInt() else 0x14ffffff) }; fillFilms(); Glass.tick(groups) } }, LinearLayout.LayoutParams(-2, dp(44)).apply { rightMargin = dp(8) })
             }
-            host.addView(gs, -1, dp(52))
-            fillFilms()
+            host.addView(gs, -1, -2)
+            fillFilms(); describe()
+            host.addView(scroll, -1, -2); host.addView(note, -1, -2)
         } else {
-            LOOKS.forEachIndexed { i, name -> row.addView(lookThumb(sample, lookMatrix(i, 0, 0), name, prefs.getInt("look", 0) == i) { prefs.edit().putInt("look", i).apply(); applyLook(); buildLookSection(host) }, LinearLayout.LayoutParams(dp(80), -2).apply { rightMargin = dp(6) }) }
+            LOOKS.forEachIndexed { i, name -> row.addView(lookThumb(lookMatrix(i, 0, 0), name, "$i", cells) { prefs.edit().putInt("look", i).apply(); applyLook(); markLook(cells, "$i"); Glass.tick(row) }, LinearLayout.LayoutParams(dp(88), -2)) }
+            markLook(cells, "${prefs.getInt("look", 0)}")
+            host.addView(scroll, -1, -2)
         }
-        host.addView(scroll, -1, dp(112))
         host.addView(lookSlider("ความสว่าง", Icons.SUN, "look_bright"))
         host.addView(lookSlider("ความอุ่น", Icons.THERMO, "look_warm"))
     }
@@ -1162,11 +1167,11 @@ class CameraActivity : ComponentActivity() {
         refreshStatus()
         val showSide = !dialing && openChip == null && !nightRunning && capture != null
         val portrait = mode == PhotoMode.PORTRAIT && !activeExtension
-        macroButton.visibility = if (showSide && rear && !portrait && macroLens != null) View.VISIBLE else View.GONE
+        macroButton.visibility = if (showSide && rear && !portrait && mode != PhotoMode.SPORT && macroLens != null) View.VISIBLE else View.GONE
         apertureButton.visibility = if (showSide && (portrait || mode == PhotoMode.SPORT)) View.VISIBLE else View.GONE
         val f = prefs.getFloat("portrait_f", 2.8f); apertureButton.text = if (mode == PhotoMode.SPORT) "1/" + (1_000_000_000L / SPORT_KINDS[sportIndex()].second) else "f/${fText(f)}"; apertureButton.contentDescription = "เบลอพื้นหลัง f/${fText(f)} แตะเพื่อเปลี่ยน"
         lookButton.visibility = if (showSide && mode != PhotoMode.PANORAMA) View.VISIBLE else View.GONE
-        nightButton.visibility = if (showSide && (mode == PhotoMode.PHOTO || mode == PhotoMode.PRO || mode == PhotoMode.NIGHT) && !portrait) View.VISIBLE else View.GONE
+        nightButton.visibility = View.GONE
         // A switched-on mode stays solid orange (not just a tinted icon), so it reads as on at a glance.
         fun lit(v: FrameLayout, on: Boolean) { (v.background as? GlassDrawable)?.let { if ((it.fill == Glass.ACCENT) != on) { it.fill = if (on) Glass.ACCENT else Glass.FILL; v.invalidate() } }; (v.getChildAt(0) as IconView).tint = if (on) Glass.ON_ACCENT else Color.WHITE }
         lit(macroButton, macro); lit(nightButton, nightActive())
@@ -1233,8 +1238,8 @@ class CameraActivity : ComponentActivity() {
             if(key==boundKey&&capture?.let{provider.isBound(it)}==true){
                 // Same stream combination: keep the session, refresh only per-mode state.
                 boundPreview?.setSurfaceProvider(preview.surfaceProvider);capture?.targetRotation=targetRotation
-                manual=ManualControls(this,camera!!,false,mode==PhotoMode.PRO).also{it.onNotice={t->notice(t)}};afterBind()
-                capture?.flashMode=if(info.hasFlashUnit())(if(mode==PhotoMode.FLASH_NIGHT)ImageCapture.FLASH_MODE_ON else flash) else ImageCapture.FLASH_MODE_OFF
+                manual=ManualControls(this,camera!!,false,mode==PhotoMode.PRO).also{it.onNotice={t->notice(t)};it.plainColor=output.needsRaw};afterBind()
+                capture?.flashMode=if(info.hasFlashUnit())(if(mode==PhotoMode.FLASH_NIGHT)ImageCapture.FLASH_MODE_ON else if(mode==PhotoMode.FLASH_FAST)ImageCapture.FLASH_MODE_OFF else flash) else ImageCapture.FLASH_MODE_OFF
                 unfreeze();lastHardwareZoom=-1f;applyZoom(ratio);refresh();return
             }
             val ticket=++binding
@@ -1258,11 +1263,11 @@ class CameraActivity : ComponentActivity() {
             val aspect=Aspects.rational(prefs.getString("aspect","4:3")?:"4:3")
             if(aspect!=Rational(4,3)&&!activeExtension)group.setViewPort(ViewPort.Builder(aspect,targetRotation).build())
             camera=provider.bindToLifecycle(this,selected,group.build())
-            manual=ManualControls(this,camera!!,false,mode==PhotoMode.PRO).also{it.onNotice={t->notice(t)}}
+            manual=ManualControls(this,camera!!,false,mode==PhotoMode.PRO).also{it.onNotice={t->notice(t)};it.plainColor=output.needsRaw}
             afterBind()
 
             boundKey=key;boundPreview=previewCase;capture=useCase;metadata=frames
-            useCase.flashMode=if(info.hasFlashUnit()) (if(mode==PhotoMode.FLASH_NIGHT)ImageCapture.FLASH_MODE_ON else flash) else ImageCapture.FLASH_MODE_OFF
+            useCase.flashMode=if(info.hasFlashUnit()) (if(mode==PhotoMode.FLASH_NIGHT)ImageCapture.FLASH_MODE_ON else if(mode==PhotoMode.FLASH_FAST)ImageCapture.FLASH_MODE_OFF else flash) else ImageCapture.FLASH_MODE_OFF
             val range=camera?.cameraInfo?.zoomState?.value
             ratio=range().let{(lo,hi)->ratio.coerceIn(lo,hi)}
             zoomGoal=ratio;lastHardwareZoom=-1f;zoomSettling=false;applyZoom(ratio)
@@ -1279,6 +1284,10 @@ class CameraActivity : ComponentActivity() {
         if(aeLock)manual?.lock(true)
         if(mode==PhotoMode.PRO)rebuildChips()
         if(mode==PhotoMode.SPORT)applySport()
+        if(mode==PhotoMode.HIRES&&!hiResHintShown){hiResHintShown=true
+            val current=camera?.let{runCatching{Camera2CameraInfo.from(it.cameraInfo).cameraId}.getOrNull()}
+            val full=HiResShot.find(this,current,rear)
+            hint(if(full!=null)"เครื่องเปิดโหมดเต็มเซนเซอร์ ${pixelsText(full.second.width.toLong()*full.second.height)} ให้แอป" else "เครื่องนี้ไม่ประกาศโหมดเต็มเซนเซอร์ให้แอปอื่น · ใช้ขนาดสูงสุดที่ระบบให้",3200)}
         preview.post{applyLook()}
         applyLogView()
         camera?.let { cam -> configureFaces(faces, cam, mask); if (rear) findMacroLens(cam) else macroLens = null }
@@ -1301,7 +1310,7 @@ class CameraActivity : ComponentActivity() {
     private fun applyLogView(){ if(::preview.isInitialized) LogPreview.apply(preview, output==CaptureOutput.RAW_LOG && mode in listOf(PhotoMode.PHOTO,PhotoMode.PRO)) }
     /** A reused session keeps streaming, so the frozen frame must be lifted here instead of on the next STREAMING state. */
     private fun unfreeze() {
-        if (frozen.alpha <= 0f || pushedBack) return
+        if (frozen.alpha <= 0f) return
         frozen.animate().alpha(0f).setDuration(220).withEndAction { Glass.blur(frozen, 0f); val old = (frozen.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap; frozen.setImageDrawable(null); old?.recycle() }.start()
     }
     /** Highest ratio the camera zooms by itself; beyond it the app crops the preview and AI SR1 enlarges the photo. */
@@ -1328,6 +1337,10 @@ class CameraActivity : ComponentActivity() {
         preview.pivotX=preview.width/2f;preview.pivotY=preview.height/2f
         preview.scaleX=extra; preview.scaleY=extra
         if(abs(hw-lastHardwareZoom)<0.0005f&&light){refreshZoomUi();return}
+        // While gliding, send at most one zoom request per camera frame; the last value is always sent.
+        val now=android.os.SystemClock.uptimeMillis()
+        if(light&&now-lastZoomSent<30&&abs(ratio-zoomGoal)>0.004f){refreshZoomUi();return}
+        lastZoomSent=now
         lastHardwareZoom=hw
         val ticket=++zoomTicket
         zoomSettling=true
@@ -1358,7 +1371,7 @@ class CameraActivity : ComponentActivity() {
         zoomFollower=android.animation.TimeAnimator().apply{
             setTimeListener{a,_,dt->
                 val cur=kotlin.math.ln(ratio.toDouble());val tgt=kotlin.math.ln(zoomGoal.toDouble())
-                val k=1-kotlin.math.exp(-dt.coerceAtLeast(1)/70.0)
+                val k=1-kotlin.math.exp(-dt.coerceAtLeast(1)/95.0)
                 val next=cur+(tgt-cur)*k
                 if(abs(tgt-next)<0.002){applyZoom(zoomGoal,true);a.end();refresh()}
                 else applyZoom(kotlin.math.exp(next).toFloat(),true)
@@ -1483,8 +1496,20 @@ class CameraActivity : ComponentActivity() {
         if(filesDir.usableSpace<32L*1024*1024){hint("พื้นที่ว่างไม่พอสำหรับถ่ายภาพ กรุณาคืนพื้นที่แล้วลองใหม่",5000);return}
         val useCase=capture ?: return
         if(mode==PhotoMode.HDR&&!activeExtension){takeHdr(useCase);return}
-        if(mode==PhotoMode.FLASH_NIGHT&&camera?.cameraInfo?.hasFlashUnit()!=true){hint("กล้องนี้ไม่มีแฟลช",1600);return}
+        if((mode==PhotoMode.FLASH_NIGHT||mode==PhotoMode.FLASH_FAST)&&camera?.cameraInfo?.hasFlashUnit()!=true){hint("กล้องนี้ไม่มีแฟลช",1600);return}
         if(busy || zoomSettling) return
+        // Fast flash: the torch comes on for a blink so exposure settles on the lit scene, the picture is taken at once
+        // (no pre-flash sequence), and the light goes off again.
+        if(mode==PhotoMode.FLASH_FAST&&!torchLit){
+            torchLit=true;camera?.cameraControl?.enableTorch(true)
+            shutter.postDelayed({ if(!isDestroyed){captureNow();shutter.postDelayed({camera?.cameraControl?.enableTorch(false);torchLit=false},700)} },170)
+            return
+        }
+        // Full-sensor picture (50 MP class) when the phone declares that sensor mode to apps.
+        if(mode==PhotoMode.HIRES&&!hiResFailed&&output==CaptureOutput.JPEG){
+            val current=camera?.let{runCatching{Camera2CameraInfo.from(it.cameraInfo).cameraId}.getOrNull()}
+            HiResShot.find(this,current,rear)?.let{(id,size)->if(size.width.toLong()*size.height>20_000_000L){takeHiRes(id,size);return}}
+        }
         if (output.needsRaw || output.enhance || (nightOn && mode == PhotoMode.PHOTO) || (mode == PhotoMode.NIGHT && !activeExtension)) {
             takeBurst()
             return
@@ -1550,6 +1575,31 @@ class CameraActivity : ComponentActivity() {
         if(m!=null&&m.longExposure(true)){hint("เปิดชัตเตอร์ ${m.shutterLabel} · ถือนิ่ง",1500);shutter.postDelayed({if(!isDestroyed)useCase.takePicture(luma.fileIo,callback)},m.settleMs)}
         else useCase.takePicture(luma.fileIo,callback)
     }
+    private var torchLit=false
+    private var hiResHintShown=false
+    private var hiResFailed=false
+    /** One full-sensor JPEG through Camera2 (see [HiResShot]); CameraX is released for the shot and bound again afterwards. */
+    private fun takeHiRes(cameraId:String,size:android.util.Size){
+        busy=true;refresh();captureFeedback()
+        hint("กำลังถ่ายเต็มเซนเซอร์ ${pixelsText(size.width.toLong()*size.height)} · ถือนิ่ง",4000)
+        val time=System.currentTimeMillis();val id=UUID.randomUUID().toString();val isRear=rear;val zoom=ratio;val rotation=targetRotation
+        val file=File(cacheDir,"hires-$id.jpg")
+        freezeFrame();provider?.unbindAll();capture=null;boundKey=null
+        HiResShot.capture(applicationContext,cameraId,size,rotation,isRear,file){error->
+            luma.fileIo.execute{
+                var message="บันทึกรูปแล้ว"
+                try{
+                    if(error!=null)throw error
+                    val dims=PhotoMedia.dimensions(file)
+                    val uri=PhotoMedia.publish(this,file,"LUMA_${time}_${id}.jpg",time)
+                    luma.shots.insert(Shot(id,time,uri,dims,zoom,isRear,null,null,decide(false,isRear,zoom,dims.pixels,null),Stage.ORIGINAL,null,0,null,false))
+                    message="บันทึกเต็มเซนเซอร์ ${dims.w}×${dims.h} · ${pixelsText(dims.pixels)}"
+                }catch(e:Throwable){hiResFailed=true;message="ถ่ายเต็มเซนเซอร์ไม่สำเร็จ · ${e.localizedMessage} · ครั้งต่อไปใช้ขนาดปกติ"}
+                finally{file.delete()}
+                runOnUiThread{pendingBind=true};complete(message)
+            }
+        }
+    }
     private fun complete(msg:String)=runOnUiThread {
         busy=false
         if(!isDestroyed) {
@@ -1577,7 +1627,7 @@ class CameraActivity : ComponentActivity() {
     @Suppress("DEPRECATION")
     private fun openVideo(kind:String){cancelModeSwitch();freezeFrame();provider?.unbindAll();capture=null;startActivity(Intent(this,VideoActivity::class.java).putExtra("mode",kind));overridePendingTransition(0,0)}
     @Suppress("DEPRECATION") private fun openSpecial(kind:String){cancelModeSwitch();freezeFrame();provider?.unbindAll();capture=null;startActivity(Intent(this,SpecialVideoActivity::class.java).putExtra("mode",kind));overridePendingTransition(0,0)}
-    private fun showAllSettings(){showStudioSettings(rawAvailable){auto=prefs.getBoolean("auto",true);cropFrom=cropPref();software=cropFrom>0f;boundKey=null;overlay.grid=prefs.getBoolean("grid",false)
+    private fun showAllSettings(){showStudioSettings(rawAvailable){auto=false;cropFrom=cropPref();software=cropFrom>0f;boundKey=null;overlay.gridKind=Grids.kind(prefs)
         if(prefs.getBoolean("gps",false)&&ContextCompat.checkSelfPermission(this,Manifest.permission.ACCESS_COARSE_LOCATION)!=PackageManager.PERMISSION_GRANTED)locationRequest.launch(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION,Manifest.permission.ACCESS_FINE_LOCATION))
         refresh();if(!busy){layoutMask(stage.width,stage.height);bind()}
     }}

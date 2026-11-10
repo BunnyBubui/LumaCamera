@@ -10,6 +10,13 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import androidx.camera.view.PreviewView
 
+/** Grid choices shared by the camera panel, the video screen and settings. */
+object Grids {
+    val names = listOf("ปิด", "3 × 3", "4 × 4", "สัดส่วนทอง", "เส้นทแยง", "กากบาทกลาง")
+    val notes = listOf("", "กฎสามส่วน", "แบ่งละเอียด จัดแนวตรง", "จุดเด่นตามสัดส่วน 1.618", "นำสายตาเข้ามุม", "จัดกึ่งกลาง")
+    fun kind(p: android.content.SharedPreferences) = if (!p.getBoolean("grid", false)) 0 else p.getInt("grid_kind", 1).coerceIn(1, 5)
+    fun set(p: android.content.SharedPreferences, kind: Int) { p.edit().putBoolean("grid", kind > 0).apply { if (kind > 0) putInt("grid_kind", kind) }.apply() }
+}
 class CompositionOverlay(context: Context) : View(context), SensorEventListener {
     var movie=false
     private var roll=0f
@@ -30,20 +37,29 @@ class CompositionOverlay(context: Context) : View(context), SensorEventListener 
     override fun onDetachedFromWindow(){removeCallbacks(poll);sensorManager.unregisterListener(this);super.onDetachedFromWindow()}
     override fun onAccuracyChanged(sensor:Sensor?,accuracy:Int){}
     override fun onSensorChanged(e:SensorEvent){if(prefs.getBoolean("level",false)){val raw=Math.toDegrees(kotlin.math.atan2(-e.values[0].toDouble(),e.values[1].toDouble())).toFloat();var d=raw-roll;while(d>180)d-=360;while(d<-180)d+=360;val next=roll+d*0.25f;if(kotlin.math.abs(next-roll)>0.05f){roll=next;invalidate()}}}
-    var grid = false
-        set(value) {
-            field = value
-            invalidate()
-        }
+    /** 0 off · 1 thirds · 2 quarters (4×4) · 3 golden ratio · 4 diagonals · 5 centre cross. */
+    var gridKind = 0
+        set(value) { field = value; invalidate() }
+    var grid: Boolean
+        get() = gridKind > 0
+        set(value) { gridKind = if (value) gridKind.coerceAtLeast(1) else 0 }
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = 0x66ffffff
         strokeWidth = context.resources.displayMetrics.density
     }
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
-        if (grid) for (i in 1..2) {
-            canvas.drawLine(width * i / 3f, 0f, width * i / 3f, height.toFloat(), paint)
-            canvas.drawLine(0f, height * i / 3f, width.toFloat(), height * i / 3f, paint)
+        if (gridKind > 0) {
+            paint.style = Paint.Style.STROKE; paint.color = 0x66ffffff; paint.strokeWidth = resources.displayMetrics.density; paint.strokeCap = Paint.Cap.BUTT
+            val w = width.toFloat(); val h = height.toFloat()
+            fun lines(parts: List<Float>) = parts.forEach { f -> canvas.drawLine(w * f, 0f, w * f, h, paint); canvas.drawLine(0f, h * f, w, h * f, paint) }
+            when (gridKind) {
+                1 -> lines(listOf(1 / 3f, 2 / 3f))
+                2 -> lines(listOf(0.25f, 0.5f, 0.75f))
+                3 -> lines(listOf(0.382f, 0.618f))
+                4 -> { canvas.drawLine(0f, 0f, w, h, paint); canvas.drawLine(w, 0f, 0f, h, paint) }
+                else -> { canvas.drawLine(w / 2, 0f, w / 2, h, paint); canvas.drawLine(0f, h / 2, w, h / 2, paint) }
+            }
         }
         val density=resources.displayMetrics.density
         if(movie){paint.style=Paint.Style.FILL;paint.color=0xaa000000.toInt();val h=(height-width/2.39f)/2;canvas.drawRect(0f,0f,width.toFloat(),h,paint);canvas.drawRect(0f,height-h,width.toFloat(),height.toFloat(),paint)}

@@ -441,6 +441,28 @@ class IconTurner {
 
 /** Plain-text dialog in the glass style, used instead of the system AlertDialog so every popup matches the app. */
 object GlassDialog {
+    /** A glass card dialog that rises softly; [build] fills the column and may dismiss the dialog. */
+    fun panel(a: android.app.Activity, title: String, build: (LinearLayout, android.app.Dialog) -> Unit): android.app.Dialog {
+        val d = android.app.Dialog(a)
+        d.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+        val box = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; background = a.glass(28, Glass.FILL_STRONG); setPadding(a.dp(20), a.dp(18), a.dp(20), a.dp(16)) }
+        box.addView(a.text(title, 18f, Color.WHITE, true).apply { tag = "title" }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = a.dp(6) })
+        val column = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
+        box.addView(android.widget.ScrollView(a).apply { isVerticalScrollBarEnabled = false; addView(column) }, LinearLayout.LayoutParams(-1, -2, 1f))
+        build(column, d)
+        d.setContentView(box)
+        d.window?.apply { setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)); setLayout((a.resources.displayMetrics.widthPixels * 0.9f).toInt(), android.view.WindowManager.LayoutParams.WRAP_CONTENT); setDimAmount(0.45f) }
+        d.setOnShowListener { if (!Glass.reduced(a)) { box.alpha = 0f; box.translationY = a.dp(22).toFloat(); box.scaleX = 0.96f; box.scaleY = 0.96f; box.animate().alpha(1f).translationY(0f).scaleX(1f).scaleY(1f).setInterpolator(Glass.SPRING).setDuration(380).start() } }
+        return d
+    }
+    /** One row of equal buttons; the last one is the accent action. */
+    fun actions(a: android.app.Activity, vararg items: Pair<String, () -> Unit>): LinearLayout = LinearLayout(a).apply {
+        items.forEachIndexed { i, (label, run) ->
+            val main = i == items.size - 1
+            addView(a.text(label, 14f, if (main) Glass.ON_ACCENT else Color.WHITE, true).apply { gravity = Gravity.CENTER; background = a.glass(22, if (main) Glass.ACCENT else 0x1affffff); isClickable = true; contentDescription = label; setOnClickListener { run() }; glassTouch() },
+                LinearLayout.LayoutParams(0, a.dp(48), 1f).apply { if (i > 0) leftMargin = a.dp(8) })
+        }
+    }
     fun show(a: android.app.Activity, title: String, message: String, button: String = "ปิด") {
         val d = android.app.Dialog(a)
         d.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)

@@ -19,6 +19,8 @@ class ManualControls(private val context:Context, val camera:Camera, private val
     private var iso:Int?=null;private var ns:Long?=null;private var wb=CR.CONTROL_AWB_MODE_AUTO;private var focus:Float?=null
     private var tint=0;private var edge:Int?=null;private var nr:Int?=null;private var contrast=0
     var locked=false;private set
+    /** RAW sessions: leave the scene mode alone, some phones shift the colour badly when it is switched there. */
+    var plainColor=false
     val canManual get()=info.getCameraCharacteristic(CC.REQUEST_AVAILABLE_CAPABILITIES)?.contains(CC.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR)==true
     private val key="manual.${info.cameraId}.${if(video)"video" else "photo"}."
     fun apply(){
@@ -52,13 +54,13 @@ class ManualControls(private val context:Context, val camera:Camera, private val
         if(prefs.getBoolean("face_detect",true)&&fd.any{it!=CR.STATISTICS_FACE_DETECT_MODE_OFF}){
             b.setCaptureRequestOption(CR.STATISTICS_FACE_DETECT_MODE,if(CR.STATISTICS_FACE_DETECT_MODE_SIMPLE in fd)CR.STATISTICS_FACE_DETECT_MODE_SIMPLE else fd.max())
             val scenes=(info.getCameraCharacteristic(CC.CONTROL_AVAILABLE_SCENE_MODES)?:intArrayOf()).toList()
-            if(iso==null&&wb==CR.CONTROL_AWB_MODE_AUTO&&focus==null&&CR.CONTROL_SCENE_MODE_FACE_PRIORITY in scenes){
+            if(!plainColor&&iso==null&&wb==CR.CONTROL_AWB_MODE_AUTO&&focus==null&&CR.CONTROL_SCENE_MODE_FACE_PRIORITY in scenes){
                 b.setCaptureRequestOption(CR.CONTROL_MODE,CR.CONTROL_MODE_USE_SCENE_MODE);b.setCaptureRequestOption(CR.CONTROL_SCENE_MODE,CR.CONTROL_SCENE_MODE_FACE_PRIORITY)
             }
         }
         edge?.let{if(it in edgeModes)b.setCaptureRequestOption(CR.EDGE_MODE,it)}
         nr?.let{if(it in nrModes)b.setCaptureRequestOption(CR.NOISE_REDUCTION_MODE,it)}
-        if(contrast!=0&&canCurve){b.setCaptureRequestOption(CR.TONEMAP_MODE,CR.TONEMAP_MODE_CONTRAST_CURVE);val pts=ToneCurves.contrast(contrast);b.setCaptureRequestOption(CR.TONEMAP_CURVE,android.hardware.camera2.params.TonemapCurve(pts,pts,pts))}
+        if(contrast!=0&&canCurve&&!plainColor){b.setCaptureRequestOption(CR.TONEMAP_MODE,CR.TONEMAP_MODE_CONTRAST_CURVE);val pts=ToneCurves.contrast(contrast);b.setCaptureRequestOption(CR.TONEMAP_CURVE,android.hardware.camera2.params.TonemapCurve(pts,pts,pts))}
         val ois=info.getCameraCharacteristic(CC.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION)?:intArrayOf()
         if(CR.LENS_OPTICAL_STABILIZATION_MODE_ON in ois && (!video || !prefs.getBoolean("video_eis",false)))b.setCaptureRequestOption(CR.LENS_OPTICAL_STABILIZATION_MODE,if(prefs.getBoolean("ois",true))CR.LENS_OPTICAL_STABILIZATION_MODE_ON else CR.LENS_OPTICAL_STABILIZATION_MODE_OFF)
         if(focus!=null){b.setCaptureRequestOption(CR.CONTROL_AF_MODE,CR.CONTROL_AF_MODE_OFF);b.setCaptureRequestOption(CR.LENS_FOCUS_DISTANCE,focus!!)}
@@ -68,7 +70,16 @@ class ManualControls(private val context:Context, val camera:Camera, private val
     }
     fun lock(value:Boolean){locked=value;apply()}
     // Direct setters for the glass UI chips and edge rails (values are applied immediately).
-    val minFocus get()=info.getCameraCharacteristic(CC.LENS_INFO_MINIMUM_FOCUS_DISTANCE)?:0f
+    /** Closest focus in diopters. Some logical cameras report 0 although the lens focuses; then a physical lens value or a safe 10 (10 cm) is used. */
+    val minFocus:Float get(){
+        val own=info.getCameraCharacteristic(CC.LENS_INFO_MINIMUM_FOCUS_DISTANCE)?:0f
+        if(own>0f)return own
+        val af=(info.getCameraCharacteristic(CC.CONTROL_AF_AVAILABLE_MODES)?:intArrayOf()).any{it!=CR.CONTROL_AF_MODE_OFF}
+        if(!af)return 0f
+        val physical=runCatching{val cm=context.getSystemService(android.hardware.camera2.CameraManager::class.java)!!
+            (if(android.os.Build.VERSION.SDK_INT>=28)cm.getCameraCharacteristics(info.cameraId).physicalCameraIds else emptySet()).mapNotNull{cm.getCameraCharacteristics(it).get(CC.LENS_INFO_MINIMUM_FOCUS_DISTANCE)}.maxOrNull()}.getOrNull()?:0f
+        return if(physical>0f)physical else 10f
+    }
     /** ISO in 1/3-stop steps inside the sensor range (OPPO-style fine dial). */
     val isoValues get()=if(!canManual)emptyList() else info.getCameraCharacteristic(CC.SENSOR_INFO_SENSITIVITY_RANGE)!!.let{r->ISO_THIRDS.filter{it in r.lower..r.upper}}
     /** Shutter in 1/3-stop steps inside the sensor range; video is capped at one frame time. */

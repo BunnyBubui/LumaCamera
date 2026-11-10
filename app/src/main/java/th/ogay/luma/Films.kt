@@ -4,80 +4,91 @@ import android.content.SharedPreferences
 import android.graphics.*
 import java.util.Random
 
-/** One film look: colour matrix terms plus optional grain and vignette (grain and vignette only on the saved file). */
-class Film(val id: String, val name: String, val group: String, val sat: Float, val con: Float, val r: Float, val g: Float, val b: Float, val lift: Float, val grain: Float, val vignette: Float)
+/** One look: colour matrix terms plus optional grain and vignette (grain and vignette only on the saved file). [note] says what the colour is like. */
+class Film(val id: String, val name: String, val group: String, val sat: Float, val con: Float, val r: Float, val g: Float, val b: Float, val lift: Float, val grain: Float, val vignette: Float, val note: String = "")
 
 /**
- * A curated list of film looks, one classic tone per base character.
- * Names are original; groups follow the kind of camera and film they imitate.
+ * Looks named after the old cameras and film stocks they imitate. The numbers are tuned by hand from how each one is
+ * usually described (warmth, contrast, saturation, grain); they are an imitation, not a measured profile of the device.
  */
 object Films {
-    private const val GROUPS = "35mm สี|สไลด์|ขาวดำ|ซีนีม่า|อินสแตนท์|มีเดียมฟอร์แมต|กล้องของเล่น|ครอสโปรเซส|วินเทจ"
+    private const val GROUPS = "กล้องฟิล์ม|ดิจิทัลยุค CCD|DSLR คลาสสิก|ฟิล์มเนกาทีฟ|ฟิล์มสไลด์|ฟิล์มหนัง|ขาวดำ|อินสแตนท์และของเล่น"
     val groups: List<String> = GROUPS.split('|')
-    // name | group index | saturation | contrast | r | g | b | lift | grain | vignette
+    // name | group index | saturation | contrast | r | g | b | lift | grain | vignette | note
     private const val BASES = """
-Amber 200|0|1.05|1.05|1.04|1.0|0.94|0.02|0.25|0.1
-Harbor 400|0|1.0|1.08|0.98|1.0|1.04|0.03|0.35|0.12
-Sakura 160|0|0.92|0.98|1.04|1.0|1.02|0.04|0.2|0.08
-Meadow 100|0|1.15|1.1|0.98|1.04|0.98|0.02|0.15|0.08
-Dune 400|0|1.02|1.05|1.06|1.0|0.92|0.03|0.38|0.12
-Coastline 800|0|1.05|1.12|0.97|1.02|1.06|0.04|0.5|0.15
-Rosewood 160|0|0.95|1.0|1.05|0.98|1.0|0.05|0.2|0.1
-Fjord 200|0|0.98|1.06|0.95|1.01|1.07|0.03|0.25|0.1
-Saffron 400|0|1.08|1.07|1.07|1.0|0.9|0.03|0.4|0.14
-Orchard 100|0|1.12|1.04|1.0|1.05|0.97|0.02|0.15|0.07
-Brass Slide 50|1|1.3|1.2|1.02|1.0|0.96|0.0|0.1|0.1
-Jade Slide 100|1|1.28|1.18|0.97|1.04|1.0|0.0|0.1|0.1
-Azure Slide 100|1|1.25|1.15|0.95|1.0|1.08|0.0|0.1|0.1
-Ember Slide 200|1|1.35|1.22|1.07|0.98|0.93|0.0|0.15|0.12
-Mono Pearl 100|2|0.0|1.05|1|1|1|0.02|0.15|0.08
-Mono Coal 400|2|0.0|1.25|1|1|1|0.0|0.45|0.15
-Mono Silk 50|2|0.0|0.95|1.01|1.0|0.98|0.04|0.1|0.06
-Mono Grit 3200|2|0.0|1.3|1|1|1|0.01|0.8|0.18
-Sepia Ink|2|0.25|1.05|1.12|1.0|0.8|0.05|0.25|0.12
-Blue Ink|2|0.2|1.1|0.92|1.0|1.1|0.03|0.25|0.12
-Teal Orange|3|1.1|1.15|1.08|0.98|0.94|0.02|0.2|0.18
-Neon Night|3|1.2|1.2|0.98|0.96|1.1|0.01|0.3|0.2
-Bleach Cine|3|0.7|1.3|1.0|1.0|1.0|0.0|0.3|0.18
-Golden Reel|3|1.05|1.1|1.08|1.02|0.9|0.03|0.25|0.15
-Noir Reel|3|0.55|1.25|0.97|1.0|1.05|0.02|0.3|0.2
-Grand Hotel|3|0.95|1.05|1.05|1.0|0.96|0.05|0.2|0.12
-Pastel Frame|4|0.88|0.92|1.04|1.02|1.04|0.08|0.12|0.06
-Snap White|4|1.0|1.02|1.02|1.0|1.04|0.06|0.15|0.1
-Snap Warm|4|1.05|1.0|1.08|1.0|0.94|0.06|0.15|0.1
-Mint Instant|4|0.95|0.98|0.97|1.05|1.02|0.07|0.18|0.1
-Square Dream|4|0.9|0.95|1.03|1.0|1.06|0.08|0.2|0.12
-Silver Print|4|0.15|1.0|1.0|1.0|1.02|0.07|0.2|0.1
-Pro Neutral 120|5|1.0|1.04|1.0|1.0|1.0|0.02|0.1|0.05
-Pro Soft 120|5|0.94|0.96|1.02|1.0|1.0|0.04|0.12|0.06
-Pro Vivid 120|5|1.2|1.12|1.0|1.02|1.0|0.02|0.1|0.06
-Pro Warm 120|5|1.0|1.04|1.06|1.0|0.94|0.03|0.12|0.06
-Pro Cool 120|5|1.0|1.04|0.94|1.0|1.06|0.03|0.12|0.06
-Pro Mono 120|5|0.0|1.12|1|1|1|0.02|0.12|0.06
-Toy Plastic|6|1.3|1.25|1.04|1.0|1.0|0.02|0.4|0.3
-Toy Pinhole|6|1.1|1.15|1.02|1.0|0.98|0.03|0.45|0.35
-Disposable Flash|6|1.15|1.2|1.06|1.0|0.96|0.03|0.5|0.22
-Holiday Snap|6|1.2|1.12|1.05|1.02|0.95|0.02|0.35|0.2
-Cross Lime|7|1.35|1.2|0.95|1.1|0.9|0.02|0.25|0.12
-Cross Magenta|7|1.3|1.18|1.1|0.92|1.05|0.02|0.25|0.12
-Cross Cyan|7|1.3|1.2|0.9|1.04|1.1|0.02|0.25|0.12
-Cross Gold|7|1.35|1.15|1.1|1.04|0.88|0.02|0.25|0.12
-Faded 70s|8|0.85|0.92|1.07|1.0|0.9|0.1|0.3|0.15
-Dusty 80s|8|0.9|0.95|1.04|0.98|0.96|0.09|0.3|0.14
-Grainy 90s|8|1.0|1.05|1.02|1.0|0.98|0.05|0.5|0.14
-Old Postcard|8|0.8|0.9|1.06|1.0|0.9|0.12|0.25|0.16
-Cabin Home Movie|8|0.95|1.05|1.08|1.0|0.88|0.06|0.55|0.2
+Contax T2|0|1.05|1.14|0.99|1.0|1.03|0.01|0.22|0.10|คมใส โทนเย็นเป็นกลาง คอนทราสต์จัดแบบเลนส์ Zeiss
+Olympus mju II|0|1.12|1.12|1.04|1.0|0.96|0.01|0.30|0.22|สีจัด อุ่นเล็กน้อย ขอบภาพมืด
+Yashica T4|0|1.15|1.15|1.01|1.01|0.99|0.0|0.28|0.14|สีสดคมชัด ดำลึก
+Leica M6|0|0.98|1.04|1.02|1.0|0.98|0.03|0.20|0.08|สีเป็นธรรมชาติ คอนทราสต์นุ่ม
+Canon AE-1|0|1.04|1.06|1.04|1.0|0.95|0.02|0.26|0.10|อุ่นแบบยุค 80 เหลืองทองอ่อน
+Nikon FM2|0|1.02|1.10|1.0|1.0|1.0|0.01|0.24|0.08|เป็นกลาง คม ชัดลึก
+Pentax 67|0|1.06|0.98|1.03|1.0|0.97|0.04|0.12|0.06|มีเดียมฟอร์แมต เนื้อภาพเนียน สีแน่น
+Hasselblad 500C|0|1.04|1.02|0.99|1.0|1.02|0.03|0.10|0.05|สะอาด เย็นนิด ๆ ไล่โทนละเอียด
+Rolleiflex 2.8F|0|0.96|0.96|1.02|1.0|0.98|0.05|0.14|0.08|นุ่มครีม คอนทราสต์ต่ำ
+Konica Big Mini|0|1.02|1.05|0.98|1.04|0.98|0.03|0.30|0.16|ติดเขียวอ่อน แบบแฟลชตรง
+Canon IXUS 70|1|1.22|1.12|1.05|1.0|0.94|0.0|0.10|0.04|สีจัด ผิวอมชมพูอุ่น แบบคอมแพกต์ปี 2007
+Sony Cyber-shot T|1|1.15|1.14|0.96|1.0|1.07|0.0|0.10|0.04|เย็นอมฟ้า คมแข็ง
+Nikon Coolpix S|1|1.10|1.10|0.98|1.03|1.01|0.01|0.12|0.04|เป็นกลางอมเขียวนิด ๆ
+Olympus mju Digital|1|1.25|1.12|0.98|1.0|1.06|0.0|0.10|0.05|ฟ้าเข้ม สีสดจัด
+Fujifilm FinePix F31|1|1.08|1.04|1.02|1.02|0.97|0.02|0.14|0.04|ผิวสวย เขียวนุ่ม
+Kodak EasyShare|1|1.28|1.10|1.08|1.0|0.90|0.0|0.12|0.05|อุ่นจัด แดงเหลืองเด่น
+Casio Exilim|1|1.08|0.98|0.98|1.0|1.05|0.04|0.10|0.03|สว่าง เย็น คอนทราสต์เบา
+Lumix LX3|1|1.04|1.08|0.99|1.02|0.99|0.01|0.12|0.06|เป็นกลาง อมเขียวจาง ๆ
+Ricoh GR Digital|1|0.90|1.20|0.99|1.02|0.98|0.0|0.22|0.12|สีหม่น คอนทราสต์จัด แนวสตรีต
+Sigma DP2|1|1.18|1.16|0.98|1.04|0.98|0.0|0.08|0.04|สีแน่น รายละเอียดกรอบ ติดเขียว
+Leica M8|1|1.12|1.10|1.05|0.98|1.02|0.01|0.12|0.08|แดงเข้ม อมม่วงแดงนิด ๆ
+iPhone 4|1|1.14|1.16|1.04|1.0|0.96|0.0|0.16|0.06|อุ่น คอนทราสต์จัด แบบมือถือยุคแรก
+Canon EOS 5D|2|1.04|1.02|1.05|1.0|0.96|0.02|0.06|0.04|ผิวอุ่นครีม นุ่มนวล
+Nikon D200|2|1.14|1.10|1.0|1.02|0.98|0.01|0.08|0.04|สีเข้มลึกแบบ CCD
+Nikon D700|2|1.03|1.06|1.03|1.0|0.97|0.01|0.06|0.03|เป็นกลาง ผิวอุ่น
+Leica M9|2|1.18|1.12|1.03|1.0|0.97|0.0|0.10|0.08|สีอิ่มลึกแบบ CCD ของ Kodak
+Fujifilm S5 Pro|2|1.02|0.96|1.04|1.01|0.97|0.04|0.06|0.03|ผิวเนียน ไฮไลต์นุ่ม
+Olympus E-1|2|1.12|1.06|0.99|1.01|1.05|0.01|0.08|0.04|ฟ้าและเขียวมะกอกเด่น
+Pentax K10D|2|1.16|1.08|1.04|1.01|0.95|0.01|0.08|0.04|อิ่ม อุ่น เขียวสด
+Sony A900|2|1.10|1.06|1.04|1.0|0.97|0.01|0.06|0.03|อิ่มและอุ่น
+Hasselblad X1D|2|1.0|1.0|1.0|1.0|1.0|0.02|0.04|0.02|สีธรรมชาติ ไล่โทนเนียน
+Kodak Portra 400|3|0.94|0.94|1.05|1.0|0.95|0.05|0.22|0.06|ผิวอุ่น พาสเทล คอนทราสต์ต่ำ
+Kodak Portra 160|3|0.92|0.92|1.04|1.0|0.97|0.05|0.14|0.05|นุ่มมาก ผิวเนียน
+Kodak Gold 200|3|1.08|1.04|1.07|1.01|0.90|0.03|0.26|0.08|เหลืองทองอบอุ่น
+Kodak ColorPlus 200|3|1.04|1.02|1.08|0.99|0.92|0.04|0.30|0.10|วินเทจ อมแดงอุ่น
+Kodak Ektar 100|3|1.30|1.14|1.03|1.0|0.99|0.0|0.10|0.05|สีสดจัดมาก คม
+Kodak Ultramax 400|3|1.14|1.08|1.05|1.0|0.94|0.02|0.32|0.08|สีจัด อุ่น เกรนชัด
+Fujifilm Superia 400|3|1.06|1.06|0.97|1.04|1.0|0.03|0.30|0.08|อมเขียว เงาเย็น
+Fujifilm C200|3|0.98|0.98|0.98|1.04|0.99|0.05|0.26|0.07|เขียวนุ่ม พาสเทล
+Fujifilm Pro 400H|3|0.92|0.92|0.98|1.03|1.03|0.06|0.18|0.05|พาสเทล เขียวมินต์ เย็น
+Agfa Vista 200|3|1.14|1.06|1.07|0.99|0.95|0.02|0.28|0.08|แดงอิ่ม อุ่น
+Lomography 800|3|1.20|1.10|1.04|1.0|0.96|0.02|0.48|0.14|สีจัด เกรนหยาบ
+Fujifilm Velvia 50|4|1.42|1.20|1.03|0.99|1.02|0.0|0.08|0.06|สีจัดสุด คอนทราสต์สูง อมม่วงแดง
+Fujifilm Provia 100F|4|1.14|1.12|1.0|1.0|1.02|0.0|0.08|0.05|เป็นกลาง คม สะอาด
+Fujifilm Astia 100F|4|1.02|1.02|1.02|1.0|1.0|0.02|0.08|0.04|สไลด์โทนนุ่ม ผิวสวย
+Kodak Ektachrome E100|4|1.16|1.12|0.97|1.0|1.06|0.0|0.10|0.05|เย็น ใส ฟ้าสะอาด
+Kodachrome 64|4|1.22|1.18|1.06|1.0|0.94|0.0|0.14|0.08|แดงเข้ม คอนทราสต์ลึก อุ่น
+Agfa Ultra 100|4|1.45|1.14|1.04|1.02|0.96|0.0|0.12|0.06|อิ่มจัดทุกสี
+CineStill 800T|5|1.04|1.04|0.92|1.0|1.12|0.04|0.36|0.10|ทังสเตน ฟ้าอมเขียว เหมาะกลางคืน
+CineStill 50D|5|1.06|1.04|1.03|1.0|0.98|0.03|0.10|0.06|กลางวัน สะอาด อุ่นนิด ๆ
+Kodak Vision3 500T|5|0.94|0.92|0.94|1.01|1.08|0.06|0.30|0.08|โทนหนัง คอนทราสต์ต่ำ เงาอมฟ้า
+Kodak Vision3 250D|5|0.96|0.94|1.04|1.0|0.96|0.05|0.20|0.06|โทนหนังกลางวัน อุ่นนุ่ม
+Fuji Eterna 500|5|0.86|0.90|0.98|1.03|1.0|0.07|0.24|0.06|หม่นเขียว นุ่มแบบหนังญี่ปุ่น
+Kodak Tri-X 400|6|0.0|1.22|1.0|1.0|1.0|0.0|0.46|0.12|ขาวดำ คอนทราสต์จัด เกรนชัด
+Ilford HP5 Plus|6|0.0|1.06|1.0|1.0|1.0|0.03|0.38|0.08|ขาวดำ นุ่ม ไล่เทาเยอะ
+Ilford Delta 3200|6|0.0|1.12|1.0|1.0|1.0|0.04|0.80|0.14|ขาวดำ เกรนหยาบมาก
+Kodak T-Max 100|6|0.0|1.14|1.0|1.0|1.0|0.0|0.12|0.06|ขาวดำ ละเอียด คม
+Fuji Acros 100|6|0.0|1.16|1.0|1.0|1.0|0.0|0.10|0.06|ขาวดำ ดำลึก เนียน
+Ilford Pan F 50|6|0.0|1.24|1.0|1.0|1.0|0.0|0.06|0.08|ขาวดำ คอนทราสต์สูง เนื้อเนียน
+Leica Monochrom|6|0.0|1.08|1.0|1.0|1.0|0.02|0.14|0.05|ขาวดำดิจิทัล สะอาด
+Polaroid SX-70|7|0.86|0.88|1.06|1.01|0.92|0.08|0.20|0.18|อุ่นครีม ซีดจาง ดำไม่สนิท
+Polaroid 600|7|0.90|0.92|0.99|1.02|1.02|0.08|0.24|0.20|ซีดเย็น อมเขียวฟ้า
+Instax Mini|7|1.02|1.06|0.98|1.0|1.05|0.05|0.14|0.12|เย็น ไฮไลต์สว่าง
+Kodak FunSaver|7|1.16|1.08|1.06|1.0|0.92|0.03|0.44|0.20|กล้องใช้แล้วทิ้ง อุ่น เกรนหยาบ
+Fuji QuickSnap|7|1.08|1.06|0.97|1.05|0.99|0.03|0.44|0.20|กล้องใช้แล้วทิ้ง อมเขียว
+Lomo LC-A|7|1.30|1.20|1.03|1.0|0.98|0.0|0.36|0.42|สีจัด ขอบมืดหนัก
+Holga 120|7|0.96|0.92|1.04|1.0|0.94|0.06|0.34|0.50|ฟุ้ง ขอบมืดมาก อุ่น
+Diana F+|7|0.90|0.88|0.98|1.0|1.06|0.08|0.30|0.40|ฝันฟุ้ง อมฟ้า ซีด
 """
-    private val variants = listOf("นุ่ม", "คลาสสิก", "เข้ม", "จาง", "อุ่น", "เย็น")
     val all: List<Film> by lazy {
-        BASES.trim().lines().flatMap { line ->
-            val p = line.split('|'); val gi = p[1].toInt()
-            variants.mapIndexed { vi, v ->
-                var sat = p[2].toFloat(); var con = p[3].toFloat(); var r = p[4].toFloat(); var g = p[5].toFloat(); var b = p[6].toFloat()
-                var lift = p[7].toFloat(); var grain = p[8].toFloat(); val vig = p[9].toFloat()
-                when (vi) { 0 -> { con *= 0.86f; sat *= 0.92f; grain *= 0.6f }; 2 -> { sat *= 1.18f; con *= 1.12f }; 3 -> { lift += 0.05f; con *= 0.9f; sat *= 0.85f }; 4 -> { r *= 1.06f; b *= 0.94f }; 5 -> { r *= 0.95f; b *= 1.07f } }
-                Film("${p[0]}#$vi", p[0], groups[gi], sat, con, r, g, b, lift, grain, vig)
-            }.filter { it.id.endsWith("#1") } // only the classic tone of each film: a short, well-chosen list
+        BASES.trim().lines().map { line ->
+            val p = line.split('|')
+            Film(p[0], p[0], groups[p[1].toInt()], p[2].toFloat(), p[3].toFloat(), p[4].toFloat(), p[5].toFloat(), p[6].toFloat(), p[7].toFloat(), p[8].toFloat(), p[9].toFloat(), p[10])
         }
     }
     fun byId(id: String?): Film? = if (id.isNullOrEmpty()) null else all.firstOrNull { it.id == id }
@@ -105,7 +116,7 @@ Cabin Home Movie|8|0.95|1.05|1.08|1.0|0.88|0.06|0.55|0.2
 
     /** What is active now: a film (when [filmOn]) or a basic look, plus the brightness and warmth sliders; null = nothing to apply. */
     fun active(p: SharedPreferences, forceFilm: Boolean = false): Pair<ColorMatrix, Film?>? {
-        val filmMode = forceFilm || p.getString("look_kind", "basic") == "film"
+        val filmMode = forceFilm
         val film = if (filmMode) byId(p.getString("film", "")) ?: if (forceFilm) all.first() else null else null
         val look = if (film == null) p.getInt("look", 0) else 0
         val b = p.getInt("look_bright", 0); val w = p.getInt("look_warm", 0)

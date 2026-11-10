@@ -580,7 +580,8 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
         val c = host.context; val d = c.resources.displayMetrics.density
         val loc = IntArray(2); val hl = IntArray(2); anchor.getLocationInWindow(loc); host.getLocationInWindow(hl)
         val ax = loc[0] - hl[0]; val ay = loc[1] - hl[1]
-        val padT = host.paddingTop + c.dp(12); val padB = host.paddingBottom + c.dp(12)
+        val nav = if (android.os.Build.VERSION.SDK_INT >= 30) host.rootWindowInsets?.getInsets(android.view.WindowInsets.Type.systemBars())?.bottom ?: 0 else 0
+        val padT = host.paddingTop + c.dp(12); val padB = max(host.paddingBottom, nav) + c.dp(18)
         val avail = host.height - padT - padB
         val w = max(c.dp(232), anchor.width).coerceAtMost(host.width - c.dp(24))
         val full = c.dp(36) + options.size * c.dp(54) + c.dp(12)
@@ -623,7 +624,9 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
             fun moveHi(i: Int, press: Boolean) {
                 val r = rows[i]
                 hi.layoutParams = (hi.layoutParams as FrameLayout.LayoutParams).apply { height = r.height.coerceAtLeast(c.dp(52)) }
-                hi.animate().translationY((r.top - rows[0].top).toFloat()).setInterpolator(Glass.EASE).setDuration(if (press) 110 else 200).start()
+                // First touch lands exactly under the finger; after that the pill glides from row to row.
+                if (hi.alpha < 0.05f) { hi.animate().cancel(); hi.translationY = (r.top - rows[0].top).toFloat(); hi.animate().alpha(1f).setDuration(90).start() }
+                else hi.animate().alpha(1f).translationY((r.top - rows[0].top).toFloat()).setInterpolator(Glass.EASE).setDuration(if (press) 90 else 180).start()
                 rows.forEachIndexed { k, row -> row.animate().scaleX(if (press && k == i) 0.985f else 1f).scaleY(if (press && k == i) 0.985f else 1f).setDuration(120).start() }
             }
             var current = selected.coerceIn(0, rows.size - 1)
@@ -633,9 +636,9 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
             fun handle(action: Int, y: Float) {
                 val i = rowAt(y)
                 when (action) {
-                    MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> { hi.alpha = 1f; if (i != current) { current = i; Glass.tick(menu) }; moveHi(i, true) }
+                    MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> { if (i != current) { current = i; Glass.tick(menu) }; moveHi(i, true) }
                     MotionEvent.ACTION_UP -> { moveHi(i, false); choose(i, pick) }
-                    MotionEvent.ACTION_CANCEL -> moveHi(current, false)
+                    MotionEvent.ACTION_CANCEL -> { moveHi(current, false); hi.animate().alpha(0f).setDuration(160).start() }
                 }
             }
             // The rows are clickable children and would swallow the touch; the card intercepts so dragging scrubs the highlight.
@@ -650,7 +653,7 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
                 val inside = lx >= -c.dp(16) && lx <= menu.width + c.dp(16) && ly >= c.dp(30) && ly <= menu.height
                 when {
                     inside -> handle(if (e.actionMasked == MotionEvent.ACTION_DOWN) MotionEvent.ACTION_MOVE else e.actionMasked, ly)
-                    e.actionMasked == MotionEvent.ACTION_MOVE -> moveHi(current, false)
+                    else -> { rows.forEach { it.animate().scaleX(1f).scaleY(1f).setDuration(120).start() }; hi.animate().alpha(0f).setDuration(160).start() }
                 }
             }
         }
@@ -682,14 +685,14 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
 fun View.pressMenu(menu: GlassMenu, open: (View) -> Unit) {
     val v = this; var opened = false; var sx = 0f; var sy = 0f
     val slop = android.view.ViewConfiguration.get(context).scaledTouchSlop
-    val hold = Runnable { if (v.isAttachedToWindow) { opened = true; v.isPressed = false; Glass.tick(v, HapticFeedbackConstants.LONG_PRESS); open(v) } }
+    val hold = Runnable { if (v.isAttachedToWindow) { opened = true; v.isPressed = false; v.parent?.requestDisallowInterceptTouchEvent(true); Glass.tick(v, HapticFeedbackConstants.LONG_PRESS); open(v) } }
     setOnClickListener { open(it) }
     glassTouch { e ->
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> { opened = false; sx = e.rawX; sy = e.rawY; v.postDelayed(hold, 150); false }
             MotionEvent.ACTION_MOVE -> { if (opened) { menu.track(e); true } else { if (abs(e.rawX - sx) > slop || abs(e.rawY - sy) > slop) v.removeCallbacks(hold); false } }
             MotionEvent.ACTION_UP -> { v.removeCallbacks(hold); if (opened) { menu.track(e); opened = false; true } else false }
-            else -> { v.removeCallbacks(hold); val was = opened; opened = false; was }
+            else -> { v.removeCallbacks(hold); val was = opened; if (was) menu.track(e); opened = false; was }
         }
     }
 }
@@ -708,7 +711,12 @@ class GlassSheet(private val host: FrameLayout, private val pivotYFromBottom: ()
     private var dragged = 0f
     private var pendingRelease: Pair<Boolean, Float>? = null
     /** Follows a finger that is opening the sheet from the dock (see [open] with interactive = true). */
-    fun follow(dy: Float) { val sheet = card ?: return; dragged = dy; if (sheet.height == 0) return; sheet.translationY = (sheet.height - dy).coerceIn(0f, sheet.height.toFloat()); pushBack(progress(sheet)) }
+    private var hapticStep = 0
+    fun follow(dy: Float) { val sheet = card ?: return; dragged = dy
+        // A soft tick every few millimetres gives the feeling of something sliding up under the finger.
+        val step = (dy / (22 * sheet.resources.displayMetrics.density)).toInt()
+        if (step != hapticStep) { hapticStep = step; if (sheet.context.getSharedPreferences("camera", 0).getBoolean("haptic", true)) sheet.performHapticFeedback(if (android.os.Build.VERSION.SDK_INT >= 27) HapticFeedbackConstants.TEXT_HANDLE_MOVE else HapticFeedbackConstants.CLOCK_TICK) }
+        if (sheet.height == 0) return; sheet.translationY = (sheet.height - dy).coerceIn(0f, sheet.height.toFloat()); pushBack(progress(sheet)) }
     private fun progress(sheet: View) = if (sheet.height == 0) 1f else (1 - sheet.translationY / sheet.height).coerceIn(0f, 1f)
     /** Ends a finger-driven open or pull: past about a third (or a quick flick) it finishes, otherwise it returns. */
     fun release(opening: Boolean, velocity: Float) {
@@ -720,6 +728,7 @@ class GlassSheet(private val host: FrameLayout, private val pivotYFromBottom: ()
     }
     private fun settle(sheet: View) {
         val from = progress(sheet)
+        if (from < 0.98f && sheet.context.getSharedPreferences("camera", 0).getBoolean("haptic", true)) sheet.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
         sheet.animate().translationY(0f).setInterpolator(Glass.SPRING).setDuration(460).setUpdateListener { pushBack(from + (1 - from) * it.animatedFraction) }.withEndAction { pushBack(1f) }.start()
     }
     fun open(build: (LinearLayout, GlassSheet) -> Unit) = open(false, build)
@@ -760,8 +769,8 @@ class GlassSheet(private val host: FrameLayout, private val pivotYFromBottom: ()
     /** Softens the sheet while a menu sits on top of it, the way the prototype blurs what is behind a menu. */
     fun recede(on: Boolean) {
         val sheet = card ?: return
-        sheet.animate().alpha(if (on) 0.7f else 1f).setDuration(220).start()
-        Glass.blur(sheet, if (on) 12f else 0f)
+        sheet.animate().alpha(if (on) 0.88f else 1f).setDuration(220).start()
+        Glass.blur(sheet, if (on) 3.5f else 0f)
     }
     fun refresh() {
         val content = body?.getChildAt(1) as? LinearLayout ?: return; val build = builder ?: return
