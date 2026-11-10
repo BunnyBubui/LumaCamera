@@ -44,7 +44,7 @@ class VideoSessions {
         })).put("queryErrors", JSONArray(errors[Key(info, quality, dynamic, eis, slow)].orEmpty()))
     }
     /** Camera ids where a [60,60] clip measured below 50 fps (per camera: the ultra-wide gives 30 while the others give 60); then the 120 fps conversion path is offered instead. */
-    val failed60 = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    val failed60: MutableSet<String> = java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap<String, Boolean>())
     @androidx.annotation.OptIn(androidx.camera.camera2.interop.ExperimentalCamera2Interop::class)
     fun cameraKey(info: CameraInfo): String = runCatching { androidx.camera.camera2.interop.Camera2CameraInfo.from(info).cameraId }.getOrDefault("?")
     /**
