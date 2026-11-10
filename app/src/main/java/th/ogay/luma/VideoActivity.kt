@@ -162,6 +162,7 @@ class VideoActivity:ComponentActivity(){
             recorder=r;useCase=v;manual=if(slow||highRt)null else ManualControls(this,camera!!,true,true,fps).also{it.onNotice={t->notice(t)}}
             camera!!.cameraInfo.zoomState.observe(this){refreshZoom()}
             faces.streamAspect=videoRatio()?:if(quality==Quality.SD)4f/3f else 16f/9f;configureFaces(faces,camera!!,null)
+            fitPreview()
             saveSettings()
             config.text="${qualityName(quality)} · ${if(mode.lower<mode.upper)"≤"else ""}$fps${if(dynamic!=DynamicRange.SDR)" HDR" else ""}"
             status.text=if(dual)"หน้า + หลัง · ตรวจไฟล์หลังอัด" else "${if(mic)"ไมค์เปิด" else "ไมค์ปิด"} · ${if(stabilization)"กันสั่นเปิด" else "พร้อมบันทึก"}"
@@ -171,6 +172,17 @@ class VideoActivity:ComponentActivity(){
     /** Frame shape chosen for the clip; null keeps the sensor's own shape. Movie mode defaults to cinema 2.39. */
     private val V_ASPECTS get()=listOf("auto")+Aspects.available(prefs)
     private fun aspectLabel(k:String)=when(k){"auto"->"ตามเซนเซอร์";"2.39"->"2.39:1";else->k}
+    /** The viewfinder takes the shape of the clip (16:9, 21:9, 2.39:1…) and shows exactly the part that is recorded. */
+    private fun fitPreview(){
+        if(!::stage.isInitialized||!::preview.isInitialized)return
+        val W=stage.width;val H=stage.height;if(W==0||H==0)return
+        val land=resources.configuration.orientation==android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        val r=videoRatio()?:if(quality==Quality.SD)4f/3f else 16f/9f
+        val a=if(land)r else 1f/r
+        val w=minOf(W,(H*a).roundToInt());val h=(w/a).roundToInt()
+        val lp=preview.layoutParams as FrameLayout.LayoutParams
+        if(lp.width!=w||lp.height!=h){lp.width=w;lp.height=h;lp.gravity=Gravity.CENTER;preview.layoutParams=lp}
+    }
     private fun videoRatio():Float?{val k=prefs.getString("video_aspect","auto")?:"auto"
         return if(k=="auto"||k !in Aspects.keys)null else Aspects.value(k,true)}
     private fun settings(){if(recording!=null||starting||finalizing){notice("หยุดคลิปก่อนเปลี่ยนรูปแบบวิดีโอ");return}
@@ -284,7 +296,7 @@ class VideoActivity:ComponentActivity(){
         // Landscape keeps the dock beside the preview instead of under it.
         val body=LinearLayout(this).apply{orientation=if(landscape)LinearLayout.HORIZONTAL else LinearLayout.VERTICAL};column.addView(body,LinearLayout.LayoutParams(-1,0,1f))
         stage=FrameLayout(this);body.addView(stage,if(landscape)LinearLayout.LayoutParams(0,-1,1f) else LinearLayout.LayoutParams(-1,0,1f))
-        preview=PreviewView(this).apply{implementationMode=PreviewView.ImplementationMode.COMPATIBLE;scaleType=PreviewView.ScaleType.FIT_CENTER};stage.addView(preview,-1,-1);faces=FaceOverlay(this).apply{fill=false};stage.addView(faces,-1,-1)
+        preview=PreviewView(this).apply{implementationMode=PreviewView.ImplementationMode.COMPATIBLE;scaleType=PreviewView.ScaleType.FILL_CENTER};stage.addView(preview,FrameLayout.LayoutParams(-1,-1,Gravity.CENTER));stage.addOnLayoutChangeListener{_,_,_,_,_,_,_,_,_->stage.post{fitPreview()}};faces=FaceOverlay(this).apply{fill=false};stage.addView(faces,-1,-1)
         val overlay=CompositionOverlay(this).apply{gridKind=Grids.kind(prefs);movie=false};vOverlay=overlay;stage.addView(overlay,-1,-1)
         expRail=EdgeRail(this,false);stage.addView(expRail,FrameLayout.LayoutParams(dp(150),-1,Gravity.START))
         focusRail=EdgeRail(this,true);stage.addView(focusRail,FrameLayout.LayoutParams(dp(170),-1,Gravity.END))
