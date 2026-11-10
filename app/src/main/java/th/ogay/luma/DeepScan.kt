@@ -123,6 +123,13 @@ object DeepScan {
                 t.put("normal60", n60.put("declared", ae.contains(Range(60, 60))))
                 lines += "  60 fps แบบปกติ (${if (ae.contains(Range(60, 60))) "ประกาศไว้" else "ไม่ได้ประกาศ"}): " + fpsText(n60)
 
+                tests.put(t)
+            }
+            // Last: lens-by-lens streams can leave the camera service unwell (id 4 gave nothing), so nothing else runs after them.
+            // (Oversize real shots were dropped: three scans showed the camera only ever returns 1920x1440 for them.)
+            for (id in listed) {
+                val ch = info[id] ?: continue
+                val t = (0 until tests.length()).map { tests.getJSONObject(it) }.firstOrNull { it.optString("id") == id } ?: continue
                 // Each lens behind a logical camera, streamed through the logical one.
                 val subs = runCatching { ch.physicalCameraIds.toList() }.getOrDefault(emptyList())
                 if (subs.isNotEmpty()) {
@@ -136,36 +143,7 @@ object DeepScan {
                     }
                     t.put("physicalStreams", ps)
                 }
-                tests.put(t)
             }
-            // 5. Last, because an oversized request can upset the camera service: really shoot at sizes the camera does not list
-            //    and read the size of the JPEG that comes back (a session that merely "configures" proves nothing).
-            val big = JSONArray()
-            val sizes = listOf(Size(8192, 6144), Size(8160, 6120), Size(8000, 6000), Size(7680, 4320))
-            for (id in listed) {
-                val ch = info[id] ?: continue
-                if (ch.get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_FRONT) continue
-                val normal = biggest(ch.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)?.getOutputSizes(ImageFormat.JPEG))
-                val vendor = vendorSwitches(ch)
-                var won = false
-                for (size in sizes) {
-                    for (use in listOf<Pair<String, CaptureRequest.Key<Any>?>?>(null) + vendor.map { it.first to it.second }) {
-                        // With a switch, only the first size: the switches are the long shot.
-                        if (use != null && size != sizes[0]) continue
-                        progress("กล้อง $id: ถ่ายจริงที่ ${size.width}×${size.height}${use?.let { " + ${it.first}" } ?: ""}…")
-                        val r = withDevice(cm, id, handler) { still(it, size, false, handler, use?.second) }.put("cameraId", id).put("switch", use?.first ?: "none")
-                        big.put(r)
-                        if (r.optBoolean("ok")) {
-                            lines += "ถ่ายจริงกล้อง $id ที่ขอ ${size.width}×${size.height}: ได้ภาพ ${r.optInt("width")}×${r.optInt("height")} (${mp(Size(r.optInt("width"), r.optInt("height")))})${use?.let { " เมื่อเปิด ${it.first}" } ?: ""}"
-                            if (r.optLong("pixels") > bestPixels && r.optLong("pixels") > pixels(normal)) { bestPixels = r.optLong("pixels"); best = Still(id, Size(r.optInt("width"), r.optInt("height")), false) }
-                            won = true
-                        } else lines += "ถ่ายจริงกล้อง $id ที่ ${size.width}×${size.height}${use?.let { " + ${it.first}" } ?: ""}: ไม่ได้ (${r.optString("error")})"
-                        if (won) break
-                    }
-                    if (won) break
-                }
-            }
-            out.put("undeclaredShots", big)
             out.put("tests", tests)
             val prefs = context.getSharedPreferences("camera", 0).edit()
             best?.let { b ->
