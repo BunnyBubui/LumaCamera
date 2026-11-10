@@ -33,6 +33,7 @@ jobs:
         run: sdkmanager 'platforms;android-36' 'build-tools;34.0.0' 'build-tools;35.0.0' 'ndk;27.0.12077973' 'cmake;3.22.1'
       - name: Verify bundled SR weights
         run: sha256sum -c model/SHA256SUMS
+      - uses: ./.github/actions/detail-model
       - name: Test, lint and build
         run: bash gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
       - name: Check 16 KB page alignment of native libraries
@@ -118,6 +119,8 @@ jobs:
         with:
           packages: platform-tools
         if: steps.select.outputs.variant != ''
+      - uses: ./.github/actions/detail-model
+        if: steps.select.outputs.variant != ''
       - name: Build with stable signing key
         if: steps.select.outputs.variant != ''
         env:
@@ -141,3 +144,4 @@ jobs:
           path: dist/
       - if: always()
         run: rm -f "$RUNNER_TEMP/luma.jks"
+

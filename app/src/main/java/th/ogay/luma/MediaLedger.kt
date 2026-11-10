@@ -66,10 +66,10 @@ class StudioLibraryActivity:ComponentActivity(){
             val box=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(12),dp(16),dp(12),dp(12));background=shape(PANEL,dp(18).toFloat())}
             box.addView(label(item.title,15f),-1,-2)
             if(item.note.isNotBlank())box.addView(label(item.note,13f,MUTED),-1,-2)
-            val row=LinearLayout(this)
-            row.addView(pill("เปิด"){MediaLedger.view(this,item.uri,item.mime)},0,dp(48));(row.getChildAt(0).layoutParams as LinearLayout.LayoutParams).weight=1f
-            row.addView(pill("ส่งออก"){MediaLedger.share(this,item.uri,item.mime)},0,dp(48));(row.getChildAt(1).layoutParams as LinearLayout.LayoutParams).weight=1f
-            if(item.mime=="video/mp4")row.addView(pill("แต่ง / AI"){startActivity(Intent(this,ClipEditorActivity::class.java).setData(item.uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))},LinearLayout.LayoutParams(0,dp(48),1f))
+            val row=LinearLayout(this).apply{gravity=android.view.Gravity.CENTER_VERTICAL}
+            row.addView(pill("เปิด"){MediaLedger.view(this,item.uri,item.mime)},0,-2);(row.getChildAt(0).layoutParams as LinearLayout.LayoutParams).weight=1f
+            row.addView(pill("ส่งออก"){MediaLedger.share(this,item.uri,item.mime)},0,-2);(row.getChildAt(1).layoutParams as LinearLayout.LayoutParams).weight=1f
+            if(item.mime=="video/mp4")row.addView(pill("แต่ง / AI"){startActivity(Intent(this,ClipEditorActivity::class.java).setData(item.uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))},LinearLayout.LayoutParams(0,-2,1f))
             box.addView(row);list.addView(box,LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(12)})
         }
     }

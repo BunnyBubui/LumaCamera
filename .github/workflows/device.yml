@@ -23,6 +23,7 @@ jobs:
           packages: platform-tools
       - name: Install Android SDK components
         run: sdkmanager 'platforms;android-36' 'build-tools;34.0.0' 'build-tools;35.0.0'
+      - uses: ./.github/actions/detail-model
       - name: Prepare app and test APKs
         run: bash gradlew --no-daemon -Pkotlin.compiler.execution.strategy=in-process :app:assembleDebug :app:assembleDebugAndroidTest
       - name: Free space for the emulator
@@ -64,3 +65,4 @@ jobs:
             app/build/reports/androidTests/
             app/build/reports/camera-screen.png
             app/build/outputs/androidTest-results/
+

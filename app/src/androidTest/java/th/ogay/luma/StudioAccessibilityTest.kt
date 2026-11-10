@@ -147,6 +147,7 @@ class StudioAccessibilityTest {
             report += screen<VideoActivity>("Video", Intent(context, VideoActivity::class.java), font, landscape = true)
             report += screen<VideoActivity>("SlowMotion", Intent(context, VideoActivity::class.java).putExtra("mode", "SLOW"), font)
             report += screen<SpecialVideoActivity>("TimeLapse", Intent(context, SpecialVideoActivity::class.java).putExtra("mode", "TIMELAPSE"), font)
+            report += screen<CameraProbeActivity>("CameraProbe", Intent(context, CameraProbeActivity::class.java), font)
             report += screen<RawLabActivity>("RawLab", Intent(context, RawLabActivity::class.java), font)
             report += screen<DocumentActivity>("Document", documentIntent(), font)
             report += screen<ClipEditorActivity>("ClipEditor", Intent(context, ClipEditorActivity::class.java), font)

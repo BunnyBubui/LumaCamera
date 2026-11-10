@@ -3,6 +3,7 @@ package th.ogay.luma
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.Context
+import android.content.Intent
 import android.graphics.ImageFormat
 import android.hardware.camera2.CameraCharacteristics as CC
 import android.hardware.camera2.CameraManager
@@ -35,6 +36,7 @@ object Capabilities {
                 .put("aeFpsRanges",JSONArray(p.get(CC.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)?.map{it.toString()}.orEmpty()))
                 .put("videoSizes",JSONArray(map?.getOutputSizes(MediaRecorder::class.java)?.map{it.toString()}.orEmpty()))
                 .put("highSpeed",JSONArray(highSpeed(c,id).map{"${it.first}@${it.second}"}))
+                .put("highSpeedConfigurations",CameraVideoInventory.highSpeed(p)).put("videoTiming",CameraVideoInventory.timing(p)).put("camcorderProfiles",CameraVideoInventory.profiles(id))
                 .put("opticalStabilization",JSONArray(p.get(CC.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION)?.toList().orEmpty()))
                 .put("electronicStabilization",JSONArray(p.get(CC.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES)?.toList().orEmpty()))
                 .put("sessionStatus","needs_combination_test").put("rawVideoStatus","experimental_measurement_required")
@@ -43,8 +45,8 @@ object Capabilities {
             if(Build.VERSION.SDK_INT>=34)j.put("jpegR",sizes(ImageFormat.JPEG_R))
             cameras.put(j)
         }}
-        val codecs=JSONArray(MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.filter{it.isEncoder}.map{JSONObject().put("name",it.name).put("types",JSONArray(it.supportedTypes.toList()))})
-        val result=JSONObject().put("schema",1).put("app","0.3.0").put("manufacturer",Build.MANUFACTURER).put("model",Build.MODEL).put("sdk",Build.VERSION.SDK_INT)
+        val codecs=JSONArray(MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.filter{it.isEncoder}.map{JSONObject().put("name",it.name).put("types",JSONArray(it.supportedTypes.toList())).put("videoSizeRateChecks",CameraVideoInventory.encoder(it))})
+        val result=JSONObject().put("schema",2).put("app","0.3.0").put("manufacturer",Build.MANUFACTURER).put("model",Build.MODEL).put("sdk",Build.VERSION.SDK_INT)
             .put("timeMs",System.currentTimeMillis()).put("freeBytes",c.filesDir.usableSpace).put("cameras",cameras).put("encoders",codecs)
         if(Build.VERSION.SDK_INT>=30)result.put("concurrentSets",JSONArray(m.concurrentCameraIds.map{JSONArray(it.toList())}))
         return result
@@ -53,11 +55,12 @@ object Capabilities {
         activity.luma.fileIo.execute {
             val json=runCatching{report(activity)}
             activity.runOnUiThread {
+                if(activity.isFinishing||activity.isDestroyed)return@runOnUiThread
                 json.onSuccess{j->
                     val text="${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE}\n\n"+j.getJSONArray("cameras").let{a->(0 until a.length()).joinToString("\n\n"){i->val x=a.getJSONObject(i);"กล้อง ${x.getString("id")}\nRAW ${x.getBoolean("raw")} · Manual ${x.getBoolean("manualSensor")}\nJPEG ${x.getJSONArray("jpegSizes").optString(0)}\nFPS ${x.getJSONArray("aeFpsRanges")}"}}+"\n\nค่าข้างต้นเป็นสิ่งที่ Android รายงาน ต้องทดสอบชุดความละเอียด / fps / HDR / กันสั่นร่วมกัน"
                     AlertDialog.Builder(activity).setTitle("ความสามารถกล้อง").setMessage(text).setPositiveButton("ส่งออก JSON"){_,_->
                         val file=File(activity.filesDir,"reports/camera-${System.currentTimeMillis()}.json");file.parentFile?.mkdirs();file.writeText(j.toString(2));MediaLedger.rememberFile(activity,file,"application/json");MediaLedger.share(activity,MediaLedger.privateUri(activity,file),"application/json")
-                    }.setNegativeButton("ปิด",null).show()
+                    }.setNeutralButton("ทดสอบกล้อง"){_,_->activity.startActivity(Intent(activity,CameraProbeActivity::class.java))}.setNegativeButton("ปิด",null).show()
                 }.onFailure{activity.notice(it.localizedMessage?:"อ่านข้อมูลกล้องไม่ได้")}
             }
         }

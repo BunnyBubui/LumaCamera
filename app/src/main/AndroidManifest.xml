@@ -1,6 +1,8 @@
 <manifest xmlns:tools="http://schemas.android.com/tools" xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.CAMERA"/>
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-feature android:name="android.hardware.microphone" android:required="false"/>
@@ -18,6 +20,7 @@
             <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths"/>
         </provider>
         <activity android:name=".StudioLibraryActivity" android:exported="false"/>
+        <activity android:name=".CameraProbeActivity" android:exported="false" android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"/>
         <activity android:name=".VideoActivity" android:exported="false"/>
         <activity android:name=".SpecialVideoActivity" android:exported="false"/>
         <activity android:name=".DocumentActivity" android:exported="false"/>
@@ -27,6 +30,8 @@
             <meta-data android:name="androidx.work.WorkManagerInitializer" android:value="androidx.startup" tools:node="remove"/>
         </provider>
         <activity android:name=".GalleryActivity" android:exported="false"/>
+        <service android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync" tools:node="merge"/>
         <activity android:name=".VideoPlayerActivity" android:exported="false"/>
         <activity android:name=".CameraActivity" android:exported="true" android:configChanges="orientation|screenSize|screenLayout|keyboardHidden">
             <intent-filter>
