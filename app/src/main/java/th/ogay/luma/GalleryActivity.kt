@@ -693,6 +693,7 @@ class GalleryActivity : ComponentActivity() {
                 if (s.ai != null) { add("AI ${s.aiVersion}  ${ai.w} × ${ai.h} px"); add("เวลาประมวลผล  ${s.elapsed} ms") }
                 s.aiReport?.let { report -> runCatching { JSONObject(report) }.getOrNull()?.let { j ->
                     add("ประมวลผลด้วย ${j.optString("backend")} · ความแรงรายละเอียด ${j.optInt("strength")}%")
+                    if (j.has("totalMs")) add("เวลา  รวม ${j.optLong("totalMs")} · AI ${j.optLong("inferenceMs")} · อ่านภาพ ${j.optLong("decodeMs")} · ผสาน ${j.optLong("renderMs")} · บันทึก ${j.optLong("encodeMs")} · เปิดโมเดล ${j.optLong("modelInitMs")} ms (${j.optInt("tiles")} ช่อง)")
                     add("รายละเอียดบางส่วนเป็นการคาดเดาของ AI")
                 } }
             }.joinToString("\n")
