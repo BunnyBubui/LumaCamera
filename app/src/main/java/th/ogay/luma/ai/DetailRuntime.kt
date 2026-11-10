@@ -22,7 +22,7 @@ class DetailRuntime(private val context: Context, private val forceCpu: Boolean 
 
     init {
         if (!forceCpu) {
-            try { open(true) } catch (e: Exception) { fallbackReason = e.javaClass.simpleName; close() }
+            try { open(true) } catch (e: Exception) { fallbackReason = "${e.javaClass.simpleName}: ${e.message?.take(240)}"; close() }
             catch (e: LinkageError) { fallbackReason = e.javaClass.simpleName; close() }
         }
         if (model == null) open(false)
@@ -66,7 +66,7 @@ class DetailRuntime(private val context: Context, private val forceCpu: Boolean 
         }
         return try { invoke() } catch (e: Exception) {
             if (!gpu) throw e
-            fallbackReason = e.javaClass.simpleName
+            fallbackReason = "${e.javaClass.simpleName}: ${e.message?.take(240)}"
             close(); open(false); invoke()
         }
     }

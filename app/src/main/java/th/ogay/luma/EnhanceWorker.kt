@@ -64,7 +64,9 @@ class EnhanceWorker(context: Context, params: WorkerParameters) : Worker(context
                         }
                     }
                     report = JSONObject(result.json).put("burstAvailable",hasBurst)
-                        .put("fusedFrames",db.get(key)?.fusedFrames ?: 0).toString()
+                        .put("sourceMode",if(shot.output.enhance && hasBurst) "burst" else "single")
+                        .put("fusedFrames",if(shot.output.enhance && hasBurst) db.get(key)?.fusedFrames ?: 1 else 1)
+                        .put("captureFusedFrames",shot.fusedFrames).toString()
                     result.size
                 }
                 else -> throw IOException("ไม่รองรับโมเดล AI ${shot.aiModel}")

@@ -40,7 +40,7 @@ their original JPEG even after old burst files have been cleaned up.
 
 CI's `.github/actions/detail-model` converts the official checkpoints before Gradle
 and caches the verified artifact. Local build: Python 3.11, `tensorflow-cpu==2.19.0`,
-`numpy==2.1.3`, CPU `torch==2.6.0`, then `python model/build_detail.py --verify`.
+`numpy==2.1.3`, `Pillow==11.3.0`, CPU `torch==2.6.0`, then `python model/build_detail.py --verify`.
 The phone needs neither Python nor a model download. Model weights/licence follow
 the upstream BSD-3-Clause Real-ESRGAN project. Native JPEG licensing is IJG/BSD/zlib;
 retain the third-party notices bundled with this change.
@@ -62,3 +62,12 @@ speedup, OPPO-equivalent quality, or 192MP of real sensor detail is claimed.
 Multi-frame capture still uses the existing integer-translation JPEG fusion;
 subpixel/raw burst reconstruction and a phone-trained efficient model are future
 work. Do not describe the existing burst fusion as subpixel super-resolution.
+
+## UI integration contract
+
+Glass UI can restyle `ai/EnhanceUi.kt` and the two AI buttons in GalleryActivity.
+Keep `EnhanceSpec(scale,strength)`, `Shots.queueEnhancement`, `EnhanceWorker.enqueue`
+and cancellation tokens intact. Display `Shot.aiSize` (actual exported dimensions),
+not a hard-coded 12MP value. Before/after must retain the same normalized pan/zoom.
+The model/native pipeline, Gradle, manifest, database migration and workflow remain
+core-owned. Any claims about quality/speed need the saved comparison/report evidence.

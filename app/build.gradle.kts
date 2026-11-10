@@ -1,3 +1,5 @@
+import java.security.MessageDigest
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -78,7 +80,7 @@ val verifyDetailModel by tasks.registering {
         val model = file("src/main/assets/luma-detail-sr2.tflite")
         val manifest = file("src/main/assets/luma-detail-sr2.json")
         check(model.isFile && manifest.isFile) { "Prepare the offline model first: python model/build_detail.py --verify (see docs/DETAIL_SR2.md)" }
-        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(model.readBytes())
+        val digest = MessageDigest.getInstance("SHA-256").digest(model.readBytes())
             .joinToString("") { "%02x".format(it.toInt() and 255) }
         check(manifest.readText().contains(digest)) { "Detail SR model does not match its verified manifest" }
     }
