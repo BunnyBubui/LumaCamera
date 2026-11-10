@@ -49,9 +49,12 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions { jvmTarget = "17" }
     lint { abortOnError = true }
 }
+
+// LiteRT 2.1.6 is compiled with Kotlin 2.3 metadata, which needs Kotlin 2.2+ to read;
+// Kotlin 2.2 makes the old kotlinOptions DSL an error, so the JVM target lives here.
+kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) } }
 
 dependencies {
     // Standalone CompiledModel: offline GPU FP16 with explicit CPU fallback.
