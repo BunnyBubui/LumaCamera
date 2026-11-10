@@ -89,7 +89,7 @@ object DeepScan {
             }
             out.put("directOpen", opens)
 
-            // 4. Live tests on every listed camera.
+            // 4. Live tests on every listed camera. Each test opens the camera again, so one failure cannot end the rest.
             val tests = JSONArray()
             var best: Still? = null
             var bestPixels = 0L
@@ -98,65 +98,58 @@ object DeepScan {
                 val map = ch.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP) ?: continue
                 val facing = if (ch.get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_FRONT) "หน้า" else "หลัง"
                 val t = JSONObject().put("id", id)
-                progress("กล้อง $id: ลองเปิด…")
-                val (dev, err) = open(cm, id, handler)
-                if (dev == null) { t.put("error", err); tests.put(t); lines += "กล้อง $id: เปิดไม่ได้ ($err)"; continue }
-                try {
-                    val normal = biggest(map.getOutputSizes(ImageFormat.JPEG))
-                    val high = biggest(map.getHighResolutionOutputSizes(ImageFormat.JPEG))
-                    val full = if (Build.VERSION.SDK_INT >= 31) biggest(ch.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP_MAXIMUM_RESOLUTION)?.getOutputSizes(ImageFormat.JPEG)) else null
-                    lines += "กล้อง $id ($facing): ปกติ ${mp(normal)} · ความละเอียดสูง ${mp(high)} · เต็มเซนเซอร์ ${if (full == null) "ไม่ประกาศ" else mp(full)}"
+                val normal = biggest(map.getOutputSizes(ImageFormat.JPEG))
+                val high = biggest(map.getHighResolutionOutputSizes(ImageFormat.JPEG))
+                val full = if (Build.VERSION.SDK_INT >= 31) biggest(ch.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP_MAXIMUM_RESOLUTION)?.getOutputSizes(ImageFormat.JPEG)) else null
+                lines += "กล้อง $id ($facing): ปกติ ${mp(normal)} · ความละเอียดสูง ${mp(high)} · เต็มเซนเซอร์ ${if (full == null) "ไม่ประกาศ" else mp(full)}"
 
-                    // Stills bigger than the normal list, in both ways the system allows.
-                    val stills = JSONArray()
-                    listOfNotNull(high?.takeIf { pixels(it) > pixels(normal) }?.let { it to false }, full?.let { it to true }).forEach { (size, maxMode) ->
-                        progress("กล้อง $id: ถ่ายทดสอบ ${mp(size)}…")
-                        val r = still(dev, size, maxMode, handler)
-                        stills.put(r)
-                        val got = r.optLong("pixels")
-                        lines += "  ถ่ายจริง ${mp(size)} ${if (maxMode) "(โหมดเต็มเซนเซอร์)" else "(ขนาดความละเอียดสูง)"}: " +
-                            if (r.optBoolean("ok")) "ได้ ${r.optInt("width")}×${r.optInt("height")} ใน ${r.optLong("ms")} ms" else "ไม่ได้ (${r.optString("error")})"
-                        if (r.optBoolean("ok") && got > bestPixels && got > pixels(normal)) { bestPixels = got; best = Still(id, Size(r.optInt("width"), r.optInt("height")), maxMode) }
+                // Stills bigger than the normal list, in both ways the system allows.
+                val stills = JSONArray()
+                listOfNotNull(high?.takeIf { pixels(it) > pixels(normal) }?.let { it to false }, full?.let { it to true }).forEach { (size, maxMode) ->
+                    progress("กล้อง $id: ถ่ายทดสอบ ${mp(size)}…")
+                    val r = withDevice(cm, id, handler) { still(it, size, maxMode, handler) }
+                    stills.put(r)
+                    lines += "  ถ่ายจริง ${mp(size)} ${if (maxMode) "(โหมดเต็มเซนเซอร์)" else "(ขนาดความละเอียดสูง)"}: " +
+                        if (r.optBoolean("ok")) "ได้ ${r.optInt("width")}×${r.optInt("height")} ใน ${r.optLong("ms")} ms" else "ไม่ได้ (${r.optString("error")})"
+                    if (r.optBoolean("ok") && r.optLong("pixels") > bestPixels && r.optLong("pixels") > pixels(normal)) { bestPixels = r.optLong("pixels"); best = Still(id, Size(r.optInt("width"), r.optInt("height")), maxMode) }
+                }
+                t.put("stills", stills)
+
+                // Sizes the camera does not list: does the session accept them anyway (with and without the maker's switches)?
+                progress("กล้อง $id: ลองขนาดที่ไม่ได้ประกาศ…")
+                val undeclared = JSONArray()
+                val vendor = vendorSwitches(ch)
+                for (size in listOf(Size(8192, 6144), Size(8160, 6120), Size(8000, 6000), Size(7680, 4320))) {
+                    for (use in listOf<Pair<String, CaptureRequest.Key<Any>?>?>(null) + vendor.map { it.first to it.second }) {
+                        val r = withDevice(cm, id, handler) { stillConfigured(it, size, use?.second, handler) }.put("size", size.toString()).put("switch", use?.first ?: "none")
+                        undeclared.put(r)
+                        if (r.optBoolean("configured")) lines += "  ขนาดไม่ประกาศ ${size.width}×${size.height} ${use?.first?.let { "+ $it" } ?: ""}: กล้องรับชุดนี้!"
                     }
-                    t.put("stills", stills)
+                }
+                t.put("undeclaredSizes", undeclared)
+                if (undeclared.let { a -> (0 until a.length()).none { a.getJSONObject(it).optBoolean("configured") } }) lines += "  ขนาดที่ไม่ได้ประกาศ (50 MP แบบ 8192×6144 ฯลฯ): กล้องปฏิเสธทุกแบบ รวมถึงเมื่อเปิดสวิตช์ของผู้ผลิต ${vendor.size} ตัว"
 
-                    // 60 fps in an ordinary session, asked for even when the list does not offer it.
-                    progress("กล้อง $id: ลอง 60 fps…")
-                    val ae = ch.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)?.toList().orEmpty()
-                    val videoSize = map.getOutputSizes(ImageFormat.PRIVATE)?.firstOrNull { it == Size(1920, 1080) } ?: Size(1280, 720)
-                    val n60 = stream(dev, videoSize, Range(60, 60), false, null, handler)
-                    t.put("normal60", n60.put("declared", ae.contains(Range(60, 60))))
-                    lines += "  60 fps แบบปกติ (${if (ae.contains(Range(60, 60))) "ประกาศไว้" else "ไม่ได้ประกาศ"}): " + fpsText(n60)
+                // 60 fps in an ordinary session, asked for even when the list does not offer it.
+                progress("กล้อง $id: ลอง 60 fps…")
+                val ae = ch.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)?.toList().orEmpty()
+                val videoSize = map.getOutputSizes(ImageFormat.PRIVATE)?.firstOrNull { it == Size(1920, 1080) } ?: Size(1280, 720)
+                val n60 = withDevice(cm, id, handler) { stream(it, videoSize, Range(60, 60), false, null, handler) }
+                t.put("normal60", n60.put("declared", ae.contains(Range(60, 60))))
+                lines += "  60 fps แบบปกติ (${if (ae.contains(Range(60, 60))) "ประกาศไว้" else "ไม่ได้ประกาศ"}): " + fpsText(n60)
 
-                    // High-speed sessions: every range the phone declares for 1080p/720p, plus [60,60] on purpose.
-                    val hsSizes = runCatching { map.highSpeedVideoSizes.toList() }.getOrDefault(emptyList())
-                    val hsSize = hsSizes.firstOrNull { it == Size(1920, 1080) } ?: hsSizes.firstOrNull { it == Size(1280, 720) } ?: hsSizes.firstOrNull()
-                    if (hsSize != null) {
-                        val ranges = runCatching { map.getHighSpeedVideoFpsRangesFor(hsSize).toList() }.getOrDefault(emptyList())
-                        val hs = JSONArray()
-                        (ranges.filter { it.lower == it.upper } + Range(60, 60)).distinct().forEach { range ->
-                            progress("กล้อง $id: ลอง high-speed $range…")
-                            val r = stream(dev, hsSize, range, true, null, handler).put("declared", ranges.contains(range))
-                            hs.put(r)
-                            lines += "  high-speed ${range.upper} fps ที่ ${hsSize.width}×${hsSize.height} (${if (ranges.contains(range)) "ประกาศไว้" else "ไม่ได้ประกาศ"}): " + fpsText(r)
-                        }
-                        t.put("highSpeed", hs.put(JSONObject().put("size", hsSize.toString()).put("declaredRanges", JSONArray(ranges.map { it.toString() }))))
-                    } else lines += "  high-speed: ไม่ประกาศ"
-
-                    // Each lens behind a logical camera, streamed through the logical one.
-                    val subs = runCatching { ch.physicalCameraIds.toList() }.getOrDefault(emptyList())
-                    if (subs.isNotEmpty()) {
-                        val ps = JSONArray()
-                        subs.forEach { pid ->
-                            progress("กล้อง $id: ลองเลนส์ย่อย $pid…")
-                            val r = stream(dev, Size(640, 480), null, false, pid, handler).put("physicalId", pid)
-                            info[pid]?.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.firstOrNull()?.let { r.put("focalMm", it.toDouble()) }
-                            ps.put(r)
-                            lines += "  เลนส์ย่อย $pid${r.optDouble("focalMm").takeIf { !it.isNaN() }?.let { String.format(Locale.US, " (%.1f มม.)", it) } ?: ""}: " + if (r.optInt("frames") > 0) "ส่งภาพได้" else "ไม่ส่งภาพ (${r.optString("error", "ไม่มีเฟรม")})"
-                        }
-                        t.put("physicalStreams", ps)
+                // Each lens behind a logical camera, streamed through the logical one.
+                val subs = runCatching { ch.physicalCameraIds.toList() }.getOrDefault(emptyList())
+                if (subs.isNotEmpty()) {
+                    val ps = JSONArray()
+                    subs.forEach { pid ->
+                        progress("กล้อง $id: ลองเลนส์ย่อย $pid…")
+                        val r = withDevice(cm, id, handler) { stream(it, Size(640, 480), null, false, pid, handler) }.put("physicalId", pid)
+                        info[pid]?.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)?.firstOrNull()?.let { r.put("focalMm", it.toDouble()) }
+                        ps.put(r)
+                        lines += "  เลนส์ย่อย $pid${r.optDouble("focalMm").takeIf { !it.isNaN() }?.let { String.format(Locale.US, " (%.1f มม.)", it) } ?: ""}: " + if (r.optInt("frames") > 0) "ส่งภาพได้" else "ไม่ส่งภาพ (${r.optString("error", "ไม่มีเฟรม")})"
                     }
-                } catch (e: Exception) { t.put("error", e.toString()) } finally { runCatching { dev.close() } }
+                    t.put("physicalStreams", ps)
+                }
                 tests.put(t)
             }
             out.put("tests", tests)
@@ -171,6 +164,49 @@ object DeepScan {
             out.put("error", e.toString()); lines += "สแกนหยุดกลางทาง: ${e.localizedMessage}"
         } finally { thread.quitSafely() }
         return Result(out, lines.joinToString("\n"))
+    }
+
+    /** Opens [id], runs [block], closes it; a camera that will not open becomes an error result instead of stopping the scan. */
+    private fun withDevice(cm: CameraManager, id: String, handler: Handler, block: (CameraDevice) -> JSONObject): JSONObject {
+        SystemClock.sleep(250)
+        val (dev, err) = open(cm, id, handler)
+        if (dev == null) return JSONObject().put("ok", false).put("frames", 0).put("error", "เปิดกล้องไม่ได้ ($err)")
+        return try { block(dev) } catch (e: Exception) { JSONObject().put("ok", false).put("frames", 0).put("error", e.message ?: e.javaClass.simpleName) } finally { runCatching { dev.close() } }
+    }
+
+    /** The maker's request keys that look like resolution/zoom switches, found by name in what the camera lists for apps. */
+    @Suppress("UNCHECKED_CAST")
+    private fun vendorSwitches(ch: CameraCharacteristics): List<Pair<String, CaptureRequest.Key<Any>>> {
+        val wanted = listOf("EnableXCFAOptimization", "EnableInsensorZoom", "EnableSnapshotOnlyInsensorZoom", "EnableIdealRAW", "ExtendedMaxZoom", "EnableQLL")
+        return runCatching {
+            ch.availableCaptureRequestKeys.filter { k -> wanted.any { k.name.endsWith(it) } }.map { it.name.substringAfterLast('.') to (it as CaptureRequest.Key<Any>) }
+        }.getOrDefault(emptyList())
+    }
+
+    /** Only asks whether a session with a big JPEG stream (and optionally one switch set) is accepted; no picture is taken. */
+    private fun stillConfigured(device: CameraDevice, size: Size, key: CaptureRequest.Key<Any>?, handler: Handler): JSONObject {
+        val r = JSONObject().put("configured", false)
+        val jpeg = try { ImageReader.newInstance(size.width, size.height, ImageFormat.JPEG, 1) } catch (e: Throwable) { return r.put("error", e.javaClass.simpleName) }
+        var s: CameraCaptureSession? = null
+        try {
+            val params = key?.let { k ->
+                // The key's value type is not published; try a whole number, then a single byte.
+                listOf<Any>(1, 1.toByte()).firstNotNullOfOrNull { v -> runCatching { device.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE).apply { set(k, v) }.build() }.getOrNull() }
+            }
+            val latch = CountDownLatch(1)
+            var ok = false
+            var error = "หมดเวลา"
+            val config = SessionConfiguration(SessionConfiguration.SESSION_REGULAR, listOf(OutputConfiguration(jpeg.surface)), { handler.post(it) }, object : CameraCaptureSession.StateCallback() {
+                override fun onConfigured(session: CameraCaptureSession) { s = session; ok = true; latch.countDown() }
+                override fun onConfigureFailed(session: CameraCaptureSession) { error = "กล้องไม่รับชุดนี้"; latch.countDown() }
+            })
+            if (params != null) config.sessionParameters = params
+            device.createCaptureSession(config)
+            latch.await(5, TimeUnit.SECONDS)
+            r.put("configured", ok); if (!ok) r.put("error", error)
+        } catch (e: Exception) { r.put("error", e.message ?: e.javaClass.simpleName) }
+        finally { runCatching { s?.close() }; SystemClock.sleep(100); runCatching { jpeg.close() } }
+        return r
     }
 
     private fun fpsText(r: JSONObject) = if (r.optInt("frames") > 0) String.format(Locale.US, "ได้จริง %.1f fps", r.optDouble("fps")) else "ไม่ได้ (${r.optString("error", "ไม่มีเฟรม")})"

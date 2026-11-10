@@ -88,7 +88,7 @@ class VideoActivity:ComponentActivity(){
     }
     /** Settings of the current kind (slow-motion keeps its own resolution, fps and camera). */
     private fun loadSettings(){
-        mic=prefs.getBoolean("video_mic",true)
+        mic=prefs.getBoolean("video_mic",true);sessions.failed60=prefs.getBoolean("force60_failed",false)
         quality=when(prefs.getString("video_quality","FHD")){"UHD"->Quality.UHD;"HD"->Quality.HD;"SD"->Quality.SD;else->Quality.FHD}
         logProfile=LogProfile.fromPrefs(prefs);fps=prefs.getInt("video_fps",30);bitrate=prefs.getInt("video_bitrate",20_000_000);stabilization=prefs.getBoolean("video_eis",false)
         dynamic=when(prefs.getString("video_dynamic","SDR")){"HLG"->DynamicRange.HLG_10_BIT;"HDR10"->DynamicRange.HDR10_10_BIT;else->DynamicRange.SDR}
@@ -229,7 +229,8 @@ class VideoActivity:ComponentActivity(){
                                 }
                             }else MediaLedger.add(this,uri,name,"video/mp4",if(event.hasError())"คลิปจบบางส่วน · รหัส ${event.error}" else "${qualityName(quality)} · เป้าหมาย $fps fps · ${if(dynamic==DynamicRange.SDR)"SDR" else "HDR"}")
                             if(!(half60&&!event.hasError()))status.text=if(event.hasError())"เก็บคลิปที่ได้รับแล้ว · ${event.error}" else "บันทึกวิดีโอแล้ว"
-                            val capture=JSONObject(boundConfig.toString());luma.fileIo.execute{ClipInspector.record(this,uri,name,requested,sensor,playback,capture)}
+                            val capture=JSONObject(boundConfig.toString());val wasForced=forced60;luma.fileIo.execute{ClipInspector.record(this,uri,name,requested,sensor,playback,capture)
+                                if(wasForced&&!event.hasError())runCatching{val m=ClipInspector.inspect(this,uri).optDouble("measuredFps");if(m<50.0){prefs.edit().putBoolean("force60_failed",true).apply();sessions.failed60=true;runOnUiThread{if(!isDestroyed)notice("คลิปนี้ได้ ${"%.0f".format(m)} fps ไม่ถึง 60 · ครั้งหน้าจะใช้แบบแปลงจาก 120")}}}}
                         }else status.text="บันทึกไม่สำเร็จ · ${event.cause?.localizedMessage?:event.error}"
                         status.announceForAccessibility(status.text)
                     }

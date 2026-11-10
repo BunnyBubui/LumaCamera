@@ -1300,7 +1300,7 @@ class CameraActivity : ComponentActivity() {
         if(mode==PhotoMode.HIRES&&!hiResHintShown){hiResHintShown=true
             val current=camera?.let{runCatching{Camera2CameraInfo.from(it.cameraInfo).cameraId}.getOrNull()}
             val full=HiResShot.find(this,current,rear)
-            hint(if(full!=null)"เครื่องเปิดโหมดเต็มเซนเซอร์ ${pixelsText(full.second.width.toLong()*full.second.height)} ให้แอป" else "เครื่องนี้ไม่ประกาศโหมดเต็มเซนเซอร์ให้แอปอื่น · ใช้ขนาดสูงสุดที่ระบบให้",3200)}
+            hint(if(full!=null)"เครื่องเปิดโหมดเต็มเซนเซอร์ ${pixelsText(full.second.width.toLong()*full.second.height)} ให้แอป" else "เครื่องนี้ไม่เปิดเซนเซอร์เต็มให้แอปอื่น · ถ่ายขนาดสูงสุดที่เปิดให้ แล้วใช้ AI ขยาย ×2 เป็นราว 50 MP · ให้",3200)}
         preview.post{applyLook()}
         applyLogView()
         camera?.let { cam -> configureFaces(faces, cam, mask); if (rear) findMacroLens(cam) else macroLens = null }
@@ -1562,7 +1562,7 @@ class CameraActivity : ComponentActivity() {
                     if(photoMode!=PhotoMode.PANORAMA)PhotoEffects.decorate(this@CameraActivity,original,isRear)
                     val size=PhotoMedia.dimensions(original)
                     if(camId!=null)LensMeta.stamp(original,LensMeta.describe(this@CameraActivity,camId,frame?.lens,zoom,hwZoom,isRear))
-                    if(photoMode==PhotoMode.HIRES)runOnUiThread{hint("บันทึก ${size.w}×${size.h} · ${pixelsText(size.pixels)}${if(size.pixels<20_000_000L)" · ระบบเปิดให้แอปได้เท่านี้" else ""}",2600)}
+                    if(photoMode==PhotoMode.HIRES)runOnUiThread{hint("บันทึก ${size.w}×${size.h} · ${pixelsText(size.pixels)}${if(size.pixels<20_000_000L)" · เครื่องเปิดให้แอปได้เท่านี้" else ""}",2600)}
                     val crop=if(useSoftware && cropBy>1f) size.pixels else frame?.crop
                     val actualZoom=if(!useSoftware && frame?.ratio!=null && frame.ratio!=1f) frame.ratio else zoom
                     val reason=decide(allowAuto,isRear,actualZoom,size.pixels,crop)
@@ -1570,14 +1570,17 @@ class CameraActivity : ComponentActivity() {
                         val converted=PhotoEffects.convert(original,outFormat,prefs.getString("jpeg_quality","95")!!.toInt())
                         try{PhotoMedia.publish(this@CameraActivity,converted,"LUMA_${time}_${id}.${if(outFormat==CaptureOutput.PNG)"png" else "webp"}",time,if(outFormat==CaptureOutput.PNG)"image/png" else "image/webp")}finally{converted.delete()}
                     }else PhotoMedia.publish(this@CameraActivity,original,"LUMA_${time}_${id}.jpg",time)
-                    val stage=if(reason.startsAi) Stage.QUEUED else Stage.ORIGINAL
+                    // The phone gives apps only ~12 MP, so the 50 MP mode takes that picture and lets the on-device AI enlarge it 2×.
+                    val hiAi=photoMode==PhotoMode.HIRES&&size.pixels<20_000_000L&&prefs.getBoolean("hires_ai",true)&&runCatching{th.ogay.luma.ai.EnhanceSpec(2,60).output(size)}.isSuccess
+                    val stage=if(reason.startsAi||hiAi) Stage.QUEUED else Stage.ORIGINAL
                     luma.shots.insert(Shot(id,time,uri,size,actualZoom,isRear,frame?.lens,crop,reason,stage,null,0,null,useSoftware))
+                    if(hiAi)luma.shots.queueEnhancement(id,th.ogay.luma.ai.EnhanceSpec(2,60))
                     if(photoMode==PhotoMode.PANORAMA){
                         val saved=File(filesDir,"panorama/${UUID.randomUUID()}.jpg");saved.parentFile?.mkdirs();original.copyTo(saved,true);runOnUiThread{panoFiles.add(saved);refresh()}
                     }
-                    if(reason.startsAi) EnhanceWorker.enqueue(applicationContext,id)
+                    if(hiAi)EnhanceWorker.enqueue(applicationContext,id,true) else if(reason.startsAi) EnhanceWorker.enqueue(applicationContext,id)
                     if(photoMode==PhotoMode.DOCUMENT)runOnUiThread{startActivity(Intent(this@CameraActivity,DocumentActivity::class.java).setData(uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))}
-                    complete(if(reason.startsAi) "บันทึกต้นฉบับแล้ว · เข้าคิว AI" else "บันทึกรูปแล้ว")
+                    complete(if(hiAi) "บันทึกต้นฉบับแล้ว · กำลังขยายเป็นราว 50 MP ด้วย AI ดูความคืบหน้าในแกลเลอรี" else if(reason.startsAi) "บันทึกต้นฉบับแล้ว · เข้าคิว AI" else "บันทึกรูปแล้ว")
                 } catch(_:OutOfMemoryError) {complete("หน่วยความจำไม่พอ ลองใช้โหมดซูมด้วยระบบกล้อง")}
                 catch(e:Exception) {complete("บันทึกรูปไม่สำเร็จ · ${e.localizedMessage}")}
                 finally {full.delete();cut.delete()}

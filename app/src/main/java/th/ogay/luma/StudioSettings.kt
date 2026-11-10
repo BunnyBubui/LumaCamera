@@ -124,6 +124,7 @@ fun Activity.showStudioSettings(rawAvailable: Boolean, changed: () -> Unit) {
     choose("ปุ่มเสียง", Icons.SOUND, "volume_action", listOf("ถ่ายภาพ", "ซูม", "ปรับเสียงระบบ"), listOf("shutter", "zoom", "system"), "shutter")
     choose("ความเร็วซูม", Icons.SEARCH, "zoom_speed", listOf("ช้า", "ปกติ", "เร็ว"), listOf("slow", "normal", "fast"), "normal")
     toggle("แตะภาพสดเพื่อถ่าย", Icons.TAP, "tap_shutter")
+    toggle("ความละเอียดสูง: ขยายด้วย AI", Icons.AI, "hires_ai", true, "เครื่องไม่เปิดเซนเซอร์ 50 MP ให้แอปอื่น โหมดนี้ถ่ายขนาดสูงสุดที่เปิดให้แล้วขยาย ×2 ด้วย AI ในเครื่อง ปิดไว้ถ้าอยากได้เฉพาะต้นฉบับ")
     toggle("ตรวจจับใบหน้า", Icons.PORTRAIT, "face_detect", true, "แสดงกรอบใบหน้าและให้กล้องวัดแสง/โฟกัสที่หน้าคนทุกโหมด")
     toggle("ใช้โหมดของผู้ผลิต", Icons.GEAR, "oem_extensions", note = "ใช้โหมดบุคคลของระบบมือถือแทนของ Lumora เปิดช้ากว่าและปรับค่า f ไม่ได้ (โหมดกลางคืนใช้ของระบบอยู่แล้ว)")
     row("ตรวจความสามารถกล้อง", Icons.INFO, "fps, WB, high-speed และความละเอียดที่ระบบเปิดให้แอป") {
