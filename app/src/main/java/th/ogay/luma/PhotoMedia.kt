@@ -19,7 +19,7 @@ import java.io.IOException
 import kotlin.math.roundToInt
 
 object PhotoMedia {
-    private fun folder(context:Context) = "Pictures/${context.getSharedPreferences("camera",0).getString("folder","Luma")}/"
+    private fun folder(context:Context) = "Pictures/${context.getSharedPreferences("camera",0).getString("folder","Lumora")}/"
     private val collection get() = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
 
     fun dimensions(file: File): Dimensions {
@@ -44,7 +44,7 @@ object PhotoMedia {
     fun published(context: Context, name: String): Uri? = lookup(context, name)?.takeUnless { it.pending }?.uri
 
     @Suppress("DEPRECATION")
-    private fun legacyFile(context:Context,name: String) = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "${context.getSharedPreferences("camera",0).getString("folder","Luma")}/$name")
+    private fun legacyFile(context:Context,name: String) = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "${context.getSharedPreferences("camera",0).getString("folder","Lumora")}/$name")
 
     fun publish(context: Context, file: File, name: String, taken: Long, mime: String = "image/jpeg"): Uri {
         val resolver = context.contentResolver
@@ -95,7 +95,7 @@ object PhotoMedia {
             }
             setAttribute(ExifInterface.TAG_ORIENTATION, orientation.toString())
             if (originalTime != null) setAttribute(ExifInterface.TAG_DATETIME_ORIGINAL, originalTime)
-            if (ai) setAttribute(ExifInterface.TAG_SOFTWARE, "Luma Camera • AI $version")
+            if (ai) setAttribute(ExifInterface.TAG_SOFTWARE, "Lumora • AI $version")
             saveAttributes()
         }
     }

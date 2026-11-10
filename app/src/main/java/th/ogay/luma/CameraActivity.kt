@@ -1236,7 +1236,7 @@ class CameraActivity : ComponentActivity() {
             val baseSelector=selector()
             val extension=when(mode){PhotoMode.HDR->ExtensionMode.HDR;PhotoMode.NIGHT->ExtensionMode.NIGHT;PhotoMode.PORTRAIT->ExtensionMode.BOKEH;else->ExtensionMode.NONE}
             // Maker portrait/night extensions open slowly (or not at all) on some phones and hide the f-number control,
-            // so Luma's own portrait blur and AI night are the default; the maker versions are an opt-in setting.
+            // so Lumora's own portrait blur and AI night are the default; the maker versions are an opt-in setting.
             val oemAllowed=extension==ExtensionMode.HDR||extension==ExtensionMode.NIGHT||prefs.getBoolean("oem_extensions",false)
             activeExtension=oemAllowed && output==CaptureOutput.JPEG && extension!=ExtensionMode.NONE && extensions?.isExtensionAvailable(baseSelector,extension)==true
             val selected=if(activeExtension)extensions!!.getExtensionEnabledCameraSelector(baseSelector,extension) else baseSelector
@@ -1412,6 +1412,7 @@ class CameraActivity : ComponentActivity() {
     // ---------- Capture (logic unchanged except night and shutter feedback) ----------
     private fun captureFeedback() {
         if (isDestroyed) return
+        lastCaptureAt = android.os.SystemClock.elapsedRealtime()
         Sounds.play(this, Sounds.Kind.SHUTTER)
         flashCapture()
     }
@@ -1640,8 +1641,19 @@ class CameraActivity : ComponentActivity() {
     @Suppress("DEPRECATION")
     private fun openVideo(kind:String){cancelModeSwitch();freezeFrame();provider?.unbindAll();capture=null;startActivity(Intent(this,VideoActivity::class.java).putExtra("mode",kind));overridePendingTransition(0,0)}
     @Suppress("DEPRECATION") private fun openSpecial(kind:String){cancelModeSwitch();freezeFrame();provider?.unbindAll();capture=null;startActivity(Intent(this,SpecialVideoActivity::class.java).putExtra("mode",kind));overridePendingTransition(0,0)}
-    private fun showAllSettings(){showStudioSettings(rawAvailable){auto=false;cropFrom=cropPref();software=cropFrom>0f;boundKey=null;overlay.gridKind=Grids.kind(prefs)
+    /** Settings that only change the screen or the saved file: switching them must not restart the camera. */
+    private val screenOnlyKeys=setOf("volume_action","zoom_speed","tap_shutter","grid","grid_kind","level","sound_all","sound","sound_level","video_sound","countdown_sound","focus_sound","click_sound","haptic","reduce_motion","watermark","watermark_name","folder","gps","timer")
+    private fun cameraSignature()=prefs.all.filterKeys{it !in screenOnlyKeys}.toSortedMap().toString()
+    private var settingsSignature=""
+    // Applied once the switch animation has finished, not on every tap, so the settings sheet stays smooth.
+    private val applySettings=Runnable{applyAllSettings()}
+    private fun showAllSettings(){settingsSignature=cameraSignature();showStudioSettings(rawAvailable){host.removeCallbacks(applySettings);host.postDelayed(applySettings,420)}}
+    private fun applyAllSettings(){if(isDestroyed)return
+        val rebind=cameraSignature()!=settingsSignature;settingsSignature=cameraSignature()
+        overlay.gridKind=Grids.kind(prefs)
         if(prefs.getBoolean("gps",false)&&ContextCompat.checkSelfPermission(this,Manifest.permission.ACCESS_COARSE_LOCATION)!=PackageManager.PERMISSION_GRANTED)locationRequest.launch(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION,Manifest.permission.ACCESS_FINE_LOCATION))
+        if(!rebind){overlay.invalidate();refresh();return}
+        run{auto=false;cropFrom=cropPref();software=cropFrom>0f;boundKey=null;overlay.gridKind=Grids.kind(prefs)
         refresh();if(!busy){layoutMask(stage.width,stage.height);bind()}
     }}
     private val locationRequest=registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()){if(it.values.none{v->v}){prefs.edit().putBoolean("gps",false).apply();notice("ปิด GPS เพราะยังไม่ได้อนุญาตตำแหน่ง")}}
@@ -1682,12 +1694,35 @@ class CameraActivity : ComponentActivity() {
         val input=panoFiles.toList();luma.fileIo.execute{runCatching{val result=PanoramaEngine.stitch(this,input);publishSpecial(result,"Panorama · ORB / homography");result.delete()}.onSuccess{input.forEach{it.delete()};runOnUiThread{panoFiles.clear();complete("บันทึกพาโนรามาแล้ว")}}.onFailure{complete("ต่อภาพไม่ได้ · ${it.localizedMessage} · เฟรมต้นฉบับยังอยู่")}}
     }
     override fun onKeyDown(code:Int,event:KeyEvent):Boolean{if(code==KeyEvent.KEYCODE_VOLUME_UP||code==KeyEvent.KEYCODE_VOLUME_DOWN){when(prefs.getString("volume_action","shutter")){"system"->return super.onKeyDown(code,event);"zoom"->{if(!busy&&!zoomLocked())applyZoom(ratio*if(code==KeyEvent.KEYCODE_VOLUME_UP)1.1f else 0.9f)};else->if(event.repeatCount==0)takePhoto()};return true};return super.onKeyDown(code,event)}
+    private var lastCaptureAt = 0L
+    /** After a capture the new picture shrinks from the viewfinder into the gallery button. */
+    private fun flyToThumb(bitmap: android.graphics.Bitmap) {
+        if (!::mask.isInitialized || mask.width == 0 || thumb.width == 0) { thumb.setImageBitmap(bitmap); return }
+        val hostAt = IntArray(2).also { host.getLocationInWindow(it) }
+        val from = IntArray(2).also { mask.getLocationInWindow(it) }; val to = IntArray(2).also { thumb.getLocationInWindow(it) }
+        val w = (mask.width * 0.52f).toInt(); val h = (w * bitmap.height / bitmap.width.toFloat()).toInt().coerceAtMost((mask.height * 0.8f).toInt())
+        val ghost = ImageView(this).apply {
+            setImageBitmap(bitmap); scaleType = ImageView.ScaleType.CENTER_CROP; clipToOutline = true; background = glass(18)
+            elevation = dp(10).toFloat(); importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO; pivotX = 0f; pivotY = 0f
+            x = (from[0] - hostAt[0] + (mask.width - w) / 2).toFloat(); y = (from[1] - hostAt[1] + (mask.height - h) / 2).toFloat(); alpha = 0f
+        }
+        host.addView(ghost, FrameLayout.LayoutParams(w, h))
+        val tx = (to[0] - hostAt[0]).toFloat(); val ty = (to[1] - hostAt[1]).toFloat()
+        ghost.animate().alpha(1f).setDuration(90).withEndAction {
+            ghost.animate().x(tx).y(ty).scaleX(thumb.width / w.toFloat()).scaleY(thumb.height / h.toFloat()).setDuration(420).setInterpolator(Glass.EASE).withEndAction {
+                thumb.setImageBitmap(bitmap); thumb.scaleX = 0.86f; thumb.scaleY = 0.86f
+                thumb.animate().scaleX(1f).scaleY(1f).setDuration(260).setInterpolator(android.view.animation.OvershootInterpolator(2.2f)).start()
+                ghost.animate().alpha(0f).setDuration(110).withEndAction { host.removeView(ghost) }.start()
+            }.start()
+        }.start()
+    }
     private fun loadThumb() {
         luma.fileIo.execute {
             val uri=luma.shots.latest()?.uri ?: return@execute
             if(uri==lastThumbUri) return@execute
-            val bitmap=PhotoMedia.thumbnail(this,uri,160)
-            runOnUiThread { if(!isDestroyed && bitmap!=null) {lastThumbUri=uri;thumb.setImageBitmap(bitmap);thumb.visibility=View.VISIBLE} }
+            val fly=lastThumbUri!=null&&android.os.SystemClock.elapsedRealtime()-lastCaptureAt<20_000&&!Glass.reduced(this)
+            val bitmap=PhotoMedia.thumbnail(this,uri,if(fly)480 else 160)
+            runOnUiThread { if(!isDestroyed && bitmap!=null) {lastThumbUri=uri;if(fly)flyToThumb(bitmap) else thumb.setImageBitmap(bitmap);thumb.visibility=View.VISIBLE} }
         }
     }
 }

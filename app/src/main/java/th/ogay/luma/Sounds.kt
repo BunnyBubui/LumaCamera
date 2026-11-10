@@ -14,7 +14,7 @@ import kotlin.math.sin
 import kotlin.random.Random
 
 /**
- * Luma's own soft UI sounds and shutter, synthesised once into small WAV files (no recorded assets, nothing
+ * Lumora's own soft UI sounds and shutter, synthesised once into small WAV files (no recorded assets, nothing
  * borrowed): muted switch clicks in a few pitches so repeated taps do not sound identical, and a two-stage
  * mechanical shutter. All sounds play on the media volume and follow the "เสียงปุ่ม" / "เสียงชัตเตอร์" settings.
  */

@@ -33,12 +33,12 @@ import kotlin.math.roundToInt
 import th.ogay.luma.ai.EnhanceUi
 
 /**
- * Glass gallery. Two sources: everything made with Luma (photos, videos and their reports — this replaces the old
- * file-list "คลัง Luma") and the whole device, which adds a sideways strip of device albums with a "ดูเพิ่มเติม" page.
+ * Glass gallery. Two sources: everything made with Lumora (photos, videos and their reports — this replaces the old
+ * file-list "คลัง Lumora") and the whole device, which adds a sideways strip of device albums with a "ดูเพิ่มเติม" page.
  * Long-press peeks; the viewer swipes between items and always has a button back to the full grid.
  */
 class GalleryActivity : ComponentActivity() {
-    /** One grid cell: a Luma shot, a Luma video/file from the media ledger, or a device photo/video. */
+    /** One grid cell: a Lumora shot, a Lumora video/file from the media ledger, or a device photo/video. */
     class Item(val key: String, val uri: Uri, val time: Long, val video: Boolean, val name: String, val album: String, val shot: Shot?, val mime: String = "", val note: String = "") {
         val file get() = shot == null && !video && !mime.startsWith("image/") && mime.isNotEmpty()
     }
@@ -84,6 +84,7 @@ class GalleryActivity : ComponentActivity() {
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 when {
+                    sortMenu.showing -> sortMenu.dismiss(true)
                     peek != null -> closePeek()
                     selected != null -> { selected = null; useAi = false; reload() }
                     allAlbums -> { allAlbums = false; reload() }
@@ -132,10 +133,10 @@ class GalleryActivity : ComponentActivity() {
     }
     /** Photos from the shot database plus videos and files from the media ledger. Video reports (.json) stay with their video. */
     private fun lumaItems(): List<Item> {
-        val shots = luma.shots.all().map { Item(it.id, it.uri, it.time, false, "", "Luma", it) }
+        val shots = luma.shots.all().map { Item(it.id, it.uri, it.time, false, "", "Lumora", it) }
         val known = shots.map { it.uri.toString() }.toSet()
         val ledger = MediaLedger.all(this).filter { it.uri.toString() !in known && it.mime != "application/json" }.map {
-            Item("ledger:${it.uri}", it.uri, it.time, it.mime.startsWith("video/"), it.title, "Luma", null, it.mime, it.note)
+            Item("ledger:${it.uri}", it.uri, it.time, it.mime.startsWith("video/"), it.title, "Lumora", null, it.mime, it.note)
         }
         return (shots + ledger).sortedByDescending { it.time }
     }
@@ -176,6 +177,11 @@ class GalleryActivity : ComponentActivity() {
         addView(text(title, 15f, Color.WHITE, true), LinearLayout.LayoutParams(0, -2, 1f))
         addView(text(end, 12.5f, Glass.TEXT2))
     }
+    private val SORTS = listOf("ใหม่ก่อน", "เก่าก่อน", "วิดีโอก่อน", "AI ก่อน")
+    private val sortMenu by lazy { GlassMenu(host) }
+    private var sortOrder: Int
+        get() = prefs.getInt("gallery_sort", 0).coerceIn(0, 3)
+        set(v) { prefs.edit().putInt("gallery_sort", v).apply() }
     private val LUMA_CATS = listOf("ทั้งหมด", "AI", "RAW", "วิดีโอ", "พิเศษ", "ไฟล์")
     private fun categories(items: List<Item>): List<Pair<String, (Item) -> Boolean>> =
         if (!device) listOf<Pair<String, (Item) -> Boolean>>(
@@ -210,7 +216,7 @@ class GalleryActivity : ComponentActivity() {
         close.setOnClickListener { morph(false) }
         if (queryText.isNotEmpty()) searchBox.post { morph(true) }
 
-        // Tabs: sliding glass highlight between Luma and the whole device.
+        // Tabs: sliding glass highlight between Lumora and the whole device.
         var tabsDrag = false
         lateinit var knobRef: View
         val tabs = object : FrameLayout(this) {
@@ -238,7 +244,7 @@ class GalleryActivity : ComponentActivity() {
         val knob = View(this).apply { background = glass(17, Glass.ACCENT_SOFT) }; knobRef = knob
         tabs.addView(knob, FrameLayout.LayoutParams(0, -1).apply { setMargins(dp(3), dp(3), dp(3), dp(3)) })
         val tabRow = LinearLayout(this)
-        listOf("ถ่ายด้วย Luma", "ทั้งเครื่อง").forEachIndexed { i, t ->
+        listOf("ถ่ายด้วย Lumora", "ทั้งเครื่อง").forEachIndexed { i, t ->
             tabRow.addView(text(t, 14f, if ((i == 1) == device) Color.WHITE else Glass.TEXT2, true).apply {
                 gravity = Gravity.CENTER; isClickable = true; contentDescription = t; isSelected = (i == 1) == device
                 androidx.core.view.ViewCompat.setStateDescription(this, if ((i == 1) == device) "เลือกอยู่" else null)
@@ -253,7 +259,7 @@ class GalleryActivity : ComponentActivity() {
             root.addView(LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; background = glass(24); setPadding(dp(20), dp(20), dp(20), dp(20))
                 addView(IconView(this@GalleryActivity, Icons.ALBUM, 1.6f), dp(40), dp(40))
-                addView(text("อนุญาตให้ Luma อ่านรูปและวิดีโอในเครื่อง", 15f, Color.WHITE, true).apply { gravity = Gravity.CENTER; setPadding(0, dp(10), 0, dp(4)) })
+                addView(text("อนุญาตให้ Lumora อ่านรูปและวิดีโอในเครื่อง", 15f, Color.WHITE, true).apply { gravity = Gravity.CENTER; setPadding(0, dp(10), 0, dp(4)) })
                 addView(text("ใช้เพื่อแสดงในแกลเลอรีเท่านั้น ไม่มีการอัปโหลด", 12.5f, Glass.TEXT2).apply { gravity = Gravity.CENTER })
                 addView(text("อนุญาต", 14f, Glass.ON_ACCENT, true).apply { gravity = Gravity.CENTER; background = glass(20, Glass.ACCENT); isClickable = true; glassTouch(); setOnClickListener { mediaRequest.launch(mediaPermissions) } },
                     LinearLayout.LayoutParams(dp(140), dp(48)).apply { topMargin = dp(14) })
@@ -265,7 +271,7 @@ class GalleryActivity : ComponentActivity() {
         val header = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         if (device && partialAccess()) header.addView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; background = glass(22); setPadding(dp(16), dp(14), dp(16), dp(14))
-            addView(text("Luma เห็นเฉพาะรูปที่คุณเลือกให้ อนุญาตทั้งหมดเพื่อดูทุกอัลบั้ม", 13f, Color.WHITE).apply { maxLines = 4 })
+            addView(text("Lumora เห็นเฉพาะรูปที่คุณเลือกให้ อนุญาตทั้งหมดเพื่อดูทุกอัลบั้ม", 13f, Color.WHITE).apply { maxLines = 4 })
             addView(LinearLayout(this@GalleryActivity).apply {
                 setPadding(0, dp(10), 0, 0)
                 addView(text("เลือกรูปเพิ่ม", 13.5f, Color.WHITE, true).apply { gravity = Gravity.CENTER; background = glass(16, 0x1affffff); isClickable = true; glassTouch(); setOnClickListener { mediaRequest.launch(mediaPermissions) } }, LinearLayout.LayoutParams(0, dp(48), 1f).apply { rightMargin = dp(8) })
@@ -325,16 +331,27 @@ class GalleryActivity : ComponentActivity() {
         grid.adapter = adapter
         fun apply() {
             val q = queryText.trim().lowercase()
-            shown = all.filter(cats[category].second).filter { album == null || it.album == album }
+            val picked = all.filter(cats[category].second).filter { album == null || it.album == album }
                 .filter { q.isEmpty() || q in "${it.name} ${it.album} ${formatTime(it.time)} ${it.note} ${it.shot?.captureNote ?: ""} ${it.shot?.reason?.description ?: ""}".lowercase() }
+            shown = when (sortOrder) {
+                1 -> picked.sortedBy { it.time }
+                2 -> picked.sortedWith(compareBy<Item> { !it.video }.thenByDescending { it.time })
+                3 -> picked.sortedWith(compareBy<Item> { it.shot?.ai == null }.thenByDescending { it.time })
+                else -> picked
+            }
             adapter.notifyDataSetChanged()
-            gridTitle.text = album ?: if (device) "รูปทั้งหมด" else "ถ่ายด้วย Luma"
-            (gridHead.getChildAt(1) as TextView).text = "${shown.size} รายการ"
-            empty.text = if (all.isEmpty()) (if (device) "ไม่พบรูปหรือวิดีโอในเครื่อง" else "รูปและวิดีโอที่ถ่ายด้วย Luma จะปรากฏที่นี่") else "ไม่พบรายการที่ตรงกัน"
+            gridTitle.text = album ?: if (device) "รูปทั้งหมด" else "ถ่ายด้วย Lumora"
+            (gridHead.getChildAt(1) as TextView).text = "${shown.size} รายการ · ${SORTS[sortOrder]} ▾"
+            empty.text = if (all.isEmpty()) (if (device) "ไม่พบรูปหรือวิดีโอในเครื่อง" else "รูปและวิดีโอที่ถ่ายด้วย Lumora จะปรากฏที่นี่") else "ไม่พบรายการที่ตรงกัน"
             empty.visibility = if (shown.isEmpty()) View.VISIBLE else View.GONE
             if (!Glass.reduced(this)) { grid.alpha = 0.4f; grid.animate().alpha(1f).setDuration(220).start() }
         }
         strip.onSelect = { i -> category = i; apply() }
+        // Sort order: a glass dropdown on the count at the right of the grid heading.
+        (gridHead.getChildAt(1) as TextView).apply {
+            isClickable = true; minHeight = dp(40); gravity = Gravity.CENTER_VERTICAL; setPadding(dp(10), 0, 0, 0); contentDescription = "เรียงลำดับรายการ"
+            setOnClickListener { v -> sortMenu.show(v, "เรียงตาม", SORTS.map { GlassMenu.Option(it) }, sortOrder) { i -> sortOrder = i; prefs.edit().putInt("gallery_sort", i).apply(); apply(); grid.setSelection(0) } }
+        }
         field.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
@@ -442,7 +459,7 @@ class GalleryActivity : ComponentActivity() {
         val x = (i * w).toFloat()
         if (animate && !Glass.reduced(this)) knob.animate().translationX(x).setInterpolator(Glass.SPRING).setDuration(420).start() else knob.translationX = x
     }
-    /** Thumbnail with fallbacks: the system thumbnail, Luma's own decoder, a sampled decode, then a video frame. */
+    /** Thumbnail with fallbacks: the system thumbnail, Lumora's own decoder, a sampled decode, then a video frame. */
     private fun thumbnail(item: Item, size: Int): Bitmap? {
         cache.get(item.key + size)?.let { return it }
         fun system() = if (Build.VERSION.SDK_INT >= 29) runCatching { contentResolver.loadThumbnail(item.uri, Size(size, size), null) }.getOrNull() else null
@@ -535,7 +552,7 @@ class GalleryActivity : ComponentActivity() {
         if (!Glass.reduced(this)) { inspect.alpha = 0f; inspect.animate().alpha(1f).setDuration(260).start() }
     }
 
-    // ---------- Luma video or file from the ledger ----------
+    // ---------- Lumora video or file from the ledger ----------
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     private fun showLedgerItem(item: Item) {
         showingId = item.key; root.removeAllViews()
@@ -583,7 +600,7 @@ class GalleryActivity : ComponentActivity() {
             .setNeutralButton("ส่งออก JSON") { _, _ -> MediaLedger.share(this, MediaLedger.privateUri(this, file), "application/json") }.show()
     }
 
-    // ---------- Luma shot detail (logic unchanged) ----------
+    // ---------- Lumora shot detail (logic unchanged) ----------
     private fun chip(label: String, active: Boolean, icon: String = "", click: () -> Unit) {
         val c = LinearLayout(this).apply {
             gravity = Gravity.CENTER; background = glass(22, if (active) Glass.ACCENT_SOFT else Glass.FILL); setPadding(dp(16), 0, dp(16), 0)
@@ -619,7 +636,7 @@ class GalleryActivity : ComponentActivity() {
         if (s.raw != null) {
             chip("เปิด DNG", false, Icons.RAW) {
                 try { startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(s.raw, "image/x-adobe-dng").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)) }
-                catch (_: android.content.ActivityNotFoundException) { notice("บันทึก DNG ใน Pictures/Luma แล้ว เปิดด้วยแอปที่รองรับ RAW") }
+                catch (_: android.content.ActivityNotFoundException) { notice("บันทึก DNG ใน Pictures/Lumora แล้ว เปิดด้วยแอปที่รองรับ RAW") }
             }
         }
         if (s.ai != null) {

@@ -95,7 +95,7 @@ class EnhanceWorker(context: Context, params: WorkerParameters) : Worker(context
         if (Build.VERSION.SDK_INT >= 26) context.getSystemService(NotificationManager::class.java)
             .createNotificationChannel(NotificationChannel("luma-ai","ประมวลผลภาพ AI",NotificationManager.IMPORTANCE_LOW))
         val notification = NotificationCompat.Builder(context,"luma-ai")
-            .setSmallIcon(android.R.drawable.ic_menu_camera).setContentTitle("Luma · เพิ่มรายละเอียดภาพ")
+            .setSmallIcon(android.R.drawable.ic_menu_camera).setContentTitle("Lumora · เพิ่มรายละเอียดภาพ")
             .setContentText(if (shot.aiModel == EnhanceSpec.MODEL) "×${shot.aiScale} · $progress%" else "SR1 · $progress%")
             .setOngoing(true).setOnlyAlertOnce(true).setProgress(100,progress,progress==0)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel,"ยกเลิก",

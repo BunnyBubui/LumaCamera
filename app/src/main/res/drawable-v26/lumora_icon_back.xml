@@ -1,0 +1,13 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android" xmlns:aapt="http://schemas.android.com/aapt" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <path android:pathData="M0,0h108v108h-108z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="linear" android:startX="10" android:startY="0" android:endX="98" android:endY="108" android:startColor="#0D1330" android:centerColor="#152A4A" android:endColor="#134A50"/>
+        </aapt:attr>
+    </path>
+    <!-- aurora glow from the upper right -->
+    <path android:pathData="M0,0h108v108h-108z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="radial" android:centerX="84" android:centerY="26" android:gradientRadius="62" android:startColor="#7048D6B0" android:centerColor="#2A3F86C8" android:endColor="#003F86C8"/>
+        </aapt:attr>
+    </path>
+</vector>

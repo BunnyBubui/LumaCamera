@@ -208,7 +208,7 @@ class VideoActivity:ComponentActivity(){
             if(!starting||isFinishing||isDestroyed){starting=false;requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;return@postDelayed}
             try{
                 val name="LUMA_VIDEO_${System.currentTimeMillis()}.mp4"
-                val values=ContentValues().apply{put(MediaStore.Video.Media.DISPLAY_NAME,name);put(MediaStore.Video.Media.MIME_TYPE,"video/mp4");if(android.os.Build.VERSION.SDK_INT>=29)put(MediaStore.Video.Media.RELATIVE_PATH,"Movies/Luma/")}
+                val values=ContentValues().apply{put(MediaStore.Video.Media.DISPLAY_NAME,name);put(MediaStore.Video.Media.MIME_TYPE,"video/mp4");if(android.os.Build.VERSION.SDK_INT>=29)put(MediaStore.Video.Media.RELATIVE_PATH,"Movies/Lumora/")}
                 val options=MediaStoreOutputOptions.Builder(contentResolver,MediaStore.Video.Media.EXTERNAL_CONTENT_URI).setContentValues(values).setFileSizeLimit((filesDir.usableSpace-32L*1024*1024).coerceAtLeast(1)).build()
                 var pending=r.prepareRecording(this,options)
                 if(mic&&ContextCompat.checkSelfPermission(this,Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED)pending=pending.withAudioEnabled()
@@ -334,7 +334,7 @@ class VideoActivity:ComponentActivity(){
         dock.addView(modeStrip,-1,(dp(58)*grow).roundToInt())
         buildModeStrip()
         val actions=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(dp(36),0,dp(36),0)}
-        library=roundButton(IconView(this,Icons.LIBRARY),56,"แกลเลอรีวิดีโอ Luma"){if(!busy())startActivity(Intent(this,GalleryActivity::class.java).putExtra("tab","luma").putExtra("category","วิดีโอ"))}
+        library=roundButton(IconView(this,Icons.LIBRARY),56,"แกลเลอรีวิดีโอ Lumora"){if(!busy())startActivity(Intent(this,GalleryActivity::class.java).putExtra("tab","luma").putExtra("category","วิดีโอ"))}
         pauseIcon=IconView(this,PAUSE,2.4f)
         pause=roundButton(pauseIcon,56,"พักการบันทึก"){val r=recording?:return@roundButton;if(paused)r.resume()else r.pause()}.apply{visibility=android.view.View.GONE;isEnabled=false}
         val left=FrameLayout(this).apply{addView(library,-1,-1);addView(pause,-1,-1)}
@@ -562,7 +562,7 @@ class VideoActivity:ComponentActivity(){
         if(k in listOf("RES","ASP","FPS","HDR","RATE","EIS","LOG")){configPending();handler.removeCallbacks(rebind);handler.postDelayed(rebind,450)}
         else if(k=="MIC")status.text=if(mic)"ไมค์เปิด" else "ไมค์ปิด"
     }
-    // ---------- Luma Log ----------
+    // ---------- Lumora Log ----------
     /** Flat "Log" look for grading: a logarithmic tone curve, no in-camera sharpening, light noise reduction.
      *  It is not Canon C-Log or any vendor profile; HLG10 under ช่วงไดนามิก is the true 10-bit option. */
     private var logProfile=LogProfile.STANDARD

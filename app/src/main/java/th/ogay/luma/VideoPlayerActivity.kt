@@ -16,7 +16,7 @@ import androidx.activity.ComponentActivity
 import java.util.Locale
 
 /**
- * Luma's own video player: play/pause, scrubbing, speed and mute, in the glass style. The "เปิดในแอปอื่น" button
+ * Lumora's own video player: play/pause, scrubbing, speed and mute, in the glass style. The "เปิดในแอปอื่น" button
  * still hands the clip to the phone's player.
  */
 class VideoPlayerActivity : ComponentActivity() {

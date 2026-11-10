@@ -1,4 +1,4 @@
-# Luma Camera 0.3.0 — Studio (กำลังตรวจรับ)
+# Lumora 0.3.0 — Studio (กำลังตรวจรับ)
 
 สถานะ: โค้ด Studio พร้อม HDR ที่รวม PR #4/#5 ผ่าน GitHub build, lint, JVM 41 tests และ Android API 30 emulator 13/13 แล้ว รวม SR1 GPU ส่งออก 2× ครบเฟรม ดู Checks ของ PR #4 และสถานะ PR #3 รุ่นนี้ยังไม่ใช่การรับรองว่าทุกโหมดทำงานหรือได้คุณภาพตามเป้าบน Reno15 จริง
 
@@ -34,7 +34,7 @@ OpenCV 4.12 และ ML Kit native ARM64 ที่บรรจุมี ELF PT_
 
 1. ลงชื่อเข้า GitHub ด้วยบัญชีที่เข้าถึง repo นี้ เปิด Checks ของ [PR #3](https://github.com/BunnyBubui/luma-camera/pull/3) หรือ [PR #4](https://github.com/BunnyBubui/luma-camera/pull/4) เลือก **Android APK** ของ commit ล่าสุดที่ผ่าน สำหรับ Studio 0.3 ให้ตรวจ branch `v0.3-studio`/PR ที่เกี่ยวข้อง; `main` ยังเป็นรุ่น 0.2
 2. เลื่อนลงไปที่ **Artifacts → Luma-Camera-Android-APK** ดาวน์โหลด แตก ZIP แล้วแตะ **Luma-Camera-0.3.0-debug.apk**
-3. หาก ColorOS ขออนุญาตติดตั้งจากแอปที่ใช้เปิดไฟล์ ให้เปิดสิทธิ์ให้แอปนั้นชั่วคราว ติดตั้งแล้วเปิด **Luma Camera** และอนุญาตใช้กล้อง
+3. หาก ColorOS ขออนุญาตติดตั้งจากแอปที่ใช้เปิดไฟล์ ให้เปิดสิทธิ์ให้แอปนั้นชั่วคราว ติดตั้งแล้วเปิด **Lumora** และอนุญาตใช้กล้อง
 4. กดชัตเตอร์ ภาพต้นฉบับจะอยู่ใน **รูปภาพ → Luma** แตะภาพย่อข้างชัตเตอร์เพื่อดูรูป เปิด/ปิด AI ด้วยปุ่มด้านบน
 
 ## เลือกภาพบนหน้ากล้อง

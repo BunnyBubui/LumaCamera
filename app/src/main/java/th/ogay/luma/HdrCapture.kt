@@ -81,7 +81,7 @@ class HdrCapture(private val c:Context,private val camera:Camera,private val cap
             label=if(engine=="EF2")"HDR EF2 · OpenCV fusion + local tone SDR" else "HDR EF1 · Exposure fusion SDR"
             val file=File(folder,"hdr-result.jpg");try{PhotoEffects.write(result,file)}finally{result.recycle()}
             PhotoMedia.tag(file,0,ExifInterface(files.first()).getAttribute(ExifInterface.TAG_DATETIME_ORIGINAL))
-            val software=if(engine=="EF2")"Luma HDR EF2 · OpenCV Mertens + L* detail SDR" else "Luma HDR EF1 · exposure fusion SDR"
+            val software=if(engine=="EF2")"Lumora HDR EF2 · OpenCV Mertens + L* detail SDR" else "Lumora HDR EF1 · exposure fusion SDR"
             ExifInterface(file).apply{setAttribute(ExifInterface.TAG_SOFTWARE,software);setAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION,"HDR $engine: captured ${files.size}/${levels.size}, aligned $usedFrames, EV ${if(measured)"EXIF exposure×ISO" else "requested compensation"}$note");saveAttributes()}
             return file
         }finally{bitmaps.forEach{if(!it.isRecycled)it.recycle()};files.forEach{it.delete()}}

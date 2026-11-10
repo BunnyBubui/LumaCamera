@@ -50,7 +50,7 @@ class VideoSessionDeviceTest {
             if (!ready) assertNotNull(device.findObject(By.textContains("high-speed")))
             device.findObject(By.textContains("SLOW · ตัวเลือก"))?.click()
             // Unsupported high-speed still exposes the diagnostic dialog, never a microphone prompt.
-            assertNull(device.findObject(By.textContains("Allow Luma")))
+            assertNull(device.findObject(By.textContains("Allow Lumora")))
         }
     }
     @org.junit.Ignore("Night mode was removed from the mode bar in round 8") @Test fun softwareNightAfterHdrKeepsAiBurstWhenReusingSession() {

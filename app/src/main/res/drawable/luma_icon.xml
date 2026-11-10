@@ -1,5 +1,9 @@
+<!-- Lumora launcher icon for Android 6–7 (flat colours; the layered adaptive version is in drawable-v26). -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="72dp" android:height="72dp" android:viewportWidth="72" android:viewportHeight="72">
-    <path android:fillColor="#182017" android:pathData="M0,0h72v72h-72z"/>
-    <path android:strokeColor="#DAEE8D" android:strokeWidth="4" android:strokeLineCap="round" android:fillColor="@android:color/transparent" android:pathData="M14,29V16h13M45,16h13v13M58,45v12H45M27,57H14V45"/>
-    <path android:fillColor="#DAEE8D" android:pathData="M36,24a12,12 0,1 1,0 24a12,12 0,1 1,0 -24"/>
+    <path android:fillColor="#111A38" android:pathData="M16,2h40a14,14 0,0 1,14 14v40a14,14 0,0 1,-14 14h-40a14,14 0,0 1,-14 -14v-40a14,14 0,0 1,14 -14z"/>
+    <path android:fillColor="#1E4F5C" android:pathData="M70,30a40,40 0,0 0,-34 -28h20a14,14 0,0 1,14 14z"/>
+    <path android:strokeColor="#F5F2E8" android:strokeWidth="3.4" android:fillColor="#00000000" android:pathData="M36,23.5a14,14 0,1 1,0 28a14,14 0,1 1,0 -28"/>
+    <path android:fillColor="#7FD9C4" android:pathData="M36,30a7.5,7.5 0,1 1,0 15a7.5,7.5 0,1 1,0 -15"/>
+    <path android:fillColor="#FFFFFF" android:pathData="M33.6,33.4a2,2 0,1 1,0 4a2,2 0,1 1,0 -4"/>
+    <path android:fillColor="#FFE9A8" android:pathData="M49,14Q49.8,19.4 55,20Q49.8,20.6 49,26Q48.2,20.6 43,20Q48.2,19.4 49,14Z"/>
 </vector>

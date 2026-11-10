@@ -55,7 +55,7 @@ class SpecialVideoActivity:ComponentActivity(){
         dock.addView(strip,-1,dp(58))
         shutter=Glyph(this,"shutter","เริ่มบันทึก Time-lapse"){if(!working){if(recording)stop()else start()}}.apply{video=true;isEnabled=false}
         val actions=FrameLayout(this);actions.addView(shutter,FrameLayout.LayoutParams(dp(82),dp(82),Gravity.CENTER))
-        actions.addView(FrameLayout(this).apply{background=glass(28);contentDescription="แกลเลอรีวิดีโอ Luma";isClickable=true;glassTouch()
+        actions.addView(FrameLayout(this).apply{background=glass(28);contentDescription="แกลเลอรีวิดีโอ Lumora";isClickable=true;glassTouch()
             addView(IconView(this@SpecialVideoActivity,Icons.LIBRARY),FrameLayout.LayoutParams(dp(24),dp(24),Gravity.CENTER))
             setOnClickListener{if(!recording&&!working)startActivity(android.content.Intent(this@SpecialVideoActivity,GalleryActivity::class.java).putExtra("tab","luma").putExtra("category","วิดีโอ"))}},FrameLayout.LayoutParams(dp(56),dp(56),Gravity.CENTER_VERTICAL or Gravity.START).apply{leftMargin=dp(36)})
         dock.addView(actions,-1,dp(104))
