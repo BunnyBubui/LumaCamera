@@ -592,6 +592,7 @@ class CameraActivity : ComponentActivity() {
     }
     private fun refreshStatus() {
         statusRow.removeAllViews()
+        statusRow.visibility = if (prefs.getBoolean("show_status", true)) View.VISIBLE else View.GONE
         if (flash != ImageCapture.FLASH_MODE_OFF) statusIcon(Icons.FLASH, after = if (flash == ImageCapture.FLASH_MODE_AUTO) "A" else "", name = "แฟลช${if (flash == ImageCapture.FLASH_MODE_AUTO) "อัตโนมัติ" else "เปิด"}")
         val timer = prefs.getString("timer", "0") ?: "0"; if (timer != "0") statusIcon(Icons.TIMER, after = "${timer}s", name = "ตั้งเวลา $timer วินาที")
         val aspect = prefs.getString("aspect", "4:3") ?: "4:3"; if (aspect != "4:3") statusIcon(Icons.FRAME, inner = aspect, name = "สัดส่วนภาพ $aspect")
@@ -1221,17 +1222,17 @@ class CameraActivity : ComponentActivity() {
         val showSide = !dialing && openChip == null && !nightRunning && capture != null
         val portrait = mode == PhotoMode.PORTRAIT && !activeExtension
         // Live background blur while composing; paused behind sheets and menus, and while a photo is being taken.
-        portraitLive?.let { if (portrait && capture != null && !busy && !lookSheet.showing && !panel.showing && !editor.showing) it.start() else it.stop() }
+        portraitLive?.let { if (portrait && prefs.getBoolean("portrait_live", true) && capture != null && !busy && !lookSheet.showing && !panel.showing && !editor.showing) it.start() else it.stop() }
         macroButton.visibility = if (showSide && rear && !portrait && mode != PhotoMode.SPORT && macroLens != null) View.VISIBLE else View.GONE
         apertureButton.visibility = if (showSide && (portrait || mode == PhotoMode.SPORT)) View.VISIBLE else View.GONE
         val f = prefs.getFloat("portrait_f", 2.8f); apertureButton.text = if (mode == PhotoMode.SPORT) "1/" + (1_000_000_000L / SPORT_KINDS[sportIndex()].second) else "f/${fText(f)}"; apertureButton.contentDescription = "เบลอพื้นหลัง f/${fText(f)} แตะเพื่อเปลี่ยน"
-        lookButton.visibility = if (showSide && mode != PhotoMode.PANORAMA) View.VISIBLE else View.GONE
+        lookButton.visibility = if (showSide && mode != PhotoMode.PANORAMA && prefs.getBoolean("show_look", true)) View.VISIBLE else View.GONE
         nightButton.visibility = View.GONE
         // A switched-on mode stays solid orange (not just a tinted icon), so it reads as on at a glance.
         fun lit(v: FrameLayout, on: Boolean) { (v.background as? GlassDrawable)?.let { if ((it.fill == Glass.ACCENT) != on) { it.fill = if (on) Glass.ACCENT else Glass.FILL; v.invalidate() } }; (v.getChildAt(0) as IconView).tint = if (on) Glass.ON_ACCENT else Color.WHITE }
         lit(macroButton, macro); lit(nightButton, nightActive())
         refreshZoomPills()
-        zooms.visibility = if (capture != null && renderedZooms.size > 1 && rear) View.VISIBLE else View.GONE
+        zooms.visibility = if (capture != null && renderedZooms.size > 1 && rear && prefs.getBoolean("show_zoom", true)) View.VISIBLE else View.GONE
         preview.contentDescription = "ช่องมองภาพ กล้อง${if (rear) "หลัง" else "หน้า"} ${zoomText(ratio)} แตะเพื่อโฟกัส ปัดขึ้นลงเพื่อปรับความสว่าง"
         val chipped = mode == PhotoMode.PRO || mode in QUICK_MODES
         if (chipped && (chipFrame.visibility != View.VISIBLE || chipKeys().size != chipTexts.size)) rebuildChips()
@@ -1305,7 +1306,7 @@ class CameraActivity : ComponentActivity() {
             val frames=FrameMetadata(single)
             val framing=ResolutionSelector.Builder().setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
             val previewCase=Preview.Builder().setResolutionSelector(framing.build()).build().apply { surfaceProvider=preview.surfaceProvider }
-            val builder=ImageCapture.Builder().setCaptureMode(if(mode in listOf(PhotoMode.PRO,PhotoMode.HDR,PhotoMode.HIRES))ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY else ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+            val builder=ImageCapture.Builder().setCaptureMode(if(mode in listOf(PhotoMode.PRO,PhotoMode.HIRES))ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY else ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
                 .setJpegQuality(prefs.getString("jpeg_quality","95")!!.toInt())
                 .setResolutionSelector(framing.setResolutionStrategy(ResolutionStrategy(Size(4000,3000),ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER)).build())
                 .setTargetRotation(targetRotation)
