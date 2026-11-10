@@ -88,7 +88,7 @@ class VideoActivity:ComponentActivity(){
     }
     /** Settings of the current kind (slow-motion keeps its own resolution, fps and camera). */
     private fun loadSettings(){
-        mic=prefs.getBoolean("video_mic",true);sessions.failed60.addAll(prefs.getStringSet("force60_failed_ids",emptySet())!!)
+        mic=prefs.getBoolean("video_mic",true);prefs.getStringSet("force60_failed_ids",emptySet())?.forEach{sessions.failed60.add(it)}
         quality=when(prefs.getString("video_quality","FHD")){"UHD"->Quality.UHD;"HD"->Quality.HD;"SD"->Quality.SD;else->Quality.FHD}
         logProfile=LogProfile.fromPrefs(prefs);fps=prefs.getInt("video_fps",30);bitrate=prefs.getInt("video_bitrate",20_000_000);stabilization=prefs.getBoolean("video_eis",false)
         dynamic=when(prefs.getString("video_dynamic","SDR")){"HLG"->DynamicRange.HLG_10_BIT;"HDR10"->DynamicRange.HDR10_10_BIT;else->DynamicRange.SDR}
