@@ -43,8 +43,10 @@ class VideoSessions {
             JSONObject().put("range", it.range.toString()).put("capabilitySource", it.source)
         })).put("queryErrors", JSONArray(errors[Key(info, quality, dynamic, eis, slow)].orEmpty()))
     }
-    /** Set after a [60,60] clip measured below 50 fps; then the 120 fps conversion path is offered instead. */
-    @Volatile var failed60 = false
+    /** Camera ids where a [60,60] clip measured below 50 fps (per camera: the ultra-wide gives 30 while the others give 60); then the 120 fps conversion path is offered instead. */
+    val failed60 = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    @androidx.annotation.OptIn(androidx.camera.camera2.interop.ExperimentalCamera2Interop::class)
+    fun cameraKey(info: CameraInfo): String = runCatching { androidx.camera.camera2.interop.Camera2CameraInfo.from(info).cameraId }.getOrDefault("?")
     /**
      * Whether the camera's own Camera2 tables allow 60 fps at this recording size even when CameraX lists no 60 fps
      * session for it: an AE target range reaching 60 and a minimum frame duration of at most 1/60 s for the encoder
@@ -56,7 +58,7 @@ class VideoSessions {
         val ae = c.getCameraCharacteristic(android.hardware.camera2.CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES) ?: return@runCatching false
         // Some phones (OPPO) do not list 60 in the AE table but still deliver it for a [60,60] request; the camera scan
         // measured this. Try it unless an earlier clip proved the phone does not really record 60 here.
-        if (ae.none { it.upper >= 60 } && failed60) return@runCatching false
+        if (ae.none { it.upper >= 60 } && failed60.contains(c.cameraId)) return@runCatching false
         val map = c.getCameraCharacteristic(android.hardware.camera2.CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP) ?: return@runCatching false
         val (w, h) = when (quality) { Quality.UHD -> 3840 to 2160; Quality.FHD -> 1920 to 1080; Quality.HD -> 1280 to 720; else -> 720 to 480 }
         // Only a size the camera lists and says is too slow rules 60 out; otherwise try it and measure the file.
