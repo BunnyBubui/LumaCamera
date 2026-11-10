@@ -19,6 +19,7 @@ import android.text.TextWatcher
 import android.util.Size
 import android.view.*
 import android.view.inputmethod.InputMethodManager
+import android.text.TextUtils
 import android.widget.*
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
@@ -526,6 +527,9 @@ class GalleryActivity : ComponentActivity() {
         val image = ImageView(this).apply { scaleType = ImageView.ScaleType.FIT_CENTER; adjustViewBounds = true }
         card.addView(image, LinearLayout.LayoutParams(-1, (resources.displayMetrics.heightPixels * 0.5f).toInt()))
         card.addView(text("${if (item.video) "วิดีโอ" else "รูปภาพ"} · ${formatTime(item.time)}", 13f, Glass.TEXT2).apply { setPadding(dp(8), dp(10), dp(8), 0) })
+        val more = listOfNotNull(item.name.takeIf { it.isNotBlank() }, item.album.takeIf { it.isNotBlank() },
+            item.shot?.let { pixelsText(it.size.pixels) }, item.shot?.takeIf { it.ai != null }?.let { "AI ×${it.aiScale.coerceAtLeast(1)} · ${pixelsText(it.aiSize.pixels)}" }).joinToString(" · ")
+        if (more.isNotEmpty()) card.addView(text(more, 12f, Glass.TEXT3).apply { setPadding(dp(8), dp(4), dp(8), 0); maxLines = 2; ellipsize = TextUtils.TruncateAt.END })
         val layer = FrameLayout(this).apply { addView(dim, -1, -1); addView(card, FrameLayout.LayoutParams(-1, -2, Gravity.CENTER).apply { setMargins(dp(24), 0, dp(24), 0) }) }
         host.addView(layer, -1, -1); peek = layer
         dim.animate().alpha(1f).setDuration(220).start(); Glass.blur(root, 14f)
