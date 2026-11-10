@@ -118,7 +118,7 @@ class VideoActivity:ComponentActivity(){
             val modes=offered(info)
             boundConfig.put("sessionQuery",sessions.report(info,quality,dynamic,stabilization,slow))
             if(slow&&modes.isNotEmpty()&&modes.none{it.upper==fps}){val before=fps;fps=modes.minBy{it.upper}.upper;notice("ชุด $before fps ไม่รองรับ · เลือก $fps fps แล้ว")}
-            var mode=modes.firstOrNull{it.upper==fps}?:modes.minByOrNull{abs(it.upper-fps)}?.also{val before=fps;fps=it.upper;notice("กล้องนี้ไม่รองรับ $before fps · ใช้ $fps fps แทน")}?:error("${qualityName(quality)} ไม่รองรับ $fps fps ร่วมกับ HDR/กันสั่นที่เลือก · เลือกชุดใหม่")
+            var mode=modes.firstOrNull{it.upper==fps}?:modes.takeIf{!rear}?.minByOrNull{abs(it.upper-fps)}?.also{val before=fps;fps=it.upper;notice("กล้องนี้ไม่รองรับ $before fps · ใช้ $fps fps แทน")}?:error("${qualityName(quality)} ไม่รองรับ $fps fps ร่วมกับ HDR/กันสั่นที่เลือก · เลือกชุดใหม่")
             forced60=false
             if(mode.source==NEEDS_SDR){dynamic=DynamicRange.SDR;stabilization=false;prefs.edit().putBoolean("video_eis",false).apply();notice("60 fps ใช้ได้เมื่อปิด HDR และกันสั่น · ปิดให้แล้ว");mode=sessions.rates(info,quality,dynamic,false,false).first{it.upper==60}}
             highRt=mode.source==HIGH_SPEED
