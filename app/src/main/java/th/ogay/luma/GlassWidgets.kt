@@ -853,3 +853,26 @@ class AiRing(context: Context) : View(context) {
         c.drawText(caption, cx, cy + r + 62 * d, small)
     }
 }
+
+/** Subject-tracking marker: four corner brackets with a soft fill and a centre dot, breathing gently while it follows. */
+class TrackMarker(context: Context) : View(context) {
+    private val d = resources.displayMetrics.density
+    private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 2.5f * d; strokeCap = Paint.Cap.ROUND; color = Glass.ACCENT }
+    private val shade = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 5f * d; strokeCap = Paint.Cap.ROUND; color = 0x55000000 }
+    private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x14ffffff }
+    private val dot = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Glass.ACCENT }
+    private val path = Path(); private val r = RectF()
+    init { importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }
+    override fun onDraw(c: Canvas) {
+        val p = 4 * d; r.set(p, p, width - p, height - p)
+        c.drawRoundRect(r, 12 * d, 12 * d, fill)
+        val k = minOf(r.width(), r.height()) * 0.28f
+        path.reset()
+        path.moveTo(r.left, r.top + k); path.lineTo(r.left, r.top); path.lineTo(r.left + k, r.top)
+        path.moveTo(r.right - k, r.top); path.lineTo(r.right, r.top); path.lineTo(r.right, r.top + k)
+        path.moveTo(r.right, r.bottom - k); path.lineTo(r.right, r.bottom); path.lineTo(r.right - k, r.bottom)
+        path.moveTo(r.left + k, r.bottom); path.lineTo(r.left, r.bottom); path.lineTo(r.left, r.bottom - k)
+        c.drawPath(path, shade); c.drawPath(path, line)
+        c.drawCircle(r.centerX(), r.centerY(), 2.5f * d, dot)
+    }
+}

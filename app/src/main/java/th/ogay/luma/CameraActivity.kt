@@ -271,11 +271,13 @@ class CameraActivity : ComponentActivity() {
         menu.dismiss(false)
         zooms.finish(); wheel.removeCallbacks(hideWheel); hideWheel.run()
         clearLensShots()
+        portraitLive?.stop()
         super.onPause()
     }
     override fun onDestroy() {
         shutterSound.release()
         tones.release()
+        portraitLive?.close()
         super.onDestroy()
     }
     override fun onSaveInstanceState(out: Bundle) { super.onSaveInstanceState(out); out.putBoolean("rear",rear); out.putFloat("zoom",ratio) }
@@ -311,6 +313,9 @@ class CameraActivity : ComponentActivity() {
         // The PreviewView survives a rebuilt screen (rotation) so a reused session keeps its surface.
         preview = (if (::preview.isInitialized) preview.also { (it.parent as? ViewGroup)?.removeView(it) } else PreviewView(this)).apply { implementationMode = PreviewView.ImplementationMode.COMPATIBLE; scaleType = PreviewView.ScaleType.FILL_CENTER }
         mask.addView(preview, -1, -1)
+        portraitView = ImageView(this).apply { scaleType = ImageView.ScaleType.FIT_XY; alpha = 0f; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
+        mask.addView(portraitView, -1, -1)
+        portraitLive?.close(); portraitLive = PortraitPreview(preview, portraitView) { prefs.getFloat("portrait_f", 2.8f) }
         overlay = CompositionOverlay(this).apply { gridKind = Grids.kind(prefs) }
         mask.addView(overlay, -1, -1)
         overlay.monitor(preview)
@@ -450,6 +455,8 @@ class CameraActivity : ComponentActivity() {
     }
     private var dockView: View? = null
     private lateinit var apertureButton: TextView
+    private lateinit var portraitView: ImageView
+    private var portraitLive: PortraitPreview? = null
     private var chromeBlurred = false
     /**
      * Everything behind an open sheet or menu (0..1) fades into one blurred, darkened still of the camera that covers
@@ -467,8 +474,8 @@ class CameraActivity : ComponentActivity() {
         if (k > 0.001f) {
             if (b.visibility != View.VISIBLE) { b.visibility = View.VISIBLE; pushedBack = true }
             // The live view keeps playing behind the sheet; it is only dimmed and softened a little.
-            b.animate().cancel(); b.alpha = 0.4f * k
-            columnView?.let { Glass.blur(it, 6f * k) }
+            // Only dimmed: blurring the whole column (live preview included) on every frame made sheets and menus stutter.
+            b.animate().cancel(); b.alpha = 0.5f * k
         } else if (pushedBack) {
             pushedBack = false
             columnView?.let { Glass.blur(it, 0f) }
@@ -711,17 +718,14 @@ class CameraActivity : ComponentActivity() {
     private fun snapshotLens(lens: Float) {
         if (lens != 1f && lens != 3.5f) return
         val now = android.os.SystemClock.uptimeMillis(); if (now - lastShot < 1500 && lensShots.containsKey(lens)) return; lastShot = now
-        val full = runCatching { preview.bitmap }.getOrNull() ?: return
-        val small = Bitmap.createScaledBitmap(full, 240, (240f * full.height / full.width).roundToInt().coerceAtLeast(1), true)
-        if (small !== full) full.recycle()
+        val small = preview.smallFrame(240) ?: return
         lensShots.put(lens, small)?.recycle()
     }
     private fun clearLensShots() { lensShots.values.forEach { it.recycle() }; lensShots.clear(); if (::miniImage.isInitialized) miniImage.setImageDrawable(null) }
     private var miniLive = false
     private val miniTicker = object : Runnable { override fun run() {
         if (!miniLive || isDestroyed || miniCard.visibility != View.VISIBLE) { miniLive = false; return }
-        if (!busy) runCatching { preview.bitmap }.getOrNull()?.let { full ->
-            val small = Bitmap.createScaledBitmap(full, 180, (180f * full.height / full.width).roundToInt().coerceAtLeast(1), true); if (small !== full) full.recycle()
+        if (!busy) preview.smallFrame(180)?.let { small ->
             val old = (miniImage.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
             miniImage.setImageBitmap(small); if (old != null && old !== small && !lensShots.containsValue(old)) old.recycle()
         }
@@ -983,12 +987,12 @@ class CameraActivity : ComponentActivity() {
     private var lookSampleCache: Bitmap? = null
     private val lookImages = mutableListOf<ImageView>()
     /** A small still of the live view, read before any colour filter, so every thumbnail starts from the camera's own colour. */
-    private fun grabLookSample(): Bitmap? = runCatching { preview.bitmap?.let { f -> Bitmap.createScaledBitmap(f, 132, (132f * f.height / f.width).toInt().coerceAtLeast(1), true).also { if (it !== f) f.recycle() } } }.getOrNull()
+    private fun grabLookSample(): Bitmap? = preview.smallFrame(132)
     /** While the sheet is open the thumbnails follow the live view, a few times a second. */
     private val lookTicker = object : Runnable { override fun run() {
         if (!lookSheet.showing || isDestroyed) return
         if (!busy) grabLookSample()?.let { b -> val old = lookSampleCache; lookSampleCache = b; lookImages.forEach { it.setImageBitmap(b) }; if (old !== b) old?.recycle() }
-        preview.postDelayed(this, 400)
+        preview.postDelayed(this, 900)
     } }
     private fun openLookSheet() {
         lookSampleCache = grabLookSample() ?: lookSampleCache
@@ -1189,6 +1193,8 @@ class CameraActivity : ComponentActivity() {
         refreshStatus()
         val showSide = !dialing && openChip == null && !nightRunning && capture != null
         val portrait = mode == PhotoMode.PORTRAIT && !activeExtension
+        // Live background blur while composing; paused behind sheets and menus, and while a photo is being taken.
+        portraitLive?.let { if (portrait && capture != null && !busy && !lookSheet.showing && !panel.showing && !editor.showing) it.start() else it.stop() }
         macroButton.visibility = if (showSide && rear && !portrait && mode != PhotoMode.SPORT && macroLens != null) View.VISIBLE else View.GONE
         apertureButton.visibility = if (showSide && (portrait || mode == PhotoMode.SPORT)) View.VISIBLE else View.GONE
         val f = prefs.getFloat("portrait_f", 2.8f); apertureButton.text = if (mode == PhotoMode.SPORT) "1/" + (1_000_000_000L / SPORT_KINDS[sportIndex()].second) else "f/${fText(f)}"; apertureButton.contentDescription = "เบลอพื้นหลัง f/${fText(f)} แตะเพื่อเปลี่ยน"

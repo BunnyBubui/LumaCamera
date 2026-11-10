@@ -417,7 +417,7 @@ class VideoActivity:ComponentActivity(){
     private var vOverlay:CompositionOverlay?=null
     private fun manualFocusOff(){stopTracking()}
     private var trackBox:android.view.View?=null
-    private val tracker=ObjectTracker{runCatching{preview.bitmap}.getOrNull()}
+    private val tracker=ObjectTracker{preview.smallFrame(96)}
     private var lastFocusX=-1f;private var lastFocusY=-1f;private var lastFocusAt=0L
     private fun focusAt(nx:Float,ny:Float){val cam=camera?:return
         val op=androidx.camera.core.FocusMeteringAction.Builder(preview.meteringPointFactory.createPoint(nx*preview.width,ny*preview.height)).disableAutoCancel().build()
@@ -433,10 +433,10 @@ class VideoActivity:ComponentActivity(){
         handler.postDelayed(this,130)}}
     private fun startTracking(x:Float,y:Float){
         if(preview.width==0||!tracker.start(x/preview.width,y/preview.height)){notice("เริ่มติดตามวัตถุไม่ได้");return}
-        val b=trackBox?:android.view.View(this).apply{background=android.graphics.drawable.GradientDrawable().apply{cornerRadius=dp(10).toFloat();setStroke(dp(2),Glass.ACCENT)};importantForAccessibility=android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO;(preview.parent as? android.view.ViewGroup)?.addView(this,FrameLayout.LayoutParams(dp(74),dp(74)));trackBox=this}
-        b.visibility=android.view.View.VISIBLE;b.translationX=preview.left+x-dp(37);b.translationY=preview.top+y-dp(37);b.scaleX=1.3f;b.scaleY=1.3f;b.animate().scaleX(1f).scaleY(1f).setDuration(220).start()
+        val b=trackBox?:TrackMarker(this).apply{(preview.parent as? android.view.ViewGroup)?.addView(this,FrameLayout.LayoutParams(dp(80),dp(80)));trackBox=this}
+        b.visibility=android.view.View.VISIBLE;b.translationX=preview.left+x-dp(40);b.translationY=preview.top+y-dp(40);b.scaleX=1.3f;b.scaleY=1.3f;b.animate().scaleX(1f).scaleY(1f).setDuration(220).start()
         if((manual?.minFocus?:0f)>0f&&focusRail.value>0f)setVideoFocus(null)
-        focusAt(tracker.x,tracker.y);Glass.tick(preview,android.view.HapticFeedbackConstants.LONG_PRESS);notice("ติดตามวัตถุ · แตะที่อื่นเพื่อยกเลิก")
+        focusAt(tracker.x,tracker.y);Glass.tick(preview,android.view.HapticFeedbackConstants.LONG_PRESS);notice("กำลังติดตาม · แตะเพื่อยกเลิก")
         handler.removeCallbacks(trackStep);handler.postDelayed(trackStep,130)
     }
     private fun stopTracking(){if(!tracker.active&&trackBox?.visibility!=android.view.View.VISIBLE)return;tracker.stop();handler.removeCallbacks(trackStep);trackBox?.visibility=android.view.View.GONE;camera?.cameraControl?.cancelFocusAndMetering()}
