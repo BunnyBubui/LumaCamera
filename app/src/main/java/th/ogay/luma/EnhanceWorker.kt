@@ -42,20 +42,21 @@ class EnhanceWorker(context: Context, params: WorkerParameters) : Worker(context
             setForegroundAsync(foreground(shot,0)).get()
             val burstFolder = File(context.filesDir,"bursts/${shot.id}")
             val hasBurst = burstFolder.listFiles()?.any { it.name.matches(Regex("[0-9]{4}\\.jpg")) } == true
+            fun stopped() = isStopped || db.get(key)?.aiToken != shot.aiToken
             val input = if (shot.output.enhance && hasBurst) {
-                val fusion = MultiFrameFusion(context).process(shot) { isStopped }
+                val fusion = MultiFrameFusion(context).process(shot) { stopped() }
                 db.fusionProgress(key,fusion.used)
                 shot.copy(uri=Uri.fromFile(fusion.file),size=fusion.size)
             } else shot
             var report: String? = null
             val output = when (shot.aiModel) {
                 MODEL_VERSION -> {
-                    SuperResolution(context).process(input,temp) { isStopped }
+                    SuperResolution(context).process(input,temp) { stopped() }
                     scaledSize(input.size,TARGET_PIXELS)
                 }
                 EnhanceSpec.MODEL -> {
                     val result = DetailSuperResolution(context).process(input,temp,
-                        EnhanceSpec(shot.aiScale,shot.aiStrength),{ isStopped }) { percent ->
+                        EnhanceSpec(shot.aiScale,shot.aiStrength),{ stopped() }) { percent ->
                         db.aiState(key,shot.aiToken,Stage.RUNNING,percent)
                         val now = SystemClock.elapsedRealtime()
                         if (now-lastNotification > 1000) {
@@ -68,7 +69,7 @@ class EnhanceWorker(context: Context, params: WorkerParameters) : Worker(context
                 }
                 else -> throw IOException("ไม่รองรับโมเดล AI ${shot.aiModel}")
             }
-            if (isStopped) throw CancellationException()
+            if (stopped()) throw CancellationException()
             report?.let { reportFile.parentFile?.mkdirs(); reportFile.writeText(it) }
             val uri = PhotoMedia.publish(context,temp,shot.aiName,shot.time)
             if (db.aiState(key,shot.aiToken,Stage.DONE,100,uri,SystemClock.elapsedRealtime()-start,

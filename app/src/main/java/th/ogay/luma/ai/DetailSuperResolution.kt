@@ -26,7 +26,7 @@ class DetailSuperResolution(private val context: Context) {
                                 progress: (Int) -> Unit): Report {
         val start = SystemClock.elapsedRealtime()
         val exif = context.contentResolver.openInputStream(shot.uri)?.use { ExifInterface(it) }
-        var decodeMs = 0L; var inferMs = 0L; var renderMs = 0L
+        var decodeMs = 0L; var inferMs = 0L; var renderMs = 0L; var encodeMs = 0L
         var count = 0; var lastProgress = -1
         fun checkpoint() { if (stopped()) throw CancellationException() }
         context.contentResolver.openInputStream(shot.uri)?.use { input ->
@@ -40,7 +40,9 @@ class DetailSuperResolution(private val context: Context) {
                 val columns = (source.w+EnhanceSpec.CORE-1)/EnhanceSpec.CORE
                 val rows = (source.h+EnhanceSpec.CORE-1)/EnhanceSpec.CORE
                 checkpoint()
+                val initStart = SystemClock.elapsedRealtime()
                 DetailRuntime(context).use { runtime ->
+                    val modelInitMs = SystemClock.elapsedRealtime()-initStart
                     StripJpeg(file, output.w, output.h).use { jpeg ->
                         val stripe = IntArray(output.w*minOf(EnhanceSpec.CORE,source.h)*spec.scale)
                         for (top in 0 until source.h step EnhanceSpec.CORE) {
@@ -62,9 +64,15 @@ class DetailSuperResolution(private val context: Context) {
                                 val percent = (count*99/(columns*rows)).coerceAtMost(99)
                                 if (percent != lastProgress) { lastProgress = percent; progress(percent) }
                             }
-                            checkpoint(); jpeg.write(stripe,h*spec.scale)
+                            checkpoint()
+                            val encodeStart=SystemClock.elapsedRealtime()
+                            jpeg.write(stripe,h*spec.scale)
+                            encodeMs+=SystemClock.elapsedRealtime()-encodeStart
                         }
-                        checkpoint(); jpeg.finish()
+                        checkpoint()
+                        val encodeStart=SystemClock.elapsedRealtime()
+                        jpeg.finish()
+                        encodeMs+=SystemClock.elapsedRealtime()-encodeStart
                     }
                     PhotoMedia.tag(file,exif?.rotationDegrees ?: 0,
                         exif?.getAttribute(ExifInterface.TAG_DATETIME_ORIGINAL),ai=true,version=shot.aiVersion)
@@ -76,6 +84,7 @@ class DetailSuperResolution(private val context: Context) {
                         .put("outputWidth",output.w).put("outputHeight",output.h)
                         .put("tiles",count).put("tileCore",EnhanceSpec.CORE).put("halo",EnhanceSpec.HALO)
                         .put("decodeMs",decodeMs).put("inferenceMs",inferMs).put("renderMs",renderMs)
+                        .put("modelInitMs",modelInitMs).put("encodeMs",encodeMs)
                         .put("totalMs",SystemClock.elapsedRealtime()-start)
                     return Report(output,report.toString())
                 }

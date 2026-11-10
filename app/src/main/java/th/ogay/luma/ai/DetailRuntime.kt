@@ -6,6 +6,7 @@ import com.google.ai.edge.litert.CompiledModel
 import com.google.ai.edge.litert.TensorBuffer
 import java.io.Closeable
 import java.io.File
+import org.json.JSONObject
 
 /** Created, run and released on the worker's single thread, including GPU fallback. */
 class DetailRuntime(private val context: Context, private val forceCpu: Boolean = false) : Closeable {
@@ -27,12 +28,15 @@ class DetailRuntime(private val context: Context, private val forceCpu: Boolean 
         if (model == null) open(false)
     }
     private fun open(useGpu: Boolean) {
+        val fingerprint = context.assets.open("luma-detail-sr2.json").bufferedReader().use {
+            JSONObject(it.readText()).getString("sha256").take(20)
+        }
         val options = CompiledModel.Options(if (useGpu) Accelerator.GPU else Accelerator.CPU).apply {
             cpuOptions = CompiledModel.CpuOptions(numThreads = minOf(4, Runtime.getRuntime().availableProcessors()))
             if (useGpu) gpuOptions = CompiledModel.GpuOptions(
                 precision = CompiledModel.GpuOptions.Precision.FP16,
                 serializationDir = File(context.codeCacheDir, "detail-sr2").apply { mkdirs() }.path,
-                modelCacheKey = "general-x4v3-fp16-v1-200",
+                modelCacheKey = "detail-$fingerprint-200",
                 serializeProgramCache = true)
         }
         model = CompiledModel.create(context.assets, "luma-detail-sr2.tflite", options)

@@ -16,6 +16,20 @@ object DetailResampler {
         require(left >= 0 && left + coreW*scale <= stride && destination.size >= stride*coreH*scale)
         val gain = strength / 100f
         val halo = EnhanceSpec.HALO
+        if (strength == 100 && scale == 4) {
+            // The detail default needs neither baseline sampling nor resize arithmetic.
+            for (y in 0 until coreH*4) for (x in 0 until coreW*4) {
+                val index=((y+halo*4)*outEdge+x+halo*4)*3
+                var color=-0x1000000
+                for(c in 0..2) {
+                    val value=native[index+c]*255f
+                    require(value.isFinite()) { "โมเดลส่งค่าพิกเซลไม่ถูกต้อง" }
+                    color=color or (value.roundToInt().coerceIn(0,255) shl (16-c*8))
+                }
+                destination[y*stride+left+x]=color
+            }
+            return
+        }
         val footprint = 4.0 / scale
         for (y in 0 until coreH*scale) {
             val y0 = halo*4 + y*footprint; val y1 = y0 + footprint
@@ -38,6 +52,10 @@ object DetailResampler {
                     val enhanced = (sum/(footprint*footprint)*255).toFloat()
                     require(enhanced.isFinite()) { "โมเดลส่งค่าพิกเซลไม่ถูกต้อง" }
                     val shift = 16-c*8
+                    if (strength == 100) {
+                        color = color or (enhanced.roundToInt().coerceIn(0,255) shl shift)
+                        continue
+                    }
                     fun original(dx: Int, dy: Int) = ((input[(by+dy)*edge+bx+dx] ushr shift) and 255).toFloat()
                     val base = (original(0,0)*(1-wx)+original(1,0)*wx)*(1-wy) +
                         (original(0,1)*(1-wx)+original(1,1)*wx)*wy

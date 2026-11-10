@@ -103,14 +103,15 @@ def main():
     validation = {}
     if args.verify:
         rng = np.random.default_rng(15)
-        sample = rng.uniform(0, 1, (1, 17, 19, 3)).astype(np.float32)
+        # The deployment graph deliberately fixes resize/output shapes at 200/800.
+        # Validate that actual graph, rather than resizing only its input tensor.
+        sample = rng.uniform(0, 1, (1, INPUT, INPUT, 3)).astype(np.float32)
         expected = reference(sample)
         actual = network.forward(tf.constant(sample))["enhanced"].numpy()
         validation["tensorflowVsTorchMaxError"] = float(np.abs(actual-expected).max())
         assert np.allclose(actual, expected, atol=0.0005, rtol=0.0005), validation
         interpreter = tf.lite.Interpreter(model_content=model, num_threads=2)
         inp = interpreter.get_input_details()[0]
-        interpreter.resize_tensor_input(inp["index"], sample.shape)
         interpreter.allocate_tensors()
         interpreter.set_tensor(inp["index"], sample)
         interpreter.invoke()

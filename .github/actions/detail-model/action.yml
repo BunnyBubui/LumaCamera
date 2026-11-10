@@ -13,7 +13,8 @@ runs:
           app/src/main/assets/luma-detail-sr2.tflite
           app/src/main/assets/luma-detail-sr2.json
           build/detail-source/
-        key: detail-sr2-${{ runner.os }}-${{ hashFiles('model/build_detail.py', 'model/detail-source-lock.json') }}
+          build/detail-comparison/
+        key: detail-sr2-${{ runner.os }}-${{ hashFiles('model/build_detail.py', 'model/compare_detail.py', 'model/detail-source-lock.json') }}
     - name: Install conversion dependencies
       if: steps.model-cache.outputs.cache-hit != 'true'
       shell: bash
@@ -24,11 +25,17 @@ runs:
       if: steps.model-cache.outputs.cache-hit != 'true'
       shell: bash
       run: python model/build_detail.py --verify
+    - name: Verify tile context and export real comparison crops
+      if: steps.model-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: python model/compare_detail.py
     - uses: actions/upload-artifact@v4
+      if: always()
       with:
         name: Detail-SR-model-${{ github.job }}
         path: |
           app/src/main/assets/luma-detail-sr2.tflite
           app/src/main/assets/luma-detail-sr2.json
           build/detail-source/observed-source-lock.json
+          build/detail-comparison/
         if-no-files-found: error
