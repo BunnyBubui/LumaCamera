@@ -45,16 +45,22 @@ class DetailSuperResolution(private val context: Context) {
                     val modelInitMs = SystemClock.elapsedRealtime()-initStart
                     StripJpeg(file, output.w, output.h).use { jpeg ->
                         val stripe = IntArray(output.w*minOf(EnhanceSpec.CORE,source.h)*spec.scale)
+                        val pixels = IntArray(EnhanceSpec.INPUT*EnhanceSpec.INPUT)
                         for (top in 0 until source.h step EnhanceSpec.CORE) {
                             val h = minOf(EnhanceSpec.CORE,source.h-top)
+                            // One decode per row of tiles instead of one per tile: neighbouring tiles overlap by the halo.
+                            var t0 = SystemClock.elapsedRealtime()
+                            val row = Row.decode(decoder,top)
+                            decodeMs += SystemClock.elapsedRealtime()-t0
                             for (left in 0 until source.w step EnhanceSpec.CORE) {
                                 checkpoint()
                                 val w = minOf(EnhanceSpec.CORE,source.w-left)
                                 var t = SystemClock.elapsedRealtime()
-                                val pixels = readInput(decoder,left,top)
+                                row.tile(left,pixels)
                                 decodeMs += SystemClock.elapsedRealtime()-t
                                 t = SystemClock.elapsedRealtime()
-                                val enhanced = runtime.run(pixels)
+                                android.os.Trace.beginSection("Lumora.ai.tile")
+                                val enhanced = try { runtime.run(pixels) } finally { android.os.Trace.endSection() }
                                 inferMs += SystemClock.elapsedRealtime()-t
                                 checkpoint()
                                 t = SystemClock.elapsedRealtime()
@@ -90,6 +96,32 @@ class DetailSuperResolution(private val context: Context) {
                 }
             } finally { decoder.recycle() }
         } ?: throw IOException("ไม่พบไฟล์ต้นฉบับ")
+    }
+
+    /** A full-width strip of the source covering one row of tiles plus the halo above and below. */
+    class Row private constructor(private val data: IntArray, private val width: Int, private val height: Int, private val y0: Int, private val top: Int) {
+        /** Same clamping as [readInput]: pixels outside the image repeat the nearest edge pixel. */
+        fun tile(left: Int, out: IntArray) {
+            val n = EnhanceSpec.INPUT; val x0 = left-EnhanceSpec.HALO
+            for (j in 0 until n) {
+                val y = (y0+j-top).coerceIn(0,height-1); val base = y*width
+                val o = j*n
+                for (i in 0 until n) out[o+i] = data[base+(x0+i).coerceIn(0,width-1)]
+            }
+        }
+        companion object {
+            fun decode(decoder: BitmapRegionDecoder, top: Int): Row {
+                val n = EnhanceSpec.INPUT; val y0 = top-EnhanceSpec.HALO
+                val rect = Rect(0,y0.coerceIn(0,decoder.height-1),decoder.width,(y0+n).coerceIn(1,decoder.height))
+                val bitmap = decoder.decodeRegion(rect, BitmapFactory.Options().apply { inPreferredConfig=android.graphics.Bitmap.Config.ARGB_8888 })
+                    ?: throw IOException("อ่านส่วนภาพไม่ได้")
+                return try {
+                    val data = IntArray(bitmap.width*bitmap.height)
+                    bitmap.getPixels(data,0,bitmap.width,0,0,bitmap.width,bitmap.height)
+                    Row(data,bitmap.width,bitmap.height,y0,rect.top)
+                } finally { bitmap.recycle() }
+            }
+        }
     }
 
     companion object {

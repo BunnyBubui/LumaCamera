@@ -1275,7 +1275,8 @@ class CameraActivity : ComponentActivity() {
             val group=UseCaseGroup.Builder().addUseCase(previewCase).addUseCase(useCase)
             val aspect=Aspects.rational(prefs.getString("aspect","4:3")?:"4:3")
             if(aspect!=Rational(4,3)&&!activeExtension)group.setViewPort(ViewPort.Builder(aspect,targetRotation).build())
-            camera=provider.bindToLifecycle(this,selected,group.build())
+            android.os.Trace.beginSection("Lumora.bind")
+            try{camera=provider.bindToLifecycle(this,selected,group.build())}finally{android.os.Trace.endSection()}
             manual=ManualControls(this,camera!!,false,mode==PhotoMode.PRO).also{it.onNotice={t->notice(t)};it.plainColor=output.needsRaw}
             afterBind()
 

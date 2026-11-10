@@ -46,6 +46,8 @@ data class Shot(
 
 class Shots(context: Context) : SQLiteOpenHelper(context, "frames.db", null, 3) {
     val changes = MutableLiveData<Long>()
+    /** AI percent for one shot. Kept apart from [changes] so a running job does not make every screen re-read the whole list. */
+    val progress = MutableLiveData<Pair<String, Int>>()
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE shots(id TEXT PRIMARY KEY, time INTEGER NOT NULL, uri TEXT NOT NULL,
             w INTEGER NOT NULL, h INTEGER NOT NULL, zoom REAL NOT NULL, rear INTEGER NOT NULL,
@@ -160,7 +162,7 @@ class Shots(context: Context) : SQLiteOpenHelper(context, "frames.db", null, 3) 
                 size?.let { put("ai_w",it.w); put("ai_h",it.h) }
             }
         },"id=? AND ai_token=? AND stage IN ('QUEUED','RUNNING')",arrayOf(id,token)) == 1
-        if (changed) changes.postValue(System.nanoTime())
+        if (changed) { if (stage == Stage.RUNNING && progress > 0) this.progress.postValue(id to progress) else changes.postValue(System.nanoTime()) }
         return changed
     }
     fun cancelEnhancement(id: String) {
@@ -175,11 +177,15 @@ class Shots(context: Context) : SQLiteOpenHelper(context, "frames.db", null, 3) 
 class LumaApp : Application(), Configuration.Provider {
     val shots by lazy { Shots(this) }
     val fileIo = Executors.newSingleThreadExecutor()
+    /** Reading lists for screens, kept off [fileIo] so saving a capture never waits behind a gallery refresh. */
+    val readIo = Executors.newSingleThreadExecutor()
     private val aiExecutor = Executors.newSingleThreadExecutor()
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder().setExecutor(aiExecutor).build()
     override fun onCreate() {
         super.onCreate()
+        if (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0)
+            android.os.StrictMode.setThreadPolicy(android.os.StrictMode.ThreadPolicy.Builder().detectDiskReads().detectDiskWrites().detectNetwork().penaltyLog().build())
         fileIo.execute {
             // An interrupted burst retains its first public image and all completed input frames.
             shots.unfinishedCaptures().forEach { shot ->

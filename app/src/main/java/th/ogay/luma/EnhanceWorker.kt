@@ -42,7 +42,14 @@ class EnhanceWorker(context: Context, params: WorkerParameters) : Worker(context
             setForegroundAsync(foreground(shot,0)).get()
             val burstFolder = File(context.filesDir,"bursts/${shot.id}")
             val hasBurst = burstFolder.listFiles()?.any { it.name.matches(Regex("[0-9]{4}\\.jpg")) } == true
-            fun stopped() = isStopped || db.get(key)?.aiToken != shot.aiToken
+            // The database check (a newer request or a cancel) costs a query, so it runs at most twice a second.
+            var lastCheck = 0L; var replaced = false
+            fun stopped(): Boolean {
+                if (isStopped || replaced) return true
+                val now = SystemClock.elapsedRealtime()
+                if (now - lastCheck >= 500) { lastCheck = now; replaced = db.get(key)?.aiToken != shot.aiToken }
+                return replaced
+            }
             val input = if (shot.output.enhance && hasBurst) {
                 val fusion = MultiFrameFusion(context).process(shot) { stopped() }
                 db.fusionProgress(key,fusion.used)

@@ -95,6 +95,9 @@ class GalleryActivity : ComponentActivity() {
             }
         })
         luma.shots.changes.observe(this) { if (!device || selected != null) reload() }
+        luma.shots.progress.observe(this) { p: Pair<String, Int> -> val id = p.first; val percent = p.second
+            if (selected == id && showingId == id && ::ring.isInitialized && ring.visibility == View.VISIBLE) ring.update(percent.toFloat(), ring.caption)
+        }
         // Opened from the camera's thumbnail: show the newest photo first; the grid is one tap (or Back) away.
         if (state == null && !device && intent.getStringExtra("tab") == null) {
             luma.fileIo.execute {
@@ -113,7 +116,7 @@ class GalleryActivity : ComponentActivity() {
 
     private fun reload() {
         val id = selected; val version = ++readVersion
-        luma.fileIo.execute {
+        luma.readIo.execute {
             val shot = id?.let { luma.shots.get(it) }
             val items = when {
                 device -> if (mediaGranted()) deviceItems() else emptyList()

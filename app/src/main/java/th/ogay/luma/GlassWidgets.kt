@@ -807,7 +807,8 @@ class AiRing(context: Context) : View(context) {
     private var target = 0f
     private var spinning = false
     private var angle = 0f
-    private var caption = ""
+    var caption = ""
+        private set
     private var glide: ValueAnimator? = null
     private var spin: ValueAnimator? = null
     init { visibility = GONE; isClickable = false }
