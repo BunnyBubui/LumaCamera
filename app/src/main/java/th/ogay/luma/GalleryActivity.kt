@@ -659,7 +659,7 @@ class GalleryActivity : ComponentActivity() {
                 add(s.reason.description)
                 if (s.ai != null) { add("AI ${s.aiVersion}  ${ai.w} × ${ai.h} px"); add("เวลาประมวลผล  ${s.elapsed} ms") }
             }.joinToString("\n")
-            runOnUiThread { if (!isDestroyed) AlertDialog.Builder(this).setTitle("ข้อมูลภาพ").setMessage(text).setPositiveButton("ปิด", null).show() }
+            runOnUiThread { if (!isDestroyed) GlassDialog.show(this, "ข้อมูลภาพ", text) }
         }
     }
 }

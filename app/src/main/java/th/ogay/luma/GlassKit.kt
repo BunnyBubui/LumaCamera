@@ -11,6 +11,8 @@ import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.Gravity
+import android.widget.LinearLayout
 import android.view.animation.PathInterpolator
 import kotlin.math.*
 
@@ -435,4 +437,21 @@ class IconTurner {
         views().forEach { v -> var to = target; val cur = v.rotation; while (to - cur > 180) to -= 360; while (to - cur < -180) to += 360; if (reduced) v.rotation = to else v.animate().rotation(to).setInterpolator(Glass.SPRING).setDuration(420).start() }
     }
     fun apply(views: List<View>) { views.forEach { it.rotation = angle } }
+}
+
+/** Plain-text dialog in the glass style, used instead of the system AlertDialog so every popup matches the app. */
+object GlassDialog {
+    fun show(a: android.app.Activity, title: String, message: String, button: String = "ปิด") {
+        val d = android.app.Dialog(a)
+        d.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+        val box = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; background = a.glass(28, Glass.FILL_STRONG); setPadding(a.dp(20), a.dp(18), a.dp(20), a.dp(14)) }
+        box.addView(a.text(title, 18f, Color.WHITE, true), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = a.dp(8) })
+        val body = a.text(message, 14f, Glass.TEXT2).apply { maxLines = 60; ellipsize = null; setLineSpacing(0f, 1.15f) }
+        box.addView(android.widget.ScrollView(a).apply { isVerticalScrollBarEnabled = false; addView(body) }, LinearLayout.LayoutParams(-1, -2, 1f))
+        box.addView(a.text(button, 15f, Glass.ON_ACCENT, true).apply { gravity = Gravity.CENTER; background = a.glass(24, Glass.ACCENT); isClickable = true; setOnClickListener { d.dismiss() }; glassTouch() },
+            LinearLayout.LayoutParams(-1, a.dp(48)).apply { topMargin = a.dp(14) })
+        d.setContentView(box)
+        d.window?.apply { setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)); setLayout((a.resources.displayMetrics.widthPixels * 0.88f).toInt(), android.view.WindowManager.LayoutParams.WRAP_CONTENT); setDimAmount(0.5f) }
+        d.show()
+    }
 }

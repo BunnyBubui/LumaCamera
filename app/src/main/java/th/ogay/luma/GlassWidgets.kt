@@ -627,8 +627,9 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
                 rows.forEachIndexed { k, row -> row.animate().scaleX(if (press && k == i) 0.985f else 1f).scaleY(if (press && k == i) 0.985f else 1f).setDuration(120).start() }
             }
             var current = selected.coerceIn(0, rows.size - 1)
-            menu.post { if (rows[current].height > 0) moveHi(current, false) }
-            if (selected < 0) hi.alpha = 0f
+            // The highlight only appears under a finger; the chosen row already carries its own border.
+            hi.alpha = 0f
+            list.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> val r = rows[current.coerceIn(0, rows.size - 1)]; if (r.height > 0) { hi.layoutParams = (hi.layoutParams as FrameLayout.LayoutParams).apply { height = r.height.coerceAtLeast(c.dp(52)) }; hi.translationY = (r.top - rows[0].top).toFloat() } }
             fun handle(action: Int, y: Float) {
                 val i = rowAt(y)
                 when (action) {

@@ -8,7 +8,7 @@ import java.util.Random
 class Film(val id: String, val name: String, val group: String, val sat: Float, val con: Float, val r: Float, val g: Float, val b: Float, val lift: Float, val grain: Float, val vignette: Float)
 
 /**
- * Hundreds of film looks, generated from a table of base characters and six tone variants.
+ * A curated list of film looks, one classic tone per base character.
  * Names are original; groups follow the kind of camera and film they imitate.
  */
 object Films {
@@ -76,8 +76,8 @@ Cabin Home Movie|8|0.95|1.05|1.08|1.0|0.88|0.06|0.55|0.2
                 var sat = p[2].toFloat(); var con = p[3].toFloat(); var r = p[4].toFloat(); var g = p[5].toFloat(); var b = p[6].toFloat()
                 var lift = p[7].toFloat(); var grain = p[8].toFloat(); val vig = p[9].toFloat()
                 when (vi) { 0 -> { con *= 0.86f; sat *= 0.92f; grain *= 0.6f }; 2 -> { sat *= 1.18f; con *= 1.12f }; 3 -> { lift += 0.05f; con *= 0.9f; sat *= 0.85f }; 4 -> { r *= 1.06f; b *= 0.94f }; 5 -> { r *= 0.95f; b *= 1.07f } }
-                Film("${p[0]}#$vi", "${p[0]} · $v", groups[gi], sat, con, r, g, b, lift, grain, vig)
-            }
+                Film("${p[0]}#$vi", p[0], groups[gi], sat, con, r, g, b, lift, grain, vig)
+            }.filter { it.id.endsWith("#1") } // only the classic tone of each film: a short, well-chosen list
         }
     }
     fun byId(id: String?): Film? = if (id.isNullOrEmpty()) null else all.firstOrNull { it.id == id }
