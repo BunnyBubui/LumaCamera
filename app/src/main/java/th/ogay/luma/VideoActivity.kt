@@ -294,6 +294,7 @@ class VideoActivity:ComponentActivity(){
         // The format pill sits where the camera shows its status icons.
         config=text(if(slow)"SLOW · ตัวเลือก" else "1080p · 30",13f,WHITE,true).apply{gravity=Gravity.CENTER;maxWidth=dp(170);maxLines=2;ellipsize=null;minHeight=dp(48);background=glass(22);setPadding(dp(14),0,dp(14),0);isClickable=true;contentDescription="รายละเอียดวิดีโอทั้งหมด";glassTouch();setOnClickListener{settings()}}
         stage.addView(config,FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.END).apply{setMargins(0,dp(6),dp(12),0)})
+        config.visibility=android.view.View.GONE // settings open by swiping up the dock, as in photo mode
         // Slow-motion records no sound; say so where it stays visible, since the status line changes.
         if(slow)stage.addView(text("Slow-motion · ไม่มีเสียง",12.5f,Glass.TEXT2,true).apply{gravity=Gravity.CENTER;maxLines=3;ellipsize=null;maxWidth=dp(170);minHeight=dp(48);background=glass(22);setPadding(dp(14),0,dp(14),0)},FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.START).apply{setMargins(dp(12),dp(6),0,0)})
         wheel=ZoomWheel(this).apply{alpha=0f;visibility=android.view.View.VISIBLE};stage.addView(wheel,FrameLayout.LayoutParams(-1,dp(150),Gravity.BOTTOM).apply{bottomMargin=dp(4)})
@@ -314,7 +315,9 @@ class VideoActivity:ComponentActivity(){
         dial.addView(srow,-1,-2)
         stage.addView(dial,FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM).apply{setMargins(dp(16),0,dp(16),dp(54))})
 
-        val dock=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER_VERTICAL};if(landscape)body.addView(dock,dp(320),-1) else body.addView(dock,-1,-2)
+        val dock=SwipeColumn(this).apply{gravity=Gravity.CENTER_VERTICAL;onSwipeUp={settings()}};if(landscape)body.addView(dock,dp(320),-1) else body.addView(dock,-1,-2)
+        androidx.core.view.ViewCompat.addAccessibilityAction(dock,"เปิดตั้งค่าวิดีโอ"){_,_->settings();true}
+        if(!slow)dock.addView(IconView(this,Icons.CHEVRON_UP,1.6f).apply{tint=Glass.TEXT3;contentDescription="ตั้งค่าวิดีโอ ปัดขึ้นหรือแตะเพื่อเปิด";isClickable=true;setOnClickListener{settings()}},LinearLayout.LayoutParams(dp(120),dp(36)).apply{gravity=Gravity.CENTER_HORIZONTAL;bottomMargin=-dp(6)})
         if(!slow){
             tabs=FrameLayout(this).apply{background=glass(20,0x1fffffff)}
             knob=android.view.View(this).apply{background=glass(17,0x38ffffff)};tabs.addView(knob,FrameLayout.LayoutParams(0,-1).apply{setMargins(dp(3),dp(3),dp(3),dp(3))})
@@ -364,7 +367,13 @@ class VideoActivity:ComponentActivity(){
                 val op=androidx.camera.core.FocusMeteringAction.Builder(point).setAutoCancelDuration(3,java.util.concurrent.TimeUnit.SECONDS).build()
                 if(cam.cameraInfo.isFocusMeteringSupported(op))cam.cameraControl.startFocusAndMetering(op)
                 vOverlay?.focus(e.x,e.y);if(focusRail.value>0f)setVideoFocus(null);showRail(expRail);preview.performClick();return true}})
-        preview.setOnTouchListener{_,e->pinch.onTouchEvent(e);taps.onTouchEvent(e);true}
+        // Two fingers belong to zoom only: the one-finger detector is cancelled so exposure, focus and long-press stay put.
+        var multi=false
+        preview.setOnTouchListener{_,e->
+            if(e.actionMasked==MotionEvent.ACTION_DOWN)multi=false
+            if(e.pointerCount>1&&!multi){multi=true;val c=MotionEvent.obtain(e).apply{action=MotionEvent.ACTION_CANCEL};taps.onTouchEvent(c);c.recycle()
+                if(axis==1){if(zone==2)setVideoFocus(if(fd0>0f)fd0 else null) else setVideoEv(ev0)};axis=0}
+            pinch.onTouchEvent(e);if(!multi)taps.onTouchEvent(e);true}
         refreshChips()
     }
     private fun slideKnob(animate:Boolean){

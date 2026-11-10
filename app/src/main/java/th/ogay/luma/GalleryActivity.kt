@@ -200,26 +200,30 @@ class GalleryActivity : ComponentActivity() {
         val bar = topBar("แกลเลอรี") { finish() }
         val searchBox = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; background = glass(22, 0x40ffffff); setPadding(dp(14), 0, dp(6), 0) }
         val searchIcon = IconView(this, Icons.SEARCH, 2f)
-        val field = EditText(this).apply { hint = "ค้นหา"; setHintTextColor(Glass.TEXT3); setTextColor(Color.WHITE); textSize = 15f; background = null; setSingleLine(); visibility = View.GONE; setText(queryText); setPadding(dp(6), 0, 0, 0) }
-        val close = IconView(this, Icons.CLOSE, 2f).apply { tint = Glass.TEXT2; visibility = View.GONE; contentDescription = "ปิดการค้นหา"; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES; isClickable = true }
+        val field = EditText(this).apply { hint = "ค้นหา"; setHintTextColor(Glass.TEXT3); setTextColor(Color.WHITE); textSize = 15f; background = null; setSingleLine(); visibility = View.GONE; setText(queryText); setSelection(queryText.length); setPadding(dp(8), 0, dp(4), 0)
+            imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
+            setOnEditorActionListener { v, _, _ -> (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(v.windowToken, 0); v.clearFocus(); true } }
+        val close = IconView(this, Icons.CLOSE, 2f).apply { tint = Glass.TEXT2; setPadding(dp(11), dp(11), dp(11), dp(11)); visibility = View.GONE; contentDescription = "ปิดการค้นหา"; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES; isClickable = true }
         searchBox.addView(searchIcon, dp(20), dp(20)); searchBox.addView(field, LinearLayout.LayoutParams(0, -1, 1f)); searchBox.addView(close, dp(40), dp(40))
         searchBox.contentDescription = "ค้นหา"
         bar.addView(searchBox, LinearLayout.LayoutParams(dp(48), dp(48)))
-        fun morph(open: Boolean) {
+        fun morph(open: Boolean, animate: Boolean = true) {
             val from = searchBox.width; val to = if (open) bar.width - bar.paddingLeft - bar.paddingRight - dp(60) else dp(48)
             field.visibility = if (open) View.VISIBLE else View.GONE; close.visibility = field.visibility
-            bar.findViewWithTag<View>("title")?.let { t -> t.animate().alpha(if (open) 0f else 1f).setDuration(180).start() }
+            // The title leaves the row while searching, so the box never squeezes or overflows it.
+            bar.findViewWithTag<View>("title")?.let { t -> if (open) t.visibility = View.GONE else { t.visibility = View.VISIBLE; t.alpha = 0f; t.animate().alpha(1f).setDuration(180).start() } }
             android.animation.ValueAnimator.ofInt(from, to).apply {
-                duration = if (Glass.reduced(this@GalleryActivity)) 0 else 420; interpolator = Glass.EASE
+                duration = if (!animate || Glass.reduced(this@GalleryActivity)) 0 else 420; interpolator = Glass.EASE
                 addUpdateListener { searchBox.layoutParams = (searchBox.layoutParams as LinearLayout.LayoutParams).apply { width = it.animatedValue as Int } }
                 start()
             }
             val ime = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
-            if (open) { field.requestFocus(); ime.showSoftInput(field, 0) } else { field.setText(""); ime.hideSoftInputFromWindow(field.windowToken, 0) }
+            if (open && animate) { field.requestFocus(); ime.showSoftInput(field, 0) } else if (!open) { field.setText(""); ime.hideSoftInputFromWindow(field.windowToken, 0) }
         }
         searchBox.setOnClickListener { if (field.visibility != View.VISIBLE) morph(true) }
         close.setOnClickListener { morph(false) }
-        if (queryText.isNotEmpty()) searchBox.post { morph(true) }
+        // A refresh while searching rebuilds the grid: reopen the box at once, without the animation or a second keyboard pop.
+        if (queryText.isNotEmpty()) searchBox.post { morph(true, false) }
 
         // Tabs: sliding glass highlight between Lumora and the whole device.
         var tabsDrag = false
@@ -526,8 +530,16 @@ class GalleryActivity : ComponentActivity() {
         closePeek()
         Glass.tick(from, HapticFeedbackConstants.LONG_PRESS)
         val dim = View(this).apply { setBackgroundColor(0x66000000); alpha = 0f }
-        val card = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = glass(26, Glass.FILL_POP); setPadding(dp(8), dp(8), dp(8), dp(12)); visibility = View.INVISIBLE }
-        val image = ImageView(this).apply { scaleType = ImageView.ScaleType.FIT_CENTER; adjustViewBounds = true }
+        val card = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = glass(28, Glass.FILL_POP); setPadding(dp(12), dp(12), dp(12), dp(14)); visibility = View.INVISIBLE }
+        val image = ImageView(this).apply { scaleType = ImageView.ScaleType.FIT_CENTER; adjustViewBounds = true
+            // Rounded to sit inside the card's corners instead of running into them.
+            outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: android.graphics.Outline) {
+                val d = v as ImageView; val b = d.drawable
+                if (b == null || b.intrinsicWidth <= 0) { o.setRoundRect(0, 0, v.width, v.height, dp(18).toFloat()); return }
+                val sc = minOf(v.width.toFloat() / b.intrinsicWidth, v.height.toFloat() / b.intrinsicHeight)
+                val w = (b.intrinsicWidth * sc).toInt(); val h = (b.intrinsicHeight * sc).toInt(); val l = (v.width - w) / 2; val t = (v.height - h) / 2
+                o.setRoundRect(l, t, l + w, t + h, dp(18).toFloat()) } }
+            clipToOutline = true }
         card.addView(image, LinearLayout.LayoutParams(-1, (resources.displayMetrics.heightPixels * 0.5f).toInt()))
         card.addView(text("${if (item.video) "วิดีโอ" else "รูปภาพ"} · ${formatTime(item.time)}", 13f, Glass.TEXT2).apply { setPadding(dp(8), dp(10), dp(8), 0) })
         val more = listOfNotNull(item.name.takeIf { it.isNotBlank() }, item.album.takeIf { it.isNotBlank() },
@@ -536,7 +548,7 @@ class GalleryActivity : ComponentActivity() {
         val layer = FrameLayout(this).apply { addView(dim, -1, -1); addView(card, FrameLayout.LayoutParams(-1, -2, Gravity.CENTER).apply { setMargins(dp(24), 0, dp(24), 0) }) }
         host.addView(layer, -1, -1); peek = layer
         dim.animate().alpha(1f).setDuration(220).start(); Glass.blur(root, 14f)
-        thumbs.execute { val b = thumbnail(item, 1080); runOnUiThread { if (peek === layer) image.setImageBitmap(b) } }
+        thumbs.execute { val b = thumbnail(item, 1080); runOnUiThread { if (peek === layer) { image.setImageBitmap(b); image.invalidateOutline() } } }
         card.post {
             val loc = IntArray(2); from.getLocationInWindow(loc); val c = IntArray(2); card.getLocationInWindow(c)
             Liquid.show(card, (loc[0] - c[0] + from.width / 2f).coerceIn(0f, card.width.toFloat()), (loc[1] - c[1] + from.height / 2f).coerceIn(0f, card.height.toFloat()), true)
@@ -561,8 +573,27 @@ class GalleryActivity : ComponentActivity() {
         toggle = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(dp(8), dp(8), dp(8), dp(14)) }
         root.addView(toggle, -1, -2)
         if (video) chip("เล่นวิดีโอ", false, Icons.VIDEO) { VideoPlayerActivity.open(this, uri) }
+        else chip("ปรับด้วย AI", false, Icons.AI) { enhanceDevice(uri) }
         chip("แชร์", false, Icons.SHARE) { startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType(contentResolver.getType(uri) ?: "image/*").putExtra(Intent.EXTRA_STREAM, uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), "แชร์")) }
         if (!Glass.reduced(this)) { inspect.alpha = 0f; inspect.animate().alpha(1f).setDuration(260).start() }
+    }
+
+    /** Any photo on the phone can go through the AI: it joins the Lumora list as a reference to the original (never moved or deleted). */
+    private fun enhanceDevice(uri: Uri) {
+        luma.fileIo.execute {
+            val existing = luma.shots.all().firstOrNull { it.uri == uri }
+            val shot = existing ?: run {
+                val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                runCatching { contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, o) } }
+                if (o.outWidth <= 0 || o.outHeight <= 0) null
+                else Shot(java.util.UUID.randomUUID().toString(), System.currentTimeMillis(), uri, Dimensions(o.outWidth, o.outHeight),
+                    1f, true, null, null, Decision.OFF, Stage.ORIGINAL, null, 0, null, false).also { luma.shots.insert(it) }
+            }
+            runOnUiThread {
+                if (isDestroyed) return@runOnUiThread
+                if (shot == null) notice("เปิดภาพนี้ไม่ได้") else EnhanceUi.show(this, shot)
+            }
+        }
     }
 
     // ---------- Lumora video or file from the ledger ----------

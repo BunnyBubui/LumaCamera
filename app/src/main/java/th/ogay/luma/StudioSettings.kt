@@ -127,11 +127,6 @@ fun Activity.showStudioSettings(rawAvailable: Boolean, changed: () -> Unit) {
     toggle("ความละเอียดสูง: ขยายด้วย AI", Icons.AI, "hires_ai", true, "เครื่องไม่เปิดเซนเซอร์ 50 MP ให้แอปอื่น โหมดนี้ถ่ายขนาดสูงสุดที่เปิดให้แล้วขยาย ×2 ด้วย AI ในเครื่อง ปิดไว้ถ้าอยากได้เฉพาะต้นฉบับ")
     toggle("ตรวจจับใบหน้า", Icons.PORTRAIT, "face_detect", true, "แสดงกรอบใบหน้าและให้กล้องวัดแสง/โฟกัสที่หน้าคนทุกโหมด")
     toggle("ใช้โหมดของผู้ผลิต", Icons.GEAR, "oem_extensions", note = "ใช้โหมดบุคคลของระบบมือถือแทนของ Lumora เปิดช้ากว่าและปรับค่า f ไม่ได้ (โหมดกลางคืนใช้ของระบบอยู่แล้ว)")
-    row("ตรวจความสามารถกล้อง", Icons.INFO, "fps, WB, high-speed และความละเอียดที่ระบบเปิดให้แอป") {
-        val text = CameraState.report(this)
-        android.app.AlertDialog.Builder(this).setTitle("ความสามารถกล้อง").setMessage(text).setPositiveButton("ปิด", null)
-            .setNeutralButton("แชร์") { _, _ -> startActivity(android.content.Intent.createChooser(android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain").putExtra(android.content.Intent.EXTRA_TEXT, text), "แชร์รายงาน")) }.show()
-    }
     section("ช่วยจัดองค์ประกอบ")
     toggle("เส้นกริด", Icons.GRID, "grid"); toggle("ระดับน้ำ", Icons.LEVEL, "level")
     toggle("Histogram", Icons.HISTO, "histogram"); toggle("Focus peaking", Icons.PEAK, "peaking"); toggle("Zebra", Icons.ZEBRA, "zebra")
@@ -158,7 +153,6 @@ fun Activity.showStudioSettings(rawAvailable: Boolean, changed: () -> Unit) {
     field("โฟลเดอร์ใน Pictures", Icons.FOLDER, "folder", "Lumora") { it.replace(Regex("[^\\p{L}\\p{N} _-]"), "").take(40).ifBlank { "Lumora" } }
     toggle("บันทึก GPS", Icons.PIN, "gps", note = "ใช้ตำแหน่งล่าสุดของระบบ เมื่อได้รับสิทธิ์เท่านั้น")
     section("เกี่ยวกับ")
-    row("ความสามารถกล้อง", Icons.INFO, "ดูและส่งออกรายงานของเครื่องนี้") { Capabilities.show(this) }
     row("คืนค่าเริ่มต้นของโหมดถ่าย", Icons.RESET, "สัดส่วน ฟิลเตอร์ ตั้งเวลา ครอปเลนส์ ค่า f และรูปแบบไฟล์ของทุกโหมด") {
         AlertDialog.Builder(this).setTitle("คืนค่าเริ่มต้นของทุกโหมด?").setMessage("เฉพาะค่าที่ปรับในโหมดถ่าย ส่วนค่าอื่นไม่เปลี่ยน")
             .setPositiveButton("คืนค่า") { _, _ -> prefs.edit().remove("aspect").remove("timer").remove("crop_from").remove("software").remove("output").remove("look").remove("look_kind").remove("film").remove("look_bright").remove("look_warm").remove("portrait_f").remove("night_frames").remove("night_toggle").remove("video_aspect").remove("video_fps").remove("video_res").apply(); changed(); dialog.dismiss() }.setNegativeButton("ยกเลิก", null).show()

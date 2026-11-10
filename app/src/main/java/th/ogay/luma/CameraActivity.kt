@@ -664,8 +664,17 @@ class CameraActivity : ComponentActivity() {
                 preview.performClick(); refresh(); return true
             }
         })
+        // Two fingers belong to zoom only: the one-finger detector is cancelled so exposure, focus and long-press stay put.
+        var multi = false
         preview.setOnTouchListener { _, e ->
-            scale.onTouchEvent(e); taps.onTouchEvent(e)
+            if (e.actionMasked == MotionEvent.ACTION_DOWN) multi = false
+            if (e.pointerCount > 1 && !multi) {
+                multi = true
+                val c = MotionEvent.obtain(e).apply { action = MotionEvent.ACTION_CANCEL }; taps.onTouchEvent(c); c.recycle()
+                if (axis == 1 && !pressLock) { if (zone == 2) setFocusRail(if (fd0 > 0f) fd0 else null) else setEv(ev0, true) }
+                axis = 0
+            }
+            scale.onTouchEvent(e); if (!multi) taps.onTouchEvent(e)
             if (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL) { if (axis == 1) { expRail.removeCallbacks(hideRails); expRail.postDelayed(hideRails, 1600) } }
             true
         }
