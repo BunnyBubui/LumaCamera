@@ -55,6 +55,7 @@ class GalleryActivity : ComponentActivity() {
     private lateinit var host: FrameLayout
     private lateinit var root: LinearLayout
     private lateinit var inspect: InspectView
+    private lateinit var ring: AiRing
     private lateinit var toggle: LinearLayout
     private lateinit var status: TextView
     private var readVersion = 0
@@ -509,7 +510,12 @@ class GalleryActivity : ComponentActivity() {
         bar.addView(roundButton(Icons.LIBRARY, "ดูรูปทั้งหมด") { selected = null; useAi = false; reload() }, LinearLayout.LayoutParams(dp(48), dp(48)).apply { rightMargin = dp(8) })
         return bar
     }
-    private fun viewer(): InspectView = InspectView(this).also { v -> v.onSwipe = { step(it) }; root.addView(v, LinearLayout.LayoutParams(-1, 0, 1f)) }
+    private fun viewer(): InspectView = InspectView(this).also { v ->
+        v.onSwipe = { step(it) }
+        ring = AiRing(this)
+        val frame = FrameLayout(this).apply { addView(v, FrameLayout.LayoutParams(-1, -1)); addView(ring, FrameLayout.LayoutParams(-1, -1)) }
+        root.addView(frame, LinearLayout.LayoutParams(-1, 0, 1f))
+    }
 
     // ---------- Long-press peek ----------
     private fun showPeek(item: Item, from: View) {
@@ -593,7 +599,7 @@ class GalleryActivity : ComponentActivity() {
             add("${j.optLong("frames")} เฟรม · ${if (j.optBoolean("audio")) "มีเสียง" else "ไม่มีเสียง"}")
             j.optString("codec").takeIf { it.isNotEmpty() }?.let { add("Codec $it") }
             j.optJSONObject("capture")?.optString("profile")?.takeIf { it.isNotEmpty() }?.let { add("โปรไฟล์ $it") }
-            j.optJSONObject("capture")?.optString("fpsPath")?.takeIf { it.isNotEmpty() }?.let { add("60 fps แบบทดลองผ่าน Camera2") }
+            j.optJSONObject("capture")?.optString("fpsPath")?.takeIf { it.isNotEmpty() }?.let { add("60 fps ผ่าน Camera2") }
             if (lens != null) add(String.format(Locale.US, "เลนส์ %s · %.1f มม. · เทียบ %d มม. · f/%.1f", lens.optString("lens"), lens.optDouble("focalLengthMm"), lens.optInt("equivalent35mm"), lens.optDouble("aperture")))
         }
         AlertDialog.Builder(this).setTitle("ผลตรวจไฟล์วิดีโอ").setMessage(lines.joinToString("\n")).setPositiveButton("ปิด", null)
@@ -627,10 +633,16 @@ class GalleryActivity : ComponentActivity() {
         status.text = when (s.stage) {
             Stage.CAPTURING -> "กำลังถ่าย ${s.frames}/${s.requestedFrames} เฟรม"
             Stage.QUEUED -> "รอประมวลผล AI"
-            Stage.RUNNING -> "กำลังเพิ่มรายละเอียด AI ×${s.aiScale.coerceAtLeast(1)} · ${s.aiProgress}%"
+            Stage.RUNNING -> "กำลังเพิ่มรายละเอียด AI ×${s.aiScale.coerceAtLeast(1)}"
             Stage.FAILED -> "AI ยังไม่สำเร็จ · ${s.error}"
             Stage.DONE -> if (useAi) "AI ${s.aiModel}   ·   ${pixelsText(s.aiSize.pixels)}" else "ต้นฉบับ   ·   ${pixelsText(s.size.pixels)}"
             Stage.ORIGINAL -> if (s.output.rawOnly) "ภาพตัวอย่าง RAW · DNG เก็บแยก" else pixelsText(s.size.pixels) + if (s.reason == Decision.OFF) "" else "   ·   ${s.reason.description}"
+        }
+        when (s.stage) {
+            Stage.RUNNING -> ring.update(s.aiProgress.toFloat(), "เพิ่มรายละเอียด AI ×${s.aiScale.coerceAtLeast(1)}")
+            Stage.QUEUED -> ring.update(null, "รอคิวประมวลผล AI")
+            Stage.CAPTURING -> ring.update(100f * s.frames / s.requestedFrames.coerceAtLeast(1), "กำลังถ่าย ${s.frames}/${s.requestedFrames} เฟรม")
+            else -> ring.hide()
         }
         toggle.removeAllViews()
         if (s.raw != null) {

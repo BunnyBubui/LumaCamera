@@ -125,7 +125,7 @@ class VideoActivity:ComponentActivity(){
             if(half60){mode=VideoSessions.Mode(sessions.rates(info,quality,DynamicRange.SDR,false,true).first{it.upper==120}.range,HIGH_SPEED);notice("60 fps: อัดที่ 120 แล้วแปลงเป็น 60 หลังหยุด · ใช้เวลาครู่หนึ่ง")}
             highRt=mode.source==HIGH_SPEED
             if(highRt){dynamic=DynamicRange.SDR;stabilization=false;mode=VideoSessions.Mode(mode.range,Recorder.VIDEO_CAPABILITIES_SOURCE_CAMCORDER_PROFILE);boundConfig.put("fpsPath","high-speed-realtime")}
-            if(mode.source==FORCED){forced60=true;mode=VideoSessions.Mode(mode.range,Recorder.VIDEO_CAPABILITIES_SOURCE_CAMCORDER_PROFILE);notice("60 fps แบบทดลอง · แอปตรวจ fps จริงของไฟล์หลังอัด")}
+            if(mode.source==FORCED){forced60=true;mode=VideoSessions.Mode(mode.range,Recorder.VIDEO_CAPABILITIES_SOURCE_CAMCORDER_PROFILE)}
             rateLabel=sessions.label(mode)
             boundConfig.put("requestedFps",fps)
                 .put("advertisedRange",mode.range.toString()).put("source",mode.source).put("dynamicRange",dynamic.toString()).put("eis",stabilization)
@@ -193,7 +193,6 @@ class VideoActivity:ComponentActivity(){
             if(!slow&&caps.isStabilizationSupported)choose("กันสั่น EIS · $stabilization",listOf("ปิด","เปิด")){stabilization=it==1;prefs.edit().putBoolean("video_eis",stabilization).apply()}
             if(!slow)choose("ไมโครโฟน · ${if(mic)"เปิด" else "ปิด"}",listOf("ปิดไมค์","บันทึกเสียง")){mic=it==1;prefs.edit().putBoolean("video_mic",mic).apply()}
             if(!slow)box.addView(pill("คืนค่าชุดพื้นฐาน 1080p30 SDR"){dynamic=DynamicRange.SDR;fps=30;quality=Quality.FHD;hevc=false;stabilization=false;d.dismiss();bind()},-1,-2)
-            box.addView(pill("รายงานความสามารถ"){Capabilities.show(this)},-1,-2)
         }
     }
     private fun startRecording(){
@@ -494,13 +493,13 @@ class VideoActivity:ComponentActivity(){
         val half=if(extra==null&&fast!=null&&fast.upper==120)VideoSessions.Mode(Range(60,60),HALF_HS) else null
         return (base+listOfNotNull(extra,half,fast)).sortedBy{it.upper}
     }
-    private fun rateName(m:VideoSessions.Mode)=when(m.source){NEEDS_SDR->"60 fps · ปิด HDR/กันสั่นให้";HALF_HS->"60 fps · แปลงจาก 120 หลังอัด";FORCED->"60 fps · ทดลอง";HIGH_SPEED->"${m.upper} fps · ความเร็วปกติ (high-speed)";else->sessions.label(m)}
+    private fun rateName(m:VideoSessions.Mode)=when(m.source){NEEDS_SDR->"60 fps · ปิด HDR/กันสั่นให้";HALF_HS->"60 fps · แปลงจาก 120 หลังอัด";FORCED->"60 fps";HIGH_SPEED->"${m.upper} fps · ความเร็วปกติ (high-speed)";else->sessions.label(m)}
     private fun frameRates()=rateModes().map{it.upper}.ifEmpty{listOf(fps)}
     private fun ranges()=listOf(DynamicRange.SDR,DynamicRange.HLG_10_BIT,DynamicRange.HDR10_10_BIT).filter{caps()?.supportedDynamicRanges?.contains(it)?:(it==DynamicRange.SDR)}
     private fun evValues():List<Float>{val st=camera?.cameraInfo?.exposureState?:return listOf(0f);if(!st.isExposureCompensationSupported)return listOf(0f);val step=st.exposureCompensationStep.toFloat();val r=st.exposureCompensationRange;return(r.lower..r.upper).map{it*step}.filter{abs(it)<=4.01f}}
     private fun chipValues(k:String):List<String>{val m=manual
         return when(k){
-            "ALL"->listOf("AUTO");"ASP"->V_ASPECTS.map{aspectLabel(it)};"RES"->qualities().map{qualityName(it)};"FPS"->rateModes().let{m->if(m.isEmpty())listOf("$fps") else m.map{x->when(x.source){NEEDS_SDR->"60 SDR";FORCED->"60 ทดลอง";HIGH_SPEED->"${x.upper} HS";else->if(x.lower<x.upper)"≤${x.upper}" else "${x.upper}"}}};"HDR"->ranges().map{when(it){DynamicRange.SDR->"SDR";DynamicRange.HLG_10_BIT->"HLG10";else->"HDR10"}}
+            "ALL"->listOf("AUTO");"ASP"->V_ASPECTS.map{aspectLabel(it)};"RES"->qualities().map{qualityName(it)};"FPS"->rateModes().let{m->if(m.isEmpty())listOf("$fps") else m.map{x->when(x.source){NEEDS_SDR->"60 SDR";FORCED->"60";HIGH_SPEED->"${x.upper} HS";else->if(x.lower<x.upper)"≤${x.upper}" else "${x.upper}"}}};"HDR"->ranges().map{when(it){DynamicRange.SDR->"SDR";DynamicRange.HLG_10_BIT->"HLG10";else->"HDR10"}}
             "RATE"->listOf("8","20","40","80").map{"$it Mbps"};"LOG"->if(info()?.let{logSupported(it)}==true)LogProfile.entries.map{it.label} else listOf("มาตรฐาน");"EIS"->listOf("ปิด","เปิด");"MIC"->listOf("ปิด","เปิด")
             "ISO"->listOf("AUTO")+(m?.isoValues?:emptyList()).map{"$it"};"S"->listOf("AUTO")+(m?.shutterValues?:emptyList()).map{it.first}
             "WB"->(m?.wbValues?:listOf("AUTO" to 1)).map{it.first};"AF"->(m?.focusValues?:listOf("AUTO" to null)).map{it.first}

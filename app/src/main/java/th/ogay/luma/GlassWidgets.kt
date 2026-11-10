@@ -9,6 +9,8 @@ import android.os.Bundle
 import android.text.TextUtils
 import android.view.*
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.animation.LinearInterpolator
+import java.util.Locale
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -786,5 +788,67 @@ class GlassSheet(private val host: FrameLayout, private val pivotYFromBottom: ()
         s?.let { it.isClickable = false; it.setOnClickListener(null); it.animate().alpha(0f).setDuration(300).withEndAction { host.removeView(it) }.start() }
         Liquid.hide(sheet, sheet.width / 2f, sheet.height - pivotYFromBottom(), true) { host.removeView(sheet); end?.invoke() }
         onClosed()
+    }
+}
+
+/**
+ * Progress over a photo while AI works: a dimmed scrim, a ring with a lit arc, a crown of 60 ticks that light up as the work advances
+ * and the percentage in big digits in the middle with two decimals. The shown value glides toward the reported one so the decimals move.
+ */
+class AiRing(context: Context) : View(context) {
+    private val d = resources.displayMetrics.density
+    private val track = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 8 * d; color = 0x26ffffff }
+    private val arc = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 8 * d; strokeCap = Paint.Cap.ROUND; color = Glass.ACCENT }
+    private val tick = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 2.5f * d; strokeCap = Paint.Cap.ROUND }
+    private val big = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textAlign = Paint.Align.CENTER; textSize = 38 * d; typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD) }
+    private val small = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Glass.TEXT2; textAlign = Paint.Align.CENTER; textSize = 14 * d }
+    private val box = RectF()
+    private var shown = 0f
+    private var target = 0f
+    private var spinning = false
+    private var angle = 0f
+    private var caption = ""
+    private var glide: ValueAnimator? = null
+    private var spin: ValueAnimator? = null
+    init { visibility = GONE; isClickable = false }
+
+    /** [percent] 0..100, or null while the work has not started and nothing can be measured yet. */
+    fun update(percent: Float?, text: String) {
+        caption = text
+        visibility = VISIBLE
+        if (percent == null) {
+            spinning = true; glide?.cancel()
+            if (spin == null && !Glass.reduced(context)) spin = ValueAnimator.ofFloat(0f, 360f).apply { duration = 1400; repeatCount = ValueAnimator.INFINITE; interpolator = LinearInterpolator(); addUpdateListener { angle = it.animatedValue as Float; invalidate() }; start() }
+            contentDescription = text; invalidate(); return
+        }
+        spinning = false; spin?.cancel(); spin = null
+        target = percent.coerceIn(0f, 100f)
+        glide?.cancel()
+        if (target < shown || Glass.reduced(context)) { shown = target; invalidate() }
+        else glide = ValueAnimator.ofFloat(shown, target).apply { duration = 1100; interpolator = LinearInterpolator(); addUpdateListener { shown = it.animatedValue as Float; invalidate() }; start() }
+        contentDescription = "$text ${String.format(Locale.US, "%.0f", target)} เปอร์เซ็นต์"
+    }
+    fun hide() { glide?.cancel(); spin?.cancel(); spin = null; spinning = false; shown = 0f; target = 0f; visibility = GONE }
+    override fun onDetachedFromWindow() { glide?.cancel(); spin?.cancel(); spin = null; super.onDetachedFromWindow() }
+
+    override fun onDraw(c: Canvas) {
+        c.drawColor(0x8c000000.toInt())
+        val cx = width / 2f; val cy = height / 2f
+        val r = minOf(width, height) * 0.27f
+        c.drawCircle(cx, cy, r, track)
+        val lit = if (spinning) 0 else (shown * 0.6f).toInt()
+        for (i in 0 until 60) {
+            val a = Math.toRadians(i * 6.0 - 90.0)
+            val r1 = r + 22 * d; val r2 = r1 + (if (i % 5 == 0) 12 else 7) * d
+            tick.color = if (i < lit || (i == lit && !spinning && shown > 0f)) Glass.ACCENT else 0x30ffffff
+            c.drawLine(cx + (r1 * Math.cos(a)).toFloat(), cy + (r1 * Math.sin(a)).toFloat(), cx + (r2 * Math.cos(a)).toFloat(), cy + (r2 * Math.sin(a)).toFloat(), tick)
+        }
+        box.set(cx - r, cy - r, cx + r, cy + r)
+        if (spinning) c.drawArc(box, angle - 90f, 90f, false, arc)
+        else if (shown > 0f) c.drawArc(box, -90f, 360f * shown / 100f, false, arc)
+        val label = if (spinning) "…" else String.format(Locale.US, "%.2f%%", shown)
+        big.textSize = (if (label.length > 6) 32 else 38) * d
+        c.drawText(label, cx, cy + big.textSize * 0.34f, big)
+        c.drawText(caption, cx, cy + r + 62 * d, small)
     }
 }

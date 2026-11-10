@@ -159,7 +159,6 @@ fun Activity.showStudioSettings(rawAvailable: Boolean, changed: () -> Unit) {
     toggle("บันทึก GPS", Icons.PIN, "gps", note = "ใช้ตำแหน่งล่าสุดของระบบ เมื่อได้รับสิทธิ์เท่านั้น")
     section("เกี่ยวกับ")
     row("ความสามารถกล้อง", Icons.INFO, "ดูและส่งออกรายงานของเครื่องนี้") { Capabilities.show(this) }
-    row("สแกนกล้องเชิงลึก", Icons.SEARCH, "ลองภาพเต็มเซนเซอร์ เลนส์ที่ซ่อน และ 60 fps แล้วส่งผลให้ผู้พัฒนา") { startActivity(android.content.Intent(this, CameraProbeActivity::class.java).putExtra("scan", true)) }
     row("คืนค่าเริ่มต้นของโหมดถ่าย", Icons.RESET, "สัดส่วน ฟิลเตอร์ ตั้งเวลา ครอปเลนส์ ค่า f และรูปแบบไฟล์ของทุกโหมด") {
         AlertDialog.Builder(this).setTitle("คืนค่าเริ่มต้นของทุกโหมด?").setMessage("เฉพาะค่าที่ปรับในโหมดถ่าย ส่วนค่าอื่นไม่เปลี่ยน")
             .setPositiveButton("คืนค่า") { _, _ -> prefs.edit().remove("aspect").remove("timer").remove("crop_from").remove("software").remove("output").remove("look").remove("look_kind").remove("film").remove("look_bright").remove("look_warm").remove("portrait_f").remove("night_frames").remove("night_toggle").remove("video_aspect").remove("video_fps").remove("video_res").apply(); changed(); dialog.dismiss() }.setNegativeButton("ยกเลิก", null).show()
