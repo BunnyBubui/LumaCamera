@@ -599,7 +599,7 @@ class GalleryActivity : ComponentActivity() {
             showingId = s.id; root.removeAllViews()
             viewerBar("ภาพถ่าย").addView(roundButton(Icons.INFO, "ข้อมูลภาพ") { details(s) }, dp(48), dp(48))
             inspect = viewer()
-            status = text("", 13f, Glass.TEXT2).apply { gravity = Gravity.CENTER; setPadding(dp(12), dp(6), dp(12), dp(6)) }
+            status = text("", 13f, Glass.TEXT2).apply { gravity = Gravity.CENTER; maxLines = 3; ellipsize = null; setPadding(dp(12), dp(6), dp(12), dp(6)) }
             root.addView(status, -1, -2)
             toggle = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(dp(8), 0, dp(8), dp(14)) }
             root.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; isFillViewport = true; addView(toggle) }, -1, -2)
@@ -613,7 +613,7 @@ class GalleryActivity : ComponentActivity() {
             Stage.RUNNING -> "กำลังเพิ่มรายละเอียด AI ×${s.aiScale.coerceAtLeast(1)} · ${s.aiProgress}%"
             Stage.FAILED -> "AI ยังไม่สำเร็จ · ${s.error}"
             Stage.DONE -> if (useAi) "AI ${s.aiModel}   ·   ${pixelsText(s.aiSize.pixels)}" else "ต้นฉบับ   ·   ${pixelsText(s.size.pixels)}"
-            Stage.ORIGINAL -> if (s.output.rawOnly) "ภาพตัวอย่าง RAW · DNG เก็บแยก" else "${pixelsText(s.size.pixels)}   ·   ${s.reason.description}"
+            Stage.ORIGINAL -> if (s.output.rawOnly) "ภาพตัวอย่าง RAW · DNG เก็บแยก" else pixelsText(s.size.pixels) + if (s.reason == Decision.OFF) "" else "   ·   ${s.reason.description}"
         }
         toggle.removeAllViews()
         if (s.raw != null) {
@@ -653,7 +653,7 @@ class GalleryActivity : ComponentActivity() {
                 s.captureNote?.let { add(it) }
                 add("Physical camera ID  ${s.lens ?: "เครื่องไม่รายงาน"}")
                 add("พื้นที่ครอป  ${s.cropped?.let(::pixelsText) ?: "เครื่องไม่รายงาน"}")
-                add(s.reason.description)
+                if (s.reason != Decision.OFF) add(s.reason.description)
                 if (s.ai != null) { add("AI ${s.aiVersion}  ${ai.w} × ${ai.h} px"); add("เวลาประมวลผล  ${s.elapsed} ms") }
                 s.aiReport?.let { report -> runCatching { JSONObject(report) }.getOrNull()?.let { j ->
                     add("ประมวลผลด้วย ${j.optString("backend")} · ความแรงรายละเอียด ${j.optInt("strength")}%")
