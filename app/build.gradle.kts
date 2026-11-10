@@ -19,6 +19,7 @@ android {
     }
     externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" } }
     buildFeatures { prefab = true }
+    androidResources { noCompress += "tflite" }
     // Both the OpenCV AAR and this app's CMake build ship libc++_shared.so; keep one copy.
     packaging { jniLibs { pickFirsts += "**/libc++_shared.so" } }
     val keyFile = providers.environmentVariable("LUMA_KEYSTORE").orNull
@@ -51,6 +52,8 @@ android {
 }
 
 dependencies {
+    // Standalone CompiledModel: offline GPU FP16 with explicit CPU fallback.
+    implementation("com.google.ai.edge.litert:litert:2.1.6")
     implementation("androidx.activity:activity-ktx:1.9.3")
     implementation("androidx.camera:camera-camera2:1.6.2")
     implementation("androidx.camera:camera-lifecycle:1.6.2")
@@ -68,3 +71,4 @@ dependencies {
     androidTestImplementation("androidx.test:rules:1.6.1")
     androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")
 }
+

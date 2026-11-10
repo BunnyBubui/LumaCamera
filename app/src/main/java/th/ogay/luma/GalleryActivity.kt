@@ -30,6 +30,7 @@ import java.text.DateFormat
 import java.util.*
 import java.util.concurrent.Executors
 import kotlin.math.roundToInt
+import th.ogay.luma.ai.EnhanceUi
 
 /**
  * Glass gallery. Two sources: everything made with Luma (photos, videos and their reports — this replaces the old
@@ -608,9 +609,9 @@ class GalleryActivity : ComponentActivity() {
         status.text = when (s.stage) {
             Stage.CAPTURING -> "กำลังถ่าย ${s.frames}/${s.requestedFrames} เฟรม"
             Stage.QUEUED -> "รอประมวลผล AI"
-            Stage.RUNNING -> "กำลังสร้างสำเนา AI"
+            Stage.RUNNING -> "กำลังเพิ่มรายละเอียด AI ×${s.aiScale.coerceAtLeast(1)} · ${s.aiProgress}%"
             Stage.FAILED -> "AI ยังไม่สำเร็จ · ${s.error}"
-            Stage.DONE -> if (useAi) "AI ${s.aiVersion}   ·   ${pixelsText(scaledSize(s.size, TARGET_PIXELS).pixels)}" else "ต้นฉบับ   ·   ${pixelsText(s.size.pixels)}"
+            Stage.DONE -> if (useAi) "AI ${s.aiModel}   ·   ${pixelsText(s.aiSize.pixels)}" else "ต้นฉบับ   ·   ${pixelsText(s.size.pixels)}"
             Stage.ORIGINAL -> if (s.output.rawOnly) "ภาพตัวอย่าง RAW · DNG เก็บแยก" else "${pixelsText(s.size.pixels)}   ·   ${s.reason.description}"
         }
         toggle.removeAllViews()
@@ -623,21 +624,16 @@ class GalleryActivity : ComponentActivity() {
         if (s.ai != null) {
             chip(if (s.output.rawOnly) "ตัวอย่าง RAW" else "ต้นฉบับ", !useAi) { useAi = false; showDetail(s) }
             chip("ภาพ AI", useAi, Icons.AI) { useAi = true; showDetail(s) }
-        } else if (s.stage != Stage.RUNNING && s.stage != Stage.QUEUED && s.stage != Stage.CAPTURING) {
-            chip(if (s.stage == Stage.FAILED) "ลอง AI อีกครั้ง" else "ปรับด้วย AI", false, Icons.AI) {
-                luma.fileIo.execute {
-                    val current = luma.shots.get(s.id)
-                    if (current != null && current.stage in setOf(Stage.ORIGINAL, Stage.FAILED)) {
-                        luma.shots.update(s.id, Stage.QUEUED)
-                        EnhanceWorker.enqueue(applicationContext, s.id, replace = true)
-                    }
-                }
-            }
+        }
+        if (s.stage !in setOf(Stage.RUNNING,Stage.QUEUED,Stage.CAPTURING)) {
+            chip(if (s.ai != null) "ปรับ AI ใหม่" else "ปรับด้วย AI",false,Icons.AI) { EnhanceUi.show(this,s) }
+        } else if (s.stage in setOf(Stage.RUNNING,Stage.QUEUED)) {
+            chip("ยกเลิก AI",false) { luma.fileIo.execute { EnhanceWorker.cancel(applicationContext,s.id) } }
         }
         chip("แชร์", false, Icons.SHARE) { startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("image/jpeg").putExtra(Intent.EXTRA_STREAM, if (useAi) s.ai else s.uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), "แชร์")) }
     }
     private fun details(s: Shot) {
-        val ai = scaledSize(s.size, TARGET_PIXELS)
+        val ai = s.aiSize
         luma.fileIo.execute {
             // Lens details come from the EXIF the camera screen wrote (focal length, 35 mm equivalent, f-number).
             val exif = runCatching { contentResolver.openInputStream(s.uri)?.use { androidx.exifinterface.media.ExifInterface(it) } }.getOrNull()
@@ -658,8 +654,13 @@ class GalleryActivity : ComponentActivity() {
                 add("พื้นที่ครอป  ${s.cropped?.let(::pixelsText) ?: "เครื่องไม่รายงาน"}")
                 add(s.reason.description)
                 if (s.ai != null) { add("AI ${s.aiVersion}  ${ai.w} × ${ai.h} px"); add("เวลาประมวลผล  ${s.elapsed} ms") }
+                s.aiReport?.let { report -> runCatching { JSONObject(report) }.getOrNull()?.let { j ->
+                    add("ประมวลผลด้วย ${j.optString("backend")} · ความแรงรายละเอียด ${j.optInt("strength")}%")
+                    add("รายละเอียดบางส่วนเป็นการคาดเดาของ AI")
+                } }
             }.joinToString("\n")
             runOnUiThread { if (!isDestroyed) AlertDialog.Builder(this).setTitle("ข้อมูลภาพ").setMessage(text).setPositiveButton("ปิด", null).show() }
         }
     }
 }
+

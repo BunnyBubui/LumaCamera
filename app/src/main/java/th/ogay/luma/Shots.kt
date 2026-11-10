@@ -10,6 +10,8 @@ import android.net.Uri
 import androidx.lifecycle.MutableLiveData
 import androidx.work.Configuration
 import java.util.concurrent.Executors
+import th.ogay.luma.ai.EnhanceSpec
+import java.util.UUID
 
 enum class Stage { CAPTURING, ORIGINAL, QUEUED, RUNNING, DONE, FAILED }
 
@@ -23,14 +25,26 @@ data class Shot(
     val frames: Int = 1,
     val requestedFrames: Int = 1,
     val fusedFrames: Int = 0,
-    val captureNote: String? = null
+    val captureNote: String? = null,
+    val aiModel: String = EnhanceSpec.MODEL,
+    val aiScale: Int = 2,
+    val aiStrength: Int = 100,
+    val aiToken: String = "",
+    val aiWidth: Int = 0,
+    val aiHeight: Int = 0,
+    val aiProgress: Int = 0,
+    val aiReport: String? = null
 ) {
     val baseName get() = "LUMA_${time}_${id}"
-    val aiVersion get() = if (output.enhance) "MF1_$MODEL_VERSION" else MODEL_VERSION
+    val aiVersion get() = (if (output.enhance) "MF1_" else "") +
+        if (aiModel == MODEL_VERSION) MODEL_VERSION else "${aiModel}_x${aiScale}_s${aiStrength}${if (aiToken.isEmpty()) "" else "_$aiToken"}"
     val aiName get() = "${baseName}_${aiVersion}_AI.jpg"
+    val aiSize get() = if (aiWidth > 0 && aiHeight > 0) Dimensions(aiWidth,aiHeight)
+        else if (aiModel == MODEL_VERSION) scaledSize(size,TARGET_PIXELS)
+        else runCatching { EnhanceSpec(aiScale,aiStrength).output(size) }.getOrDefault(size)
 }
 
-class Shots(context: Context) : SQLiteOpenHelper(context, "frames.db", null, 2) {
+class Shots(context: Context) : SQLiteOpenHelper(context, "frames.db", null, 3) {
     val changes = MutableLiveData<Long>()
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("""CREATE TABLE shots(id TEXT PRIMARY KEY, time INTEGER NOT NULL, uri TEXT NOT NULL,
@@ -38,7 +52,11 @@ class Shots(context: Context) : SQLiteOpenHelper(context, "frames.db", null, 2) 
             lens TEXT, cropped INTEGER, reason TEXT NOT NULL, stage TEXT NOT NULL, ai TEXT,
             elapsed INTEGER NOT NULL DEFAULT 0, error TEXT, software INTEGER NOT NULL,
             raw TEXT, output TEXT NOT NULL DEFAULT 'JPEG', frames INTEGER NOT NULL DEFAULT 1,
-            requested_frames INTEGER NOT NULL DEFAULT 1, fused_frames INTEGER NOT NULL DEFAULT 0, capture_note TEXT)""")
+            requested_frames INTEGER NOT NULL DEFAULT 1, fused_frames INTEGER NOT NULL DEFAULT 0, capture_note TEXT,
+            ai_model TEXT NOT NULL DEFAULT 'SR1', ai_scale INTEGER NOT NULL DEFAULT 0,
+            ai_strength INTEGER NOT NULL DEFAULT 100, ai_token TEXT NOT NULL DEFAULT '',
+            ai_w INTEGER NOT NULL DEFAULT 0, ai_h INTEGER NOT NULL DEFAULT 0,
+            ai_progress INTEGER NOT NULL DEFAULT 0, ai_report TEXT)""")
         db.execSQL("CREATE INDEX shots_time ON shots(time DESC)")
     }
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
@@ -50,6 +68,17 @@ class Shots(context: Context) : SQLiteOpenHelper(context, "frames.db", null, 2) 
             db.execSQL("ALTER TABLE shots ADD COLUMN fused_frames INTEGER NOT NULL DEFAULT 0")
             db.execSQL("ALTER TABLE shots ADD COLUMN capture_note TEXT")
         }
+        if (oldVersion < 3) {
+            // Existing exports retain SR1 names, dimensions and URIs across upgrades.
+            db.execSQL("ALTER TABLE shots ADD COLUMN ai_model TEXT NOT NULL DEFAULT 'SR1'")
+            db.execSQL("ALTER TABLE shots ADD COLUMN ai_scale INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE shots ADD COLUMN ai_strength INTEGER NOT NULL DEFAULT 100")
+            db.execSQL("ALTER TABLE shots ADD COLUMN ai_token TEXT NOT NULL DEFAULT ''")
+            db.execSQL("ALTER TABLE shots ADD COLUMN ai_w INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE shots ADD COLUMN ai_h INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE shots ADD COLUMN ai_progress INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE shots ADD COLUMN ai_report TEXT")
+        }
     }
     private fun Cursor.shot(): Shot {
         fun str(key: String): String? = getString(getColumnIndexOrThrow(key))
@@ -59,7 +88,9 @@ class Shots(context: Context) : SQLiteOpenHelper(context, "frames.db", null, 2) 
             str("cropped")?.toLong(), Decision.valueOf(str("reason")!!), Stage.valueOf(str("stage")!!),
             str("ai")?.let { Uri.parse(it) }, num("elapsed"), str("error"), num("software") == 1L,
             str("raw")?.let(Uri::parse), CaptureOutput.valueOf(str("output")!!),
-            num("frames").toInt(), num("requested_frames").toInt(), num("fused_frames").toInt(), str("capture_note"))
+            num("frames").toInt(), num("requested_frames").toInt(), num("fused_frames").toInt(), str("capture_note"),
+            str("ai_model")!!,num("ai_scale").toInt(),num("ai_strength").toInt(),str("ai_token")!!,
+            num("ai_w").toInt(),num("ai_h").toInt(),num("ai_progress").toInt(),str("ai_report"))
     }
     fun insert(s: Shot) {
         writableDatabase.insertOrThrow("shots", null, ContentValues().apply {
@@ -70,6 +101,9 @@ class Shots(context: Context) : SQLiteOpenHelper(context, "frames.db", null, 2) 
             put("raw", s.raw?.toString()); put("output", s.output.name); put("frames", s.frames)
             put("requested_frames", s.requestedFrames); put("fused_frames", s.fusedFrames)
             put("capture_note", s.captureNote)
+            put("ai_model",s.aiModel); put("ai_scale",s.aiScale); put("ai_strength",s.aiStrength)
+            put("ai_token",s.aiToken); put("ai_w",s.aiWidth); put("ai_h",s.aiHeight)
+            put("ai_progress",s.aiProgress); put("ai_report",s.aiReport)
         })
         changes.postValue(System.nanoTime())
     }
@@ -103,6 +137,39 @@ class Shots(context: Context) : SQLiteOpenHelper(context, "frames.db", null, 2) 
         }, "id=?", arrayOf(id))
         changes.postValue(System.nanoTime())
     }
+
+    /** A new token separates exports and prevents an old/cancelled worker completing a newer request. */
+    fun queueEnhancement(id: String, spec: EnhanceSpec): Boolean {
+        val changed = writableDatabase.update("shots",ContentValues().apply {
+            put("stage",Stage.QUEUED.name); put("ai_model",EnhanceSpec.MODEL)
+            put("ai_scale",spec.scale); put("ai_strength",spec.strength)
+            put("ai_token",UUID.randomUUID().toString().replace("-", "").take(12))
+            putNull("ai"); putNull("error"); putNull("ai_report")
+            put("ai_w",0); put("ai_h",0); put("ai_progress",0); put("elapsed",0)
+        },"id=? AND stage NOT IN ('CAPTURING','QUEUED','RUNNING')",arrayOf(id)) == 1
+        if (changed) changes.postValue(System.nanoTime())
+        return changed
+    }
+    fun aiState(id: String, token: String, stage: Stage, progress: Int = 0,
+                ai: Uri? = null, elapsed: Long = 0, error: String? = null,
+                size: Dimensions? = null, report: String? = null): Boolean {
+        val changed = writableDatabase.update("shots",ContentValues().apply {
+            put("stage",stage.name); put("ai_progress",progress); put("error",error)
+            if (stage == Stage.DONE) {
+                put("ai",ai?.toString()); put("elapsed",elapsed); put("ai_report",report)
+                size?.let { put("ai_w",it.w); put("ai_h",it.h) }
+            }
+        },"id=? AND ai_token=? AND stage IN ('QUEUED','RUNNING')",arrayOf(id,token)) == 1
+        if (changed) changes.postValue(System.nanoTime())
+        return changed
+    }
+    fun cancelEnhancement(id: String) {
+        writableDatabase.update("shots",ContentValues().apply {
+            put("stage",Stage.ORIGINAL.name); put("ai_token",UUID.randomUUID().toString())
+            put("ai_progress",0); putNull("error")
+        },"id=? AND stage IN ('QUEUED','RUNNING')",arrayOf(id))
+        changes.postValue(System.nanoTime())
+    }
 }
 
 class LumaApp : Application(), Configuration.Provider {
@@ -123,3 +190,4 @@ class LumaApp : Application(), Configuration.Provider {
     }
 }
 val Context.luma get() = applicationContext as LumaApp
+
