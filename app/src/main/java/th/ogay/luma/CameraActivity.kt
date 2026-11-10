@@ -69,7 +69,11 @@ class CameraActivity : ComponentActivity() {
             BarMode("PORTRAIT", "บุคคล", Icons.PORTRAIT), BarMode("PHOTO", "ภาพถ่าย", Icons.PHOTO),
             BarMode("VIDEO", "วิดีโอ", Icons.VIDEO), BarMode("PRO", "โปร", Icons.PRO),
             BarMode("HDR", "HDR", Icons.HDR), BarMode("HIRES", "ความละเอียดสูง", Icons.HIRES),
-            BarMode("FLASH_NIGHT", "แฟลชเร็ว", Icons.FLASH), BarMode("FLASH_FAST", "แฟลชไว", Icons.FLASH), BarMode("FILM", "ฟิล์ม", Icons.FILM), BarMode("SPORT", "ถ่ายเร็ว", Icons.FLASH))
+            BarMode("QUICK", "ถ่ายเร็ว", Icons.FLASH), BarMode("FILM", "ฟิล์ม", Icons.FILM))
+        /** Flash-fast, flash-quick and sport share one bar entry; a chip picks which. */
+        val QUICK_MODES = listOf(PhotoMode.FLASH_NIGHT, PhotoMode.FLASH_FAST, PhotoMode.SPORT)
+        val QUICK_NAMES = listOf("แฟลชเร็ว", "แฟลชไว", "ถ่ายเร็ว")
+        fun barKey(m: PhotoMode) = if (m in QUICK_MODES) "QUICK" else m.name
         const val DEFAULT_BAR = "PORTRAIT,PHOTO,VIDEO,PRO"
         val LOOKS = listOf("มาตรฐาน", "สดใส", "อบอุ่น", "เย็น", "ฟิล์ม", "ขาวดำ")
         val NIGHT_FRAMES = listOf(6, 9, 12)
@@ -207,8 +211,8 @@ class CameraActivity : ComponentActivity() {
         if (output.enhance) output = CaptureOutput.JPEG
         if (prefs.getInt("night_frames", 6) > 12 || prefs.getInt("night_frames", 6) < 6) prefs.edit().putInt("night_frames", 6).apply()
         mode = runCatching { PhotoMode.valueOf(prefs.getString("photo_mode", "PHOTO")!!) }.getOrDefault(PhotoMode.PHOTO)
-        if (ALL.none { it.key == mode.name }) mode = PhotoMode.PHOTO   // a mode that no longer exists (night, pro video) falls back to photo
-        if(ALL.none { it.key == mode.name })mode=PhotoMode.PHOTO
+        if (ALL.none { it.key == barKey(mode) }) mode = PhotoMode.PHOTO   // a mode that no longer exists (night, pro video) falls back to photo
+        if(ALL.none { it.key == barKey(mode) })mode=PhotoMode.PHOTO
         shutterSound.load(MediaActionSound.SHUTTER_CLICK)
         auto = false; cropFrom = cropPref(); software = cropFrom > 0f
         nightOn = false   // the night toggle was removed from the UI
@@ -379,6 +383,7 @@ class CameraActivity : ComponentActivity() {
         nudge()
         modeStrip = CenterStrip(this).apply { onSelect = { i -> pickBar(i) }; onLive = { i -> styleModes(i) }; contentDescription = "แถบโหมด" }
         dock.addView(modeStrip, -1, dp(58 * grow()))
+        if (android.os.Build.VERSION.SDK_INT >= 29) modeStrip.addOnLayoutChangeListener { v, l, t, r, b, _, _, _, _ -> v.systemGestureExclusionRects = listOf(android.graphics.Rect(0, 0, r - l, b - t)) }
         val actions = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(36), 0, dp(36), 0) }
         dock.addView(actions, -1, dp(104))
         thumb = ImageView(this).apply {
@@ -541,9 +546,9 @@ class CameraActivity : ComponentActivity() {
     }
 
     // ---------- Mode bar ----------
-    private fun barList(): List<String> = (prefs.getString("mode_bar", DEFAULT_BAR) ?: DEFAULT_BAR).split(',').filter { k -> ALL.any { it.key == k } }.let { if ("PHOTO" in it) it else listOf("PHOTO") + it }
+    private fun barList(): List<String> = (prefs.getString("mode_bar", DEFAULT_BAR) ?: DEFAULT_BAR).split(',').map { if (it == "FLASH_NIGHT" || it == "FLASH_FAST" || it == "SPORT") "QUICK" else it }.distinct().filter { k -> ALL.any { it.key == k } }.let { if ("PHOTO" in it) it else listOf("PHOTO") + it }
     private fun rebuildModeStrip() {
-        val bar = barList(); barKeys = if (mode.name in bar) bar else bar + mode.name
+        val bar = barList(); barKeys = if (barKey(mode) in bar) bar else bar + barKey(mode)
         modeLabels.clear()
         val paint = Paint().apply { textSize = 12.5f * resources.displayMetrics.scaledDensity }
         val items = barKeys.map { k ->
@@ -557,12 +562,12 @@ class CameraActivity : ComponentActivity() {
             CenterStrip.Item(k, w, cell)
         } + CenterStrip.Item("+", 52, LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; contentDescription = "ปรับแต่งแถบโหมด"; isClickable = true
             addView(IconView(this@CameraActivity, Icons.PLUS).apply { tint = Glass.TEXT2 }, dp(20), dp(20)); addView(text("ปรับ", 12.5f, Glass.TEXT2), -2, -2) })
-        modeStrip.setItems(items, barKeys.indexOf(mode.name).coerceAtLeast(0))
+        modeStrip.setItems(items, barKeys.indexOf(barKey(mode)).coerceAtLeast(0))
     }
     private fun styleModes(live: Int) {
         modeLabels.forEachIndexed { i, (t, ic) -> val on = i == live; t.setTextColor(if (on) Glass.ACCENT else Glass.TEXT2); t.typeface = if (on) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT; ic.tint = if (on) Glass.ACCENT else Glass.TEXT2 }
     }
-    private fun syncModeStrip(animate: Boolean) { val i = barKeys.indexOf(mode.name); if (i >= 0) modeStrip.select(i, animate) else rebuildModeStrip() }
+    private fun syncModeStrip(animate: Boolean) { val i = barKeys.indexOf(barKey(mode)); if (i >= 0) modeStrip.select(i, animate) else rebuildModeStrip() }
     private fun pickBar(i: Int) {
         // "+" opens the editor only when tapped; a swipe that ends past the last mode settles on that mode.
         if (i >= barKeys.size) { if (modeStrip.byTap) { syncModeStrip(true); openEditor() } else { modeStrip.select(barKeys.size - 1, true); pickBar(barKeys.size - 1) }; return }
@@ -571,10 +576,12 @@ class CameraActivity : ComponentActivity() {
             "VIDEO" -> openVideo("VIDEO")
             "TIMELAPSE" -> openSpecial("TIMELAPSE")
             "RAWV" -> { provider?.unbindAll(); capture = null; startActivity(Intent(this, RawLabActivity::class.java)) }
+            "QUICK" -> selectMode(quickMode())
             else -> runCatching { PhotoMode.valueOf(key) }.getOrNull()?.let { selectMode(it) }
         }
     }
-    private fun step(dir: Int) { val i = barKeys.indexOf(mode.name) + dir; if (i in barKeys.indices) { modeStrip.select(i, true); pickBar(i) } }
+    private fun quickMode() = runCatching { PhotoMode.valueOf(prefs.getString("quick_kind", "FLASH_NIGHT") ?: "") }.getOrNull()?.takeIf { it in QUICK_MODES } ?: PhotoMode.FLASH_NIGHT
+    private fun step(dir: Int) { val i = barKeys.indexOf(barKey(mode)) + dir; if (i in barKeys.indices) { modeStrip.select(i, true); pickBar(i) } }
 
     // ---------- Status, rails, gestures ----------
     private fun statusIcon(d: String, inner: String = "", after: String = "", name: String) {
@@ -758,7 +765,7 @@ class CameraActivity : ComponentActivity() {
     }
 
     // ---------- Pro chips and dial ----------
-    private fun chipKeys(): List<String> = if (mode != PhotoMode.PRO) emptyList() else buildList {
+    private fun chipKeys(): List<String> = if (mode in QUICK_MODES) listOf("KIND") else if (mode != PhotoMode.PRO) emptyList() else buildList {
         val m = manual; add("ALL"); if (m != null && m.canManual) { add("ISO"); add("S") }
         add("WB"); if (m != null && m.canKelvin) add("TINT"); if ((m?.minFocus ?: 0f) > 0f) add("AF"); add("EV")
         if (m != null) { if (m.contrastValues.isNotEmpty()) add("CON"); if (m.edgeValues.size > 1) add("SHP"); if (m.nrValues.size > 1) add("NR") }
@@ -781,11 +788,12 @@ class CameraActivity : ComponentActivity() {
         val keys = chipKeys()
         chipTexts.forEachIndexed { i, (t, v) -> val on = i == live; t.setTextColor(if (on) Color.WHITE else Glass.TEXT3); v.text = chipValue(keys[i]); v.setTextColor(chipColor(keys[i])); (v.parent as? View)?.animate()?.scaleX(if (on) 1f else 0.92f)?.scaleY(if (on) 1f else 0.92f)?.setDuration(300)?.start() }
     }
-    private fun chipTitle(k: String) = when (k) { "ALL" -> "ทั้งหมด"; "ISO" -> "ISO"; "S" -> "ชัตเตอร์"; "WB" -> "WB"; "TINT" -> "ทินต์"; "AF" -> "โฟกัส"; "CON" -> "คอนทราสต์"; "SHP" -> "ความคม"; "NR" -> "ลดนอยส์"; "F" -> "เบลอพื้นหลัง"; else -> "EV" }
+    private fun chipTitle(k: String) = when (k) { "KIND" -> "รูปแบบ"; "ALL" -> "ทั้งหมด"; "ISO" -> "ISO"; "S" -> "ชัตเตอร์"; "WB" -> "WB"; "TINT" -> "ทินต์"; "AF" -> "โฟกัส"; "CON" -> "คอนทราสต์"; "SHP" -> "ความคม"; "NR" -> "ลดนอยส์"; "F" -> "เบลอพื้นหลัง"; else -> "EV" }
     private fun chipValues(k: String): List<String> {
         val m = manual
         return when (k) {
             "ALL" -> listOf("AUTO")
+            "KIND" -> QUICK_NAMES
             "F" -> F_STEPS.map { "f/" + fText(it) }
             "ISO" -> listOf("AUTO") + (m?.isoValues ?: emptyList()).map { it.toString() }
             "S" -> listOf("AUTO") + (m?.shutterValues ?: emptyList()).map { it.first }
@@ -803,6 +811,7 @@ class CameraActivity : ComponentActivity() {
         val m = manual
         return when (k) {
             "ALL" -> 0
+            "KIND" -> QUICK_MODES.indexOf(mode).coerceAtLeast(0)
             "F" -> F_STEPS.indices.minBy { abs(F_STEPS[it] - prefs.getFloat("portrait_f", 2.8f)) }
             "ISO" -> m?.currentIso?.let { (m.isoValues.indexOf(it) + 1).coerceAtLeast(0) } ?: 0
             "S" -> m?.currentShutter?.let { s -> (m.shutterValues.indexOfFirst { it.second == s } + 1).coerceAtLeast(0) } ?: 0
@@ -825,6 +834,7 @@ class CameraActivity : ComponentActivity() {
     }
     private fun chipSep(k: String) = k in listOf("ISO", "S", "AF")
     private fun chipGrad(k: String) = when (k) {
+        "KIND" -> intArrayOf(0xffffd60a.toInt(), Glass.ACCENT, 0xff64d2ff.toInt())
         "F" -> intArrayOf(0xffbf9bff.toInt(), 0xff7db8ff.toInt(), Color.WHITE, 0xffffd9a8.toInt())
         "ISO" -> intArrayOf(0xff5ac8fa.toInt(), 0xff7be3b0.toInt(), Glass.ACCENT, 0xffff9f0a.toInt(), 0xffff453a.toInt())
         "S" -> intArrayOf(0xff64d2ff.toInt(), 0xffbf9bff.toInt(), Glass.ACCENT, 0xffff9f0a.toInt())
@@ -854,6 +864,12 @@ class CameraActivity : ComponentActivity() {
     private fun updateDialValue(k: String) { dialValue.text = chipValue(k); dialValue.setTextColor(chipColor(k)); val auto = chipIndex(k) == chipAuto(k); dialReset.setTextColor(if (auto) Glass.ON_ACCENT else Color.WHITE); (dialReset.background as? GlassDrawable)?.let { it.fill = if (auto) Glass.ACCENT else 0x1fffffff; it.invalidateSelf() } }
     private fun sliderChanged(i: Int) { applyChip(openChip ?: return, i) }
     private fun applyChip(k: String, i: Int) {
+        if (k == "KIND") {
+            // The slider moves freely; the camera switches once it rests, so a sweep across does not rebind three times.
+            val pm = QUICK_MODES[i.coerceIn(0, QUICK_MODES.size - 1)]
+            dialValue.text = QUICK_NAMES[QUICK_MODES.indexOf(pm)]
+            preview.removeCallbacks(quickSwitch); quickTarget = pm; preview.postDelayed(quickSwitch, 320); return
+        }
         if (k == "F") { prefs.edit().putFloat("portrait_f", F_STEPS[i.coerceIn(0, F_STEPS.size - 1)]).apply(); updateDialValue(k); dialTitle.text = "เบลอพื้นหลัง · " + blurWord(F_STEPS[i.coerceIn(0, F_STEPS.size - 1)]); refresh(); return }
         val m = manual ?: return
         when (k) {
@@ -869,6 +885,8 @@ class CameraActivity : ComponentActivity() {
         }
         updateDialValue(k); styleChips(chips.selected)
     }
+    private var quickTarget: PhotoMode? = null
+    private val quickSwitch = Runnable { val pm = quickTarget ?: return@Runnable; if (pm != mode && !busy) { prefs.edit().putString("quick_kind", pm.name).apply(); selectMode(pm) } }
     private fun resetChip() { val k = openChip ?: return; slider.index = chipAuto(k); applyChip(k, chipAuto(k)) }
 
     // ---------- Macro and night ----------
@@ -964,8 +982,8 @@ class CameraActivity : ComponentActivity() {
                     }
                 }
                 val grid0 = Grids.kind(prefs)
-                tile("เส้นกริด", Icons.GRID, Grids.names[grid0], grid0 > 0, isMenu = true) { v ->
-                    menu.show(v, "เส้นกริด", Grids.names.mapIndexed { i, n -> GlassMenu.Option(n, Icons.GRID, Grids.notes[i]) }, grid0) { i -> Grids.set(prefs, i); overlay.gridKind = i; reopen() }
+                tile("เส้นกริด", Grids.icons[grid0], Grids.names[grid0], grid0 > 0, isMenu = true) { v ->
+                    menu.show(v, "เส้นกริด", Grids.names.mapIndexed { i, n -> GlassMenu.Option(n, Grids.icons[i], Grids.notes[i]) }, grid0) { i -> Grids.set(prefs, i); overlay.gridKind = i; reopen() }
                 }
             }
             fill(); reopen = { fill() }
@@ -1111,9 +1129,9 @@ class CameraActivity : ComponentActivity() {
             head.addView(text("ปรับแต่งแถบโหมด", 20f, Color.WHITE, true), LinearLayout.LayoutParams(0, -2, 1f))
             head.addView(text("เสร็จ", 14f, Glass.ON_ACCENT, true).apply { gravity = Gravity.CENTER; background = glass(22, Glass.ACCENT); setPadding(dp(16), 0, dp(16), 0); isClickable = true; glassTouch(); setOnClickListener { sheet.close() } }, -2, dp(48))
             box.addView(head, -1, dp(52))
-            box.addView(text("ลากที่จับเพื่อเรียงใหม่ แตะ + หรือ − เพื่อเพิ่มหรือนำออก แตะชื่อโหมดเพิ่มเติมเพื่อใช้ทันที ภาพถ่ายต้องอยู่ในแถบเสมอ", 13f, Glass.TEXT2).apply { maxLines = 8; ellipsize = null; setPadding(0, dp(4), 0, dp(12)) })
+            // Short and visual: rows show icon + name; the grip, − and + explain themselves (TalkBack gets actions).
             val inBar = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = glass(22, 0x08ffffff); setPadding(dp(6), dp(6), dp(6), dp(6)) }
-            val more = GridLayout(this).apply { columnCount = 2 }
+            val more = GridLayout(this).apply { columnCount = 3 }
             fun pitch(): Float = if (inBar.childCount > 1) (inBar.getChildAt(1).top - inBar.getChildAt(0).top).toFloat().coerceAtLeast(dp(40).toFloat()) else dp(60).toFloat()
             fun render() {
                 inBar.removeAllViews(); more.removeAllViews(); inBar.clipChildren = false
@@ -1122,8 +1140,10 @@ class CameraActivity : ComponentActivity() {
                     val m = ALL.first { it.key == k }
                     val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(8), 0, dp(6), 0); background = glass(18, 0x1affffff) }
                     val grip = IconView(this, "M9 6h.01 M15 6h.01 M9 12h.01 M15 12h.01 M9 18h.01 M15 18h.01", 3f).apply { tint = Glass.TEXT2; contentDescription = "ลากเพื่อเรียง${m.title}"; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES }
-                    row.addView(grip, dp(40), dp(48)); row.addView(IconView(this, m.icon), dp(18), dp(18))
-                    row.addView(text(m.title, 13.5f).apply { setPadding(dp(8), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
+                    row.addView(grip, dp(52), dp(52)); row.addView(IconView(this, m.icon), dp(22), dp(22))
+                    // Dragging near the screen edge must not turn into the system back gesture (which left the app).
+                    if (android.os.Build.VERSION.SDK_INT >= 29) grip.addOnLayoutChangeListener { v, l, t, r, b, _, _, _, _ -> v.systemGestureExclusionRects = listOf(android.graphics.Rect(0, 0, r - l, b - t)) }
+                    row.addView(text(m.title, 14f, Color.WHITE, true).apply { setPadding(dp(10), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
                     if (k == "PHOTO") row.addView(IconView(this, Icons.LOCK, 2f).apply { tint = Glass.TEXT3; contentDescription = "ภาพถ่าย ล็อกไว้ในแถบ" }, dp(48), dp(16))
                     else row.addView(glassButton(IconView(this, Icons.MINUS, 2.4f), 48, "นำ${m.title}ออกจากแถบ") { saveBar(bar.filter { it != k }); render() }, dp(48), dp(48))
                     var startY = 0f
@@ -1133,8 +1153,10 @@ class CameraActivity : ComponentActivity() {
                             MotionEvent.ACTION_MOVE -> row.translationY = (e.rawY - startY).coerceIn(-i * pitch(), (bar.size - 1 - i) * pitch())
                             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                                 val to = (i + (row.translationY / pitch()).roundToInt()).coerceIn(0, bar.size - 1)
-                                if (to != i) { bar.removeAt(i); bar.add(to, k); saveBar(bar); Glass.tick(row) }
-                                render()
+                                grip.parent?.requestDisallowInterceptTouchEvent(false)
+                                if (to != i) { bar.removeAt(i); bar.add(to, k); Glass.tick(row) }
+                                // Rebuild after this touch has finished: removing the touched view mid-gesture was unsafe.
+                                row.post { if (to != i) saveBar(bar); render() }
                             }
                         }
                         true
@@ -1146,13 +1168,18 @@ class CameraActivity : ComponentActivity() {
                     inBar.addView(row, LinearLayout.LayoutParams(-1, dp(52)).apply { setMargins(0, dp(3), 0, dp(3)) })
                 }
                 ALL.filter { it.key !in bar }.forEach { m ->
-                    val cell = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; background = glass(18, 0x12ffffff); setPadding(dp(10), 0, dp(6), 0) }
-                    val use = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; isClickable = true; contentDescription = "ใช้โหมด${m.title}ทันที"; glassTouch()
-                        addView(IconView(this@CameraActivity, m.icon), dp(20), dp(20)); addView(text(m.title, 13.5f).apply { setPadding(dp(8), 0, 0, 0) })
-                        setOnClickListener { sheet.close { useTemporary(m.key) } } }
-                    cell.addView(use, LinearLayout.LayoutParams(0, -2, 1f).apply { height = LinearLayout.LayoutParams.WRAP_CONTENT }); use.minimumHeight = dp(48)
-                    cell.addView(glassButton(IconView(this, Icons.PLUS, 2.4f).apply { tint = Glass.ACCENT }, 48, "เพิ่ม${m.title}ลงแถบ") { saveBar(barList() + m.key); render() }, dp(48), dp(48))
-                    cell.minimumHeight = dp(56)
+                    // Icon tiles: tap adds the mode to the bar, long-press uses it once without adding.
+                    val cell = LinearLayout(this).apply {
+                        orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; background = glass(20, 0x12ffffff); setPadding(dp(6), dp(12), dp(6), dp(10))
+                        isClickable = true; isLongClickable = true; glassTouch(); contentDescription = "เพิ่ม${m.title}ลงแถบ แตะค้างเพื่อใช้ครั้งเดียว"
+                        setOnClickListener { Glass.tick(this); saveBar(barList() + m.key); post { render() } }
+                        setOnLongClickListener { sheet.close { useTemporary(m.key) }; true }
+                    }
+                    val iconBox = FrameLayout(this)
+                    iconBox.addView(IconView(this, m.icon), FrameLayout.LayoutParams(dp(28), dp(28), Gravity.CENTER))
+                    iconBox.addView(IconView(this, Icons.PLUS, 2.6f).apply { tint = Glass.ACCENT }, FrameLayout.LayoutParams(dp(14), dp(14), Gravity.TOP or Gravity.END))
+                    cell.addView(iconBox, dp(44), dp(36))
+                    cell.addView(text(m.title, 12f, Glass.TEXT2).apply { gravity = Gravity.CENTER; maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END; setPadding(0, dp(6), 0, 0) }, -1, -2)
                     more.addView(cell, GridLayout.LayoutParams(GridLayout.spec(GridLayout.UNDEFINED), GridLayout.spec(GridLayout.UNDEFINED, 1f)).apply { width = 0; height = GridLayout.LayoutParams.WRAP_CONTENT; setMargins(dp(4), dp(4), dp(4), dp(4)) })
                 }
             }
@@ -1161,7 +1188,7 @@ class CameraActivity : ComponentActivity() {
             box.addView(sectionTitle("โหมดเพิ่มเติม").apply { setPadding(dp(2), dp(16), 0, dp(8)) }); box.addView(more, -1, -2)
         }
     }
-    private fun saveBar(list: List<String>) { if (mode.name !in list && ALL.any { it.key == mode.name }) selectMode(PhotoMode.PHOTO); prefs.edit().putString("mode_bar", (if ("PHOTO" in list) list else listOf("PHOTO") + list).distinct().joinToString(",")).apply(); rebuildModeStrip() }
+    private fun saveBar(list: List<String>) { if (barKey(mode) !in list && ALL.any { it.key == barKey(mode) }) selectMode(PhotoMode.PHOTO); prefs.edit().putString("mode_bar", (if ("PHOTO" in list) list else listOf("PHOTO") + list).distinct().joinToString(",")).apply(); rebuildModeStrip() }
     private fun useTemporary(key: String) {
         val m = ALL.first { it.key == key }
         val pm = runCatching { PhotoMode.valueOf(key) }.getOrNull()
@@ -1206,8 +1233,9 @@ class CameraActivity : ComponentActivity() {
         refreshZoomPills()
         zooms.visibility = if (capture != null && renderedZooms.size > 1 && rear) View.VISIBLE else View.GONE
         preview.contentDescription = "ช่องมองภาพ กล้อง${if (rear) "หลัง" else "หน้า"} ${zoomText(ratio)} แตะเพื่อโฟกัส ปัดขึ้นลงเพื่อปรับความสว่าง"
-        if (mode == PhotoMode.PRO && chipFrame.visibility != View.VISIBLE) rebuildChips()
-        if (mode != PhotoMode.PRO && chipFrame.visibility == View.VISIBLE) { chipFrame.visibility = View.GONE; closeDial() }
+        val chipped = mode == PhotoMode.PRO || mode in QUICK_MODES
+        if (chipped && (chipFrame.visibility != View.VISIBLE || chipKeys().size != chipTexts.size)) rebuildChips()
+        if (!chipped && chipFrame.visibility == View.VISIBLE) { chipFrame.visibility = View.GONE; closeDial() }
         if (chipFrame.visibility == View.VISIBLE) styleChips(chips.selected)
         val dlp = dial.layoutParams as FrameLayout.LayoutParams; val want = if (chipFrame.visibility == View.VISIBLE) dp(78 + 56 * grow()) else dp(70)
         if (dlp.bottomMargin != want) { dlp.bottomMargin = want; dial.layoutParams = dlp }
@@ -1311,7 +1339,7 @@ class CameraActivity : ComponentActivity() {
     private fun afterBind() {
         macro=false;ev=0f;pressLock=false;focusRail.value=0f;focusRail.label="AF";banner.visibility=View.GONE
         if(aeLock)manual?.lock(true)
-        if(mode==PhotoMode.PRO)rebuildChips()
+        if(mode==PhotoMode.PRO||mode in QUICK_MODES)rebuildChips()
         if(mode==PhotoMode.SPORT)applySport()
         if(mode==PhotoMode.HIRES&&!hiResHintShown){hiResHintShown=true
             val current=camera?.let{runCatching{Camera2CameraInfo.from(it.cameraInfo).cameraId}.getOrNull()}
@@ -1651,7 +1679,7 @@ class CameraActivity : ComponentActivity() {
         mode=next
         if(next!=PhotoMode.PHOTO&&next!=PhotoMode.PRO){output=CaptureOutput.JPEG;prefs.edit().putString("output",output.name).apply()}
         prefs.edit().putString("photo_mode",next.name).apply()
-        if(next!=PhotoMode.PRO){chipFrame.visibility=View.GONE;closeDial()}
+        if(next!=PhotoMode.PRO&&next !in QUICK_MODES){chipFrame.visibility=View.GONE;closeDial()}
         if(next.name !in barKeys) rebuildModeStrip() else syncModeStrip(true)
         // Rapid swipes coalesce: only the last mode within 70 ms binds.
         if(!modePending)freezeFrame()

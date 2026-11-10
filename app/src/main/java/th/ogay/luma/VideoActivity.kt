@@ -347,6 +347,7 @@ class VideoActivity:ComponentActivity(){
         dock.addView(chipFrame,LinearLayout.LayoutParams(-1,(dp(56)*grow).roundToInt()).apply{setMargins(dp(16),dp(6),dp(16),dp(4))})
         modeStrip=CenterStrip(this).apply{onSelect={i->pickMode(i)};onLive={i->styleModes(i)};contentDescription="แถบโหมด"}
         dock.addView(modeStrip,-1,(dp(58)*grow).roundToInt())
+        if(android.os.Build.VERSION.SDK_INT>=29)modeStrip.addOnLayoutChangeListener{v,l,t,r,b,_,_,_,_->v.systemGestureExclusionRects=listOf(android.graphics.Rect(0,0,r-l,b-t))}
         buildModeStrip()
         val actions=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(dp(36),0,dp(36),0)}
         library=roundButton(IconView(this,Icons.LIBRARY),56,"แกลเลอรีวิดีโอ Lumora"){if(!busy())startActivity(Intent(this,GalleryActivity::class.java).putExtra("tab","luma").putExtra("category","วิดีโอ"))}

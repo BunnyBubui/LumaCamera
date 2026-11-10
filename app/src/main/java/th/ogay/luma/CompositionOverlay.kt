@@ -13,6 +13,14 @@ import androidx.camera.view.PreviewView
 /** Grid choices shared by the camera panel, the video screen and settings. */
 object Grids {
     val names = listOf("ปิด", "3 × 3", "4 × 4", "สัดส่วนทอง", "เส้นทแยง", "กากบาทกลาง")
+    /** Each icon draws the grid itself, so the menu shows what the lines will look like. */
+    val icons = listOf(
+        "M4 4h16v16H4z M7 17L17 7",
+        "M4 4h16v16H4z M9.3 4v16 M14.7 4v16 M4 9.3h16 M4 14.7h16",
+        "M4 4h16v16H4z M8 4v16 M12 4v16 M16 4v16 M4 8h16 M4 12h16 M4 16h16",
+        "M4 4h16v16H4z M10.1 4v16 M13.9 4v16 M4 10.1h16 M4 13.9h16",
+        "M4 4h16v16H4z M4 4L20 20 M20 4L4 20",
+        "M4 4h16v16H4z M12 4v16 M4 12h16")
     val notes = listOf("", "กฎสามส่วน", "แบ่งละเอียด จัดแนวตรง", "จุดเด่นตามสัดส่วน 1.618", "นำสายตาเข้ามุม", "จัดกึ่งกลาง")
     fun kind(p: android.content.SharedPreferences) = if (!p.getBoolean("grid", false)) 0 else p.getInt("grid_kind", 1).coerceIn(1, 5)
     fun set(p: android.content.SharedPreferences, kind: Int) { p.edit().putBoolean("grid", kind > 0).apply { if (kind > 0) putInt("grid_kind", kind) }.apply() }
