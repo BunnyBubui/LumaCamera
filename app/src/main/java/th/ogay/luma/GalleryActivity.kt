@@ -700,6 +700,30 @@ class GalleryActivity : ComponentActivity() {
         }
         chip("แชร์", false, Icons.SHARE) { startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("image/jpeg").putExtra(Intent.EXTRA_STREAM, if (useAi) s.ai else s.uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), "แชร์")) }
     }
+    private fun infoPanel(s: Shot, time: String, rows: List<Triple<String, String, String>>, tech: List<String>) {
+        GlassDialog.panel(this, time) { col, d ->
+            // A small preview on top, then one row per fact: icon, value, quiet detail.
+            val pic = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP; setBackgroundColor(0x14ffffff); outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: android.graphics.Outline) { o.setRoundRect(0, 0, v.width, v.height, dp(18).toFloat()) } }; clipToOutline = true }
+            col.addView(pic, LinearLayout.LayoutParams(-1, dp(150)).apply { topMargin = dp(4); bottomMargin = dp(10) })
+            thumbs.execute { val b = runCatching { PhotoMedia.thumbnail(this, s.ai ?: s.uri, 540) }.getOrNull(); runOnUiThread { if (b != null) pic.setImageBitmap(b) } }
+            rows.forEach { (icon, value, note) ->
+                val r = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(7), 0, dp(7)) }
+                r.addView(FrameLayout(this).apply { background = glass(14, 0x1affffff); addView(IconView(this@GalleryActivity, icon).apply { tint = Glass.ACCENT }, FrameLayout.LayoutParams(dp(18), dp(18), Gravity.CENTER)) }, dp(36), dp(36))
+                val t = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, 0, 0) }
+                t.addView(text(value, 14.5f, Color.WHITE, true).apply { maxLines = 2; ellipsize = null })
+                if (note.isNotEmpty()) t.addView(text(note, 12f, Glass.TEXT3).apply { maxLines = 2; ellipsize = null })
+                r.addView(t, LinearLayout.LayoutParams(0, -2, 1f))
+                col.addView(r, -1, -2)
+            }
+            if (tech.isNotEmpty()) {
+                val more = text(tech.joinToString("\n"), 12f, Glass.TEXT3).apply { maxLines = 20; ellipsize = null; setLineSpacing(0f, 1.15f); visibility = View.GONE; setPadding(dp(4), dp(6), dp(4), 0) }
+                val toggle = text("รายละเอียดทางเทคนิค ▾", 12.5f, Glass.TEXT2).apply { gravity = Gravity.CENTER_VERTICAL; minHeight = dp(44); isClickable = true
+                    setOnClickListener { more.visibility = if (more.visibility == View.VISIBLE) View.GONE else View.VISIBLE; text = if (more.visibility == View.VISIBLE) "รายละเอียดทางเทคนิค ▴" else "รายละเอียดทางเทคนิค ▾" } }
+                col.addView(toggle, -1, -2); col.addView(more, -1, -2)
+            }
+            col.addView(GlassDialog.actions(this, "ปิด" to { d.dismiss() }), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
+        }.show()
+    }
     private fun details(s: Shot) {
         val ai = s.aiSize
         luma.fileIo.execute {
@@ -708,27 +732,26 @@ class GalleryActivity : ComponentActivity() {
             val lens = exif?.getAttribute(androidx.exifinterface.media.ExifInterface.TAG_LENS_MODEL)
             val eq = exif?.getAttribute(androidx.exifinterface.media.ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM)
             val fn = exif?.getAttribute(androidx.exifinterface.media.ExifInterface.TAG_F_NUMBER)?.let { r -> r.split('/').let { p -> if (p.size == 2) (p[0].toDoubleOrNull() ?: 0.0) / (p[1].toDoubleOrNull() ?: 1.0) else r.toDoubleOrNull() } }
-            val text = buildList {
-                add(formatTime(s.time)); add("ต้นฉบับ  ${s.size.w} × ${s.size.h} px")
-                add("กล้อง${if (s.rear) "หลัง" else "หน้า"}  ·  ${zoomText(s.zoom)}")
-                if (eq != null || fn != null) add("เลนส์  ${eq?.let { "เทียบ $it มม." } ?: ""}${if (fn != null && fn > 0) "  ·  f/${String.format(Locale.US, "%.1f", fn)}" else ""}")
+            val fnText = fn?.takeIf { it > 0 }?.let { String.format(Locale.US, "f/%.1f", it) }
+            val report = s.aiReport?.let { r -> runCatching { JSONObject(r) }.getOrNull() }
+            // Icon rows instead of a wall of text: the essentials first, technical details folded at the bottom.
+            val rows = buildList<Triple<String, String, String>> {
+                add(Triple(Icons.PHOTO, "${s.size.w} × ${s.size.h}", pixelsText(s.size.pixels)))
+                add(Triple(Icons.FLIP, if (s.rear) "กล้องหลัง" else "กล้องหน้า", listOfNotNull(zoomText(s.zoom), eq?.let { "$it มม." }, fnText).joinToString(" · ")))
+                add(Triple(Icons.FILE, s.output.label, if (s.softwareCrop) "ครอปในแอป" else "ซูมระบบ"))
+                if (s.output.enhance) add(Triple(Icons.STACK, "${s.fusedFrames}/${s.requestedFrames} เฟรม", "รวมหลายเฟรม"))
+                s.captureNote?.let { add(Triple(Icons.INFO, it, "")) }
+                if (s.ai != null) add(Triple(Icons.AI, "AI ×${s.aiScale.coerceAtLeast(1)} · ${ai.w} × ${ai.h}", listOfNotNull(pixelsText(ai.pixels), report?.optString("backend")?.takeIf { it.isNotEmpty() }, "${s.elapsed / 1000.0} วิ".takeIf { s.elapsed > 0 }).joinToString(" · ")))
+            }
+            val tech = buildList {
                 lens?.let { add(it) }
-                add(if (s.softwareCrop) "ซูมครอปในแอป ขยายด้วย AI" else "ซูมด้วยระบบกล้อง")
-                add("รูปแบบ ${s.output.label}")
-                if (s.output.needsRaw) add("DNG เก็บข้อมูลเซนเซอร์เต็มตามที่กล้องส่ง ภาพตัวอย่าง JPEG อาจมีครอป/ซูม")
-                if (s.output.enhance) { add("รับ ${s.frames}/${s.requestedFrames} เฟรม · ผ่านการจัดแนว ${s.fusedFrames} เฟรม"); add("ส่วนที่เคลื่อนไหวมากใช้ภาพอ้างอิง") }
-                s.captureNote?.let { add(it) }
-                add("Physical camera ID  ${s.lens ?: "เครื่องไม่รายงาน"}")
-                add("พื้นที่ครอป  ${s.cropped?.let(::pixelsText) ?: "เครื่องไม่รายงาน"}")
+                add("Physical camera ${s.lens ?: "-"} · ครอป ${s.cropped?.let(::pixelsText) ?: "-"}")
                 if (s.reason != Decision.OFF) add(s.reason.description)
-                if (s.ai != null) { add("AI ${s.aiVersion}  ${ai.w} × ${ai.h} px"); add("เวลาประมวลผล  ${s.elapsed} ms") }
-                s.aiReport?.let { report -> runCatching { JSONObject(report) }.getOrNull()?.let { j ->
-                    add("ประมวลผลด้วย ${j.optString("backend")} · ความแรงรายละเอียด ${j.optInt("strength")}%")
-                    if (j.has("totalMs")) add("เวลา  รวม ${j.optLong("totalMs")} · AI ${j.optLong("inferenceMs")} · อ่านภาพ ${j.optLong("decodeMs")} · ผสาน ${j.optLong("renderMs")} · บันทึก ${j.optLong("encodeMs")} · เปิดโมเดล ${j.optLong("modelInitMs")} ms (${j.optInt("tiles")} ช่อง)")
-                    add("รายละเอียดบางส่วนเป็นการคาดเดาของ AI")
-                } }
-            }.joinToString("\n")
-            runOnUiThread { if (!isDestroyed) GlassDialog.show(this, "ข้อมูลภาพ", text) }
+                if (s.output.needsRaw) add("DNG เก็บข้อมูลเซนเซอร์เต็มตามที่กล้องส่ง")
+                report?.takeIf { it.has("totalMs") }?.let { j -> add("เวลา AI ${j.optLong("inferenceMs")} · อ่าน ${j.optLong("decodeMs")} · ผสาน ${j.optLong("renderMs")} · บันทึก ${j.optLong("encodeMs")} · รวม ${j.optLong("totalMs")} ms") }
+                if (s.ai != null) add("รายละเอียดบางส่วนเป็นการคาดเดาของ AI")
+            }
+            runOnUiThread { if (!isDestroyed) infoPanel(s, formatTime(s.time), rows, tech) }
         }
     }
 }
