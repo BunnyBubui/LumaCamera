@@ -53,7 +53,7 @@ class VideoSessionDeviceTest {
             assertNull(device.findObject(By.textContains("Allow Luma")))
         }
     }
-    @Test fun softwareNightAfterHdrKeepsAiBurstWhenReusingSession() {
+    @org.junit.Ignore("Night mode was removed from the mode bar in round 8") @Test fun softwareNightAfterHdrKeepsAiBurstWhenReusingSession() {
         val provider = androidx.camera.lifecycle.ProcessCameraProvider.getInstance(context).get()
         val extensions = androidx.camera.extensions.ExtensionsManager.getInstanceAsync(context, provider).get()
         val selector = androidx.camera.core.CameraSelector.DEFAULT_BACK_CAMERA

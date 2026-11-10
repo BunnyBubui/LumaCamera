@@ -561,7 +561,7 @@ class CameraActivity : ComponentActivity() {
         if (i >= barKeys.size) { if (modeStrip.byTap) { syncModeStrip(true); openEditor() } else { modeStrip.select(barKeys.size - 1, true); pickBar(barKeys.size - 1) }; return }
         val key = barKeys[i]
         when (key) {
-            "VIDEO" -> openVideo("VIDEO"); "MOVIE" -> openVideo("MOVIE"); "SLOW" -> openVideo("SLOW")
+            "VIDEO" -> openVideo("VIDEO")
             "TIMELAPSE" -> openSpecial("TIMELAPSE")
             "RAWV" -> { provider?.unbindAll(); capture = null; startActivity(Intent(this, RawLabActivity::class.java)) }
             else -> runCatching { PhotoMode.valueOf(key) }.getOrNull()?.let { selectMode(it) }
@@ -659,7 +659,7 @@ class CameraActivity : ComponentActivity() {
                 if (!aeLock && ev != 0f) { setEv(0f, false); hint("ล้างค่าความสว่างแล้ว", 1200) }
                 if (focusRail.value > 0f) setFocusRail(null)
                 showRail(expRail)
-                if (prefs.getBoolean("focus_sound", false)) tones.startTone(ToneGenerator.TONE_PROP_BEEP, 50)
+                if (prefs.getBoolean("focus_sound", false) && Sounds.enabled(prefs)) tones.startTone(ToneGenerator.TONE_PROP_BEEP, 50)
                 if (prefs.getBoolean("tap_shutter", false)) takePhoto()
                 preview.performClick(); refresh(); return true
             }
@@ -708,6 +708,16 @@ class CameraActivity : ComponentActivity() {
         lensShots.put(lens, small)?.recycle()
     }
     private fun clearLensShots() { lensShots.values.forEach { it.recycle() }; lensShots.clear(); if (::miniImage.isInitialized) miniImage.setImageDrawable(null) }
+    private var miniLive = false
+    private val miniTicker = object : Runnable { override fun run() {
+        if (!miniLive || isDestroyed || miniCard.visibility != View.VISIBLE) { miniLive = false; return }
+        if (!busy) runCatching { preview.bitmap }.getOrNull()?.let { full ->
+            val small = Bitmap.createScaledBitmap(full, 180, (180f * full.height / full.width).roundToInt().coerceAtLeast(1), true); if (small !== full) full.recycle()
+            val old = (miniImage.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+            miniImage.setImageBitmap(small); if (old != null && old !== small && !lensShots.containsValue(old)) old.recycle()
+        }
+        miniCard.postDelayed(this, 160)
+    } }
     private fun refreshZoomUi() {
         val (lo, hi) = range()
         wheel.minZoom = lo; wheel.maxZoom = hi; wheel.lenses = renderedZooms; wheel.zoom = ratio
@@ -725,7 +735,10 @@ class CameraActivity : ComponentActivity() {
         if (showMini && miniCard.visibility != View.VISIBLE) { miniCard.visibility = View.VISIBLE; Liquid.show(miniCard, miniCard.width.toFloat(), 0f, false) }
         if (!showMini && miniCard.visibility == View.VISIBLE) Liquid.hide(miniCard, miniCard.width.toFloat(), 0f, false)
         if (showMini) {
-            miniLabel.text = zoomText(lens); lensShots[lens]?.let { miniImage.setImageBitmap(it) }
+            miniLabel.text = zoomText(lens)
+            // When the app does the zoom by cropping, the stream is still the whole lens view, so the small map can be live.
+            if (appCrop() > 1.01f && abs(minOf(ratio, hardwareMax()) - lens) < 0.05f) { if (!miniLive) { miniLive = true; miniCard.post(miniTicker) } }
+            else { miniLive = false; lensShots[lens]?.let { miniImage.setImageBitmap(it) } }
             val f = (lens / ratio).coerceIn(0.05f, 1f).pow(0.5f); val lp = miniBox.layoutParams
             lp.width = (dp(90) * f).roundToInt(); lp.height = (dp(120) * f).roundToInt(); miniBox.layoutParams = lp
         }
@@ -1482,7 +1495,7 @@ class CameraActivity : ComponentActivity() {
         fun tick(left:Int){
             if(token!=timerGeneration)return
             if(left==0){timerRunning=false;captureWithLight();return}
-            hint("$left",1100);if(prefs.getBoolean("countdown_sound",true))tones.startTone(ToneGenerator.TONE_PROP_BEEP,80)
+            hint("$left",1100);if(prefs.getBoolean("countdown_sound",true)&&Sounds.enabled(prefs))tones.startTone(ToneGenerator.TONE_PROP_BEEP,80)
             shutter.postDelayed({tick(left-1)},1000)
         };tick(seconds)
     }

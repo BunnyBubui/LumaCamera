@@ -22,8 +22,14 @@ class InspectView(context: Context) : View(context) {
     private var cx=0.5f
     private var cy=0.5f
     private var aspect=1f
-    private data class Tile(val image:Bitmap,val area:RectF)
+    /** [area] is where the pixels sat on screen when they were decoded for the view box [frame]. */
+    private data class Tile(val image:Bitmap,val area:RectF,val frame:RectF)
     private var tile:Tile?=null
+    /** The whole picture at fit-to-screen: shown under the sharp tile so zooming and panning never show a gap. */
+    private var base:Tile?=null
+    private var dec:BitmapRegionDecoder?=null;private var decUri:Uri?=null;private var decRot=0
+    private var dragX0=0f;private var dragY0=0f;private var paging=false;private var tracker:android.view.VelocityTracker?=null
+    private val slop=android.view.ViewConfiguration.get(context).scaledTouchSlop
     private val scale=ScaleGestureDetector(context,object:ScaleGestureDetector.SimpleOnScaleGestureListener() {
         override fun onScale(d:ScaleGestureDetector):Boolean {
             val old=zoom;val oldBox=box(width,height,aspect,old,cx,cy)
@@ -43,7 +49,7 @@ class InspectView(context: Context) : View(context) {
         }
         override fun onFling(a:MotionEvent?,b:MotionEvent,vx:Float,vy:Float):Boolean {
             if(zoom>1.05f||scale.isInProgress)return false
-            if(kotlin.math.abs(vx)>kotlin.math.abs(vy)*1.5f&&kotlin.math.abs(vx)>900*resources.displayMetrics.density/2.75f){onSwipe?.invoke(if(vx<0)1 else -1);return true}
+            if(!paging&&translationX==0f&&kotlin.math.abs(vx)>kotlin.math.abs(vy)*1.5f&&kotlin.math.abs(vx)>900*resources.displayMetrics.density/2.75f){onSwipe?.invoke(if(vx<0)1 else -1);return true}
             return false
         }
         override fun onDoubleTap(e:MotionEvent):Boolean {
@@ -66,14 +72,35 @@ class InspectView(context: Context) : View(context) {
         val b=box(width,height,aspect,zoom,cx,cy)
         if(b.width()>0 && b.height()>0){cx=(width/2f-b.left)/b.width();cy=(height/2f-b.top)/b.height()}
     }
-    override fun onTouchEvent(e:MotionEvent):Boolean {scale.onTouchEvent(e);gestures.onTouchEvent(e);if(e.action==MotionEvent.ACTION_UP) performClick();return true}
+    override fun onTouchEvent(e:MotionEvent):Boolean {
+        scale.onTouchEvent(e)
+        // At fit-to-screen a sideways drag moves the picture with the finger; letting go past a fifth of the width (or a flick) turns the page.
+        if(zoom<=1.05f&&onSwipe!=null) when(e.actionMasked){
+            MotionEvent.ACTION_DOWN->{dragX0=e.rawX;dragY0=e.rawY;paging=false;animate().cancel();tracker?.recycle();tracker=android.view.VelocityTracker.obtain()}
+            MotionEvent.ACTION_POINTER_DOWN->if(paging){paging=false;animate().translationX(0f).alpha(1f).setDuration(160).start()}
+            MotionEvent.ACTION_MOVE->if(e.pointerCount==1&&!scale.isInProgress){
+                val dx=e.rawX-dragX0;val dy=e.rawY-dragY0
+                if(!paging&&kotlin.math.abs(dx)>slop&&kotlin.math.abs(dx)>kotlin.math.abs(dy)*1.3f){paging=true;parent?.requestDisallowInterceptTouchEvent(true)}
+                if(paging){val m=MotionEvent.obtain(e);m.setLocation(e.rawX,e.rawY);tracker?.addMovement(m);m.recycle();translationX=dx;alpha=1f-(kotlin.math.abs(dx)/width.coerceAtLeast(1)).coerceAtMost(0.45f);return true}
+            }
+            MotionEvent.ACTION_UP,MotionEvent.ACTION_CANCEL->if(paging){
+                paging=false;tracker?.computeCurrentVelocity(1000);val vx=tracker?.xVelocity?:0f;tracker?.recycle();tracker=null
+                val dx=translationX;val far=kotlin.math.abs(dx)>width*0.2f||kotlin.math.abs(vx)>700*resources.displayMetrics.density
+                if(e.actionMasked==MotionEvent.ACTION_UP&&far&&(vx==0f||(vx<0)==(dx<0)||kotlin.math.abs(dx)>width*0.35f))onSwipe?.invoke(if(dx<0)1 else -1)
+                settle();return true
+            }
+        }
+        gestures.onTouchEvent(e);if(e.action==MotionEvent.ACTION_UP) performClick();return true
+    }
+    /** Springs back to rest unless a page turn has already taken the view over. */
+    fun settle(){post{if(!turning)animate().translationX(0f).alpha(1f).setInterpolator(th.ogay.luma.Glass.SPRING).setDuration(300).start()}}
+    var turning=false
     override fun performClick():Boolean {super.performClick();return true}
-    override fun onSizeChanged(w:Int,h:Int,oldw:Int,oldh:Int){super.onSizeChanged(w,h,oldw,oldh);change()}
     fun show(uri:Uri) {
         if(source==uri) return
-        source=uri; tile?.image?.recycle();tile=null;invalidate();change()
+        source=uri; tile?.takeIf{it!==base}?.image?.recycle();base?.image?.recycle();tile=null;base=null;zoom=1f;cx=0.5f;cy=0.5f;invalidate();change()
     }
-    private fun change(){version++;schedule()}
+    private fun change(){version++;invalidate();schedule()}
     private fun schedule() {
         val uri=source ?: return
         if(working || width==0 || height==0 || dead) return
@@ -89,12 +116,14 @@ class InspectView(context: Context) : View(context) {
                     val bounds=BitmapFactory.Options().apply{inJustDecodeBounds=true}
                     resolver.openInputStream(uri)?.use{BitmapFactory.decodeStream(it,null,bounds)}
                     var sample=1;while(bounds.outWidth/(sample*2)>=w&&bounds.outHeight/(sample*2)>=h)sample*=2
-                    resolver.openInputStream(uri)?.use{BitmapFactory.decodeStream(it,null,BitmapFactory.Options().apply{inSampleSize=sample})}?.let{b->ratio=b.width.toFloat()/b.height;Tile(b,box(w,h,ratio,z,x,y))}
+                    resolver.openInputStream(uri)?.use{BitmapFactory.decodeStream(it,null,BitmapFactory.Options().apply{inSampleSize=sample})}?.let{b->ratio=b.width.toFloat()/b.height;box(w,h,ratio,z,x,y).let{f->Tile(b,f,RectF(f))}}
                 } else {
-                val rotation=resolver.openInputStream(uri)?.use { ExifInterface(it).rotationDegrees } ?: 0
-                resolver.openInputStream(uri)?.use { input ->
-                    val decoder=BitmapRegionDecoder.newInstance(input,false) ?: return@use null
-                    try {
+                if(decUri!=uri){dec?.recycle();dec=null;decUri=uri
+                    decRot=resolver.openInputStream(uri)?.use { ExifInterface(it).rotationDegrees } ?: 0
+                    @Suppress("DEPRECATION") run{dec=resolver.openInputStream(uri)?.use { BitmapRegionDecoder.newInstance(it,false) }}}
+                val rotation=decRot
+                dec?.let { decoder ->
+                    run {
                         val raw=RectF(0f,0f,decoder.width.toFloat(),decoder.height.toFloat())
                         val transform=Matrix().apply {setRotate(rotation.toFloat())}
                         val upright=RectF(raw);transform.mapRect(upright);transform.postTranslate(-upright.left,-upright.top)
@@ -108,30 +137,40 @@ class InspectView(context: Context) : View(context) {
                             ceil(visible.right).toInt().coerceIn(1,decoder.width),ceil(visible.bottom).toInt().coerceIn(1,decoder.height))
                         var sample=1
                         while(sample*2 <= 1/factor) sample*=2
-                        val decoded=decoder.decodeRegion(r, BitmapFactory.Options().apply { inSampleSize=sample }) ?: return@use null
+                        val decoded=decoder.decodeRegion(r, BitmapFactory.Options().apply { inSampleSize=sample }) ?: return@let null
                         val bitmap=if(rotation==0) decoded else Bitmap.createBitmap(decoded,0,0,decoded.width,decoded.height,
                             Matrix().apply {setRotate(rotation.toFloat())},true).also { if(it!==decoded) decoded.recycle() }
                         val dst=RectF(r);transform.mapRect(dst)
-                        Tile(bitmap,dst)
-                    } finally {decoder.recycle()}
+                        Tile(bitmap,dst,frame)
+                    }
                 }
                 }
             } catch(_:Exception){null} catch(_:OutOfMemoryError){null}
             post {
                 working=false
-                if(!dead && job==version) {
-                    aspect=ratio;tile?.image?.recycle();tile=next;invalidate()
-                    if(next==null) context.notice("เปิดภาพไม่ได้ อาจถูกลบออกจากแกลเลอรี")
+                if(!dead && uri==source) {
+                    // A tile decoded for an older position is still used: it is drawn mapped to where the picture is now.
+                    if(next!=null){aspect=ratio;tile?.takeIf{it!==base}?.image?.recycle();tile=next;if(base==null&&z<=1.001f)base=next;invalidate()}
+                    else if(job==version&&tile==null) context.notice("เปิดภาพไม่ได้ อาจถูกลบออกจากแกลเลอรี")
                 } else next?.image?.recycle()
                 if(job!=version) schedule()
             }
         }
     }
-    private val fade=Paint()
-    /** Soft top and bottom edges so the picture melts into the page instead of ending in a hard line. */
-    override fun onDraw(c:Canvas){super.onDraw(c);tile?.let {c.drawBitmap(it.image,null,it.area,paint)}
+    private val fade=Paint();private val fadeBottom=Paint();private val placed=RectF()
+    private fun place(t:Tile,cur:RectF):RectF{val k=cur.width()/t.frame.width().coerceAtLeast(1f)
+        placed.set(cur.left+(t.area.left-t.frame.left)*k,cur.top+(t.area.top-t.frame.top)*k,cur.left+(t.area.right-t.frame.left)*k,cur.top+(t.area.bottom-t.frame.top)*k);return placed}
+    override fun onSizeChanged(w:Int,h:Int,oldw:Int,oldh:Int){super.onSizeChanged(w,h,oldw,oldh)
         val e=30*resources.displayMetrics.density;val bg=th.ogay.luma.Glass.NAVY_DEEP;val clear=bg and 0x00ffffff
-        fade.shader=android.graphics.LinearGradient(0f,0f,0f,e,bg,clear,android.graphics.Shader.TileMode.CLAMP);c.drawRect(0f,0f,width.toFloat(),e,fade)
-        fade.shader=android.graphics.LinearGradient(0f,height-e,0f,height.toFloat(),clear,bg,android.graphics.Shader.TileMode.CLAMP);c.drawRect(0f,height-e,width.toFloat(),height.toFloat(),fade)}
-    override fun onDetachedFromWindow(){dead=true;io.shutdown();tile?.image?.recycle();tile=null;super.onDetachedFromWindow()}
+        fade.shader=android.graphics.LinearGradient(0f,0f,0f,e,bg,clear,android.graphics.Shader.TileMode.CLAMP)
+        fadeBottom.shader=android.graphics.LinearGradient(0f,h-e,0f,h.toFloat(),clear,bg,android.graphics.Shader.TileMode.CLAMP)
+        change()}
+    /** Draws what is already decoded at the current zoom and position straight away; sharper pixels replace it when they arrive. */
+    override fun onDraw(c:Canvas){super.onDraw(c)
+        val cur=box(width,height,aspect,zoom,cx,cy)
+        base?.let{if(it!==tile)c.drawBitmap(it.image,null,place(it,cur),paint)}
+        tile?.let{c.drawBitmap(it.image,null,place(it,cur),paint)}
+        val e=30*resources.displayMetrics.density
+        c.drawRect(0f,0f,width.toFloat(),e,fade);c.drawRect(0f,height-e,width.toFloat(),height.toFloat(),fadeBottom)}
+    override fun onDetachedFromWindow(){dead=true;runCatching{io.execute{dec?.recycle();dec=null}};io.shutdown();tile?.takeIf{it!==base}?.image?.recycle();base?.image?.recycle();tile=null;base=null;super.onDetachedFromWindow()}
 }

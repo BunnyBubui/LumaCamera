@@ -46,10 +46,16 @@ object Sounds {
         }.start()
     }
 
+    /** Master switch for every sound the app makes. */
+    fun enabled(p: android.content.SharedPreferences) = p.getBoolean("sound_all", true)
+    /** App sound level: 0..10 in settings, 7 is the tuned default (factor 1.0). */
+    fun level(p: android.content.SharedPreferences) = p.getInt("sound_level", 7).coerceIn(0, 10) / 7f
     fun play(c: Context, k: Kind) {
         val p = pool ?: return init(c)
         if (!ready) return
         val prefs = c.getSharedPreferences("camera", 0)
+        val forced = k == Kind.SHUTTER && androidx.camera.core.CameraInfo.mustPlayShutterSound()
+        if (!forced && !enabled(prefs)) return
         if (k == Kind.SHUTTER) { if (!prefs.getBoolean("sound", true) && !androidx.camera.core.CameraInfo.mustPlayShutterSound()) return }
         else {
             if (!prefs.getBoolean("click_sound", true)) return
@@ -57,7 +63,7 @@ object Sounds {
             val now = System.nanoTime(); if (k == Kind.DETENT && now - last < 28_000_000L) return; last = now
         }
         val set = ids[k] ?: return
-        val vol = when (k) { Kind.SHUTTER -> 0.9f; Kind.DETENT -> 0.3f; else -> 0.4f }
+        val vol = (when (k) { Kind.SHUTTER -> 0.9f; Kind.DETENT -> 0.3f; else -> 0.4f } * level(prefs)).coerceIn(0f, 1f)
         p.play(set[Random.nextInt(set.size)], vol, vol, 1, 0, 1f)
     }
 

@@ -23,6 +23,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 object HiResShot {
     /** Largest JPEG a camera offers in maximum-resolution sensor mode, or null when it declares none. */
+    @android.annotation.TargetApi(31)
     fun maxSize(context: Context, cameraId: String): Size? {
         if (Build.VERSION.SDK_INT < 31) return null
         return runCatching {
@@ -56,7 +57,7 @@ object HiResShot {
         }.getOrDefault("อ่านข้อมูลกล้องไม่ได้")
     }
 
-    @SuppressLint("MissingPermission")
+    @SuppressLint("MissingPermission") @android.annotation.TargetApi(31)
     fun capture(context: Context, cameraId: String, size: Size, targetRotation: Int, rear: Boolean, file: File, done: (Throwable?) -> Unit) {
         if (Build.VERSION.SDK_INT < 31) { done(IllegalStateException("ต้องใช้ Android 12 ขึ้นไป")); return }
         val cm = context.getSystemService(CameraManager::class.java)!!

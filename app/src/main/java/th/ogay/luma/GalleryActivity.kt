@@ -475,13 +475,14 @@ class GalleryActivity : ComponentActivity() {
         val i = visible.indexOfFirst { (it.shot?.id ?: it.key) == selected }
         val next = visible.getOrNull(i + dir) ?: return
         selected = next.shot?.id ?: next.key; useAi = false
-        // Only the picture slides; the bars stay still. The next picture glides in from the opposite side.
+        // Only the picture moves; the bars stay still. It carries on from where the finger left it and the next one glides in.
         val moving = if (::inspect.isInitialized && inspect.parent === root) inspect else null
         if (moving != null && !Glass.reduced(this)) {
-            val d = dp(70).toFloat()
-            moving.animate().translationX(-dir * d).alpha(0f).setDuration(110).setInterpolator(Glass.EASE).withEndAction {
+            val w = moving.width.coerceAtLeast(1).toFloat()
+            moving.turning = true
+            moving.animate().translationX(-dir * (w * 0.55f).coerceAtLeast(kotlin.math.abs(moving.translationX) + dp(40))).alpha(0f).setDuration(130).setInterpolator(Glass.EASE).withEndAction {
                 reload()
-                if (::inspect.isInitialized && inspect.parent === root) { inspect.translationX = dir * d; inspect.alpha = 0f; inspect.animate().translationX(0f).alpha(1f).setDuration(240).setInterpolator(Glass.EASE).start() }
+                if (::inspect.isInitialized && inspect.parent === root) { inspect.turning = false; inspect.translationX = dir * w * 0.35f; inspect.alpha = 0f; inspect.animate().translationX(0f).alpha(1f).setDuration(260).setInterpolator(Glass.SPRING).start() }
             }.start()
         } else reload()
     }

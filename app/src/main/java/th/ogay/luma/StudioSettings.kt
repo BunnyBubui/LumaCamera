@@ -135,6 +135,17 @@ fun Activity.showStudioSettings(rawAvailable: Boolean, changed: () -> Unit) {
     toggle("เส้นกริด", Icons.GRID, "grid"); toggle("ระดับน้ำ", Icons.LEVEL, "level")
     toggle("Histogram", Icons.HISTO, "histogram"); toggle("Focus peaking", Icons.PEAK, "peaking"); toggle("Zebra", Icons.ZEBRA, "zebra")
     section("เสียงและการสัมผัส")
+    toggle("เสียงทั้งหมด", Icons.SOUND, "sound_all", true, "ปิดเพื่อเงียบทุกเสียงของแอปในครั้งเดียว")
+    run {
+        // Level slider in the same glass style as the camera's adjusters; a soft click previews the level.
+        val value = text("${prefs.getInt("sound_level", 7).coerceIn(0, 10)}", 14f, Glass.TEXT2).apply { gravity = Gravity.END or Gravity.CENTER_VERTICAL; minWidth = dp(28) }
+        row("ระดับเสียง", Icons.SOUND, "ใช้กับเสียงปุ่ม ชัตเตอร์ และเสียงเลื่อน", value)
+        val slider = GlassSlider(this).apply {
+            values = (0..10).map { "$it" }; index = prefs.getInt("sound_level", 7).coerceIn(0, 10); grad = intArrayOf(0xff4b5563.toInt(), Color.WHITE, Glass.ACCENT); contentDescription = "ระดับเสียง"
+            onChange = { i -> value.text = "$i"; prefs.edit().putInt("sound_level", i).apply(); Sounds.play(context, Sounds.Kind.TAP) }
+        }
+        group.addView(slider, LinearLayout.LayoutParams(-1, dp(52)).apply { leftMargin = dp(18); rightMargin = dp(18); bottomMargin = dp(6) })
+    }
     toggle("เสียงชัตเตอร์", Icons.SOUND, "sound", true); toggle("เสียงเริ่มและจบวิดีโอ", Icons.VIDEO, "video_sound", true)
     toggle("เสียงนับถอยหลัง", Icons.TIMER, "countdown_sound", true); toggle("เสียงโฟกัส", Icons.TAP, "focus_sound"); toggle("เสียงปุ่ม", Icons.SOUND, "click_sound", true, "เสียงคลิกเบา ๆ เมื่อแตะปุ่มและสวิตช์")
     toggle("สั่นเมื่อแตะ", Icons.HAPTIC, "haptic", true); toggle("ลดการเคลื่อนไหว", Icons.MOTION, "reduce_motion", note = "ปิดแอนิเมชันเด้งและเบลอ")
