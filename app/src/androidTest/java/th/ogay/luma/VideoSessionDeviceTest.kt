@@ -19,6 +19,16 @@ class VideoSessionDeviceTest {
     @get:Rule val permissions = GrantPermissionRule.grant(Manifest.permission.CAMERA)
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
     private val device get() = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+    /** The FPS chip can sit off screen in the chip strip, where UiAutomator cannot see it, so search the view tree itself. */
+    private fun shows60(scenario: ActivityScenario<VideoActivity>): Boolean {
+        var found = false
+        fun walk(v: android.view.View) {
+            if (v is android.widget.TextView && v.text?.contains("60") == true) found = true
+            if (v is android.view.ViewGroup) for (i in 0 until v.childCount) walk(v.getChildAt(i))
+        }
+        scenario.onActivity { walk(it.window.decorView) }
+        return found || device.findObject(By.textContains("ชุดนี้ใช้ไม่ได้")) != null
+    }
     private fun waitFor(condition: () -> Boolean) {
         val until = SystemClock.elapsedRealtime() + 40000
         while (SystemClock.elapsedRealtime() < until) { val ready = try { condition() } catch (_: androidx.test.uiautomator.StaleObjectException) { false }; if (ready) return; SystemClock.sleep(200) }
@@ -34,11 +44,11 @@ class VideoSessionDeviceTest {
                 fun settled() = device.findObject(By.desc("เริ่มบันทึกวิดีโอ"))?.isEnabled == true || device.findObject(By.textContains("ชุดนี้ใช้ไม่ได้")) != null
                 waitFor { settled() }
                 assertEquals("60", prefs.getString("video_fps_s", null))
-                assertNotNull("60 is not shown · ${GlassNav.dump(device)}", device.findObject(By.textContains("60")))
+                assertTrue("60 is not in the video screen · ${GlassNav.dump(device)}", shows60(activity))
                 activity.recreate()
                 waitFor { settled() }
                 assertEquals("60", prefs.getString("video_fps_s", null))
-                assertNotNull("60 is not shown · ${GlassNav.dump(device)}", device.findObject(By.textContains("60")))
+                assertTrue("60 is not in the video screen · ${GlassNav.dump(device)}", shows60(activity))
             }
         } finally { prefs.edit().apply { if (before == null) remove("video_fps_s") else putString("video_fps_s", before) }.commit() }
     }
