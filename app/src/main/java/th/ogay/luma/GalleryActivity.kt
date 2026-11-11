@@ -441,14 +441,15 @@ class GalleryActivity : ComponentActivity() {
         val tabRow = LinearLayout(this)
         listOf("ถ่ายด้วย Lumora", "ทั้งเครื่อง").forEachIndexed { i, t ->
             tabRow.addView(text(t, 14f, if ((i == 1) == device) Color.WHITE else Glass.TEXT2, true).apply {
-                gravity = Gravity.CENTER; isClickable = true; contentDescription = t; isSelected = (i == 1) == device
+                gravity = Gravity.CENTER; isClickable = true; contentDescription = t; isSelected = (i == 1) == device; minHeight = dp(48); maxLines = 2; setPadding(dp(6), dp(4), dp(6), dp(4))
                 androidx.core.view.ViewCompat.setStateDescription(this, if ((i == 1) == device) "เลือกอยู่" else null)
                 setOnClickListener { if ((i == 1) != device) { device = i == 1; category = 0; album = null; prefs.edit().putBoolean("gallery_device", device).apply(); slideKnob(knob, tabs, i); reload() } }
-            }, LinearLayout.LayoutParams(0, -1, 1f))
+            }, LinearLayout.LayoutParams(0, -2, 1f))
         }
-        tabs.addView(tabRow, -1, -1)
+        // The tabs grow with large fonts instead of cutting "ถ่ายด้วย Lumora" to one line.
+        tabs.addView(tabRow, -1, -2)
         tabs.post { slideKnob(knob, tabs, if (device) 1 else 0, false) }
-        root.addView(tabs, LinearLayout.LayoutParams(-1, dp(48)).apply { setMargins(dp(16), dp(4), dp(16), dp(8)) })
+        root.addView(tabs, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(16), dp(4), dp(16), dp(8)) })
 
         if (device && !mediaGranted()) {
             root.addView(LinearLayout(this).apply {
@@ -497,7 +498,7 @@ class GalleryActivity : ComponentActivity() {
         val gridTitle = gridHead.getChildAt(0) as TextView
 
         val grid = GridView(this).apply {
-            numColumns = 3; horizontalSpacing = dp(5); verticalSpacing = dp(5); setPadding(dp(8), 0, dp(8), dp(8)); clipToPadding = false; selector = android.graphics.drawable.ColorDrawable(0)
+            contentDescription = "รายการรูปและวิดีโอ"; numColumns = 3; horizontalSpacing = dp(5); verticalSpacing = dp(5); setPadding(dp(8), 0, dp(8), dp(8)); clipToPadding = false; selector = android.graphics.drawable.ColorDrawable(0)
             // Longer, softer flings.
             setFriction(android.view.ViewConfiguration.getScrollFriction() * 0.75f); isVerticalScrollBarEnabled = false; overScrollMode = View.OVER_SCROLL_ALWAYS
         }
@@ -544,7 +545,7 @@ class GalleryActivity : ComponentActivity() {
         strip.onSelect = { i -> category = i; apply() }
         // Sort order: a glass dropdown on the count at the right of the grid heading.
         (gridHead.getChildAt(1) as TextView).apply {
-            isClickable = true; minHeight = dp(40); gravity = Gravity.CENTER_VERTICAL; setPadding(dp(10), 0, 0, 0); contentDescription = "เรียงลำดับรายการ"
+            isClickable = true; minHeight = dp(48); gravity = Gravity.CENTER_VERTICAL; setPadding(dp(10), 0, 0, 0); contentDescription = "เรียงลำดับรายการ"
             setOnClickListener { v -> sortMenu.show(v, "เรียงตาม", SORTS.mapIndexed { i, n -> GlassMenu.Option(n, listOf(Icons.CHEVRON_UP, Icons.UPDOWN, Icons.VIDEO, Icons.AI)[i]) }, sortOrder) { i -> sortOrder = i; prefs.edit().putInt("gallery_sort", i).apply(); apply(); grid.setSelection(0) } }
         }
         field.addTextChangedListener(object : TextWatcher {
