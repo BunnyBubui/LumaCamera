@@ -66,20 +66,7 @@ class EditorFlowTest {
 
     @androidx.annotation.OptIn(markerClass = [UnstableApi::class])
     @Test(timeout = 300_000) fun videoEditorExportsAClip() {
-        // A two-second clip made from a still, so the test does not depend on the emulator camera.
-        val still = picture(640, 360)
-        val clip = File(context.cacheDir, "editor-test-${System.nanoTime()}.mp4")
-        val made = CountDownLatch(1); var failure: Exception? = null
-        inst.runOnMainSync {
-            val item = EditedMediaItem.Builder(MediaItem.Builder().setUri(Uri.fromFile(still)).setMimeType(MimeTypes.IMAGE_JPEG).setImageDurationMs(2000).build()).setFrameRate(30).build()
-            Transformer.Builder(context).setVideoMimeType(MimeTypes.VIDEO_H264).addListener(object : Transformer.Listener {
-                override fun onCompleted(composition: Composition, result: ExportResult) { made.countDown() }
-                override fun onError(composition: Composition, result: ExportResult, e: ExportException) { failure = e; made.countDown() }
-            }).build().start(item, clip.path)
-        }
-        assertTrue("Test clip was not made in time", made.await(60, TimeUnit.SECONDS))
-        assertTrue("Test clip failed: $failure", failure == null && clip.length() > 0)
-
+        val clip = TestMedia.clip(inst)
         val before = MediaLedger.all(context).map { it.uri.toString() }.toSet()
         ActivityScenario.launch<VideoEditorActivity>(VideoEditorActivity.intent(context, Uri.fromFile(clip))).use {
             assertNotNull("Speed tab is missing · ${GlassNav.dump(device)}", device.wait(Until.findObject(By.desc("ความเร็ว")), 10000))
@@ -95,6 +82,6 @@ class EditorFlowTest {
             until(150000, "No edited clip was published") { device.findObject(By.text("ส่งออกไม่ได้")) != null || MediaLedger.all(context).any { it.uri.toString() !in before && it.title.startsWith("Lumora_EDIT_") } }
             assertTrue("Export failed · ${device.findObject(By.textContains("วิดีโอต้นฉบับยังอยู่ครบ"))?.text}", device.findObject(By.text("ส่งออกไม่ได้")) == null)
         }
-        still.delete(); clip.delete()
+        clip.delete()
     }
 }

@@ -411,22 +411,7 @@ class VideoEditorActivity : ComponentActivity() {
         val (from, to) = parts[index]
         try {
             val composition = composition(from, to)
-            // Same decoder choice as the clip editor: on emulators the Goldfish decoder can drop the last surface frame,
-            // which leaves the export waiting forever, so Android's software decoder goes first there. Phones are unchanged.
-            val selector = androidx.media3.exoplayer.mediacodec.MediaCodecSelector { mime, secure, tunnel ->
-                val codecs = androidx.media3.exoplayer.mediacodec.MediaCodecSelector.DEFAULT.getDecoderInfos(mime, secure, tunnel)
-                if (androidx.media3.common.util.Util.isRunningOnEmulator()) codecs.sortedBy { when { it.name.contains("goldfish", true) -> 2; it.softwareOnly -> 0; else -> 1 } } else codecs
-            }
-            val platform = androidx.media3.transformer.DefaultDecoderFactory.Builder(this).setMediaCodecSelector(selector).build()
-            // Emulators also lose surface frames when the effects are slow; one frame in flight at a time keeps every frame.
-            val decoder: androidx.media3.transformer.Codec.DecoderFactory = if (!androidx.media3.common.util.Util.isRunningOnEmulator()) platform else object : androidx.media3.transformer.Codec.DecoderFactory by platform {
-                override fun createForVideoDecoding(format: androidx.media3.common.Format, surface: Surface, toneMap: Boolean, session: android.media.metrics.LogSessionId?): androidx.media3.transformer.Codec {
-                    val delegate = platform.createForVideoDecoding(format, surface, toneMap, session)
-                    return object : androidx.media3.transformer.Codec by delegate { override fun getMaxPendingFrameCount() = 1 }
-                }
-            }
-            val loaders = androidx.media3.transformer.DefaultAssetLoaderFactory(this, decoder, androidx.media3.common.util.Clock.DEFAULT, null)
-            val t = Transformer.Builder(this).setAssetLoaderFactory(loaders).setMaxDelayBetweenMuxerSamplesMs(90_000).setVideoMimeType(androidx.media3.common.MimeTypes.VIDEO_H264).setPortraitEncodingEnabled(true).addListener(object : Transformer.Listener {
+            val t = VideoEdit.transformer(this, object : Transformer.Listener {
                 override fun onCompleted(composition: Composition, result: ExportResult) {
                     done += file
                     if (index + 1 < parts.size) { exportPart(parts, index + 1, id, done); return }
@@ -443,7 +428,7 @@ class VideoEditorActivity : ComponentActivity() {
                 override fun onError(composition: Composition, result: ExportResult, e: ExportException) {
                     transformer = null; file.delete(); hideProgress(); failed("${e.errorCodeName} · ${e.cause?.message ?: e.localizedMessage}")
                 }
-            }).build()
+            })
             transformer = t; t.start(composition, file.path)
             overlayText?.text = if (parts.size > 1) "กำลังส่งออกคลิป ${index + 1}/${parts.size}" else "กำลังส่งออก"
             handler.post(poll)
@@ -455,31 +440,8 @@ class VideoEditorActivity : ComponentActivity() {
         handler.postDelayed(this, 300)
     } }
 
-    /** The edit as a media3 composition: clipped, sped up or slowed, look, crop and caption; music as a looping second sequence. */
-    private fun composition(from: Long, to: Long): Composition {
-        val item = MediaItem.Builder().setUri(source).setClippingConfiguration(MediaItem.ClippingConfiguration.Builder().setStartPositionMs(from).setEndPositionMs(to).build()).build()
-        val effects = mutableListOf<Effect>()
-        if (film != null) effects += SingleColorLut.createFromCube(EditorKit.cube(colour()))
-        val ratio = CROPS[cropIndex].second
-        if (ratio > 0f) effects += Presentation.createForAspectRatio(ratio, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP)
-        if (caption.isNotBlank()) {
-            val text = SpannableString(caption).apply { setSpan(ForegroundColorSpan(textColor), 0, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE) }
-            // TextOverlay draws at 100 px; scale it to a share of the (cropped) frame height like the preview.
-            val frameH = if (ratio > 0f && ratio > videoW.toFloat() / videoH) videoW / ratio else videoH.toFloat()
-            val scale = ((if (textBig) 0.11f else 0.07f) * frameH / TextOverlay.TEXT_SIZE_PIXELS).coerceAtLeast(0.2f)
-            val y = when (place) { 0 -> 0.88f; 1 -> 0f; else -> -0.88f }
-            val settings = StaticOverlaySettings.Builder().setScale(scale, scale).setBackgroundFrameAnchor(0f, y).setOverlayFrameAnchor(0f, if (place == 1) 0f else if (place == 0) 1f else -1f).build()
-            effects += OverlayEffect(listOf<TextureOverlay>(TextOverlay.createStaticTextOverlay(text, settings)))
-        }
-        val keepAudio = hasAudio && keepSound
-        val edited = EditedMediaItem.Builder(item).setEffects(Effects(emptyList(), effects)).setRemoveAudio(!keepAudio)
-        if (speed != 1f) edited.setSpeed(object : SpeedProvider { override fun getSpeed(timeUs: Long) = speed; override fun getNextSpeedChangeTimeUs(timeUs: Long) = C.TIME_UNSET })
-        val main = if (keepAudio) EditedMediaItemSequence.withAudioAndVideoFrom(listOf(edited.build())) else EditedMediaItemSequence.withVideoFrom(listOf(edited.build()))
-        val song = music ?: return Composition.Builder(main).build()
-        val track = EditedMediaItem.Builder(MediaItem.fromUri(song)).setRemoveVideo(true).build()
-        val audio = EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_AUDIO)).addItem(track).setIsLooping(true).build()
-        return Composition.Builder(main, audio).build()
-    }
+    private fun composition(from: Long, to: Long): Composition = VideoEdit.composition(VideoEditSpec(source, from, to, videoW, videoH,
+        speed, CROPS[cropIndex].second, caption, place, textColor, textBig, if (film != null) colour() else null, music, hasAudio && keepSound))
 
     /** Export problems stay on screen until dismissed, so the reason can be read (and reported). */
     private fun failed(reason: String) { if (!isFinishing) GlassDialog.show(this, "ส่งออกไม่ได้", "$reason\nวิดีโอต้นฉบับยังอยู่ครบ ลองปิดฟิลเตอร์หรือข้อความแล้วส่งออกอีกครั้ง") }
