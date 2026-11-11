@@ -1,5 +1,12 @@
 import java.security.MessageDigest
 
+// OPPO CameraUnit SDK is off by default. -Plumora.cameraunit=true compiles the real bridge against
+// OPPO's published SDK (see docs/CAMERAUNIT.md); otherwise a stub reports NOT_BUNDLED.
+val cameraUnitSdk = providers.gradleProperty("lumora.cameraunit").orNull == "true"
+// AUTH_CODE is issued by OPPO for one package name + signing key; empty means "not issued".
+val cameraUnitAuth = providers.gradleProperty("lumora.cameraunit.auth").orNull
+    ?: providers.environmentVariable("LUMA_CAMERAUNIT_AUTH").orNull ?: ""
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -20,7 +27,9 @@ android {
         externalNativeBuild { cmake { arguments += listOf("-DANDROID_STL=c++_shared") } }
         // Phones are arm64; x86_64 stays for the CI emulator. 32-bit copies of OpenCV/LiteRT only made the APK bigger.
         ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
+        manifestPlaceholders["cameraUnitAuth"] = cameraUnitAuth
     }
+    sourceSets["main"].java.srcDir(if (cameraUnitSdk) "src/cameraunitSdk/java" else "src/cameraunitStub/java")
     externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" } }
     buildFeatures { prefab = true }
     androidResources { noCompress += "tflite" }
@@ -77,6 +86,11 @@ dependencies {
     implementation("org.opencv:opencv:4.12.0")
     implementation("androidx.exifinterface:exifinterface:1.3.7")
     implementation("androidx.work:work-runtime:2.9.1")
+    if (cameraUnitSdk) {
+        // Same coordinates as OPPO's official demo (github.com/oppo/CameraUnit, camerax/build.gradle).
+        implementation("com.oplus.ocs:base:1.0.13@aar")
+        implementation("com.oplus.ocs:camera:1.0.7")
+    }
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:rules:1.6.1")
