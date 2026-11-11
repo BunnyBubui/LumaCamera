@@ -133,8 +133,8 @@ class VideoEditorActivity : ComponentActivity() {
         installRoot(root)
         // The caption field sits low on the screen: the page shrinks above the keyboard instead of hiding under it.
         androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
-            val t = androidx.core.view.WindowInsetsCompat.Type
-            val b = insets.getInsets(t.systemBars() or t.displayCutout() or t.ime()); v.setPadding(b.left, b.top, b.right, b.bottom); insets
+            val b = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars() or androidx.core.view.WindowInsetsCompat.Type.displayCutout() or androidx.core.view.WindowInsetsCompat.Type.ime())
+            v.setPadding(b.left, b.top, b.right, b.bottom); insets
         }
 
         val bar = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(10), dp(14), dp(6)) }
