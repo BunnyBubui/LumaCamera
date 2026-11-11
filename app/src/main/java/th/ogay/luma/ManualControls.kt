@@ -21,7 +21,7 @@ class ManualControls(private val context:Context, val camera:Camera, private val
     var locked=false;private set
     /** RAW sessions: leave the scene mode alone, some phones shift the colour badly when it is switched there. */
     var plainColor=false
-    val canManual get()=info.getCameraCharacteristic(CC.REQUEST_AVAILABLE_CAPABILITIES)?.contains(CC.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR)==true
+    val canManual by lazy{info.getCameraCharacteristic(CC.REQUEST_AVAILABLE_CAPABILITIES)?.contains(CC.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR)==true}
     private val key="manual.${info.cameraId}.${if(video)"video" else "photo"}."
     // A slider can move twenty times a second; the camera gets at most one new request per frame or two, and always
     // the last value, so dragging stays smooth instead of queueing requests behind each other.
@@ -80,7 +80,8 @@ class ManualControls(private val context:Context, val camera:Camera, private val
     fun lock(value:Boolean){locked=value;apply()}
     // Direct setters for the glass UI chips and edge rails (values are applied immediately).
     /** Closest focus in diopters. Some logical cameras report 0 although the lens focuses; then a physical lens value or a safe 10 (10 cm) is used. */
-    val minFocus:Float get(){
+    val minFocus:Float by lazy{computeMinFocus()}
+    private fun computeMinFocus():Float{
         val own=info.getCameraCharacteristic(CC.LENS_INFO_MINIMUM_FOCUS_DISTANCE)?:0f
         if(own>0f)return own
         val af=(info.getCameraCharacteristic(CC.CONTROL_AF_AVAILABLE_MODES)?:intArrayOf()).any{it!=CR.CONTROL_AF_MODE_OFF}
@@ -90,13 +91,13 @@ class ManualControls(private val context:Context, val camera:Camera, private val
         return if(physical>0f)physical else 10f
     }
     /** ISO in 1/3-stop steps inside the sensor range (OPPO-style fine dial). */
-    val isoValues get()=if(!canManual)emptyList() else info.getCameraCharacteristic(CC.SENSOR_INFO_SENSITIVITY_RANGE)!!.let{r->ISO_THIRDS.filter{it in r.lower..r.upper}}
+    val isoValues by lazy{if(!canManual)emptyList() else info.getCameraCharacteristic(CC.SENSOR_INFO_SENSITIVITY_RANGE)!!.let{r->ISO_THIRDS.filter{it in r.lower..r.upper}}}
     /** Shutter in 1/3-stop steps inside the sensor range; video is capped at one frame time. */
-    val shutterValues get()=if(!canManual)emptyList() else info.getCameraCharacteristic(CC.SENSOR_INFO_EXPOSURE_TIME_RANGE)!!.let{r->SHUTTER_THIRDS.filter{it.second>=r.lower&&it.second<=minOf(r.upper,if(video)(1_000_000_000L/videoFps) else r.upper)}}
+    val shutterValues by lazy{if(!canManual)emptyList() else info.getCameraCharacteristic(CC.SENSOR_INFO_EXPOSURE_TIME_RANGE)!!.let{r->SHUTTER_THIRDS.filter{it.second>=r.lower&&it.second<=minOf(r.upper,if(video)(1_000_000_000L/videoFps) else r.upper)}}}
     /** Manual white balance needs AWB off, the colour-correction controls of MANUAL_POST_PROCESSING and the sensor calibration matrices. */
-    val canKelvin get()=(info.getCameraCharacteristic(CC.CONTROL_AWB_AVAILABLE_MODES)?:intArrayOf()).contains(CR.CONTROL_AWB_MODE_OFF)&&
+    val canKelvin by lazy{(info.getCameraCharacteristic(CC.CONTROL_AWB_AVAILABLE_MODES)?:intArrayOf()).contains(CR.CONTROL_AWB_MODE_OFF)&&
         info.getCameraCharacteristic(CC.SENSOR_FORWARD_MATRIX1)!=null&&info.getCameraCharacteristic(CC.SENSOR_COLOR_TRANSFORM1)!=null&&
-        info.getCameraCharacteristic(CC.REQUEST_AVAILABLE_CAPABILITIES)?.contains(CC.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_POST_PROCESSING)==true
+        info.getCameraCharacteristic(CC.REQUEST_AVAILABLE_CAPABILITIES)?.contains(CC.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_POST_PROCESSING)==true}
     private fun m(t:android.hardware.camera2.params.ColorSpaceTransform?)=t?.let{x->DoubleArray(9){i->x.getElement(i%3,i/3).toDouble()}}
     /** Gains and camera→sRGB matrix for [kelvin], both interpolated between the two calibration illuminants like a DNG converter. */
     private fun kelvinColor(kelvin:Double,tint:Double):Pair<android.hardware.camera2.params.RggbChannelVector,android.hardware.camera2.params.ColorSpaceTransform>{
@@ -111,16 +112,16 @@ class ManualControls(private val context:Context, val camera:Camera, private val
         val out=IntArray(18){i->if(i%2==1)10000 else Math.round(ccm[i/2]*10000).toInt()}
         return android.hardware.camera2.params.RggbChannelVector(g[0].toFloat(),1f,1f,g[2].toFloat()) to android.hardware.camera2.params.ColorSpaceTransform(out)
     }
-    val edgeModes get()=(info.getCameraCharacteristic(CC.EDGE_AVAILABLE_EDGE_MODES)?:intArrayOf()).toList()
-    val nrModes get()=(info.getCameraCharacteristic(CC.NOISE_REDUCTION_AVAILABLE_NOISE_REDUCTION_MODES)?:intArrayOf()).toList()
-    val canCurve get()=(info.getCameraCharacteristic(CC.TONEMAP_AVAILABLE_TONE_MAP_MODES)?:intArrayOf()).contains(CR.TONEMAP_MODE_CONTRAST_CURVE)
+    val edgeModes by lazy{(info.getCameraCharacteristic(CC.EDGE_AVAILABLE_EDGE_MODES)?:intArrayOf()).toList()}
+    val nrModes by lazy{(info.getCameraCharacteristic(CC.NOISE_REDUCTION_AVAILABLE_NOISE_REDUCTION_MODES)?:intArrayOf()).toList()}
+    val canCurve by lazy{(info.getCameraCharacteristic(CC.TONEMAP_AVAILABLE_TONE_MAP_MODES)?:intArrayOf()).contains(CR.TONEMAP_MODE_CONTRAST_CURVE)}
     /** Tint −50 (green) … +50 (magenta) in steps of 5; only with Kelvin white balance. */
-    val tintValues get()=(-50..50 step 5).map{(if(it>0)"M" else if(it<0)"G" else "")+kotlin.math.abs(it) to it}
+    val tintValues by lazy{(-50..50 step 5).map{(if(it>0)"M" else if(it<0)"G" else "")+kotlin.math.abs(it) to it}}
     /** Sharpening and noise reduction: AUTO plus the modes this camera lists. */
-    val edgeValues:List<Pair<String,Int?>> get()=listOf<Pair<String,Int?>>("AUTO" to null)+listOf("ปิด" to CR.EDGE_MODE_OFF,"เบา" to CR.EDGE_MODE_FAST,"คมสูง" to CR.EDGE_MODE_HIGH_QUALITY).filter{it.second in edgeModes}
-    val nrValues:List<Pair<String,Int?>> get()=listOf<Pair<String,Int?>>("AUTO" to null)+listOf("ปิด" to CR.NOISE_REDUCTION_MODE_OFF,"น้อยที่สุด" to CR.NOISE_REDUCTION_MODE_MINIMAL,"เบา" to CR.NOISE_REDUCTION_MODE_FAST,"สูง" to CR.NOISE_REDUCTION_MODE_HIGH_QUALITY).filter{it.second in nrModes}
+    val edgeValues:List<Pair<String,Int?>> by lazy{listOf<Pair<String,Int?>>("AUTO" to null)+listOf("ปิด" to CR.EDGE_MODE_OFF,"เบา" to CR.EDGE_MODE_FAST,"คมสูง" to CR.EDGE_MODE_HIGH_QUALITY).filter{it.second in edgeModes}}
+    val nrValues:List<Pair<String,Int?>> by lazy{listOf<Pair<String,Int?>>("AUTO" to null)+listOf("ปิด" to CR.NOISE_REDUCTION_MODE_OFF,"น้อยที่สุด" to CR.NOISE_REDUCTION_MODE_MINIMAL,"เบา" to CR.NOISE_REDUCTION_MODE_FAST,"สูง" to CR.NOISE_REDUCTION_MODE_HIGH_QUALITY).filter{it.second in nrModes}}
     /** Contrast −3 … +3 as a tone curve; 0 leaves the camera's own curve. */
-    val contrastValues get()=if(!canCurve)emptyList() else (-3..3).map{(if(it>0)"+" else if(it==0)"±" else "")+it to it}
+    val contrastValues by lazy{if(!canCurve)emptyList() else (-3..3).map{(if(it>0)"+" else if(it==0)"±" else "")+it to it}}
     val currentTint get()=tint
     val currentEdge get()=edge
     val currentNr get()=nr
@@ -141,7 +142,7 @@ class ManualControls(private val context:Context, val camera:Camera, private val
     /** Time for the sensor to run a couple of frames at the long shutter before the picture is taken. */
     val settleMs get()=(realNs/1_000_000L*2+250).coerceAtMost(8000)
     val shutterLabel get()=shutterValues.firstOrNull{it.second==ns}?.first?:"${realNs/1_000_000} ms"
-    private val awbModes get()=(info.getCameraCharacteristic(CC.CONTROL_AWB_AVAILABLE_MODES)?:intArrayOf()).toList()
+    private val awbModes by lazy{(info.getCameraCharacteristic(CC.CONTROL_AWB_AVAILABLE_MODES)?:intArrayOf()).toList()}
     /** Camera presets with their usual colour temperatures, for cameras that ignore manual gains. */
     private val presetKelvin=listOf(CR.CONTROL_AWB_MODE_INCANDESCENT to 2850,CR.CONTROL_AWB_MODE_WARM_FLUORESCENT to 3200,CR.CONTROL_AWB_MODE_FLUORESCENT to 4000,CR.CONTROL_AWB_MODE_DAYLIGHT to 5500,CR.CONTROL_AWB_MODE_CLOUDY_DAYLIGHT to 6500,CR.CONTROL_AWB_MODE_SHADE to 7500)
     private fun nearestPreset(k:Int)=presetKelvin.filter{it.first in awbModes}.minByOrNull{kotlin.math.abs(it.second-k)}?.first?:CR.CONTROL_AWB_MODE_AUTO
@@ -163,10 +164,11 @@ class ManualControls(private val context:Context, val camera:Camera, private val
         },900)
     }
     /** Kelvin values whenever the camera can either take manual gains or has presets to approximate them. */
-    val wbValues get()=if(canKelvin||presetKelvin.count{it.first in awbModes}>=2)listOf("AUTO" to CR.CONTROL_AWB_MODE_AUTO)+(2000..10000 step 50).map{"${it}K" to it}
-        else (info.getCameraCharacteristic(CC.CONTROL_AWB_AVAILABLE_MODES)?:intArrayOf()).let{m->listOf("AUTO" to CR.CONTROL_AWB_MODE_AUTO,"แดด" to CR.CONTROL_AWB_MODE_DAYLIGHT,"เมฆ" to CR.CONTROL_AWB_MODE_CLOUDY_DAYLIGHT,"ร่ม" to CR.CONTROL_AWB_MODE_SHADE,"หลอดไฟ" to CR.CONTROL_AWB_MODE_INCANDESCENT,"ฟลูออเรสเซนต์" to CR.CONTROL_AWB_MODE_FLUORESCENT,"วอร์มฟลูออเรสเซนต์" to CR.CONTROL_AWB_MODE_WARM_FLUORESCENT,"พลบค่ำ" to CR.CONTROL_AWB_MODE_TWILIGHT).filter{it.second in m}}
+    val wbValues by lazy{if(canKelvin||presetKelvin.count{it.first in awbModes}>=2)listOf("AUTO" to CR.CONTROL_AWB_MODE_AUTO)+(2000..10000 step 50).map{"${it}K" to it}
+        else (info.getCameraCharacteristic(CC.CONTROL_AWB_AVAILABLE_MODES)?:intArrayOf()).let{m->listOf("AUTO" to CR.CONTROL_AWB_MODE_AUTO,"แดด" to CR.CONTROL_AWB_MODE_DAYLIGHT,"เมฆ" to CR.CONTROL_AWB_MODE_CLOUDY_DAYLIGHT,"ร่ม" to CR.CONTROL_AWB_MODE_SHADE,"หลอดไฟ" to CR.CONTROL_AWB_MODE_INCANDESCENT,"ฟลูออเรสเซนต์" to CR.CONTROL_AWB_MODE_FLUORESCENT,"วอร์มฟลูออเรสเซนต์" to CR.CONTROL_AWB_MODE_WARM_FLUORESCENT,"พลบค่ำ" to CR.CONTROL_AWB_MODE_TWILIGHT).filter{it.second in m}}}
     /** Manual focus: AUTO, then 48 steps from infinity to the closest distance, labelled in metres/centimetres. */
-    val focusValues:List<Pair<String,Float?>> get(){
+    val focusValues:List<Pair<String,Float?>> by lazy{computeFocus()}
+    private fun computeFocus():List<Pair<String,Float?>>{
         val near=minFocus; if(near<=0f)return listOf("AUTO" to null)
         return listOf("AUTO" to null)+(0..48).map{i->val d=near*i/48f;focusLabel(d) to d}
     }

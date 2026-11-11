@@ -862,7 +862,7 @@ class CameraActivity : ComponentActivity() {
     }
     private val chipTexts = mutableListOf<Pair<TextView, TextView>>()
     private fun rebuildChips() {
-        val keys = chipKeys(); chipTexts.clear()
+        val keys = chipKeys(); chipTexts.clear(); valuesCache.clear()
         if (keys.isEmpty()) { chipFrame.visibility = View.GONE; closeDial(); return }
         chipFrame.visibility = View.VISIBLE
         val items = keys.map { k ->
@@ -880,7 +880,10 @@ class CameraActivity : ComponentActivity() {
         chipTexts.forEachIndexed { i, (t, v) -> val on = i == live; t.setTextColor(if (on) Color.WHITE else Glass.TEXT3); v.text = chipValue(keys[i]); v.setTextColor(chipColor(keys[i])); (v.parent as? View)?.animate()?.scaleX(if (on) 1f else 0.92f)?.scaleY(if (on) 1f else 0.92f)?.setDuration(300)?.start() }
     }
     private fun chipTitle(k: String) = when (k) { "TIMER" -> "ตั้งเวลาถ่าย"; "KIND" -> "รูปแบบ"; "ALL" -> "ทั้งหมด"; "ISO" -> "ISO"; "S" -> "ชัตเตอร์"; "WB" -> "WB"; "TINT" -> "ทินต์"; "AF" -> "โฟกัส"; "CON" -> "คอนทราสต์"; "SHP" -> "ความคม"; "NR" -> "ลดนอยส์"; "F" -> "เบลอพื้นหลัง"; else -> "EV" }
-    private fun chipValues(k: String): List<String> {
+    // The lists are fixed for a bound camera; building them again on every slider step made Pro slow to open and to drag.
+    private val valuesCache = HashMap<String, List<String>>()
+    private fun chipValues(k: String): List<String> = valuesCache.getOrPut(k) { buildChipValues(k) }
+    private fun buildChipValues(k: String): List<String> {
         val m = manual
         return when (k) {
             "ALL" -> listOf("AUTO")

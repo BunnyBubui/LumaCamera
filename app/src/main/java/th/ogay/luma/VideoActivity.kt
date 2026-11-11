@@ -180,10 +180,10 @@ class VideoActivity:ComponentActivity(){
                     videoRatio()?.let{group.setViewPort(ViewPort.Builder(Rational((it*1000).roundToInt(),1000),targetRotation).build())}
                     group.build()
                 }
-                camera=p.bindToLifecycle(this,selector(),session)
+                lastHw=0f;vValuesCache.clear();camera=p.bindToLifecycle(this,selector(),session)
             }
             selectedCameraId=Camera2CameraInfo.from(info).cameraId;rear=info.lensFacing==CameraSelector.LENS_FACING_BACK
-            recorder=r;useCase=v;manual=if(slow||highRt)null else ManualControls(this,camera!!,true,true,fps).also{it.onNotice={t->notice(t)}}
+            recorder=r;useCase=v;vValuesCache.clear();manual=if(slow||highRt)null else ManualControls(this,camera!!,true,true,fps).also{it.onNotice={t->notice(t)}}
             camera!!.cameraInfo.zoomState.observe(this){refreshZoom()}
             faces.streamAspect=videoRatio()?:if(quality==Quality.SD)4f/3f else 16f/9f;configureFaces(faces,camera!!,null)
             applyStageShape();fitPreview()
@@ -539,13 +539,15 @@ class VideoActivity:ComponentActivity(){
     private var extraZoom=1f
     private fun zMax(z:androidx.camera.core.ZoomState)=if(zoomEffect!=null)maxOf(500f,z.maxZoomRatio) else z.maxZoomRatio
     private fun zNow(z:androidx.camera.core.ZoomState)=z.zoomRatio*extraZoom
-    private var wideUsed=false;private var low60=0
+    private var wideUsed=false;private var low60=0;private var lastHw=0f
     private fun setZoom(t:Float){
         if(t<0.95f&&recording!=null)wideUsed=true
         val cam=camera?:return;val z=cam.cameraInfo.zoomState.value?:return
         val hw=minOf(t,z.maxZoomRatio);val extra=if(zoomEffect!=null)(t/hw).coerceAtLeast(1f) else 1f
         val changed=extra!=extraZoom;extraZoom=extra;zoomEffect?.zoom=extra
-        cam.cameraControl.setZoomRatio(hw);if(changed)refreshZoom()
+        // Skip requests that would not change the picture: a spring that is settling asked the camera 120 times a second.
+        if(abs(hw-lastHw)>lastHw*0.0015f||hw==z.minZoomRatio||hw==z.maxZoomRatio){lastHw=hw;cam.cameraControl.setZoomRatio(hw)}
+        if(changed)refreshZoom()
     }
     private var zGoal=1f;private var zCur=1f;private var zVel=0.0;private var zSoft=false;private var zFollow:android.animation.TimeAnimator?=null
     /** The zoom follows a goal as a critically damped spring on a log scale (the same feel as photo mode): it starts and stops softly and never jumps. */
@@ -660,7 +662,9 @@ class VideoActivity:ComponentActivity(){
     private fun frameRates()=rateModes().map{it.upper}.ifEmpty{listOf(fps)}
     private fun ranges()=listOf(DynamicRange.SDR,DynamicRange.HLG_10_BIT,DynamicRange.HDR10_10_BIT).filter{caps()?.supportedDynamicRanges?.contains(it)?:(it==DynamicRange.SDR)}
     private fun evValues():List<Float>{val st=camera?.cameraInfo?.exposureState?:return listOf(0f);if(!st.isExposureCompensationSupported)return listOf(0f);val step=st.exposureCompensationStep.toFloat();val r=st.exposureCompensationRange;return(r.lower..r.upper).map{it*step}.filter{abs(it)<=4.01f}}
-    private fun chipValues(k:String):List<String>{val m=manual
+    private val vValuesCache=HashMap<String,List<String>>()
+    private fun chipValues(k:String):List<String> = vValuesCache.getOrPut(k){buildChipValues(k)}
+    private fun buildChipValues(k:String):List<String>{val m=manual
         return when(k){
             "ALL"->listOf("AUTO");"ASP"->V_ASPECTS.map{aspectLabel(it)};"RES"->qualities().map{qualityName(it)};"FPS"->rateModes().let{m->if(m.isEmpty())listOf("$fps") else m.map{x->when(x.source){NEEDS_SDR->"60 SDR";FORCED->"60";HIGH_SPEED->"${x.upper} HS";else->if(x.lower<x.upper)"≤${x.upper}" else "${x.upper}"}}};"HDR"->ranges().map{when(it){DynamicRange.SDR->"SDR";DynamicRange.HLG_10_BIT->"HLG10";else->"HDR10"}}
             "RATE"->listOf("8","20","40","80").map{"$it Mbps"};"LOG"->if(info()?.let{logSupported(it)}==true)LogProfile.entries.map{it.label} else listOf("มาตรฐาน");"EIS"->listOf("ปิด","เปิด");"MIC"->listOf("ปิด","เปิด")
