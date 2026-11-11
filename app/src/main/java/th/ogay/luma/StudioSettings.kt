@@ -131,6 +131,7 @@ fun Activity.showStudioSettings(rawAvailable: Boolean, changed: () -> Unit) {
     choose("ถ่ายเร็ว: เริ่มต้นที่", Icons.FLASH, "quick_kind", listOf("แฟลชเร็ว", "แฟลชไว", "ถ่ายเร็ว (กีฬา)"), listOf("FLASH_NIGHT", "FLASH_FAST", "SPORT"), "FLASH_NIGHT")
     toggle("วิดีโอ: บันทึกเสียง", Icons.MIC, "video_mic", true)
     toggle("วิดีโอ: กันสั่น", Icons.STAB, "video_eis", false)
+    toggle("วิดีโอ: ซูมเกิน 20×", Icons.SEARCH, "video_superzoom", false, "ครอปภาพด้วย GPU ระหว่างอัด ซูมได้ถึง 500× ใช้แบตมากขึ้น ใช้กับวิดีโอ SDR")
     section("การควบคุม")
     choose("ปุ่มเสียง", Icons.SOUND, "volume_action", listOf("ถ่ายภาพ", "ซูม", "ปรับเสียงระบบ"), listOf("shutter", "zoom", "system"), "shutter")
     choose("ความเร็วซูม", Icons.SEARCH, "zoom_speed", listOf("ช้า", "ปกติ", "เร็ว"), listOf("slow", "normal", "fast"), "normal")
