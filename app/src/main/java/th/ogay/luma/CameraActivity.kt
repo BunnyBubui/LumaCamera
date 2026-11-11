@@ -57,7 +57,9 @@ class CameraActivity : ComponentActivity() {
     class BarMode(val key: String, val title: String, val icon: String)
     companion object {
         /** Rear camera zoom limit: hardware zoom, then the app's crop enlarged by AI SR1 when the photo is saved. */
-        const val SUPER_ZOOM = 200f
+        const val SUPER_ZOOM = 500f
+        /** Front camera: the system stops at 10×; the app crops up to here. */
+        const val FRONT_ZOOM = 20f
         /** Fast-shot types: shutter time in nanoseconds and the ISO that keeps the picture usable. */
         val SPORT_KINDS = listOf(
             Triple("เดิน · เด็กเล่น", 1_000_000_000L / 500, 400), Triple("วิ่ง · กีฬาทั่วไป", 1_000_000_000L / 1000, 800),
@@ -707,7 +709,7 @@ class CameraActivity : ComponentActivity() {
         if (zoomLocked()) return
         val (lo, hi) = range()
         var z = (dragZoom0 * 2f.pow(-dx / dp(80))).coerceIn(lo, hi)
-        renderedZooms.firstOrNull { abs(ln(z / it) / ln(2f)) < 0.075f }?.let { lens -> if (abs(ratio - lens) > 0.001f) { Glass.tick(wheel); snapshotLens(lens) }; z = lens }
+        renderedZooms.firstOrNull { abs(ln(z / it) / ln(2f)) < 0.075f }?.let { lens -> if (abs(ratio - lens) > 0.001f) Glass.tick(wheel); z = lens }
         zoomTo(z); wheel.zoom = zoomGoal
     }
     private fun zoomDragEnd() { wheel.removeCallbacks(hideWheel); wheel.postDelayed(hideWheel, 1300) }
@@ -731,6 +733,10 @@ class CameraActivity : ComponentActivity() {
         if (lens != 1f && lens != 3.5f) return
         val now = android.os.SystemClock.uptimeMillis(); if (now - lastShot < 1500 && lensShots.containsKey(lens)) return; lastShot = now
         val small = preview.smallFrame(240) ?: return
+        // A frame grabbed while the lens is still switching is black; keep the previous map instead.
+        val px = IntArray(small.width * small.height); small.getPixels(px, 0, small.width, 0, 0, small.width, small.height)
+        val mean = px.sumOf { ((it shr 16 and 255) + (it shr 8 and 255) + (it and 255)).toLong() } / (3L * px.size)
+        if (mean < 4 && lensShots.containsKey(lens)) { small.recycle(); return }
         lensShots.put(lens, small)?.recycle()
     }
     private fun clearLensShots() { lensShots.values.forEach { it.recycle() }; lensShots.clear(); if (::miniImage.isInitialized) miniImage.setImageDrawable(null) }
@@ -755,6 +761,9 @@ class CameraActivity : ComponentActivity() {
             if (lp.width != size) { lp.width = size; lp.height = size; t.layoutParams = lp }
             (t.background as? GlassDrawable)?.fill = if (on) 0x8c000000.toInt() else 0x1affffff
         }
+        // The map is the frame seen while resting exactly on a lens (1× or 3.5×), refreshed every 1.5 s there.
+        if (rear && !busy && !zoomSettling && preview.previewStreamState.value == PreviewView.StreamState.STREAMING)
+            renderedZooms.firstOrNull { (it == 1f || it == 3.5f) && abs(ratio - it) < 0.02f }?.let { snapshotLens(it) }
         val showMini = ratio > 10f && rear
         val lens = if (ratio >= 3.5f && renderedZooms.contains(3.5f)) 3.5f else 1f
         if (showMini && miniCard.visibility != View.VISIBLE) { miniCard.visibility = View.VISIBLE; Liquid.show(miniCard, miniCard.width.toFloat(), 0f, false) }
@@ -1212,7 +1221,7 @@ class CameraActivity : ComponentActivity() {
             stops.forEach { v ->
                 val cell = FrameLayout(this).apply { isClickable = true; isFocusable = true; contentDescription = "ซูม ${zoomText(v)} ลากซ้ายขวาเพื่อซูมละเอียด" }
                 cell.addView(text(zoomText(v), 12f, Color.WHITE, true).apply { setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 12f); gravity = Gravity.CENTER; background = GlassDrawable(0x1affffff, dp(20).toFloat(), resources.displayMetrics.density) }, FrameLayout.LayoutParams(dp(32), dp(32), Gravity.CENTER))
-                cell.setOnClickListener { if (!zoomLocked()) { snapshotLens(v); animateZoom(v) } }
+                cell.setOnClickListener { if (!zoomLocked()) animateZoom(v) }
                 zooms.addView(cell, LinearLayout.LayoutParams(dp(48), dp(48)).apply { setMargins(dp(1), 0, dp(1), 0) })
             }
         }
@@ -1383,7 +1392,7 @@ class CameraActivity : ComponentActivity() {
     private fun range(): Pair<Float,Float> {
         val z=camera?.cameraInfo?.zoomState?.value
         val lo=if(software && rear && cropFrom<=1f) 1f else z?.minZoomRatio ?: 1f
-        return lo to (if(rear) maxOf(SUPER_ZOOM,hardwareMax()) else z?.maxZoomRatio ?: 1f)
+        return lo to (if(rear) maxOf(SUPER_ZOOM,hardwareMax()) else maxOf(FRONT_ZOOM,z?.maxZoomRatio ?: 1f))
     }
     /** Part of [ratio] the app adds by cropping (1 = none). */
     private fun appCrop(z: Float = ratio): Float = (z / minOf(z, hardwareMax()).coerceAtLeast(0.01f)).coerceAtLeast(1f)
