@@ -24,6 +24,10 @@ import java.util.concurrent.Executors
 class QrWatcher(private val preview: PreviewView, private val host: FrameLayout) {
     private val scanner by lazy { BarcodeScanning.getClient(BarcodeScannerOptions.Builder().setBarcodeFormats(Barcode.FORMAT_QR_CODE).build()) }
     private val worker = Executors.newSingleThreadExecutor()
+    // A scan can still be running when the camera screen closes and shuts the worker down; ML Kit then hands its
+    // result to a terminated executor, which threw RejectedExecutionException on the main thread and killed the app.
+    // Results that arrive after close are dropped instead.
+    private val results = java.util.concurrent.Executor { r -> if (!worker.isShutdown) runCatching { worker.execute(r) } }
     private var running = false; private var busy = false; private var closed = false
     private var lastValue: String? = null; private var lastAt = 0L
     private var chip: View? = null
@@ -42,12 +46,12 @@ class QrWatcher(private val preview: PreviewView, private val host: FrameLayout)
         val frame = preview.smallFrame(720) ?: return
         busy = true
         scanner.process(InputImage.fromBitmap(frame, 0))
-            .addOnSuccessListener(worker) { codes ->
+            .addOnSuccessListener(results) { codes ->
                 val value = codes.firstOrNull { !it.rawValue.isNullOrBlank() }?.rawValue
                 frame.recycle()
                 preview.post { busy = false; if (value != null && running) found(value) }
             }
-            .addOnFailureListener(worker) { frame.recycle(); preview.post { busy = false } }
+            .addOnFailureListener(results) { frame.recycle(); preview.post { busy = false } }
     }
 
     private fun found(value: String) {

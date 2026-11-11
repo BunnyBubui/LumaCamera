@@ -50,6 +50,8 @@ class PortraitPreview(private val preview: PreviewView, private val view: ImageV
     private val width = 256
     private val segmenter by lazy { Segmentation.getClient(SelfieSegmenterOptions.Builder().setDetectorMode(SelfieSegmenterOptions.STREAM_MODE).build()) }
     private val worker = Executors.newSingleThreadExecutor()
+    // Same guard as QrWatcher: a mask that arrives after close() must not be handed to the shut-down worker.
+    private val results = java.util.concurrent.Executor { r -> if (!worker.isShutdown) runCatching { worker.execute(r) } }
     private var running = false
     @Volatile private var inFlight = false
     private var closed = false
@@ -77,7 +79,7 @@ class PortraitPreview(private val preview: PreviewView, private val view: ImageV
         val f = aperture(); val at = focus()
         inFlight = true
         segmenter.process(InputImage.fromBitmap(small, 0))
-            .addOnSuccessListener(worker) { mask ->
+            .addOnSuccessListener(results) { mask ->
                 val out = runCatching {
                     val buf = mask.buffer; buf.rewind()
                     val weights = FloatArray(mask.width * mask.height); buf.asFloatBuffer().get(weights)
@@ -95,7 +97,7 @@ class PortraitPreview(private val preview: PreviewView, private val view: ImageV
                     else { view.setImageBitmap(out); if (view.alpha < 1f) view.animate().alpha(1f).setDuration(200).start() }
                 }
             }
-            .addOnFailureListener(worker) { preview.post { inFlight = false } }
+            .addOnFailureListener(results) { preview.post { inFlight = false } }
     }
 
     @androidx.annotation.RequiresApi(33)
