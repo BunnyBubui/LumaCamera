@@ -417,8 +417,16 @@ class VideoEditorActivity : ComponentActivity() {
                 val codecs = androidx.media3.exoplayer.mediacodec.MediaCodecSelector.DEFAULT.getDecoderInfos(mime, secure, tunnel)
                 if (androidx.media3.common.util.Util.isRunningOnEmulator()) codecs.sortedBy { when { it.name.contains("goldfish", true) -> 2; it.softwareOnly -> 0; else -> 1 } } else codecs
             }
-            val loaders = androidx.media3.transformer.DefaultAssetLoaderFactory(this, androidx.media3.transformer.DefaultDecoderFactory.Builder(this).setMediaCodecSelector(selector).build(), androidx.media3.common.util.Clock.DEFAULT, null)
-            val t = Transformer.Builder(this).setAssetLoaderFactory(loaders).setVideoMimeType(androidx.media3.common.MimeTypes.VIDEO_H264).setPortraitEncodingEnabled(true).addListener(object : Transformer.Listener {
+            val platform = androidx.media3.transformer.DefaultDecoderFactory.Builder(this).setMediaCodecSelector(selector).build()
+            // Emulators also lose surface frames when the effects are slow; one frame in flight at a time keeps every frame.
+            val decoder: androidx.media3.transformer.Codec.DecoderFactory = if (!androidx.media3.common.util.Util.isRunningOnEmulator()) platform else object : androidx.media3.transformer.Codec.DecoderFactory by platform {
+                override fun createForVideoDecoding(format: androidx.media3.common.Format, surface: Surface, toneMap: Boolean, session: android.media.metrics.LogSessionId?): androidx.media3.transformer.Codec {
+                    val delegate = platform.createForVideoDecoding(format, surface, toneMap, session)
+                    return object : androidx.media3.transformer.Codec by delegate { override fun getMaxPendingFrameCount() = 1 }
+                }
+            }
+            val loaders = androidx.media3.transformer.DefaultAssetLoaderFactory(this, decoder, androidx.media3.common.util.Clock.DEFAULT, null)
+            val t = Transformer.Builder(this).setAssetLoaderFactory(loaders).setMaxDelayBetweenMuxerSamplesMs(90_000).setVideoMimeType(androidx.media3.common.MimeTypes.VIDEO_H264).setPortraitEncodingEnabled(true).addListener(object : Transformer.Listener {
                 override fun onCompleted(composition: Composition, result: ExportResult) {
                     done += file
                     if (index + 1 < parts.size) { exportPart(parts, index + 1, id, done); return }
