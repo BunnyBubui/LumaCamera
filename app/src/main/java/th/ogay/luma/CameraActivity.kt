@@ -166,7 +166,7 @@ class CameraActivity : ComponentActivity() {
     private lateinit var thumb: ImageView
     private lateinit var thumbWorking: ProcessingSpinner
     private lateinit var countdown: TextView
-    private lateinit var modeArrow: IconView
+    private lateinit var modeArrow: ArrowTab
     private lateinit var menu: GlassMenu
     private lateinit var panel: GlassSheet
     private lateinit var editor: GlassSheet
@@ -412,12 +412,13 @@ class CameraActivity : ComponentActivity() {
         modeStrip = CenterStrip(this).apply { onSelect = { i -> pickBar(i) }; onLive = { i -> styleModes(i) }; contentDescription = "แถบโหมด"; fadeDp = 64f }
         val stripBox = FrameLayout(this).apply { clipChildren = false; setPadding(dp(10), 0, dp(10), 0) }
         stripBox.addView(modeStrip, FrameLayout.LayoutParams(-1, dp(58 * grow())))
-        modeArrow = IconView(this, Icons.CHEVRON_UP, 2.2f).apply {
-            tint = Color.WHITE; shadow = true; contentDescription = "เปิดตัวเลือกกล้อง"; isClickable = true; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+        // 48 dp touch box; the chevron is drawn at its top so it overlaps the top edge of the selected-mode capsule.
+        modeArrow = ArrowTab(this, modeStrip).apply {
+            contentDescription = "ตัวเลือกกล้อง แตะเพื่อเปิด"
             setOnClickListener { Glass.tick(this); openPanel() }
+            addView(IconView(this@CameraActivity, Icons.CHEVRON_UP, 2.4f).apply { tint = Color.WHITE; shadow = true }, FrameLayout.LayoutParams(dp(24), dp(16), Gravity.TOP or Gravity.CENTER_HORIZONTAL))
         }
-        // 48 dp touch box with the 20 dp chevron drawn at its top, overlapping the top edge of the selected-mode capsule.
-        stripBox.addView(modeArrow, FrameLayout.LayoutParams(dp(48), dp(20), Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = -dp(6) })
+        stripBox.addView(modeArrow, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP or Gravity.CENTER_HORIZONTAL))
         dock.clipChildren = false
         dock.addView(stripBox, -1, -2)
         if (android.os.Build.VERSION.SDK_INT >= 29) modeStrip.addOnLayoutChangeListener { v, l, t, r, b, _, _, _, _ -> v.systemGestureExclusionRects = listOf(android.graphics.Rect(0, 0, r - l, b - t)) }

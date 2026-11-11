@@ -25,21 +25,22 @@ class VideoSessionDeviceTest {
         assertTrue("Video session did not finish discovery", condition())
     }
     @Test fun sixtyFpsIsRetainedAcrossRecreateOrExplicitlyRejected() {
+        // The choice lives in "video_fps_s" (string) since the video settings sheet; "video_fps" is only an old fallback.
         val prefs = context.getSharedPreferences("camera", 0)
-        val before = prefs.getInt("video_fps", 30)
-        prefs.edit().putInt("video_fps", 60).commit()
+        val before = prefs.getString("video_fps_s", null)
+        prefs.edit().putString("video_fps_s", "60").commit()
         try {
             ActivityScenario.launch<VideoActivity>(Intent(context, VideoActivity::class.java)).use { activity ->
                 fun settled() = device.findObject(By.desc("เริ่มบันทึกวิดีโอ"))?.isEnabled == true || device.findObject(By.textContains("ชุดนี้ใช้ไม่ได้")) != null
                 waitFor { settled() }
-                assertEquals(60, prefs.getInt("video_fps", -1))
+                assertEquals("60", prefs.getString("video_fps_s", null))
                 assertNotNull(device.findObject(By.textContains("60")))
                 activity.recreate()
                 waitFor { settled() }
-                assertEquals(60, prefs.getInt("video_fps", -1))
+                assertEquals("60", prefs.getString("video_fps_s", null))
                 assertNotNull(device.findObject(By.textContains("60")))
             }
-        } finally { prefs.edit().putInt("video_fps", before).commit() }
+        } finally { prefs.edit().apply { if (before == null) remove("video_fps_s") else putString("video_fps_s", before) }.commit() }
     }
     @org.junit.Ignore("Mode or AI row removed in round 5") @Test fun slowMotionEntryUsesSameDiscoveryBeforeSettingsAndDoesNotRequestAudio() {
         ActivityScenario.launch<VideoActivity>(Intent(context, VideoActivity::class.java).putExtra("mode", "SLOW")).use {

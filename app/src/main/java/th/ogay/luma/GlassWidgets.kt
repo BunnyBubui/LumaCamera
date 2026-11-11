@@ -1031,3 +1031,32 @@ class ProcessingSpinner(context: Context) : View(context) {
         c.drawArc(box, angle - 90f, 100f, false, arc)
     }
 }
+
+/**
+ * The small arrow above the selected mode. It is a full 48 dp touch box, so it can be tapped, but it sits on top of
+ * the mode strip: a sideways drag that starts on it is handed to the strip (from the original down event), so
+ * swiping between modes still works from the middle of the bar. An upward swipe is taken by the dock as before.
+ */
+class ArrowTab(context: Context, private val strip: View) : FrameLayout(context) {
+    private val slop = ViewConfiguration.get(context).scaledTouchSlop
+    private var x0 = 0f; private var y0 = 0f; private var forwarding = false; private var down: MotionEvent? = null
+    init { isClickable = true; isFocusable = true }
+    private fun send(e: MotionEvent) {
+        val a = IntArray(2); val b = IntArray(2); getLocationOnScreen(a); strip.getLocationOnScreen(b)
+        val c = MotionEvent.obtain(e); c.offsetLocation((a[0] - b[0]).toFloat(), (a[1] - b[1]).toFloat())
+        strip.dispatchTouchEvent(c); c.recycle()
+    }
+    override fun onTouchEvent(e: MotionEvent): Boolean {
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> { x0 = e.rawX; y0 = e.rawY; forwarding = false; down?.recycle(); down = MotionEvent.obtain(e); isPressed = true }
+            MotionEvent.ACTION_MOVE -> {
+                if (!forwarding && abs(e.rawX - x0) > slop && abs(e.rawX - x0) > abs(e.rawY - y0)) { forwarding = true; isPressed = false; down?.let { send(it) } }
+                if (forwarding) send(e)
+            }
+            MotionEvent.ACTION_UP -> { if (forwarding) send(e) else if (isPressed) { isPressed = false; performClick() }; forwarding = false }
+            MotionEvent.ACTION_CANCEL -> { if (forwarding) send(e); forwarding = false; isPressed = false }
+        }
+        return true
+    }
+    override fun onDetachedFromWindow() { down?.recycle(); down = null; super.onDetachedFromWindow() }
+}
