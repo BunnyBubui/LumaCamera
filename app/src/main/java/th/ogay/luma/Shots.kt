@@ -35,7 +35,7 @@ data class Shot(
     val aiProgress: Int = 0,
     val aiReport: String? = null
 ) {
-    val baseName get() = "LUMA_${time}_${id}"
+    val baseName get() = "Lumora_${time}_${id}"
     val aiVersion get() = (if (output.enhance) "MF1_" else "") +
         if (aiModel == MODEL_VERSION) MODEL_VERSION else "${aiModel}_x${aiScale}_s${aiStrength}${if (aiToken.isEmpty()) "" else "_$aiToken"}"
     val aiName get() = "${baseName}_${aiVersion}_AI.jpg"

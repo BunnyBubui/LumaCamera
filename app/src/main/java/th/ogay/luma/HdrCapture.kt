@@ -54,7 +54,7 @@ class HdrCapture(private val c:Context,private val camera:Camera,private val cap
         val runtime=Runtime.getRuntime()
         val available=runtime.maxMemory()-(runtime.totalMemory()-runtime.freeMemory())
         fun frame(i:Int):Bitmap=decoded[i]?.let{runCatching{it.get()}.getOrNull()}?:PhotoEffects.read(files[i],target)
-        PhotoMedia.publish(c,files.first(),"LUMA_HDR_REFERENCE_${System.currentTimeMillis()}.jpg",System.currentTimeMillis())
+        PhotoMedia.publish(c,files.first(),"Lumora_HDR_REFERENCE_${System.currentTimeMillis()}.jpg",System.currentTimeMillis())
         val base=frame(0);val width=base.width;val height=base.height
         val bitmaps=mutableListOf(base)
         try{

@@ -8,7 +8,7 @@ import kotlin.math.roundToInt
 object DetailResampler {
     fun copyCore(native: FloatArray, input: IntArray, scale: Int, strength: Int,
                  coreW: Int, coreH: Int, destination: IntArray, stride: Int, left: Int) {
-        require(scale in 2..4 && strength in 0..100)
+        require(scale in 2..4 && strength in 0..150)
         val edge = EnhanceSpec.INPUT
         val outEdge = edge * 4
         require(native.size == outEdge*outEdge*3 && input.size == edge*edge)

@@ -476,7 +476,7 @@ open class LayerFrame(context: Context) : FrameLayout(context) {
         if (scrub) return true
         if (onPull != null) when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> { tracking = e.y < pullZonePx && !contentScrolled(this); pulling = false; y0 = e.rawY; x0 = e.rawX; tracker?.recycle(); tracker = VelocityTracker.obtain().also { it.addMovement(e) } }
-            MotionEvent.ACTION_MOVE -> { tracker?.addMovement(e); if (tracking && !pulling) { val dy = e.rawY - y0; if (dy > slop && dy > abs(e.rawX - x0)) { pulling = true; parent?.requestDisallowInterceptTouchEvent(true); return true } } }
+            MotionEvent.ACTION_MOVE -> { tracker?.addMovement(e); if (tracking && !pulling) { val dy = e.rawY - y0; if (dy > slop && dy > abs(e.rawX - x0)) { pulling = true; Glass.tick(this); parent?.requestDisallowInterceptTouchEvent(true); return true } } }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { tracking = false; tracker?.recycle(); tracker = null }
         }
         return super.onInterceptTouchEvent(e)
@@ -663,7 +663,8 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
                 }
             }
         }
-        host.addView(menu, FrameLayout.LayoutParams(w, if (scrolls) h else -2).apply { leftMargin = x; topMargin = y })
+        // Margins are measured inside the host padding; x/y are window-relative, so take the padding back off (the menu sat a status bar too low).
+        host.addView(menu, FrameLayout.LayoutParams(w, if (scrolls) h else -2).apply { leftMargin = x - host.paddingLeft; topMargin = y - host.paddingTop })
         overlay = shade; card = menu; dimmed = true; dim(true)
         menu.alpha = 0f
         menu.post { Liquid.show(menu, (ax + anchor.width / 2f - x).coerceIn(0f, w.toFloat()), if (up) menu.height.toFloat() else 0f, false) }

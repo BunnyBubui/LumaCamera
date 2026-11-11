@@ -6,7 +6,7 @@ import th.ogay.luma.Dimensions
 data class EnhanceSpec(val scale: Int = 2, val strength: Int = 100) {
     init {
         require(scale in 2..4) { "เลือกขนาด ×2, ×3 หรือ ×4" }
-        require(strength in 0..100) { "ความแรงต้องอยู่ระหว่าง 0–100" }
+        require(strength in 0..150) { "ความแรงต้องอยู่ระหว่าง 0–150" }
     }
     fun output(source: Dimensions): Dimensions {
         require(source.w > 0 && source.h > 0)

@@ -73,9 +73,14 @@ class VideoPlayerActivity : ComponentActivity() {
         val speedLabel = text("1×", 13f, Color.WHITE, true)
         row.addView(speedLabel.apply { gravity = Gravity.CENTER; background = glass(18, 0x1affffff); setPadding(dp(14), 0, dp(14), 0); minWidth = dp(56); isClickable = true; contentDescription = "ความเร็วการเล่น"; glassTouch()
             setOnClickListener { speed = when (speed) { 1f -> 1.5f; 1.5f -> 2f; 2f -> 0.5f; else -> 1f }; text = "${if (speed % 1f == 0f) speed.toInt().toString() else speed.toString()}×"; applySpeed() } }, LinearLayout.LayoutParams(-2, dp(44)).apply { rightMargin = dp(8) })
-        val mute = text("เสียงเปิด", 13f, Color.WHITE, true)
-        row.addView(mute.apply { gravity = Gravity.CENTER; background = glass(18, 0x1affffff); setPadding(dp(14), 0, dp(14), 0); isClickable = true; glassTouch()
-            setOnClickListener { muted = !muted; player?.setVolume(if (muted) 0f else 1f, if (muted) 0f else 1f); text = if (muted) "ปิดเสียง" else "เสียงเปิด" } }, LinearLayout.LayoutParams(-2, dp(44)))
+        // Speaker icon instead of words; the state is spoken for TalkBack.
+        val speakerOn = "M4 9h4l5-4v14l-5-4H4z M16.5 9.5v5 M19.5 7v10"
+        val speakerOff = "M4 9h4l5-4v14l-5-4H4z M16 9l6 6 M22 9l-6 6"
+        val muteIcon = IconView(this, speakerOn).apply { tint = Color.WHITE }
+        val mute = FrameLayout(this).apply { background = glass(22, 0x1affffff); isClickable = true; glassTouch(); contentDescription = "ปิดเสียง"
+            addView(muteIcon, FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER))
+            setOnClickListener { muted = !muted; player?.setVolume(if (muted) 0f else 1f, if (muted) 0f else 1f); muteIcon.path = if (muted) speakerOff else speakerOn; contentDescription = if (muted) "เปิดเสียง" else "ปิดเสียง"; Glass.tick(this) } }
+        row.addView(mute, LinearLayout.LayoutParams(dp(44), dp(44)))
         bottom.addView(row, -1, -2)
         host.addView(bottom, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply { setMargins(dp(12), 0, dp(12), dp(12)) })
         chrome = listOf(top, center, bottom)

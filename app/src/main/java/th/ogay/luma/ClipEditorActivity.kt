@@ -45,7 +45,7 @@ class ClipEditorActivity:ComponentActivity(){
         export=pill("ส่งออกเป็นไฟล์ใหม่"){if(transformer==null)start()else cancel()}.apply{contentDescription="ส่งออกคลิป"};export.minHeight=dp(60);root.addView(export,-1,-2)
     }
     private fun start(){val uri=intent.data?:return;if(filesDir.usableSpace<128L*1024*1024){notice("พื้นที่ว่างไม่พอเริ่มส่งออก");return};if(preset==4&&lut==null){notice("นำเข้า .cube ก่อน");return}
-        val id=System.currentTimeMillis();val dir=File(filesDir,"video-exports/$id").apply{mkdirs()};val file=File(dir,"LUMA_EDIT_$id.mp4");output=file;job=File(dir,"job.json")
+        val id=System.currentTimeMillis();val dir=File(filesDir,"video-exports/$id").apply{mkdirs()};val file=File(dir,"Lumora_EDIT_$id.mp4");output=file;job=File(dir,"job.json")
         val metadata=JSONObject().put("source",uri.toString()).put("preset",preset).put("codec",codec).put("speed",speed).put("crop",crop).put("state","running")
         if(preset==3)metadata.put("transfer","LumaLog1: log10(1+9*linearRGB), derived from SDR; not sensor Log/RAW")
         job!!.writeText(metadata.toString(2))

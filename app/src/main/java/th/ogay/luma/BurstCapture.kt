@@ -100,7 +100,7 @@ class BurstCapture(
                         // CameraX can emit one final callback or one per format. An early
                         // callback may precede the other file; the final one sees both.
                         if (rawFile.length() == 0L || jpegFile.length() == 0L) return
-                        rawUri = PhotoMedia.publish(context, rawFile, "LUMA_${time}_${id}.dng", time, "image/x-adobe-dng")
+                        rawUri = PhotoMedia.publish(context, rawFile, "Lumora_${time}_${id}.dng", time, "image/x-adobe-dng")
                         accept(jpegFile)
                     } catch (e: Exception) {
                         finish(e.localizedMessage ?: "บันทึก RAW ไม่สำเร็จ")
@@ -177,7 +177,7 @@ class BurstCapture(
             if (!inserted) {
                 val size = PhotoMedia.dimensions(complete)
                 val uri = if (output.rawOnly) Uri.fromFile(complete)
-                    else PhotoMedia.publish(context, complete, "LUMA_${time}_${id}.jpg", time)
+                    else PhotoMedia.publish(context, complete, "Lumora_${time}_${id}.jpg", time)
                 app.shots.insert(Shot(id, time, uri, size, zoom, rear, null,
                     if (softwareCrop) size.pixels else null, if (output.enhance) Decision.MANUAL_AI else Decision.RAW_CAPTURE, Stage.CAPTURING,
                     null, 0, null, softwareCrop, rawUri, output, captured, count))

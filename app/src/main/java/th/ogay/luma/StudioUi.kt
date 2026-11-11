@@ -12,7 +12,7 @@ import kotlin.math.*
 
 enum class PhotoMode(val title: String) {
     NIGHT("กลางคืน"), PORTRAIT("บุคคล"), PHOTO("ภาพถ่าย"), VIDEO("วิดีโอ"), PRO("โปร"), MORE("เพิ่มเติม"),
-    HDR("HDR"), ULTRA_HDR("Ultra HDR"), HIRES("ความละเอียดสูง"), DOCUMENT("เอกสาร"), PANORAMA("พาโนรามา"), FLASH_NIGHT("แฟลชเร็ว"), FILM("ฟิล์ม"), SPORT("ถ่ายเร็ว"), FLASH_FAST("แฟลชไว")
+    HDR("HDR"), ULTRA_HDR("Ultra HDR"), HIRES("ความละเอียดสูง"), DOCUMENT("เอกสาร"), PANORAMA("พาโนรามา"), FLASH_NIGHT("แฟลชเร็ว"), FILM("ฟิล์ม"), SPORT("ถ่ายเร็ว"), FLASH_FAST("แฟลชเร็วพิเศษ")
 }
 
 fun Context.studioSheet(title: String, build: (LinearLayout, Dialog) -> Unit): Dialog {

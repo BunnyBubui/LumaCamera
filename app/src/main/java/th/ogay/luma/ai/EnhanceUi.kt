@@ -17,7 +17,8 @@ object EnhanceUi {
     fun show(activity: ComponentActivity, shot: Shot) {
         val prefs = activity.getSharedPreferences("enhance",0)
         var scale = prefs.getInt("scale",2).coerceIn(2,4)
-        var strength = prefs.getInt("strength",100).coerceIn(0,100)
+        // Above 100 the AI detail is pushed past the plain upscale (sharper); 120 is the new default.
+        var strength = prefs.getInt("strength2",120).coerceIn(0,150)
         val dialog = GlassDialog.panel(activity, "เพิ่มรายละเอียดด้วย AI") { column, dialog ->
             fun label(value: String, small: Boolean = false) = activity.text(value, if (small) 12.5f else 14f, if (small) Glass.TEXT3 else Glass.TEXT2).apply { maxLines = 6; ellipsize = null; setLineSpacing(0f, 1.15f); setPadding(0, activity.dp(6), 0, activity.dp(6)) }
             column.addView(label("ประมวลผลในเครื่อง ไม่ส่งภาพออกไปไหน\nรายละเอียดบางส่วนเป็นการคาดเดาของ AI"))
@@ -41,7 +42,7 @@ object EnhanceUi {
             val amount = label("ความแรงรายละเอียด $strength%")
             column.addView(amount)
             column.addView(GlassSlider(activity).apply {
-                values = (0..20).map { "${it * 5}" }; index = strength / 5; grad = intArrayOf(0xff7db8ff.toInt(), Color.WHITE, Glass.ACCENT); contentDescription = "ความแรงรายละเอียด"
+                values = (0..30).map { "${it * 5}" }; index = strength / 5; grad = intArrayOf(0xff7db8ff.toInt(), Color.WHITE, Glass.ACCENT); contentDescription = "ความแรงรายละเอียด"
                 onChange = { strength = it * 5; amount.text = "ความแรงรายละเอียด $strength%" }
             }, LinearLayout.LayoutParams(-1, activity.dp(56)))
             column.addView(label("×3 และ ×4 ใช้โมเดล ×4 แล้วปรับขนาดผลลัพธ์ จึงใช้เวลาใกล้กัน ตัวอย่างใช้ส่วนกลางภาพ ภาพจริงอาจใช้เวลาหลายนาที", true))
@@ -52,7 +53,7 @@ object EnhanceUi {
                 "สร้างภาพ" to {
                     val ok = try { EnhanceSpec(scale,strength).output(shot.size); true } catch (e: IllegalArgumentException) { activity.notice(e.message ?: "ขนาดภาพเกินขีดจำกัด"); false }
                     if (ok) {
-                        prefs.edit().putInt("scale",scale).putInt("strength",strength).apply()
+                        prefs.edit().putInt("scale",scale).putInt("strength2",strength).apply()
                         val spec = EnhanceSpec(scale,strength)
                         activity.luma.fileIo.execute { if (activity.luma.shots.queueEnhancement(shot.id,spec)) EnhanceWorker.enqueue(activity.applicationContext,shot.id,true) }
                         dialog.dismiss()

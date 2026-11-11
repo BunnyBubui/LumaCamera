@@ -137,15 +137,18 @@ fun Activity.preferFastestRefresh() {
  */
 fun androidx.camera.view.PreviewView.smallFrame(width: Int): android.graphics.Bitmap? = runCatching {
     val tv = (0 until childCount).map { getChildAt(it) }.firstOrNull { it is android.view.TextureView } as? android.view.TextureView
-    if (tv == null || !tv.isAvailable || tv.width <= 0 || tv.height <= 0) {
+    if (tv == null || !tv.isAvailable || tv.width <= 0 || tv.height <= 0 || this.width <= 0 || this.height <= 0) {
         return@runCatching bitmap?.let { f -> android.graphics.Bitmap.createScaledBitmap(f, width, (width.toFloat() * f.height / f.width).toInt().coerceAtLeast(1), true).also { if (it !== f) f.recycle() } }
     }
-    val s = width.toFloat() / tv.width
-    val tw = width; val th = (tv.height * s).toInt().coerceAtLeast(1)
-    val src = tv.getBitmap(tw, th) ?: return@runCatching null
-    val m = android.graphics.Matrix().apply { setScale(1 / s, 1 / s); postConcat(tv.getTransform(null)); postScale(s, s) }
-    if (m.isIdentity) return@runCatching src
-    val out = android.graphics.Bitmap.createBitmap(tw, th, android.graphics.Bitmap.Config.ARGB_8888)
+    // CameraX sizes the TextureView to the stream and fills the PreviewView with the view's own scale/translation,
+    // plus a buffer correction in setTransform; all three are applied, as on screen.
+    val s = width.toFloat() / this.width
+    val src = tv.getBitmap((tv.width * s).toInt().coerceAtLeast(1), (tv.height * s).toInt().coerceAtLeast(1)) ?: return@runCatching null
+    val m = android.graphics.Matrix().apply {
+        setScale(tv.width.toFloat() / src.width, tv.height.toFloat() / src.height)
+        postConcat(tv.getTransform(null)); postConcat(tv.matrix); postTranslate(tv.left.toFloat(), tv.top.toFloat()); postScale(s, s)
+    }
+    val out = android.graphics.Bitmap.createBitmap(width, (this.height * s).toInt().coerceAtLeast(1), android.graphics.Bitmap.Config.ARGB_8888)
     android.graphics.Canvas(out).drawBitmap(src, m, android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG))
     src.recycle(); out
 }.getOrNull()

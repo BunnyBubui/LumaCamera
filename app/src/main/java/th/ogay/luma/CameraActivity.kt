@@ -74,7 +74,7 @@ class CameraActivity : ComponentActivity() {
             BarMode("QUICK", "ถ่ายเร็ว", Icons.FLASH), BarMode("FILM", "ฟิล์ม", Icons.FILM))
         /** Flash-fast, flash-quick and sport share one bar entry; a chip picks which. */
         val QUICK_MODES = listOf(PhotoMode.FLASH_NIGHT, PhotoMode.FLASH_FAST, PhotoMode.SPORT)
-        val QUICK_NAMES = listOf("แฟลชเร็ว", "แฟลชไว", "ถ่ายเร็ว")
+        val QUICK_NAMES = listOf("แฟลชเร็ว", "แฟลชเร็วพิเศษ", "ถ่ายเร็ว")
         fun barKey(m: PhotoMode) = if (m in QUICK_MODES) "QUICK" else m.name
         const val DEFAULT_BAR = "PORTRAIT,PHOTO,VIDEO,PRO"
         val LOOKS = listOf("มาตรฐาน", "สดใส", "อบอุ่น", "เย็น", "ฟิล์ม", "ขาวดำ")
@@ -586,6 +586,13 @@ class CameraActivity : ComponentActivity() {
             else -> runCatching { PhotoMode.valueOf(key) }.getOrNull()?.let { selectMode(it) }
         }
     }
+    /** A portrait rectangle with the ratio's real proportions, so 21:9 looks long and 1:1 square. */
+    private fun aspectIcon(name: String): String {
+        val p = name.split(':').mapNotNull { it.trim().toFloatOrNull() }
+        val r = if (p.size == 2 && p[1] > 0f) maxOf(p[0], p[1]) / minOf(p[0], p[1]) else 4f / 3f
+        val h = 20f; val w = h / r; val x = 12f - w / 2; val y = 12f - h / 2
+        return String.format(java.util.Locale.US, "M%.2f %.2fh%.2fv%.2fh%.2fz", x, y, w, h, -w)
+    }
     private fun quickMode() = runCatching { PhotoMode.valueOf(prefs.getString("quick_kind", "FLASH_NIGHT") ?: "") }.getOrNull()?.takeIf { it in QUICK_MODES } ?: PhotoMode.FLASH_NIGHT
     private fun step(dir: Int) { val i = barKeys.indexOf(barKey(mode)) + dir; if (i in barKeys.indices) { modeStrip.select(i, true); pickBar(i) } }
 
@@ -981,8 +988,8 @@ class CameraActivity : ComponentActivity() {
                     menu.show(v, "ตั้งเวลา", listOf(GlassMenu.Option("ปิด", Icons.TIMER), GlassMenu.Option("3 วินาที", Icons.TIMER), GlassMenu.Option("10 วินาที", Icons.TIMER)), timers.indexOf(timer)) { i -> prefs.edit().putString("timer", timers[i]).apply(); refresh(); reopen() }
                 }
                 val aspects = Aspects.available(prefs); val aspect = prefs.getString("aspect", "4:3") ?: "4:3"
-                tile("สัดส่วนภาพ", Icons.FRAME, aspect, aspect != "4:3", aspect, true) { v ->
-                    menu.show(v, "สัดส่วนภาพ", aspects.map { GlassMenu.Option(it, Icons.FRAME, Aspects.note(it), it) }, aspects.indexOf(aspect)) { i ->
+                tile("สัดส่วนภาพ", aspectIcon(aspect), aspect, aspect != "4:3", "", true) { v ->
+                    menu.show(v, "สัดส่วนภาพ", aspects.map { GlassMenu.Option(it, aspectIcon(it), Aspects.note(it)) }, aspects.indexOf(aspect)) { i ->
                         if (!busy) { prefs.edit().putString("aspect", aspects[i]).apply(); applyStageShape(); layoutMask(stage.width, stage.height); freezeFrame(); bind() }; reopen()
                     }
                 }
@@ -1620,7 +1627,7 @@ class CameraActivity : ComponentActivity() {
                     val date=SimpleDateFormat("yyyy:MM:dd HH:mm:ss",Locale.US).format(Date(time))
                     PhotoMedia.tag(original,rot,date)
                     if(photoMode==PhotoMode.PORTRAIT&&!nativeEffect){
-                        val reference=PhotoMedia.publish(this@CameraActivity,original,"LUMA_PORTRAIT_ORIGINAL_${time}.jpg",time)
+                        val reference=PhotoMedia.publish(this@CameraActivity,original,"Lumora_PORTRAIT_ORIGINAL_${time}.jpg",time)
                         MediaLedger.add(this@CameraActivity,reference,"Portrait ต้นฉบับ","image/jpeg")
                         PhotoEffects.portrait(original,aperture)
                     }
@@ -1633,8 +1640,8 @@ class CameraActivity : ComponentActivity() {
                     val reason=decide(allowAuto,isRear,actualZoom,size.pixels,crop)
                     val uri=if(outFormat==CaptureOutput.PNG||outFormat==CaptureOutput.WEBP){
                         val converted=PhotoEffects.convert(original,outFormat,prefs.getString("jpeg_quality","95")!!.toInt())
-                        try{PhotoMedia.publish(this@CameraActivity,converted,"LUMA_${time}_${id}.${if(outFormat==CaptureOutput.PNG)"png" else "webp"}",time,if(outFormat==CaptureOutput.PNG)"image/png" else "image/webp")}finally{converted.delete()}
-                    }else PhotoMedia.publish(this@CameraActivity,original,"LUMA_${time}_${id}.jpg",time)
+                        try{PhotoMedia.publish(this@CameraActivity,converted,"Lumora_${time}_${id}.${if(outFormat==CaptureOutput.PNG)"png" else "webp"}",time,if(outFormat==CaptureOutput.PNG)"image/png" else "image/webp")}finally{converted.delete()}
+                    }else PhotoMedia.publish(this@CameraActivity,original,"Lumora_${time}_${id}.jpg",time)
                     // The phone gives apps only ~12 MP, so the 50 MP mode takes that picture and lets the on-device AI enlarge it 2×.
                     val hiAi=photoMode==PhotoMode.HIRES&&size.pixels<20_000_000L&&prefs.getBoolean("hires_ai",true)&&runCatching{th.ogay.luma.ai.EnhanceSpec(2,60).output(size)}.isSuccess
                     val stage=if(reason.startsAi||hiAi) Stage.QUEUED else Stage.ORIGINAL
@@ -1673,7 +1680,7 @@ class CameraActivity : ComponentActivity() {
                 try{
                     if(error!=null)throw error
                     val dims=PhotoMedia.dimensions(file)
-                    val uri=PhotoMedia.publish(this,file,"LUMA_${time}_${id}.jpg",time)
+                    val uri=PhotoMedia.publish(this,file,"Lumora_${time}_${id}.jpg",time)
                     luma.shots.insert(Shot(id,time,uri,dims,zoom,isRear,null,null,decide(false,isRear,zoom,dims.pixels,null),Stage.ORIGINAL,null,0,null,false))
                     message="บันทึกเต็มเซนเซอร์ ${dims.w}×${dims.h} · ${pixelsText(dims.pixels)}"
                 }catch(e:Throwable){hiResFailed=true;message="ถ่ายเต็มเซนเซอร์ไม่สำเร็จ · ${e.localizedMessage} · ครั้งต่อไปใช้ขนาดปกติ"}
@@ -1693,10 +1700,10 @@ class CameraActivity : ComponentActivity() {
                 var message="บันทึก RAW + JPEG แล้ว"
                 try{
                     if(error!=null)throw error
-                    PhotoMedia.publish(this,dng,"LUMA_${time}_${id}.dng",time,"image/x-adobe-dng")
+                    PhotoMedia.publish(this,dng,"Lumora_${time}_${id}.dng",time,"image/x-adobe-dng")
                     LensMeta.stamp(jpg,lens);PhotoEffects.decorate(this,jpg,isRear)
                     val dims=PhotoMedia.dimensions(jpg)
-                    val uri=PhotoMedia.publish(this,jpg,"LUMA_${time}_${id}.jpg",time)
+                    val uri=PhotoMedia.publish(this,jpg,"Lumora_${time}_${id}.jpg",time)
                     luma.shots.insert(Shot(id,time,uri,dims,zoom,isRear,cameraId,null,Decision.OFF,Stage.ORIGINAL,null,0,null,false))
                 }catch(e:Throwable){message="ถ่าย RAW ไม่สำเร็จ · ${e.localizedMessage}"}
                 finally{dng.delete();jpg.delete()}
@@ -1755,7 +1762,7 @@ class CameraActivity : ComponentActivity() {
         override fun onImageSaved(result:ImageCapture.OutputFileResults){try{publishSpecial(file,"Ultra HDR · gain map จากกล้อง");complete("บันทึก Ultra HDR แล้ว")}catch(e:Exception){complete(e.localizedMessage?:"บันทึกไม่ได้")}finally{file.delete()}}
         override fun onError(e:ImageCaptureException){complete(e.localizedMessage?:"ถ่ายไม่ได้");file.delete()}
     })}
-    private fun publishSpecial(file:File,note:String,used:Int=1,requested:Int=used){val id=UUID.randomUUID().toString();val time=System.currentTimeMillis();val uri=PhotoMedia.publish(this,file,"LUMA_${time}_${id}.jpg",time);luma.shots.insert(Shot(id,time,uri,PhotoMedia.dimensions(file),ratio,rear,null,null,Decision.OFF,Stage.ORIGINAL,null,0,null,false,frames=used,requestedFrames=requested,fusedFrames=used,captureNote=note))}
+    private fun publishSpecial(file:File,note:String,used:Int=1,requested:Int=used){val id=UUID.randomUUID().toString();val time=System.currentTimeMillis();val uri=PhotoMedia.publish(this,file,"Lumora_${time}_${id}.jpg",time);luma.shots.insert(Shot(id,time,uri,PhotoMedia.dimensions(file),ratio,rear,null,null,Decision.OFF,Stage.ORIGINAL,null,0,null,false,frames=used,requestedFrames=requested,fusedFrames=used,captureNote=note))}
     private fun takeSequence(){val useCase=capture?:return;busy=true;refresh();SequentialPhotos(this,useCase,rear,ratio,{n->hint("ถ่ายต่อเนื่อง $n/10",3000)},{message->complete(message)},started={captureFeedback()}).start()}
     private var pano: PanoramaSweep? = null
     private var panoGuide: PanoGuide? = null

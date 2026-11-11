@@ -176,6 +176,16 @@ class VideoActivity:ComponentActivity(){
     private val V_ASPECTS get()=listOf("auto")+Aspects.available(prefs)
     private fun aspectLabel(k:String)=when(k){"auto"->"ตามเซนเซอร์";"2.39"->"2.39:1";else->k}
     private var dockRef:android.view.View?=null
+    /** While recording only the zoom stays (it glides down to where the tabs and chips were); everything returns after. */
+    private fun focusRecording(on:Boolean){
+        val hide=listOfNotNull(if(::tabs.isInitialized)tabs else null,chipFrame,modeStrip,flip,if(::expRail.isInitialized)expRail else null,if(::expRail.isInitialized)focusRail else null)
+        val d=if(Glass.reduced(this))0L else 260L
+        hide.forEach{v->v.animate().cancel();if(on)v.animate().alpha(0f).setDuration(d).withEndAction{v.visibility=android.view.View.INVISIBLE}.start() else{v.visibility=android.view.View.VISIBLE;v.animate().alpha(if(v===flip&&dual)0.35f else 1f).setDuration(d).start()}}
+        val land=resources.configuration.orientation==android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        stage.clipChildren=false;(stage.parent as? android.view.ViewGroup)?.clipChildren=false
+        val drop=if(on&&!land)(dockRef?.let{dock->val loc=IntArray(2);chipFrame.getLocationInWindow(loc);val z=IntArray(2);zooms.getLocationInWindow(z);(loc[1]-z[1]).toFloat().coerceAtLeast(0f)}?:0f) else 0f
+        zooms.animate().translationY(drop).setInterpolator(Glass.EASE).setDuration(if(d==0L)0 else 420).start()
+    }
     /** As in photo mode: tall shapes (16:9 and longer) run under the control dock, which turns see-through. */
     private fun applyStageShape(){
         val dock=dockRef?:return
@@ -239,17 +249,17 @@ class VideoActivity:ComponentActivity(){
         handler.postDelayed({
             if(!starting||isFinishing||isDestroyed){starting=false;requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;return@postDelayed}
             try{
-                val name="LUMA_VIDEO_${System.currentTimeMillis()}.mp4"
+                val name="Lumora_VIDEO_${System.currentTimeMillis()}.mp4"
                 val values=ContentValues().apply{put(MediaStore.Video.Media.DISPLAY_NAME,name);put(MediaStore.Video.Media.MIME_TYPE,"video/mp4");if(android.os.Build.VERSION.SDK_INT>=29)put(MediaStore.Video.Media.RELATIVE_PATH,"Movies/Lumora/")}
                 val options=MediaStoreOutputOptions.Builder(contentResolver,MediaStore.Video.Media.EXTERNAL_CONTENT_URI).setContentValues(values).setFileSizeLimit((filesDir.usableSpace-32L*1024*1024).coerceAtLeast(1)).build()
                 var pending=r.prepareRecording(this,options)
                 if(mic&&ContextCompat.checkSelfPermission(this,Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED)pending=pending.withAudioEnabled()
                 recording=pending.start(main){event->when(event){
-                    is VideoRecordEvent.Start->{diagnostics.active(true);status.announceForAccessibility("เริ่มบันทึกวิดีโอ");starting=false;shutter.isEnabled=true;shutter.recording=true;shutter.contentDescription="หยุดบันทึกวิดีโอ";pause.isEnabled=true;recordingUi(true)}
+                    is VideoRecordEvent.Start->{Glass.quiet=true;focusRecording(true);diagnostics.active(true);status.announceForAccessibility("เริ่มบันทึกวิดีโอ");starting=false;shutter.isEnabled=true;shutter.recording=true;shutter.contentDescription="หยุดบันทึกวิดีโอ";pause.isEnabled=true;recordingUi(true)}
                     is VideoRecordEvent.Status->{val seconds=event.recordingStats.recordedDurationNanos/1_000_000_000;status.text=String.format(Locale.US,"%02d:%02d  ·  %.1f MB%s",seconds/60,seconds%60,event.recordingStats.numBytesRecorded/1e6,if(paused)" · พัก" else "")}
                     is VideoRecordEvent.Pause->{diagnostics.active(false);paused=true;pauseIcon.path=Icons.VIDEO;pause.contentDescription="ต่อการบันทึก"}
                     is VideoRecordEvent.Resume->{diagnostics.active(true);paused=false;pauseIcon.path=PAUSE;pause.contentDescription="พักการบันทึก"}
-                    is VideoRecordEvent.Finalize->{if(event.hasError())VideoDiagnostics.save(this,if(slow)"high-speed-finalize"else "normal-finalize",boundConfig,event.cause?:IllegalStateException("Recorder finalize code ${event.error}"));diagnostics.active(false);val sensor=diagnostics.snapshot();val requested=fps;val playback=if(slow)30 else fps;requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;recording=null;starting=false;finalizing=false;paused=false;shutter.recording=false;shutter.contentDescription="เริ่มบันทึกวิดีโอ";pause.isEnabled=false;pauseIcon.path=PAUSE;pause.contentDescription="พักการบันทึก";shutter.isEnabled=true;config.isEnabled=true;recordingUi(false)
+                    is VideoRecordEvent.Finalize->{Glass.quiet=false;focusRecording(false);if(event.hasError())VideoDiagnostics.save(this,if(slow)"high-speed-finalize"else "normal-finalize",boundConfig,event.cause?:IllegalStateException("Recorder finalize code ${event.error}"));diagnostics.active(false);val sensor=diagnostics.snapshot();val requested=fps;val playback=if(slow)30 else fps;requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;recording=null;starting=false;finalizing=false;paused=false;shutter.recording=false;shutter.contentDescription="เริ่มบันทึกวิดีโอ";pause.isEnabled=false;pauseIcon.path=PAUSE;pause.contentDescription="พักการบันทึก";shutter.isEnabled=true;config.isEnabled=true;recordingUi(false)
                         if(sound&&!isDestroyed)sounds.play(MediaActionSound.STOP_VIDEO_RECORDING)
                         val uri=event.outputResults.outputUri
                         if(uri!=Uri.EMPTY&&event.recordingStats.numBytesRecorded>0){
@@ -304,7 +314,7 @@ class VideoActivity:ComponentActivity(){
     private fun saveSettings(){prefs.edit().putString(if(slow)"slow_camera"else "video_camera",selectedCameraId).apply();if(slow){prefs.edit().putInt("slow_fps",fps).putString("slow_quality",when(quality){Quality.UHD->"UHD";Quality.HD->"HD";Quality.SD->"SD";else->"FHD"}).apply();return};prefs.edit().putString("video_quality",when(quality){Quality.UHD->"UHD";Quality.HD->"HD";Quality.SD->"SD";else->"FHD"}).putInt("video_fps",fps).putInt("video_bitrate",bitrate).putBoolean("video_eis",stabilization).putString("video_dynamic",when(dynamic){DynamicRange.HLG_10_BIT->"HLG";DynamicRange.HDR10_10_BIT->"HDR10";else->"SDR"}).apply()}
     override fun onResume(){super.onResume();orientation.enable();if(recording==null&&!starting&&!finalizing&&useCase!=null){shutter.isEnabled=true;config.isEnabled=true}}
     override fun onPause(){stopTracking();if(::zooms.isInitialized){zooms.finish();wheel.removeCallbacks(hideWheel);hideWheel.run()};orientation.disable();if(starting&&recording==null){requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT};starting=false;animator?.cancel();handler.removeCallbacksAndMessages(null);recording?.stop();super.onPause()}
-    override fun onDestroy(){sounds.release();zoomEffect?.release();super.onDestroy()}
+    override fun onDestroy(){Glass.quiet=false;sounds.release();zoomEffect?.release();super.onDestroy()}
     override fun onKeyDown(keyCode:Int,event:KeyEvent):Boolean{if(keyCode==KeyEvent.KEYCODE_VOLUME_DOWN||keyCode==KeyEvent.KEYCODE_VOLUME_UP){if(event.repeatCount==0)shutter.performClick();return true};return super.onKeyDown(keyCode,event)}
     // ---------- Glass screen ----------
     private val PAUSE="M8 5v14 M16 5v14"

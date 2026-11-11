@@ -206,9 +206,9 @@ class GalleryActivity : ComponentActivity() {
         val close = IconView(this, Icons.CLOSE, 2f).apply { tint = Glass.TEXT2; setPadding(dp(11), dp(11), dp(11), dp(11)); visibility = View.GONE; contentDescription = "ปิดการค้นหา"; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES; isClickable = true }
         searchBox.addView(searchIcon, dp(20), dp(20)); searchBox.addView(field, LinearLayout.LayoutParams(0, -1, 1f)); searchBox.addView(close, dp(40), dp(40))
         searchBox.contentDescription = "ค้นหา"
-        bar.addView(searchBox, LinearLayout.LayoutParams(dp(48), dp(48)))
+        bar.addView(searchBox, LinearLayout.LayoutParams(dp(48), dp(48)).apply { leftMargin = dp(10) })
         fun morph(open: Boolean, animate: Boolean = true) {
-            val from = searchBox.width; val to = if (open) bar.width - bar.paddingLeft - bar.paddingRight - dp(60) else dp(48)
+            val from = searchBox.width; val to = if (open) bar.width - bar.paddingLeft - bar.paddingRight - dp(70) else dp(48)
             field.visibility = if (open) View.VISIBLE else View.GONE; close.visibility = field.visibility
             // The title leaves the row while searching, so the box never squeezes or overflows it.
             bar.findViewWithTag<View>("title")?.let { t -> if (open) t.visibility = View.GONE else { t.visibility = View.VISIBLE; t.alpha = 0f; t.animate().alpha(1f).setDuration(180).start() } }
