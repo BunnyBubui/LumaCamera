@@ -247,6 +247,36 @@ object Icons {
     const val CHAT = "M4 5h16v11H9l-5 4z"
     const val SHOT = "M7 3h10v18H7z M10 7h4"
     const val RAW = "M4 6h16v12H4z M8 15v-6h2.5a1.5 1.5 0 0 1 0 3H8 M10.5 12l1.5 3"
+    /**
+     * An icon that fits the words of a menu row, for menus whose caller gave none: "ปิด" gets a cross,
+     * seconds a timer, fps a film strip and so on. Unknown words fall back to [fallback].
+     */
+    fun forLabel(label: String, fallback: String = CHECK): String {
+        val t = label.lowercase()
+        return when {
+            t == "ปิด" || t.startsWith("ปิด ") -> CLOSE
+            "แฟลช" in t -> FLASH
+            "กีฬา" in t || "ถ่ายเร็ว" in t || "เคลื่อนไหว" in t -> MOTION
+            "วินาที" in t || t.endsWith(" วิ") || "ตั้งเวลา" in t -> TIMER
+            "fps" in t || "เฟรม" in t -> FPS
+            "อัตโนมัติ" in t || "ตามระบบ" in t || "auto" in t -> AI
+            "4k" in t || "1080" in t || "720" in t || "mp" in t || "ความละเอียด" in t -> RES
+            "ev" in t || "hdr" in t || "ช่วงแสง" in t -> HDR
+            "เสียง" in t -> SOUND
+            "สั่น" in t -> HAPTIC
+            "ซูม" in t || "เลนส์" in t || "×" in t -> SEARCH
+            "ถ่ายภาพ" in t || "ชัตเตอร์" in t -> SHOT
+            "%" in t || "jpeg" in t || "png" in t || "webp" in t || "ไฟล์" in t -> FILE
+            "raw" in t || "dng" in t -> RAW
+            "ช้า" in t || "ปกติ" in t || "เร็ว" in t -> MOTION
+            "กลางคืน" in t || "มืด" in t -> NIGHT
+            "บุคคล" in t || "ใบหน้า" in t -> PORTRAIT
+            "วิดีโอ" in t -> VIDEO
+            "กริด" in t || "เส้น" in t -> GRID
+            "ล่าสุด" in t || "วันที่" in t || "เวลา" in t -> TIMER
+            else -> fallback
+        }
+    }
 }
 
 /** Stroked icon drawn from SVG path data, with optional text set inside the glyph. */

@@ -608,29 +608,21 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
         val padT = host.paddingTop + c.dp(12); val padB = max(host.paddingBottom, nav) + c.dp(18)
         val avail = host.height - padT - padB
         val w = max(c.dp(232), anchor.width).coerceAtMost(host.width - c.dp(24))
-        val full = c.dp(36) + options.size * c.dp(54) + c.dp(12)
-        val h = min(full, avail); val scrolls = full > avail
         val x = (ax + anchor.width / 2 - w / 2).coerceIn(c.dp(12), max(c.dp(12), host.width - c.dp(12) - w))
-        val below = ay + anchor.height + c.dp(8); val above = ay - c.dp(8) - h
-        val up = below + h > host.height - padB
-        val y = (if (up) above else below).coerceIn(padT, max(padT, host.height - padB - h))
         val quiet = over()
-        modal.hide()
-        // Touch and drawing order follow elevation, so the menu layer must sit above sheets (16 dp) or it is hidden and untappable.
-        val shade = View(c).apply { setBackgroundColor(if (quiet) 0 else 0x29000000); alpha = 0f; isClickable = true; contentDescription = "ปิดเมนู"; elevation = 20 * d; outlineProvider = null; setOnClickListener { dismiss(true) } }
-        host.addView(shade, FrameLayout.LayoutParams(-1, -1)); shade.animate().alpha(1f).setDuration(320).start()
-        val menu = LayerFrame(c).apply { background = c.glass(22, if (quiet) 0xf5222225.toInt() else Glass.FILL_POP); setPadding(c.dp(8), c.dp(8), c.dp(8), c.dp(8)); elevation = 24 * d }
         val hi = View(c).apply { background = GlassDrawable(0x24ffffff, c.dp(16).toFloat(), d) }
         val list = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
-        list.addView(c.text(title, 12f, Glass.TEXT2, true).apply { setPadding(c.dp(10), c.dp(6), 0, 0); importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES; isFocusable = true }, -1, c.dp(30))
+        list.addView(c.text(title, 12f, Glass.TEXT2, true).apply { setPadding(c.dp(12), c.dp(6), c.dp(12), 0); importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES; isFocusable = true }, -1, c.dp(30))
         val rows = options.mapIndexed { i, o ->
             LinearLayout(c).apply {
-                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(c.dp(10), 0, c.dp(10), 0); minimumHeight = c.dp(52)
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(c.dp(12), c.dp(6), c.dp(12), c.dp(6)); minimumHeight = c.dp(52)
                 contentDescription = o.label + if (o.note.isNotEmpty()) ", ${o.note}" else ""; isClickable = true; isFocusable = true
                 if (i == selected) background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = c.dp(18).toFloat(); setColor(0x14ffffff); setStroke(c.dp(1), 0xb3ff9f43.toInt()) }
                 isSelected = i == selected; androidx.core.view.ViewCompat.setStateDescription(this, if (i == selected) "เลือกอยู่" else null)
-                if (o.icon.isNotEmpty()) addView(IconView(c, o.icon).apply { tint = if (i == selected) Glass.ACCENT else Color.WHITE; inner = o.inner }, c.dp(22), c.dp(22))
-                val texts = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL; setPadding(c.dp(10), 0, 0, 0) }
+                // Every row carries an icon: the caller's, or one chosen from the words in the label.
+                val icon = o.icon.ifEmpty { Icons.forLabel(o.label) }
+                addView(IconView(c, icon).apply { tint = if (i == selected) Glass.ACCENT else Color.WHITE; inner = o.inner }, c.dp(22), c.dp(22))
+                val texts = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL; setPadding(c.dp(12), 0, c.dp(4), 0) }
                 texts.addView(c.text(o.label, 14f, Color.WHITE, i == selected))
                 if (o.note.isNotEmpty()) texts.addView(c.text(o.note, 11.5f, Glass.TEXT2))
                 addView(texts, LinearLayout.LayoutParams(0, -2, 1f))
@@ -638,13 +630,31 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
                 setOnClickListener { choose(i, pick) }
             }.also { list.addView(it, LinearLayout.LayoutParams(-1, -2).apply { topMargin = c.dp(2) }) }
         }
+        // Measure the real list (notes and large fonts make rows taller than a fixed estimate), so the card is
+        // placed fully on screen instead of running past the bottom edge.
+        list.measure(View.MeasureSpec.makeMeasureSpec(w - c.dp(16), View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
+        // Laying the list out now gives every row its final position before the card is even attached,
+        // so a finger that is already sliding maps to the right row from the first event.
+        list.layout(0, 0, list.measuredWidth, list.measuredHeight)
+        val full = list.measuredHeight + c.dp(16)
+        val h = min(full, avail); val scrolls = full > avail
+        val below = ay + anchor.height + c.dp(8); val above = ay - c.dp(8) - h
+        val up = below + h > host.height - padB
+        val y = (if (up) above else below).coerceIn(padT, max(padT, host.height - padB - h))
+        modal.hide()
+        // Touch and drawing order follow elevation, so the menu layer must sit above sheets (16 dp) or it is hidden and untappable.
+        val shade = View(c).apply { setBackgroundColor(if (quiet) 0 else 0x29000000); alpha = 0f; isClickable = true; contentDescription = "ปิดเมนู"; elevation = 20 * d; outlineProvider = null; setOnClickListener { dismiss(true) } }
+        host.addView(shade, FrameLayout.LayoutParams(-1, -1)); shade.animate().alpha(1f).setDuration(320).start()
+        val menu = LayerFrame(c).apply { background = c.glass(22, if (quiet) 0xf5222225.toInt() else Glass.FILL_POP); setPadding(c.dp(8), c.dp(8), c.dp(8), c.dp(8)); elevation = 24 * d }
         if (scrolls) {
             // Too many options for the space: a plain scrolling list, rows stay tappable, no scrub highlight.
             menu.addView(ScrollView(c).apply { isVerticalScrollBarEnabled = false; addView(list) }, -1, -1)
         } else {
             menu.addView(hi, FrameLayout.LayoutParams(-1, c.dp(52)).apply { topMargin = c.dp(32) })
             menu.addView(list, -1, -2)
-            fun rowAt(y: Float) = rows.indexOfFirst { y - c.dp(6) < it.bottom }.let { if (it < 0) rows.size - 1 else it }
+            // Row positions are in list coordinates; the list sits inside the card's padding.
+            val pad = c.dp(8)
+            fun rowAt(y: Float) = (y - pad).let { ly -> rows.indexOfFirst { ly < it.bottom + c.dp(1) }.let { if (it < 0) rows.size - 1 else it } }
             fun moveHi(i: Int, press: Boolean) {
                 val r = rows[i]
                 hi.layoutParams = (hi.layoutParams as FrameLayout.LayoutParams).apply { height = r.height.coerceAtLeast(c.dp(52)) }
@@ -669,12 +679,14 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
             menu.scrub = true
             menu.setOnTouchListener { _, e -> handle(e.actionMasked, e.y); true }
             // A finger that opened the menu by holding the anchor keeps going: slide over a row and lift to pick it.
+            // The card is still springing open for the first few hundred milliseconds, so its on-screen box is scaled;
+            // the finger is mapped through the card's layout position (host + margins) instead, which does not move.
             // Lifting outside the card leaves the menu open for a normal tap.
-            val at = IntArray(2)
+            val hostAt = IntArray(2)
             forward = { e ->
-                menu.getLocationOnScreen(at)
-                val lx = e.rawX - at[0]; val ly = e.rawY - at[1]
-                val inside = lx >= -c.dp(16) && lx <= menu.width + c.dp(16) && ly >= c.dp(30) && ly <= menu.height
+                host.getLocationOnScreen(hostAt)
+                val lx = e.rawX - hostAt[0] - x; val ly = e.rawY - hostAt[1] - y
+                val inside = lx >= -c.dp(24) && lx <= w + c.dp(24) && ly >= pad + rows[0].top - c.dp(4) && ly <= h + c.dp(12)
                 when {
                     inside -> handle(if (e.actionMasked == MotionEvent.ACTION_DOWN) MotionEvent.ACTION_MOVE else e.actionMasked, ly)
                     else -> { rows.forEach { it.animate().scaleX(1f).scaleY(1f).setDuration(120).start() }; hi.animate().alpha(0f).setDuration(160).start() }
@@ -988,3 +1000,34 @@ class SnapScroll(context: Context) : android.widget.HorizontalScrollView(context
     override fun fling(velocityX: Int) { flung = true; go(downPage + if (velocityX > 0) 1 else -1) }
 }
 
+
+/**
+ * Small "working on it" ring: a soft track with a bright arc that turns while the view is shown.
+ * Used on photos that are still being captured or processed, so they never look like a finished file.
+ */
+class ProcessingSpinner(context: Context) : View(context) {
+    private val d = context.resources.displayMetrics.density
+    private val track = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 2.4f * d; color = 0x40ffffff }
+    private val arc = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 2.4f * d; strokeCap = Paint.Cap.ROUND; color = Glass.ACCENT }
+    private val back = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x8c000000.toInt() }
+    private val box = android.graphics.RectF()
+    private var angle = 0f
+    private val spin = android.animation.ValueAnimator.ofFloat(0f, 360f).apply {
+        duration = 900; repeatCount = android.animation.ValueAnimator.INFINITE; interpolator = android.view.animation.LinearInterpolator()
+        addUpdateListener { angle = it.animatedValue as Float; invalidate() }
+    }
+    init { importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }
+    private fun sync() { if (isAttachedToWindow && visibility == VISIBLE && !Glass.reduced(context)) { if (!spin.isStarted) spin.start() } else spin.cancel() }
+    override fun onAttachedToWindow() { super.onAttachedToWindow(); sync() }
+    override fun onDetachedFromWindow() { spin.cancel(); super.onDetachedFromWindow() }
+    override fun onVisibilityChanged(changedView: View, visibility: Int) { super.onVisibilityChanged(changedView, visibility); sync() }
+    override fun onDraw(c: Canvas) {
+        val r = min(width, height) / 2f
+        c.drawCircle(width / 2f, height / 2f, r, back)
+        val inset = r * 0.32f
+        box.set(width / 2f - r + inset, height / 2f - r + inset, width / 2f + r - inset, height / 2f + r - inset)
+        c.drawOval(box, track)
+        // With reduced motion the arc stays still: a fixed quarter still reads as "busy".
+        c.drawArc(box, angle - 90f, 100f, false, arc)
+    }
+}

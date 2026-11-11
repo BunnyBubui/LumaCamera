@@ -99,7 +99,7 @@ fun Activity.showStudioSettings(rawAvailable: Boolean, changed: () -> Unit) {
         fun current() = values.indexOf(prefs.getString(key, default)).coerceAtLeast(0)
         value.text = labels[current()]
         row(title, icon, end = end) {}.pressMenu(menu) { anchor ->
-            menu.show(anchor, title, labels.mapIndexed { i, l -> GlassMenu.Option(l, icons.getOrElse(i) { "" }, notes.getOrElse(i) { "" }) }, current()) { i ->
+            menu.show(anchor, title, labels.mapIndexed { i, l -> GlassMenu.Option(l, icons.getOrElse(i) { Icons.forLabel(l, icon) }, notes.getOrElse(i) { "" }) }, current()) { i ->
                 prefs.edit().putString(key, values[i]).apply(); value.text = labels[i]; changed()
             }
         }
@@ -116,7 +116,7 @@ fun Activity.showStudioSettings(rawAvailable: Boolean, changed: () -> Unit) {
 
     section("ภาพถ่าย")
     choose("สัดส่วนภาพ", Icons.FRAME, "aspect", Aspects.available(prefs), Aspects.available(prefs), "4:3", Aspects.available(prefs).map { Aspects.note(it) }, Aspects.available(prefs).map { aspectIconPath(it) })
-    choose("ตั้งเวลาถ่าย", Icons.TIMER, "timer", listOf("ปิด", "3 วินาที", "10 วินาที"), listOf("0", "3", "10"), "0")
+    choose("ตั้งเวลาถ่าย", Icons.TIMER, "timer", CameraActivity.TIMER_STEPS.map { CameraActivity.timerLabel(it) }, CameraActivity.TIMER_STEPS.map { it.toString() }, "0")
     choose("คุณภาพ JPEG", Icons.FILE, "jpeg_quality", listOf("ประหยัด 85%", "มาตรฐาน 95%", "สูงสุด 100%"), listOf("85", "95", "100"), "95")
     choose("ครอปจากเลนส์", Icons.SEARCH, "crop_from", listOf("ปิด", "เลนส์หลัก 1×", "เลนส์ 2×", "เลนส์เทเล 3.5×"), listOf("0", "1", "2", "3.5"), if (prefs.getBoolean("software", false)) "1" else "0", listOf("สลับเลนส์ตามระยะซูม", "ซูมด้วยการครอปจากเลนส์หลัก", "ครอปจากระยะ 2×", "ครอปจากระยะ 3.5×"))
     section("หน้าจอกล้อง")
@@ -129,7 +129,7 @@ fun Activity.showStudioSettings(rawAvailable: Boolean, changed: () -> Unit) {
     choose("HDR: ช่วงแสง", Icons.HDR, "hdr_spread", listOf("แคบ ±1 EV", "มาตรฐาน ±2 EV", "กว้าง ±3 EV"), listOf("1", "2", "3"), "2", listOf("ฉากแสงต่างกันน้อย", "ใช้ได้ทั่วไป", "ย้อนแสงจัด"))
     toggle("HDR แบบ native EF2 (ทดลอง)", Icons.HDR, HdrCapture.NATIVE_KEY, note = "รวมภาพ HDR ด้วย OpenCV เพื่อเทียบกับ EF1 ยังไม่มีระบบกันเงาซ้อน")
     toggle("ความละเอียดสูง: ขยายด้วย AI", Icons.AI, "hires_ai", true, "เครื่องไม่เปิดเซนเซอร์ 50 MP ให้แอปอื่น โหมดนี้ถ่ายขนาดสูงสุดที่เปิดให้แล้วขยาย ×2 ด้วย AI ในเครื่อง ปิดไว้ถ้าอยากได้เฉพาะต้นฉบับ")
-    choose("ถ่ายเร็ว: เริ่มต้นที่", Icons.FLASH, "quick_kind", listOf("แฟลชเร็ว", "แฟลชเร็วพิเศษ", "ถ่ายเร็ว (กีฬา)"), listOf("FLASH_NIGHT", "FLASH_FAST", "SPORT"), "FLASH_NIGHT")
+    choose("ถ่ายเร็ว: เริ่มต้นที่", Icons.FLASH, "quick_kind", listOf("แฟลชเร็ว", "แฟลชเร็วพิเศษ", "ถ่ายเร็ว (กีฬา)"), listOf("FLASH_NIGHT", "FLASH_FAST", "SPORT"), "FLASH_NIGHT", listOf("แฟลชเปิดทุกภาพ", "ไฟฉายค้างไว้ ถ่ายต่อได้ไว", "ชัตเตอร์สั้น ไม่ใช้แฟลช"), listOf(Icons.FLASH, Icons.FLASH, Icons.MOTION))
     choose("ภาพถ่าย: เฟรมเรตบนจอ", Icons.FILM, "fps_lock", listOf("ตามระบบ", "ล็อก 24 fps", "ล็อก 30 fps", "ล็อก 60 fps"), listOf("off", "24", "30", "60"), "off", listOf("ระบบลดเฟรมเองในที่มืด", "จอไม่ต่ำกว่า 24", "จอคงที่ 30", "ลื่นสุด ถ้ากล้องรองรับ"))
     toggle("ภาพถ่าย: ชัตเตอร์ตามแสงตอนกดถ่าย", Icons.TIMER, "fps_free_shot", true, "เฟรมเรตที่ล็อกใช้กับจอเท่านั้น ตอนกดถ่ายกล้องเลือกความเร็วชัตเตอร์เองตามแสง ภาพจึงไม่มืดหรือเสียรายละเอียด")
     choose("วิดีโอ: เฟรมเรต", Icons.FPS, "video_fps_s", listOf("24 fps", "30 fps", "60 fps"), listOf("24", "30", "60"), "30", listOf("แบบภาพยนตร์", "มาตรฐาน", "ลื่น · ใช้เลนส์ 1× ขึ้นไป"))

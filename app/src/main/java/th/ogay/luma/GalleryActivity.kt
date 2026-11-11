@@ -545,7 +545,7 @@ class GalleryActivity : ComponentActivity() {
         // Sort order: a glass dropdown on the count at the right of the grid heading.
         (gridHead.getChildAt(1) as TextView).apply {
             isClickable = true; minHeight = dp(40); gravity = Gravity.CENTER_VERTICAL; setPadding(dp(10), 0, 0, 0); contentDescription = "เรียงลำดับรายการ"
-            setOnClickListener { v -> sortMenu.show(v, "เรียงตาม", SORTS.map { GlassMenu.Option(it) }, sortOrder) { i -> sortOrder = i; prefs.edit().putInt("gallery_sort", i).apply(); apply(); grid.setSelection(0) } }
+            setOnClickListener { v -> sortMenu.show(v, "เรียงตาม", SORTS.mapIndexed { i, n -> GlassMenu.Option(n, listOf(Icons.CHEVRON_UP, Icons.UPDOWN, Icons.VIDEO, Icons.AI)[i]) }, sortOrder) { i -> sortOrder = i; prefs.edit().putInt("gallery_sort", i).apply(); apply(); grid.setSelection(0) } }
         }
         field.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
@@ -576,6 +576,8 @@ class GalleryActivity : ComponentActivity() {
             addView(text("", 10.5f, Color.WHITE).apply { maxLines = 2; gravity = Gravity.CENTER; setPadding(dp(6), 0, dp(6), dp(8)) }, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
             addView(FrameLayout(this@GalleryActivity).apply { addView(IconView(this@GalleryActivity, Icons.CHECK, 2.6f), FrameLayout.LayoutParams(dp(13), dp(13), Gravity.CENTER)) },
                 FrameLayout.LayoutParams(dp(24), dp(24), Gravity.TOP or Gravity.START).apply { setMargins(dp(6), dp(6), 0, 0) })
+            // Child 7: a small turning ring while the photo is still being captured or processed.
+            addView(ProcessingSpinner(this@GalleryActivity).apply { visibility = View.GONE }, FrameLayout.LayoutParams(dp(26), dp(26), Gravity.BOTTOM or Gravity.END).apply { setMargins(0, 0, dp(6), dp(6)) })
         }
         val placeholder = cell.getChildAt(1) as IconView; val image = cell.getChildAt(2) as ImageView
         val badge = cell.getChildAt(6) as FrameLayout; val on = item.key in picked
@@ -583,13 +585,16 @@ class GalleryActivity : ComponentActivity() {
         badge.background = android.graphics.drawable.GradientDrawable().apply { shape = android.graphics.drawable.GradientDrawable.OVAL; setColor(if (on) Glass.ACCENT else 0x55000000); setStroke(dp(2), Color.WHITE) }
         badge.getChildAt(0).visibility = if (on) View.VISIBLE else View.INVISIBLE
         cell.foreground = if (on) android.graphics.drawable.ColorDrawable(0x33000000) else null
-        cell.getChildAt(3).visibility = if (item.video) View.VISIBLE else View.GONE
+        // A photo that is still being taken or processed shows the working ring, never the video mark.
+        val working = item.shot?.stage.let { it == Stage.CAPTURING || it == Stage.QUEUED || it == Stage.RUNNING }
+        cell.getChildAt(7).visibility = if (working) View.VISIBLE else View.GONE
+        cell.getChildAt(3).visibility = if (item.video && item.shot == null && !working) View.VISIBLE else View.GONE
         cell.getChildAt(4).visibility = if (item.shot?.ai != null) View.VISIBLE else View.GONE
         val caption = cell.getChildAt(5) as TextView; caption.text = if (item.file) item.name else ""; caption.visibility = if (item.file) View.VISIBLE else View.GONE
         placeholder.path = if (item.file) Icons.DOC else if (item.video) Icons.VIDEO else Icons.ALBUM; placeholder.visibility = View.VISIBLE
         image.tag = item.key; image.setImageDrawable(null); image.animate().cancel(); image.alpha = 1f
         cell.layoutParams = AbsListView.LayoutParams(-1, ((gridWidth - dp(26)) / 3).coerceAtLeast(dp(92))); cell.invalidateOutline(); cell.post { cell.invalidateOutline() }
-        cell.contentDescription = "${if (item.video) "วิดีโอ" else if (item.file) "ไฟล์ ${item.name}" else "รูป"} ${formatTime(item.time)} แตะค้างเพื่อดูตัวอย่าง"
+        cell.contentDescription = "${if (item.video) "วิดีโอ" else if (item.file) "ไฟล์ ${item.name}" else "รูป"} ${formatTime(item.time)}${if (working) " กำลังประมวลผล" else ""} แตะค้างเพื่อดูตัวอย่าง"
         val cached = cache.get(item.key + 320)
         if (cached != null) { placeholder.visibility = View.GONE; image.setImageBitmap(cached) }
         else if (!item.file) {
