@@ -50,7 +50,18 @@ class GalleryActivity : ComponentActivity() {
     private var device = false
     private var category = 0
     private var album: String? = null
-    private var allAlbums = false
+    /** Bottom tab: 0 รูปภาพ (every picture the app may read), 1 อัลบั้ม. */
+    private var section = 0
+    /** Album page opened from the albums tab: "lumora", "video", "fav", "raw", "ai" or "bucket" (named by [album]). */
+    private var albumKind: String? = null
+    /** Albums tab in its manage mode: pin, hide and drag to reorder. */
+    private var managing = false
+    private var showHidden = false
+    /** -1 or 1 while switching bottom tabs, so the new page slides in from that side. */
+    private var tabMove = 0
+    private val editPhoto = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+        r.data?.getStringExtra(PhotoEditorActivity.RESULT_ID)?.let { if (r.resultCode == RESULT_OK) { selected = it; useAi = false; reload() } }
+    }
     private var queryText = ""
     private var lastItems: List<Item> = emptyList()
     private lateinit var host: FrameLayout
@@ -97,7 +108,8 @@ class GalleryActivity : ComponentActivity() {
         super.onCreate(state)
         requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         selected = state?.getString("id"); useAi = state?.getBoolean("ai") ?: false
-        device = state?.getBoolean("device") ?: when (intent.getStringExtra("tab")) { "luma" -> false; "device" -> true; else -> prefs.getBoolean("gallery_device", false) }
+        section = state?.getInt("section") ?: when (intent.getStringExtra("tab")) { "luma" -> 1; "device" -> 0; else -> prefs.getInt("gallery_section", 0) }
+        albumKind = if (state != null) state.getString("albumKind") else if (intent.getStringExtra("tab") == "luma") "lumora" else null
         album = state?.getString("album")
         intent.getStringExtra("category")?.let { want -> category = if (want == "วิดีโอ") LUMA_CATS.indexOf("วิดีโอ").coerceAtLeast(0) else 0 }
         host = FrameLayout(this)
@@ -114,7 +126,8 @@ class GalleryActivity : ComponentActivity() {
                     selecting -> endSelection()
                     peek != null -> closePeek()
                     selected != null -> { selected = null; useAi = false; reload() }
-                    allAlbums -> { allAlbums = false; reload() }
+                    managing -> { managing = false; reload() }
+                    albumKind != null -> closeAlbum()
                     else -> finish()
                 }
             }
@@ -136,7 +149,7 @@ class GalleryActivity : ComponentActivity() {
             }
         } else reload()
     }
-    override fun onSaveInstanceState(out: Bundle) { super.onSaveInstanceState(out); out.putString("id", selected); out.putBoolean("ai", useAi); out.putBoolean("device", device); out.putString("album", album) }
+    override fun onSaveInstanceState(out: Bundle) { super.onSaveInstanceState(out); out.putString("id", selected); out.putBoolean("ai", useAi); out.putInt("section", section); out.putString("albumKind", albumKind); out.putString("album", album) }
     override fun onDestroy() { thumbs.shutdownNow(); super.onDestroy() }
     private fun mediaGranted() = mediaPermissions.any { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }
     /** Android 14+: the person allowed only some photos. */
@@ -146,25 +159,37 @@ class GalleryActivity : ComponentActivity() {
 
     private fun reload() {
         val id = selected; val version = ++readVersion
+        val kind = albumKind; val albumsTab = section == 1 && kind == null
+        favouritesOnly = kind == "fav"
         luma.readIo.execute {
             val shot = id?.let { luma.shots.get(it) }
-            val items = when {
-                device -> if (mediaGranted()) deviceItems() else emptyList()
-                else -> lumaItems()
-            }
+            val granted = mediaGranted()
+            // Everything the app may read, or only Lumora's own pictures before access is given (and in the Lumora album).
+            val useDevice = kind != "lumora" && granted
+            val items = if (useDevice) deviceItems() else lumaItems()
+            val lumora = if (!albumsTab) emptyList() else if (useDevice) lumaItems() else items
+            val favourites = if (albumsTab && granted) favouriteCount() else 0
             runOnUiThread {
                 if (version == readVersion && !isDestroyed) {
-                    lastItems = items
+                    device = useDevice; lastItems = items
                     when {
                         shot != null -> showDetail(shot)
                         id?.startsWith("device:") == true -> showDeviceItem(Uri.parse(id.removePrefix("device:")))
                         id?.startsWith("ledger:") == true -> items.firstOrNull { it.key == id }?.let { showLedgerItem(it) } ?: run { selected = null; showGrid(items) }
-                        allAlbums -> showAlbums(items)
+                        albumsTab -> { selected = null; showAlbums(items, lumora, favourites) }
                         else -> { selected = null; showGrid(items) }
                     }
+                    tabMove = 0
                 }
             }
         }
+    }
+    private fun favouriteCount(): Int {
+        if (Build.VERSION.SDK_INT < 30) return 0
+        var n = 0
+        for (base in listOf(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, MediaStore.Video.Media.EXTERNAL_CONTENT_URI))
+            runCatching { contentResolver.query(base, arrayOf(MediaStore.MediaColumns._ID), "is_favorite = 1", null, null)?.use { n += it.count } }
+        return n
     }
     /** Photos from the shot database plus videos and files from the media ledger. Video reports (.json) stay with their video. */
     private fun lumaItems(): List<Item> {
@@ -356,6 +381,8 @@ class GalleryActivity : ComponentActivity() {
     private val LUMA_CATS = listOf("ทั้งหมด", "AI", "RAW", "วิดีโอ", "พิเศษ", "ไฟล์")
     private val TRASH = "M5 7h14 M9 7V4h6v3 M7 7l1 13h8l1-13 M10 11v6 M14 11v6"
     private val HEART = "M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"
+    private val EYE = "M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6"
+    private val EYE_OFF = "M3 3l18 18 M10.6 5.1A10 10 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 3.9 M6.6 6.6C3.9 8.4 2 12 2 12s3.6 7 10 7a9.7 9.7 0 0 0 5.4-1.6 M9.9 9.9a3 3 0 0 0 4.2 4.2"
     private val PENCIL = "M4 20l1-4L16 5l3 3L8 19z M14 7l3 3"
     private val RED = 0xffe5484d.toInt()
     private fun categories(items: List<Item>): List<Pair<String, (Item) -> Boolean>> =
@@ -367,7 +394,7 @@ class GalleryActivity : ComponentActivity() {
     // ---------- Grid ----------
     private fun showGrid(all: List<Item>) {
         showingId = null; viewerKind = ""; root.removeAllViews()
-        val bar = topBar("แกลเลอรี") { finish() }
+        val bar = topBar(if (albumKind != null) albumTitle() else "รูปภาพ") { if (albumKind != null) closeAlbum() else finish() }
         val searchBox = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; background = glass(22, 0x40ffffff); setPadding(dp(14), 0, dp(6), 0) }
         val searchIcon = IconView(this, Icons.SEARCH, 2f)
         val field = EditText(this).apply { hint = "ค้นหา"; setHintTextColor(Glass.TEXT3); setTextColor(Color.WHITE); textSize = 15f; background = null; setSingleLine(); visibility = View.GONE; setText(queryText); setSelection(queryText.length); setPadding(dp(8), 0, dp(4), 0)
@@ -379,11 +406,11 @@ class GalleryActivity : ComponentActivity() {
         bar.addView(searchBox, LinearLayout.LayoutParams(dp(48), dp(48)).apply { leftMargin = dp(10) })
         lateinit var more: View
         more = roundButton("M12 5.2v.1 M12 12v.1 M12 18.8v.1", "ตัวเลือกเพิ่มเติม") {
-            val options = listOf(GlassMenu.Option("เลือก", Icons.CHECK), GlassMenu.Option("เลือกทั้งหมด", Icons.STACK), GlassMenu.Option(if (favouritesOnly) "แสดงทั้งหมด" else "รายการโปรด", "M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"))
+            val options = listOf(GlassMenu.Option("เลือก", Icons.CHECK), GlassMenu.Option("เลือกทั้งหมด", Icons.STACK), GlassMenu.Option("รายการโปรด", "M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"))
             sortMenu.show(more, "แกลเลอรี", options, -1) { i -> when (i) {
                 0 -> startSelection(null)
                 1 -> { startSelection(null); picked.addAll(visibleItems.filter { !it.file }.map { it.key }); refreshCells(); updateSelectBar() }
-                else -> { favouritesOnly = !favouritesOnly; reload() }
+                else -> openAlbum("fav")
             } }
         }
         bar.addView(more, LinearLayout.LayoutParams(dp(48), dp(48)).apply { leftMargin = dp(8) })
@@ -411,65 +438,10 @@ class GalleryActivity : ComponentActivity() {
         // A refresh while searching rebuilds the grid: reopen the box at once, without the animation or a second keyboard pop.
         if (queryText.isNotEmpty()) searchBox.post { morph(true, false) }
 
-        // Tabs: sliding glass highlight between Lumora and the whole device.
-        var tabsDrag = false
-        lateinit var knobRef: View
-        val tabs = object : FrameLayout(this) {
-            var downX = 0f
-            private fun pos(x: Float) = ((x - dp(3) - (width - dp(6)) / 4f) / ((width - dp(6)) / 2f)).coerceIn(0f, 1f) * ((width - dp(6)) / 2f)
-            override fun onInterceptTouchEvent(e: android.view.MotionEvent): Boolean {
-                when (e.actionMasked) { android.view.MotionEvent.ACTION_DOWN -> downX = e.x
-                    android.view.MotionEvent.ACTION_MOVE -> if (!tabsDrag && Math.abs(e.x - downX) > dp(8)) { tabsDrag = true; parent.requestDisallowInterceptTouchEvent(true); knobRef.animate().cancel() } }
-                return tabsDrag
-            }
-            override fun onTouchEvent(e: android.view.MotionEvent): Boolean {
-                if (!tabsDrag && e.actionMasked != android.view.MotionEvent.ACTION_DOWN) return false
-                when (e.actionMasked) {
-                    android.view.MotionEvent.ACTION_MOVE -> knobRef.translationX = pos(e.x)
-                    android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
-                        tabsDrag = false
-                        val i = if (pos(e.x) > (width - dp(6)) / 4f) 1 else 0
-                        slideKnob(knobRef, this, i)
-                        if ((i == 1) != device) { device = i == 1; category = 0; album = null; prefs.edit().putBoolean("gallery_device", device).apply(); reload() }
-                    }
-                }
-                return true
-            }
-        }.apply { background = glass(20, 0x24ffffff) }
-        // The knob must not set the height of the tabs: a plain View asked for "match parent" inside a box that wraps
-        // its content takes all the space it is offered, which stretched the tabs over the whole screen and hid the grid.
-        // It reports zero height until the box measures it again at the height of the tab row.
-        val knob = object : View(this) {
-            override fun onMeasure(w: Int, h: Int) = setMeasuredDimension(MeasureSpec.getSize(w), if (MeasureSpec.getMode(h) == MeasureSpec.EXACTLY) MeasureSpec.getSize(h) else 0)
-        }.apply { background = glass(17, Glass.ACCENT_SOFT) }; knobRef = knob
-        tabs.addView(knob, FrameLayout.LayoutParams(0, -1).apply { setMargins(dp(3), dp(3), dp(3), dp(3)) })
-        val tabRow = LinearLayout(this)
-        listOf("ถ่ายด้วย Lumora", "ทั้งเครื่อง").forEachIndexed { i, t ->
-            tabRow.addView(text(t, 14f, if ((i == 1) == device) Color.WHITE else Glass.TEXT2, true).apply {
-                gravity = Gravity.CENTER; isClickable = true; contentDescription = t; isSelected = (i == 1) == device; minHeight = dp(48); maxLines = 2; setPadding(dp(6), dp(4), dp(6), dp(4))
-                androidx.core.view.ViewCompat.setStateDescription(this, if ((i == 1) == device) "เลือกอยู่" else null)
-                setOnClickListener { if ((i == 1) != device) { device = i == 1; category = 0; album = null; prefs.edit().putBoolean("gallery_device", device).apply(); slideKnob(knob, tabs, i); reload() } }
-            }, LinearLayout.LayoutParams(0, -2, 1f))
-        }
-        // The tabs grow with large fonts instead of cutting "ถ่ายด้วย Lumora" to one line.
-        tabs.addView(tabRow, -1, -2)
-        tabs.post { slideKnob(knob, tabs, if (device) 1 else 0, false) }
-        root.addView(tabs, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(16), dp(4), dp(16), dp(8)) })
 
-        if (device && !mediaGranted()) {
-            root.addView(LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; background = glass(24); setPadding(dp(20), dp(20), dp(20), dp(20))
-                addView(IconView(this@GalleryActivity, Icons.ALBUM, 1.6f), dp(40), dp(40))
-                addView(text("อนุญาตให้ Lumora อ่านรูปและวิดีโอในเครื่อง", 15f, Color.WHITE, true).apply { gravity = Gravity.CENTER; setPadding(0, dp(10), 0, dp(4)) })
-                addView(text("ใช้เพื่อแสดงในแกลเลอรีเท่านั้น ไม่มีการอัปโหลด", 12.5f, Glass.TEXT2).apply { gravity = Gravity.CENTER })
-                addView(text("อนุญาต", 14f, Glass.ON_ACCENT, true).apply { gravity = Gravity.CENTER; background = glass(20, Glass.ACCENT); isClickable = true; glassTouch(); setOnClickListener { mediaRequest.launch(mediaPermissions) } },
-                    LinearLayout.LayoutParams(dp(140), dp(48)).apply { topMargin = dp(14) })
-            }, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(16), dp(30), dp(16), 0) })
-            return
-        }
-
-        // Header part that scrolls away with the grid: partial-access notice and the album strip.
+        // Header above the grid: access notices and, in the Lumora album, the kind strip.
         val header = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        if (!device && albumKind == null && !mediaGranted()) header.addView(accessCard(), LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(16), dp(4), dp(16), dp(8)) })
         if (device && partialAccess()) header.addView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; background = glass(22); setPadding(dp(16), dp(14), dp(16), dp(14))
             addView(text("Lumora เห็นเฉพาะรูปที่คุณเลือกให้ อนุญาตทั้งหมดเพื่อดูทุกอัลบั้ม", 13f, Color.WHITE).apply { maxLines = 4 })
@@ -480,16 +452,8 @@ class GalleryActivity : ComponentActivity() {
                     setOnClickListener { runCatching { startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) } } }, LinearLayout.LayoutParams(0, dp(48), 1f))
             })
         }, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(16), 0, dp(16), dp(8)) })
-        val albumPart = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        if (device) {
-            val list = albums(all)
-            if (album != null && list.none { it.name == album }) album = null
-            albumPart.addView(sectionHead("อัลบั้มในเครื่อง", "${list.size} อัลบั้ม"))
-            albumPart.addView(albumStrip(list), -1, dp(150))
-            header.addView(albumPart, -1, -2)
-        }
 
-        val cats = categories(all); if (category >= cats.size) category = 0
+        val cats = categories(all); if (category >= cats.size || device) category = 0
         val strip = CenterStrip(this).apply { capsuleHeightDp = 40; contentDescription = "หมวด" }
         val labels = mutableListOf<TextView>()
         strip.setItems(cats.mapIndexed { i, (name, _) ->
@@ -498,7 +462,7 @@ class GalleryActivity : ComponentActivity() {
             CenterStrip.Item(name, (t.paint.measureText(name) / resources.displayMetrics.density + 28).roundToInt().coerceAtLeast(64), t)
         }, category)
         strip.onLive = { live -> labels.forEachIndexed { i, t -> t.setTextColor(if (i == live) Color.WHITE else Glass.TEXT2) } }
-        header.addView(strip, -1, dp(48))
+        if (!device) header.addView(strip, -1, dp(48))
         val gridHead = sectionHead("", ""); header.addView(gridHead)
         val gridTitle = gridHead.getChildAt(0) as TextView
 
@@ -511,17 +475,8 @@ class GalleryActivity : ComponentActivity() {
         // GridView cannot hold a header, so the header sits above it in a column that shares the space.
         val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; addView(header, -1, -2); addView(FrameLayout(this@GalleryActivity).apply { addView(grid, -1, -1); addView(empty, -1, -1) }, LinearLayout.LayoutParams(-1, 0, 1f)) }
         root.addView(column, LinearLayout.LayoutParams(-1, 0, 1f))
-        // Scrolling into the grid folds the album strip away; it returns at the top. The gap between the two
-        // thresholds keeps the resize from bouncing back and forth.
-        grid.setOnScrollListener(object : AbsListView.OnScrollListener {
-            override fun onScrollStateChanged(v: AbsListView, s: Int) {}
-            override fun onScroll(v: AbsListView, first: Int, visible: Int, total: Int) {
-                if (!device) return
-                val atTop = first == 0 && (v.childCount == 0 || v.getChildAt(0).top >= v.paddingTop)
-                if (first >= 6 && albumPart.visibility == View.VISIBLE) albumPart.visibility = View.GONE
-                else if (atTop && albumPart.visibility != View.VISIBLE) albumPart.visibility = View.VISIBLE
-            }
-        })
+        if (albumKind == null) root.addView(bottomNav(), LinearLayout.LayoutParams(-1, dp(64)).apply { setMargins(dp(40), dp(4), dp(40), dp(10)) })
+        slideIn(column)
         var shown = all
         val adapter = object : BaseAdapter() {
             override fun getCount() = shown.size
@@ -532,7 +487,7 @@ class GalleryActivity : ComponentActivity() {
         grid.adapter = adapter
         fun apply() {
             val q = queryText.trim().lowercase()
-            val picked = all.filter(cats[category].second).filter { album == null || it.album == album }
+            val picked = all.filter(cats[category].second).filter { inAlbum(it) }
                 .filter { q.isEmpty() || q in "${it.name} ${it.album} ${formatTime(it.time)} ${it.note} ${it.shot?.captureNote ?: ""} ${it.shot?.reason?.description ?: ""}".lowercase() }
             shown = when (sortOrder) {
                 1 -> picked.sortedBy { it.time }
@@ -541,7 +496,7 @@ class GalleryActivity : ComponentActivity() {
                 else -> picked
             }
             adapter.notifyDataSetChanged()
-            gridTitle.text = album ?: if (device) "รูปทั้งหมด" else "ถ่ายด้วย Lumora"
+            gridTitle.text = if (albumKind != null) "" else if (device) "รูปและวิดีโอทั้งหมด" else "ถ่ายด้วย Lumora"
             (gridHead.getChildAt(1) as TextView).text = "${shown.size} รายการ · ${SORTS[sortOrder]} ▾"
             empty.text = if (all.isEmpty()) (if (device) "ไม่พบรูปหรือวิดีโอในเครื่อง" else "รูปและวิดีโอที่ถ่ายด้วย Lumora จะปรากฏที่นี่") else "ไม่พบรายการที่ตรงกัน"
             empty.visibility = if (shown.isEmpty()) View.VISIBLE else View.GONE
@@ -619,57 +574,190 @@ class GalleryActivity : ComponentActivity() {
         return cell
     }
 
-    /** Sideways strip of album cards; tapping filters the grid (tap again for all), the last card opens every album. */
-    private fun albumStrip(list: List<Album>): View {
-        val row = LinearLayout(this).apply { setPadding(dp(12), 0, dp(12), 0) }
-        fun card(name: String, sub: String, on: Boolean, cover: Item?, desc: String, click: () -> Unit) = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; isClickable = true; isFocusable = true; contentDescription = desc; setPadding(dp(4), 0, dp(4), 0)
-            isSelected = on; androidx.core.view.ViewCompat.setStateDescription(this, if (on) "เลือกอยู่" else null)
-            val frame = FrameLayout(this@GalleryActivity).apply { background = glass(20, if (on) Glass.ACCENT_SOFT else 0x1affffff); setPadding(dp(if (on) 3 else 0), dp(if (on) 3 else 0), dp(if (on) 3 else 0), dp(if (on) 3 else 0)) }
-            val img = ImageView(this@GalleryActivity).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
-            rounded(img, 18); frame.addView(img, -1, -1)
-            if (cover == null) frame.addView(IconView(this@GalleryActivity, Icons.CHEVRON_RIGHT, 2.2f), FrameLayout.LayoutParams(dp(28), dp(28), Gravity.CENTER))
-            else { img.tag = cover.key; thumbs.execute { val b = thumbnail(cover, 240); runOnUiThread { if (!isDestroyed && img.tag == cover.key && b != null) img.setImageBitmap(b) } } }
-            addView(frame, dp(104), dp(104))
-            addView(text(name, 13f, if (on) Glass.ACCENT else Color.WHITE, true).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END; setPadding(dp(2), dp(6), 0, 0) }, dp(104), -2)
-            addView(text(sub, 12f, Glass.TEXT2).apply { maxLines = 1; setPadding(dp(2), 0, 0, 0) }, dp(104), -2)
-            glassTouch(); setOnClickListener { click() }
-        }
-        list.take(12).forEach { a ->
-            row.addView(card(a.name, "${a.count} รายการ", album == a.name, a.cover, "อัลบั้ม ${a.name} ${a.count} รายการ") { album = if (album == a.name) null else a.name; reload() })
-        }
-        row.addView(card("ดูเพิ่มเติม", "อัลบั้มทั้งหมด", false, null, "ดูอัลบั้มทั้งหมด") { allAlbums = true; reload() })
-        return HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; clipToPadding = false; addView(row) }
+    // ---------- Albums tab (OPPO-style): my media first, then the phone's albums; pin, hide and reorder ----------
+    private fun albumTitle() = when (albumKind) { "lumora" -> "ถ่ายด้วย Lumora"; "video" -> "วิดีโอ"; "fav" -> "รายการโปรด"; "raw" -> "RAW"; "ai" -> "ภาพ AI"; else -> album ?: "อัลบั้ม" }
+    private fun openAlbum(kind: String, name: String? = null) { albumKind = kind; album = name; category = 0; endSelection(); reload() }
+    private fun closeAlbum() { albumKind = null; album = null; section = 1; category = 0; reload() }
+    private fun isRaw(i: Item) = i.shot?.output?.needsRaw == true || i.name.endsWith(".dng", true) || i.mime == "image/x-adobe-dng"
+    /** Whether an item belongs on the open page. Hidden albums stay out of the รูปภาพ tab. */
+    private fun inAlbum(i: Item): Boolean = when (albumKind) {
+        null -> !(device && i.album in prefList("album_hidden"))
+        "video" -> i.video; "raw" -> isRaw(i); "ai" -> i.shot?.ai != null; "bucket" -> i.album == album
+        else -> true
+    }
+    private fun prefList(key: String): List<String> = prefs.getString(key, "")!!.split('\u001f').filter { it.isNotEmpty() }
+    private fun savePrefList(key: String, v: List<String>) = prefs.edit().putString(key, v.joinToString("\u001f")).apply()
+    /** Pinned albums first, then the saved order, then the biggest. */
+    private fun ordered(list: List<Album>): List<Album> {
+        val order = prefList("album_order"); val pinned = prefList("album_pinned")
+        fun at(n: String) = order.indexOf(n).let { if (it < 0) Int.MAX_VALUE else it }
+        return list.sortedWith(compareBy<Album> { it.name !in pinned }.thenBy { at(it.name) }.thenByDescending { it.count })
     }
 
-    /** Every device album as a two-column grid of covers. */
-    private fun showAlbums(items: List<Item>) {
-        showingId = null; viewerKind = ""; root.removeAllViews()
-        topBar("อัลบั้มทั้งหมด") { allAlbums = false; reload() }
-        val list = albums(items)
-        val grid = GridView(this).apply { numColumns = 2; horizontalSpacing = dp(12); verticalSpacing = dp(16); setPadding(dp(16), dp(8), dp(16), dp(24)); clipToPadding = false; selector = android.graphics.drawable.ColorDrawable(0) }
-        grid.adapter = object : BaseAdapter() {
-            override fun getCount() = list.size
-            override fun getItem(p: Int) = list[p]
-            override fun getItemId(p: Int) = p.toLong()
-            override fun getView(p: Int, previous: View?, parent: ViewGroup?): View {
-                val a = list[p]
-                val box = (previous as? LinearLayout) ?: LinearLayout(this@GalleryActivity).apply {
-                    orientation = LinearLayout.VERTICAL
-                    val img = ImageView(this@GalleryActivity).apply { scaleType = ImageView.ScaleType.CENTER_CROP; background = glass(20, 0x1affffff) }
-                    rounded(img, 20); addView(img, -1, dp(150))
-                    addView(text("", 14f, Color.WHITE, true).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END; setPadding(dp(2), dp(8), 0, 0) })
-                    addView(text("", 12f, Glass.TEXT2).apply { setPadding(dp(2), 0, 0, 0) })
+    /** Glass bar at the bottom: รูปภาพ | อัลบั้ม, with a sliding highlight. */
+    private fun bottomNav(): View {
+        val nav = FrameLayout(this).apply { background = glass(30, Glass.FILL_STRONG); elevation = dp(6).toFloat() }
+        val knob = View(this).apply { background = glass(26, Glass.ACCENT_SOFT) }
+        nav.addView(knob, FrameLayout.LayoutParams(0, -1).apply { setMargins(dp(3), dp(3), dp(3), dp(3)) })
+        val row = LinearLayout(this)
+        listOf(Icons.ALBUM to "รูปภาพ", Icons.STACK to "อัลบั้ม").forEachIndexed { i, (icon, name) ->
+            val on = i == section
+            row.addView(LinearLayout(this).apply {
+                gravity = Gravity.CENTER; isClickable = true; contentDescription = name; isSelected = on
+                androidx.core.view.ViewCompat.setStateDescription(this, if (on) "เลือกอยู่" else null)
+                addView(IconView(this@GalleryActivity, icon, 2f).apply { tint = if (on) Glass.ACCENT else Color.WHITE }, dp(20), dp(20))
+                addView(text(name, 14f, if (on) Glass.ACCENT else Glass.TEXT2, true).apply { setPadding(dp(8), 0, 0, 0) })
+                setOnClickListener {
+                    if (i == section) return@setOnClickListener
+                    Glass.tick(this); slideKnob(knob, nav, i); tabMove = if (i > section) 1 else -1
+                    section = i; managing = false; albumKind = null; album = null; prefs.edit().putInt("gallery_section", i).apply(); endSelection()
+                    postDelayed({ if (!isDestroyed) reload() }, if (Glass.reduced(this@GalleryActivity)) 0 else 140)
                 }
-                val img = box.getChildAt(0) as ImageView; img.setImageDrawable(null); img.tag = a.cover.key
-                (box.getChildAt(1) as TextView).text = a.name; (box.getChildAt(2) as TextView).text = "${a.count} รายการ"
-                box.contentDescription = "อัลบั้ม ${a.name} ${a.count} รายการ"
-                thumbs.execute { val b = thumbnail(a.cover, 360); runOnUiThread { if (!isDestroyed && img.tag == a.cover.key && b != null) img.setImageBitmap(b) } }
-                return box
+            }, LinearLayout.LayoutParams(0, -1, 1f))
+        }
+        nav.addView(row, -1, -1)
+        nav.post { slideKnob(knob, nav, section, false) }
+        return nav
+    }
+    /** The new page slides in from the side of the tab that was tapped. */
+    private fun slideIn(v: View) {
+        if (tabMove == 0 || Glass.reduced(this)) return
+        v.alpha = 0f; v.translationX = tabMove * dp(48).toFloat()
+        v.animate().alpha(1f).translationX(0f).setInterpolator(Glass.EASE).setDuration(300).start()
+    }
+    private fun accessCard() = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL; background = glass(22); setPadding(dp(16), dp(14), dp(16), dp(14))
+        addView(text("ตอนนี้แสดงเฉพาะรูปที่ถ่ายด้วย Lumora อนุญาตให้อ่านรูปในเครื่องเพื่อดูทุกรูปและอัลบั้ม", 13f, Color.WHITE).apply { maxLines = 8; ellipsize = null })
+        addView(text("อนุญาต", 13.5f, Glass.ON_ACCENT, true).apply { gravity = Gravity.CENTER; background = glass(18, Glass.ACCENT); isClickable = true; glassTouch(); setOnClickListener { mediaRequest.launch(mediaPermissions) } },
+            LinearLayout.LayoutParams(dp(120), dp(48)).apply { topMargin = dp(10) })
+    }
+
+    private fun showAlbums(items: List<Item>, lumora: List<Item>, favourites: Int) {
+        showingId = null; viewerKind = ""; root.removeAllViews()
+        val bar = topBar("อัลบั้ม") { finish() }
+        if (device) bar.addView(EditorKit.chip(this, if (managing) "เสร็จ" else "จัดการ", if (managing) Icons.CHECK else Icons.GEAR, managing) { managing = !managing; reload() }, LinearLayout.LayoutParams(-2, dp(48)))
+        val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, 0, 0, dp(16)) }
+        val scroll = ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(col) }
+        root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        val buckets = if (device) ordered(albums(items)) else emptyList()
+        val hidden = prefList("album_hidden"); val pinned = prefList("album_pinned")
+        if (managing) {
+            col.addView(text("ลาก ≡ เพื่อเรียง · ปักหมุดให้อยู่บนสุด · ซ่อนเพื่อเอาออกจากแท็บรูปภาพ", 12.5f, Glass.TEXT2).apply { maxLines = 3; setPadding(dp(16), dp(4), dp(16), dp(10)) }, -1, -2)
+            val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            col.addView(list, -1, -2)
+            manageList(list, buckets.toMutableList(), scroll)
+        } else {
+            col.addView(sectionHead("สื่อของฉัน"))
+            val mine = listOf(
+                Triple("lumora", "ถ่ายด้วย Lumora", lumora.filter { !it.file }),
+                Triple("video", "วิดีโอ", items.filter { it.video }),
+                Triple("fav", "รายการโปรด", emptyList()),
+                Triple("raw", "RAW", items.filter { isRaw(it) }),
+                Triple("ai", "ภาพ AI", items.filter { it.shot?.ai != null }))
+                .filter { (k, _, l) -> k == "lumora" || k == "video" || (k == "fav" && favourites > 0) || l.isNotEmpty() }
+            val icons = mapOf("lumora" to Icons.PHOTO, "video" to Icons.VIDEO, "fav" to HEART, "raw" to Icons.RAW, "ai" to Icons.AI)
+            albumGrid(col, mine.map { (k, name, l) -> AlbumCard(name, if (k == "fav") favourites else l.size, l.firstOrNull(), icons[k] ?: Icons.ALBUM, false) { openAlbum(k) } })
+            if (device) {
+                val shown = buckets.filter { it.name !in hidden }
+                col.addView(sectionHead("อัลบั้มในเครื่อง", "${shown.size} อัลบั้ม"))
+                albumGrid(col, shown.map { a -> AlbumCard(a.name, a.count, a.cover, Icons.ALBUM, a.name in pinned) { openAlbum("bucket", a.name) } })
+                val gone = buckets.filter { it.name in hidden }
+                if (gone.isNotEmpty()) {
+                    col.addView(LinearLayout(this).apply {
+                        gravity = Gravity.CENTER_VERTICAL; isClickable = true; minimumHeight = dp(52); setPadding(dp(16), 0, dp(16), 0); contentDescription = "อัลบั้มที่ซ่อน ${gone.size} อัลบั้ม"
+                        addView(IconView(this@GalleryActivity, EYE_OFF, 2f).apply { tint = Glass.TEXT2 }, dp(20), dp(20))
+                        addView(text("อัลบั้มที่ซ่อน · ${gone.size}", 14f, Glass.TEXT2, true).apply { setPadding(dp(10), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
+                        addView(IconView(this@GalleryActivity, if (showHidden) Icons.CHEVRON_UP else Icons.CHEVRON_RIGHT, 2f).apply { tint = Glass.TEXT2 }, dp(18), dp(18))
+                        glassTouch(); setOnClickListener { showHidden = !showHidden; reload() }
+                    }, -1, -2)
+                    if (showHidden) albumGrid(col, gone.map { a -> AlbumCard(a.name, a.count, a.cover, EYE_OFF, false) { openAlbum("bucket", a.name) } })
+                }
+            } else col.addView(accessCard(), LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(16), dp(12), dp(16), 0) })
+        }
+        root.addView(bottomNav(), LinearLayout.LayoutParams(-1, dp(64)).apply { setMargins(dp(40), dp(4), dp(40), dp(10)) })
+        slideIn(scroll)
+    }
+    private class AlbumCard(val name: String, val count: Int, val cover: Item?, val icon: String, val pinned: Boolean, val open: () -> Unit)
+    /** Two columns of album covers with the name and count under each. */
+    private fun albumGrid(col: LinearLayout, cards: List<AlbumCard>) {
+        cards.chunked(2).forEach { pair ->
+            val row = LinearLayout(this).apply { setPadding(dp(12), 0, dp(12), dp(14)) }
+            pair.forEach { a ->
+                row.addView(LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL; isClickable = true; isFocusable = true; contentDescription = "อัลบั้ม ${a.name} ${a.count} รายการ${if (a.pinned) " ปักหมุด" else ""}"
+                    setPadding(dp(4), 0, dp(4), 0)
+                    val frame = FrameLayout(this@GalleryActivity).apply { background = android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0xff1b2747.toInt(), 0xff0d1428.toInt())) }
+                    rounded(frame, 20)
+                    frame.addView(IconView(this@GalleryActivity, a.icon, 1.8f).apply { tint = 0x88ffffff.toInt() }, FrameLayout.LayoutParams(dp(34), dp(34), Gravity.CENTER))
+                    val img = ImageView(this@GalleryActivity).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
+                    frame.addView(img, -1, -1)
+                    if (a.pinned) frame.addView(FrameLayout(this@GalleryActivity).apply { background = glass(14, 0x99000000.toInt())
+                        addView(IconView(this@GalleryActivity, Icons.PIN, 2f).apply { tint = Glass.ACCENT }, FrameLayout.LayoutParams(dp(14), dp(14), Gravity.CENTER)) }, FrameLayout.LayoutParams(dp(28), dp(28), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(8), dp(8), 0) })
+                    a.cover?.let { c -> img.tag = c.key; thumbs.execute { val b = thumbnail(c, 360); runOnUiThread { if (!isDestroyed && img.tag == c.key && b != null) { img.setImageBitmap(b); if (!Glass.reduced(this@GalleryActivity)) { img.alpha = 0f; img.animate().alpha(1f).setDuration(180).start() } } } } }
+                    addView(frame, LinearLayout.LayoutParams(-1, dp(156)))
+                    addView(text(a.name, 14f, Color.WHITE, true).apply { setPadding(dp(2), dp(8), 0, 0) }, -1, -2)
+                    addView(text("${a.count} รายการ", 12f, Glass.TEXT2).apply { setPadding(dp(2), dp(2), 0, 0) }, -1, -2)
+                    glassTouch(); setOnClickListener { Glass.tick(this); a.open() }
+                }, LinearLayout.LayoutParams(0, -2, 1f))
+            }
+            if (pair.size == 1) row.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+            col.addView(row, -1, -2)
+        }
+    }
+
+    /**
+     * Manage mode: one row per album with a drag handle, pin and hide. Dragging the handle lifts the row; the rows it
+     * passes slide out of the way, and the new order is saved when the finger lifts. Pinned albums stay on top.
+     */
+    private fun manageList(list: LinearLayout, albums: MutableList<Album>, scroll: ScrollView) {
+        list.removeAllViews()
+        val pinned = prefList("album_pinned").toMutableList(); val hidden = prefList("album_hidden").toMutableList()
+        val rowH = dp(68)
+        fun commit() {
+            val sorted = albums.sortedBy { it.name !in pinned }   // stable: keeps the dragged order inside each group
+            albums.clear(); albums.addAll(sorted)
+            savePrefList("album_order", albums.map { it.name }); savePrefList("album_pinned", pinned); savePrefList("album_hidden", hidden)
+            manageList(list, albums, scroll)
+        }
+        albums.forEachIndexed { index, a ->
+            val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(4), 0, dp(12), 0); background = glass(18, 0x14ffffff) }
+            val handle = FrameLayout(this).apply { contentDescription = "ลากเพื่อเรียง ${a.name}"
+                addView(IconView(this@GalleryActivity, "M5 8h14 M5 12h14 M5 16h14", 2f).apply { tint = Glass.TEXT2 }, FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER)) }
+            row.addView(handle, dp(48), dp(48))
+            val img = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP; background = glass(12, 0x22ffffff) }
+            rounded(img, 12); row.addView(img, dp(48), dp(48))
+            img.tag = a.cover.key; thumbs.execute { val b = thumbnail(a.cover, 160); runOnUiThread { if (!isDestroyed && img.tag == a.cover.key && b != null) img.setImageBitmap(b) } }
+            row.addView(LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, dp(8), 0)
+                addView(text(a.name, 14.5f, if (a.name in hidden) Glass.TEXT3 else Color.WHITE, true)); addView(text("${a.count} รายการ${if (a.name in hidden) " · ซ่อนอยู่" else ""}", 12f, Glass.TEXT2)) }, LinearLayout.LayoutParams(0, -2, 1f))
+            val isPinned = a.name in pinned; val isHidden = a.name in hidden
+            row.addView(FrameLayout(this).apply { isClickable = true; contentDescription = if (isPinned) "เลิกปักหมุด ${a.name}" else "ปักหมุด ${a.name}"; isSelected = isPinned; glassTouch()
+                addView(IconView(this@GalleryActivity, Icons.PIN, 2f).apply { tint = if (isPinned) Glass.ACCENT else Glass.TEXT2 }, FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER))
+                setOnClickListener { Glass.tick(this); if (isPinned) pinned.remove(a.name) else pinned.add(a.name); commit() } }, dp(48), dp(48))
+            row.addView(FrameLayout(this).apply { isClickable = true; contentDescription = if (isHidden) "แสดง ${a.name}" else "ซ่อน ${a.name}"; isSelected = isHidden; glassTouch()
+                addView(IconView(this@GalleryActivity, if (isHidden) EYE_OFF else EYE, 2f).apply { tint = if (isHidden) Glass.ACCENT else Glass.TEXT2 }, FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER))
+                setOnClickListener { Glass.tick(this); if (isHidden) hidden.remove(a.name) else hidden.add(a.name); commit() } }, dp(48), dp(48))
+            list.addView(row, LinearLayout.LayoutParams(-1, rowH - dp(8)).apply { setMargins(dp(12), dp(4), dp(12), dp(4)) })
+            var startY = 0f; var target = index
+            handle.setOnTouchListener { _, e ->
+                when (e.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> { startY = e.rawY; target = index; scroll.requestDisallowInterceptTouchEvent(true); row.elevation = dp(8).toFloat(); row.animate().scaleX(1.03f).scaleY(1.03f).setDuration(120).start(); Glass.tick(row) }
+                    MotionEvent.ACTION_MOVE -> {
+                        val dy = e.rawY - startY; row.translationY = dy
+                        val t = (index + Math.round(dy / rowH)).coerceIn(0, albums.lastIndex)
+                        if (t != target) { target = t; Glass.tick(row)
+                            for (k in 0 until list.childCount) if (k != index) {
+                                val shift = when { k in (index + 1)..target -> -rowH; k in target until index -> rowH; else -> 0 }
+                                list.getChildAt(k).animate().translationY(shift.toFloat()).setInterpolator(Glass.EASE).setDuration(160).start()
+                            } }
+                    }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        if (target != index) { val moved = albums.removeAt(index); albums.add(target, moved); commit() }
+                        else { row.animate().translationY(0f).scaleX(1f).scaleY(1f).setDuration(160).start(); row.elevation = 0f }
+                    }
+                }
+                true
             }
         }
-        grid.setOnItemClickListener { _, _, p, _ -> album = list[p].name; allAlbums = false; category = 0; reload() }
-        root.addView(grid, LinearLayout.LayoutParams(-1, 0, 1f))
     }
 
     private fun slideKnob(knob: View, tabs: View, i: Int, animate: Boolean = true) {
@@ -850,8 +938,8 @@ class GalleryActivity : ComponentActivity() {
         if (!video) inspect.show(uri)
         toggle.removeAllViews()
         val item = Item("device:$uri", uri, System.currentTimeMillis(), video, "", "", null)
-        if (video) chip("เล่นวิดีโอ", false, Icons.VIDEO) { VideoPlayerActivity.open(this, uri) }
-        else chip("ปรับด้วย AI", false, Icons.AI) { enhanceDevice(uri) }
+        if (video) { chip("เล่นวิดีโอ", false, Icons.VIDEO) { VideoPlayerActivity.open(this, uri) }; chip("ตัดต่อ", false, EditorKit.SCISSORS) { startActivity(VideoEditorActivity.intent(this, uri)) } }
+        else { chip("แก้ไข", false, EditorKit.PEN) { editPhoto.launch(PhotoEditorActivity.intent(this, uri)) }; chip("ปรับด้วย AI", false, Icons.AI) { enhanceDevice(uri) } }
         chip("แชร์", false, Icons.SHARE) { share(item) }
         chip("ลบ", false, TRASH) { confirmDelete(listOf(lastItems.firstOrNull { it.uri == uri } ?: item)) }
         preloadNear()
@@ -900,7 +988,8 @@ class GalleryActivity : ComponentActivity() {
         root.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; isFillViewport = true; addView(toggle) }, -1, -2)
         chip("แชร์", false, Icons.SHARE) { MediaLedger.share(this, item.uri, item.mime) }
         if (item.video) {
-            chip("แต่ง / AI", false, Icons.AI) { startActivity(Intent(this, ClipEditorActivity::class.java).setData(item.uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)) }
+            chip("ตัดต่อ", false, EditorKit.SCISSORS) { startActivity(VideoEditorActivity.intent(this, item.uri)) }
+            chip("AI / LUT", false, Icons.AI) { startActivity(Intent(this, ClipEditorActivity::class.java).setData(item.uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)) }
             val report = File(filesDir, "reports/${item.name}.json")
             if (report.exists()) chip("ผลตรวจไฟล์", false, Icons.INFO) { clipReport(report) }
         }
@@ -984,6 +1073,8 @@ class GalleryActivity : ComponentActivity() {
                 setOnClickListener { } }
             toggle.addView(compare, LinearLayout.LayoutParams(dp(48), dp(48)).apply { setMargins(dp(4), 0, dp(4), 0) })
         }
+        if (s.stage !in setOf(Stage.RUNNING,Stage.QUEUED,Stage.CAPTURING) && (s.raw == null || s.uri != s.raw))
+            chip("แก้ไข", false, EditorKit.PEN) { editPhoto.launch(PhotoEditorActivity.intent(this, if (useAi && s.ai != null) s.ai!! else s.uri)) }
         if (s.stage !in setOf(Stage.RUNNING,Stage.QUEUED,Stage.CAPTURING)) {
             chip(if (s.ai != null) "ปรับ AI ใหม่" else "ปรับด้วย AI",false,Icons.AI) { EnhanceUi.show(this,s) }
         } else if (s.stage in setOf(Stage.RUNNING,Stage.QUEUED)) {

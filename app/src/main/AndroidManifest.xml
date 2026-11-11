@@ -29,6 +29,8 @@
         <activity android:name=".DocumentActivity" android:exported="false"/>
         <activity android:name=".RawLabActivity" android:exported="false"/>
         <activity android:name=".ClipEditorActivity" android:exported="false"/>
+        <activity android:name=".PhotoEditorActivity" android:exported="false" android:windowSoftInputMode="adjustResize"/>
+        <activity android:name=".VideoEditorActivity" android:exported="false" android:windowSoftInputMode="adjustResize"/>
         <provider android:name="androidx.startup.InitializationProvider" android:authorities="${applicationId}.androidx-startup" android:exported="false" tools:node="merge">
             <meta-data android:name="androidx.work.WorkManagerInitializer" android:value="androidx.startup" tools:node="remove"/>
         </provider>
