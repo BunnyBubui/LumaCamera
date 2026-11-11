@@ -428,18 +428,18 @@ class VideoEditorActivity : ComponentActivity() {
                         runOnUiThread {
                             hideProgress()
                             ok.onSuccess { notice(if (done.size > 1) "ส่งออก ${done.size} คลิปแล้ว · ต้นฉบับยังอยู่" else "ส่งออกคลิปใหม่แล้ว · ต้นฉบับยังอยู่"); setResult(RESULT_OK); finish() }
-                                .onFailure { notice("บันทึกไม่สำเร็จ · ${it.localizedMessage}") }
+                                .onFailure { failed("บันทึกไฟล์ไม่ได้ · ${it.localizedMessage}") }
                         }
                     }
                 }
                 override fun onError(composition: Composition, result: ExportResult, e: ExportException) {
-                    transformer = null; file.delete(); hideProgress(); notice("ส่งออกไม่ได้ · ${e.localizedMessage}")
+                    transformer = null; file.delete(); hideProgress(); failed("${e.errorCodeName} · ${e.cause?.message ?: e.localizedMessage}")
                 }
             }).build()
             transformer = t; t.start(composition, file.path)
             overlayText?.text = if (parts.size > 1) "กำลังส่งออกคลิป ${index + 1}/${parts.size}" else "กำลังส่งออก"
             handler.post(poll)
-        } catch (e: Exception) { transformer = null; file.delete(); hideProgress(); notice("เริ่มส่งออกไม่ได้ · ${e.localizedMessage}") }
+        } catch (e: Exception) { transformer = null; file.delete(); hideProgress(); failed("เริ่มไม่ได้ · ${e.localizedMessage}") }
     }
     private val poll = object : Runnable { override fun run() {
         val t = transformer ?: return
@@ -473,6 +473,8 @@ class VideoEditorActivity : ComponentActivity() {
         return Composition.Builder(main, audio).build()
     }
 
+    /** Export problems stay on screen until dismissed, so the reason can be read (and reported). */
+    private fun failed(reason: String) { if (!isFinishing) GlassDialog.show(this, "ส่งออกไม่ได้", "$reason\nวิดีโอต้นฉบับยังอยู่ครบ ลองปิดฟิลเตอร์หรือข้อความแล้วส่งออกอีกครั้ง") }
     private fun showProgress() {
         exportButton.alpha = 0.5f
         val layer = FrameLayout(this).apply { setBackgroundColor(0x99000000.toInt()); isClickable = true }
