@@ -162,7 +162,7 @@ class VideoActivity:ComponentActivity(){
             recorder=r;useCase=v;manual=if(slow||highRt)null else ManualControls(this,camera!!,true,true,fps).also{it.onNotice={t->notice(t)}}
             camera!!.cameraInfo.zoomState.observe(this){refreshZoom()}
             faces.streamAspect=videoRatio()?:if(quality==Quality.SD)4f/3f else 16f/9f;configureFaces(faces,camera!!,null)
-            fitPreview()
+            applyStageShape();fitPreview()
             saveSettings()
             config.text="${qualityName(quality)} · ${if(mode.lower<mode.upper)"≤"else ""}$fps${if(dynamic!=DynamicRange.SDR)" HDR" else ""}"
             status.text=if(dual)"หน้า + หลัง · ตรวจไฟล์หลังอัด" else "${if(mic)"ไมค์เปิด" else "ไมค์ปิด"} · ${if(stabilization)"กันสั่นเปิด" else "พร้อมบันทึก"}"
@@ -172,6 +172,21 @@ class VideoActivity:ComponentActivity(){
     /** Frame shape chosen for the clip; null keeps the sensor's own shape. Movie mode defaults to cinema 2.39. */
     private val V_ASPECTS get()=listOf("auto")+Aspects.available(prefs)
     private fun aspectLabel(k:String)=when(k){"auto"->"ตามเซนเซอร์";"2.39"->"2.39:1";else->k}
+    private var dockRef:android.view.View?=null
+    /** As in photo mode: tall shapes (16:9 and longer) run under the control dock, which turns see-through. */
+    private fun applyStageShape(){
+        val dock=dockRef?:return
+        if(!::stage.isInitialized||resources.configuration.orientation==android.content.res.Configuration.ORIENTATION_LANDSCAPE)return
+        val r=videoRatio()?:if(quality==Quality.SD)4f/3f else 16f/9f
+        val tall=1f/r<0.6f&&dock.height>0
+        val lp=dock.layoutParams as LinearLayout.LayoutParams
+        val want=if(tall)-dock.height else 0
+        if(lp.topMargin!=want){lp.topMargin=want;dock.layoutParams=lp}
+        dock.setBackgroundColor(if(tall)0x66070b16 else 0)
+        stage.clipToPadding=false
+        val pad=if(tall)dock.height else 0
+        if(stage.paddingBottom!=pad)stage.setPadding(0,0,0,pad)
+    }
     /** The viewfinder takes the shape of the clip (16:9, 21:9, 2.39:1…) and shows exactly the part that is recorded. */
     private fun fitPreview(){
         if(!::stage.isInitialized||!::preview.isInitialized)return
@@ -181,7 +196,10 @@ class VideoActivity:ComponentActivity(){
         val a=if(land)r else 1f/r
         val w=minOf(W,(H*a).roundToInt());val h=(w/a).roundToInt()
         val lp=preview.layoutParams as FrameLayout.LayoutParams
-        if(lp.width!=w||lp.height!=h){lp.width=w;lp.height=h;lp.gravity=Gravity.CENTER;preview.layoutParams=lp}
+        val g=if(land)Gravity.CENTER else Gravity.TOP or Gravity.CENTER_HORIZONTAL
+        if(lp.width!=w||lp.height!=h||lp.gravity!=g){lp.width=w;lp.height=h;lp.gravity=g;preview.layoutParams=lp}
+        // Face boxes map onto the same rectangle as the picture.
+        if(::faces.isInitialized){val f=faces.layoutParams as? FrameLayout.LayoutParams;if(f!=null&&(f.width!=w||f.height!=h||f.gravity!=g)){f.width=w;f.height=h;f.gravity=g;faces.layoutParams=f}}
     }
     private fun videoRatio():Float?{val k=prefs.getString("video_aspect","auto")?:"auto"
         return if(k=="auto"||k !in Aspects.keys)null else Aspects.value(k,true)}
@@ -330,6 +348,7 @@ class VideoActivity:ComponentActivity(){
         stage.addView(dial,FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM).apply{setMargins(dp(16),0,dp(16),dp(54))})
 
         val dock=SwipeColumn(this).apply{gravity=Gravity.CENTER_VERTICAL;onSwipeUp={settings()}};if(landscape)body.addView(dock,dp(320),-1) else body.addView(dock,-1,-2)
+        dockRef=dock;dock.addOnLayoutChangeListener{_,_,t,_,b,_,ot,_,ob->if(b-t!=ob-ot)dock.post{applyStageShape()}}
         androidx.core.view.ViewCompat.addAccessibilityAction(dock,"เปิดตั้งค่าวิดีโอ"){_,_->settings();true}
         if(!slow)dock.addView(IconView(this,Icons.CHEVRON_UP,1.6f).apply{tint=Glass.TEXT3;contentDescription="ตั้งค่าวิดีโอ ปัดขึ้นหรือแตะเพื่อเปิด";isClickable=true;setOnClickListener{settings()}},LinearLayout.LayoutParams(dp(120),dp(36)).apply{gravity=Gravity.CENTER_HORIZONTAL;bottomMargin=-dp(6)})
         if(!slow){
