@@ -161,6 +161,7 @@ class GalleryActivity : ComponentActivity() {
         } else reload()
     }
     override fun onSaveInstanceState(out: Bundle) { super.onSaveInstanceState(out); out.putString("id", selected); out.putBoolean("ai", useAi); out.putInt("section", section); out.putString("albumKind", albumKind); out.putString("album", album) }
+    override fun onPause() { th.ogay.luma.ai.AiPace.watching = false; super.onPause() }
     override fun onDestroy() { thumbs.shutdownNow(); super.onDestroy() }
     private fun mediaGranted() = mediaPermissions.any { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }
     /** Android 14+: the person allowed only some photos. */
@@ -425,6 +426,7 @@ class GalleryActivity : ComponentActivity() {
 
     // ---------- Grid ----------
     private fun showGrid(all: List<Item>) {
+        th.ogay.luma.ai.AiPace.watching = false
         showingId = null; viewerKind = ""; immersive(false); root.removeAllViews()
         val bar = topBar(if (albumKind != null) albumTitle() else "รูปภาพ") { if (albumKind != null) closeAlbum() else finish() }
         val searchBox = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; background = glass(22, 0x40ffffff); setPadding(dp(14), 0, dp(6), 0) }
@@ -1211,6 +1213,8 @@ class GalleryActivity : ComponentActivity() {
             Stage.ORIGINAL -> if (s.output.rawOnly) "ภาพตัวอย่าง RAW · DNG เก็บแยก" else ""
         }
         status.visibility = if (status.text.isEmpty()) View.GONE else View.VISIBLE
+        // The AI works at full speed only while its progress is on screen.
+        th.ogay.luma.ai.AiPace.watching = s.stage == Stage.RUNNING || s.stage == Stage.QUEUED
         when (s.stage) {
             Stage.RUNNING -> ring.update(s.aiProgress.toFloat(), "เพิ่มรายละเอียด AI ×${s.aiScale.coerceAtLeast(1)}")
             Stage.QUEUED -> ring.update(null, "รอคิวประมวลผล AI")

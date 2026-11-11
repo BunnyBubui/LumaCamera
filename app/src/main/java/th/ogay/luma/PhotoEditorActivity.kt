@@ -44,7 +44,10 @@ class PhotoEditorActivity : ComponentActivity() {
     // ---- Edit state ----
     private var turns = 0; private var flipped = false
     private val crop = RectF(0f, 0f, 1f, 1f); private var aspect = 0
-    private val values = FloatArray(EditorKit.ADJUSTMENTS.size); private var adjustIndex = 0
+    private val values = FloatArray(Develop.NAMES.size); private var adjustIndex = 0
+    /** 8 colours × hue, saturation, luminance. */
+    private val hsl = FloatArray(24); private var hslColor = 0
+    private val curve = Develop.IDENTITY_CURVE
     private var film: Film? = null; private var filmStrength = 1f
     private val strokes = mutableListOf<Stroke>(); private var penColor = COLORS[2]; private var penSize = 1
 
@@ -58,14 +61,14 @@ class PhotoEditorActivity : ComponentActivity() {
     private lateinit var source: Uri
 
     // ---- Undo / redo: a snapshot after each finished change ----
-    private class Snap(val turns: Int, val flipped: Boolean, val crop: RectF, val aspect: Int, val values: FloatArray, val film: Film?, val strength: Float, val strokes: List<Stroke>)
+    private class Snap(val turns: Int, val flipped: Boolean, val crop: RectF, val aspect: Int, val values: FloatArray, val film: Film?, val strength: Float, val strokes: List<Stroke>, val hsl: FloatArray, val curve: FloatArray)
     private val history = mutableListOf<Snap>(); private var at = -1
     private lateinit var undoButton: View; private lateinit var redoButton: View
     private val commitLater = Runnable { commit() }
     private fun copyStrokes(list: List<Stroke>) = list.map { s -> Stroke(s.color, s.width, s.points.map { PointF(it.x, it.y) }.toMutableList()) }
-    private fun snap() = Snap(turns, flipped, RectF(crop), aspect, values.copyOf(), film, filmStrength, copyStrokes(strokes))
+    private fun snap() = Snap(turns, flipped, RectF(crop), aspect, values.copyOf(), film, filmStrength, copyStrokes(strokes), hsl.copyOf(), curve.copyOf())
     private fun same(a: Snap, b: Snap) = a.turns == b.turns && a.flipped == b.flipped && a.crop == b.crop && a.aspect == b.aspect && a.values.contentEquals(b.values) &&
-        a.film?.id == b.film?.id && a.strength == b.strength && a.strokes.size == b.strokes.size && a.strokes.zip(b.strokes).all { (x, y) -> x.color == y.color && x.points.size == y.points.size }
+        a.film?.id == b.film?.id && a.strength == b.strength && a.hsl.contentEquals(b.hsl) && a.curve.contentEquals(b.curve) && a.strokes.size == b.strokes.size && a.strokes.zip(b.strokes).all { (x, y) -> x.color == y.color && x.points.size == y.points.size }
     private fun commit() {
         canvasView.removeCallbacks(commitLater)
         val s = snap(); if (at >= 0 && same(history[at], s)) return
@@ -78,7 +81,7 @@ class PhotoEditorActivity : ComponentActivity() {
         commit()
         val t = at + d; if (t !in history.indices) return
         at = t; val s = history[at]
-        turns = s.turns; flipped = s.flipped; crop.set(s.crop); aspect = s.aspect; s.values.copyInto(values); film = s.film; filmStrength = s.strength
+        turns = s.turns; flipped = s.flipped; crop.set(s.crop); aspect = s.aspect; s.values.copyInto(values); film = s.film; filmStrength = s.strength; s.hsl.copyInto(hsl); s.curve.copyInto(curve)
         strokes.clear(); strokes += copyStrokes(s.strokes)
         markHistory(); showTool(tool, false); canvasView.refresh(true)
     }
@@ -121,14 +124,14 @@ class PhotoEditorActivity : ComponentActivity() {
         canvasView = EditCanvas(this)
         root.addView(canvasView, LinearLayout.LayoutParams(-1, 0, 1f))
         tools = FrameLayout(this).apply { clipChildren = false }
-        root.addView(tools, LinearLayout.LayoutParams(-1, dp(150)))
-        toolBar = EditorKit.ToolBar(this, listOf(EditorKit.CROP to "ครอบตัด", EditorKit.ADJUST to "ปรับ", Icons.FILM to "ฟิลเตอร์", EditorKit.PEN to "วาด")) { showTool(it) }
+        root.addView(tools, LinearLayout.LayoutParams(-1, dp(172)))
+        toolBar = EditorKit.ToolBar(this, listOf(EditorKit.CROP to "ครอบตัด", EditorKit.ADJUST to "ปรับ", HSL_ICON to "สี", CURVE_ICON to "เส้นโค้ง", Icons.FILM to "ฟิลเตอร์", EditorKit.PEN to "วาด")) { showTool(it) }
         root.addView(toolBar, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(8), dp(2), dp(8), dp(8)) })
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) { override fun handleOnBackPressed() = leave() })
         markHistory()
 
         luma.readIo.execute {
-            val loaded = runCatching { load(source, 2_400_000) }.getOrNull()
+            val loaded = runCatching { load(source, 1_600_000) }.getOrNull()
             runOnUiThread {
                 if (isDestroyed) return@runOnUiThread
                 if (loaded == null) { notice("เปิดภาพนี้ไม่ได้"); finish(); return@runOnUiThread }
@@ -138,7 +141,7 @@ class PhotoEditorActivity : ComponentActivity() {
         }
     }
 
-    private fun changed() = turns != 0 || flipped || crop != RectF(0f, 0f, 1f, 1f) || values.any { it != 0f } || film != null || strokes.isNotEmpty()
+    private fun changed() = turns != 0 || flipped || crop != RectF(0f, 0f, 1f, 1f) || values.any { it != 0f } || film != null || strokes.isNotEmpty() || hsl.any { it != 0f } || !curve.contentEquals(Develop.IDENTITY_CURVE)
     private fun leave() {
         if (saving) return
         if (!changed()) { finish(); return }
@@ -148,14 +151,16 @@ class PhotoEditorActivity : ComponentActivity() {
     // ---------- Tools ----------
     private fun showTool(i: Int, animate: Boolean = true) {
         val dir = if (animate) i.compareTo(tool) else 0
-        val modeChange = (tool == 0) != (i == 0) || (tool == 3) != (i == 3)
+        val modeChange = (tool == 0) != (i == 0)
         tool = i; toolBar.select(i, animate)
         canvasView.mode = i; canvasView.refresh(animate && modeChange)
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_VERTICAL }
         when (i) {
             0 -> cropTools(col)
             1 -> adjustTools(col)
-            2 -> filmTools(col)
+            2 -> hslTools(col)
+            3 -> curveTools(col)
+            4 -> filmTools(col)
             else -> penTools(col)
         }
         EditorKit.swap(tools, col, dir)
@@ -200,22 +205,31 @@ class PhotoEditorActivity : ComponentActivity() {
         crop.set((1f - cw) / 2, (1f - ch) / 2, (1f + cw) / 2, (1f + ch) / 2)
     }
 
+    private val HSL_ICON = "M12 3a9 9 0 1 0 0 18a9 9 0 1 0 0-18 M12 3v18 M3.5 8.5l17 7 M3.5 15.5l17-7"
+    private val CURVE_ICON = "M4 20h16 M4 4v16 M4 18c5 0 6-12 16-14"
+    private val PEN = 5
     private fun sign(v: Float) = (v * 100).roundToInt().let { if (it > 0) "+$it" else "$it" }
     private fun adjustTools(col: LinearLayout) {
+        // Group chips (light, colour, effects) above one strip of dials; the chip of the dial in the middle lights up.
+        val chips = LinearLayout(this).apply { gravity = Gravity.CENTER }
+        val chipViews = Develop.GROUPS.map { (n, icon, _) -> EditorKit.chip(this, n, icon) {}.also { chips.addView(it, LinearLayout.LayoutParams(-2, dp(36)).apply { setMargins(dp(4), 0, dp(4), 0) }) } }
         val name = text("", 12f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER }
-        val value = text("", 17f, Color.WHITE, true).apply { gravity = Gravity.CENTER }
-        col.addView(LinearLayout(this).apply { gravity = Gravity.CENTER; addView(name); addView(value.apply { setPadding(dp(8), 0, 0, 0) }) }, -1, -2)
-        val dials = EditorKit.ADJUSTMENTS.mapIndexed { k, n -> EditorKit.Dial(this, EditorKit.ADJUST_ICONS[k], n).apply { amount = values[k] } }
+        val value = text("", 15f, Color.WHITE, true).apply { gravity = Gravity.CENTER }
+        val dials = Develop.NAMES.mapIndexed { k, n -> EditorKit.Dial(this, Develop.ICONS[k], n).apply { amount = values[k] } }
         val slider = GlassSlider(this).apply { values = (-100..100).map { if (it > 0) "+$it" else "$it" }; grad = intArrayOf(0xff8e8e93.toInt(), Color.WHITE, Glass.ACCENT) }
         fun show(k: Int) {
             adjustIndex = k; dials.forEachIndexed { j, d -> d.lit = j == k }
-            name.text = EditorKit.ADJUSTMENTS[k]; value.text = sign(values[k]); value.setTextColor(if (values[k] == 0f) Glass.TEXT2 else Glass.ACCENT)
-            slider.index = (values[k] * 100).roundToInt() + 100; slider.contentDescription = EditorKit.ADJUSTMENTS[k]
+            Develop.GROUPS.forEachIndexed { g, (_, _, r) -> EditorKit.mark(chipViews[g], k in r) }
+            name.text = Develop.NAMES[k]; value.text = sign(values[k]); value.setTextColor(if (values[k] == 0f) Glass.TEXT2 else Glass.ACCENT)
+            slider.index = (values[k] * 100).roundToInt() + 100; slider.contentDescription = Develop.NAMES[k]
         }
-        // Slide the dials to choose; tap the one in the middle to put it back to zero.
-        col.addView(EditorKit.strip(this, dials.map { it to 60 }, adjustIndex, 0, { k -> show(k) },
-            tapAgain = { k -> if (values[k] != 0f) { values[k] = 0f; dials[k].amount = 0f; Glass.tick(dials[k]); show(k); edited() } }) { k -> show(k) },
-            LinearLayout.LayoutParams(-1, dp(62)).apply { topMargin = dp(4) })
+        lateinit var strip: CenterStrip
+        strip = EditorKit.strip(this, dials.map { it to 60 }, adjustIndex, 0, { k -> show(k) },
+            tapAgain = { k -> if (values[k] != 0f) { values[k] = 0f; dials[k].amount = 0f; Glass.tick(dials[k]); show(k); edited() } }) { k -> show(k) }
+        chipViews.forEachIndexed { g, c -> c.setOnClickListener { Glass.tick(c); val first = Develop.GROUPS[g].third.first; strip.select(first, true); show(first) } }
+        col.addView(chips, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(2) })
+        col.addView(LinearLayout(this).apply { gravity = Gravity.CENTER; addView(name); addView(value.apply { setPadding(dp(8), 0, 0, 0) }) }, -1, -2)
+        col.addView(strip, LinearLayout.LayoutParams(-1, dp(60)))
         var zero = values[adjustIndex] == 0f
         slider.onChange = { idx ->
             val v = (idx - 100) / 100f; values[adjustIndex] = v; dials[adjustIndex].amount = v
@@ -224,8 +238,40 @@ class PhotoEditorActivity : ComponentActivity() {
             if ((v == 0f) != zero) { zero = v == 0f; if (zero) Glass.tick(slider, android.view.HapticFeedbackConstants.CONTEXT_CLICK) }
             edited()
         }
-        col.addView(slider, LinearLayout.LayoutParams(-1, dp(52)).apply { setMargins(dp(12), dp(2), dp(12), 0) })
+        col.addView(slider, LinearLayout.LayoutParams(-1, dp(46)).apply { setMargins(dp(12), 0, dp(12), 0) })
         show(adjustIndex)
+    }
+
+    /** Per-colour hue, saturation and luminance, like Lightroom's colour mixer. */
+    private fun hslTools(col: LinearLayout) {
+        val dots = LinearLayout(this).apply { gravity = Gravity.CENTER }
+        val views = Develop.HSL_COLORS.mapIndexed { k, color -> View(this).apply {
+            isClickable = true; contentDescription = "สี" + Develop.HSL_NAMES[k]
+            background = android.graphics.drawable.GradientDrawable().apply { shape = android.graphics.drawable.GradientDrawable.OVAL; setColor(color); setStroke(dp(if (k == hslColor) 3 else 0), Color.WHITE) }
+            if (k == hslColor) { scaleX = 1.18f; scaleY = 1.18f }
+            setOnClickListener { Glass.tick(this); hslColor = k; showTool(2, false) }
+        }.also { dots.addView(it, LinearLayout.LayoutParams(dp(30), dp(30)).apply { setMargins(dp(7), dp(6), dp(7), dp(6)) }) } }
+        col.addView(dots, -1, -2)
+        listOf("เฉดสี" to 0, "ความอิ่ม" to 1, "ความสว่าง" to 2).forEach { (label, part) ->
+            val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), 0, dp(8), 0) }
+            row.addView(text(label, 12f, Glass.TEXT2, true), dp(64), -2)
+            val idx = hslColor * 3 + part
+            val slider = GlassSlider(this).apply { values = (-100..100).map { if (it > 0) "+$it" else "$it" }; index = (hsl[idx] * 100).roundToInt() + 100
+                contentDescription = "$label สี${Develop.HSL_NAMES[hslColor]}"
+                grad = when (part) { 0 -> intArrayOf(Develop.HSL_COLORS[(hslColor + 7) % 8], Develop.HSL_COLORS[hslColor], Develop.HSL_COLORS[(hslColor + 1) % 8]); 1 -> intArrayOf(0xff8e8e93.toInt(), Develop.HSL_COLORS[hslColor]); else -> intArrayOf(0xff1c1c1e.toInt(), Develop.HSL_COLORS[hslColor], Color.WHITE) }
+                onChange = { i -> hsl[idx] = (i - 100) / 100f; views[hslColor].alpha = 1f; edited() } }
+            row.addView(slider, LinearLayout.LayoutParams(0, dp(40), 1f))
+            col.addView(row, -1, -2)
+        }
+    }
+
+    /** Tone curve: drag the five points up or down. */
+    private fun curveTools(col: LinearLayout) {
+        val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), 0, dp(12), 0) }
+        val view = CurveView(this, curve).apply { onChange = { canvasView.refresh() }; onRelease = { commit() } }
+        row.addView(view, LinearLayout.LayoutParams(0, dp(150), 1f))
+        row.addView(EditorKit.action(this, Icons.RESET, "คืนค่า") { Develop.IDENTITY_CURVE.copyInto(curve); view.invalidate(); canvasView.refresh(); commit() }, LinearLayout.LayoutParams(dp(72), -2).apply { leftMargin = dp(8) })
+        col.addView(row, -1, -2)
     }
 
     private fun filmTools(col: LinearLayout) {
@@ -260,7 +306,7 @@ class PhotoEditorActivity : ComponentActivity() {
         }
         markDots(false)
         col.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; clipToPadding = false; addView(swatches) }, -1, -2)
-        val sizes = SIZES.mapIndexed { k, (n, _) -> EditorKit.action(this, EditorKit.dot(2.5f + k * 2.5f), n, k == penSize) { penSize = k; showTool(3, false) } }
+        val sizes = SIZES.mapIndexed { k, (n, _) -> EditorKit.action(this, EditorKit.dot(2.5f + k * 2.5f), n, k == penSize) { penSize = k; showTool(PEN, false) } }
         col.addView(EditorKit.actions(this, sizes + listOf(
             EditorKit.action(this, EditorKit.UNDO, "ลบเส้นล่าสุด") { if (strokes.isNotEmpty()) { strokes.removeAt(strokes.lastIndex); canvasView.refresh(); commit() } },
             EditorKit.action(this, EditorKit.ERASE, "ล้างทั้งหมด") { if (strokes.isNotEmpty()) { strokes.clear(); canvasView.refresh(); commit() } })).apply { setPadding(dp(4), 0, dp(4), 0) },
@@ -294,7 +340,7 @@ class PhotoEditorActivity : ComponentActivity() {
         val r = RectF(0f, 0f, w.toFloat(), h.toFloat()); m.mapRect(r); m.postTranslate(-r.left, -r.top)
         return m to Point(r.width().toInt(), r.height().toInt())
     }
-    fun colour(): ColorMatrix = EditorKit.film(film, filmStrength).apply { postConcat(EditorKit.adjust(values)) }
+    fun develop() = Develop(values, hsl, curve, EditorKit.film(film, filmStrength))
 
     /** Draws the finished picture: turned, cropped, coloured, vignette and pen strokes. Shared by preview thumbnails and saving. */
     private fun render(src: Bitmap): Bitmap {
@@ -303,8 +349,9 @@ class PhotoEditorActivity : ComponentActivity() {
         val w = max(1, (crop.width() * size.x).toInt()); val h = max(1, (crop.height() * size.y).toInt())
         val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val c = Canvas(out); m.postTranslate(-left, -top)
-        c.drawBitmap(src, m, Paint(Paint.FILTER_BITMAP_FLAG).apply { colorFilter = ColorMatrixColorFilter(colour()) })
-        drawVignette(c, RectF(0f, 0f, w.toFloat(), h.toFloat()), values.last())
+        c.drawBitmap(src, m, Paint(Paint.FILTER_BITMAP_FLAG))
+        develop().apply(out)
+        drawVignette(c, RectF(0f, 0f, w.toFloat(), h.toFloat()), values[Develop.VIGNETTE])
         val shorter = min(size.x, size.y).toFloat()
         drawStrokes(c, strokes, { x -> x * size.x - left }, { y -> y * size.y - top }, shorter)
         return out
@@ -342,13 +389,15 @@ class PhotoEditorActivity : ComponentActivity() {
     override fun onSaveInstanceState(out: Bundle) {
         super.onSaveInstanceState(out)
         out.putInt("turns", turns); out.putBoolean("flipped", flipped); out.putFloatArray("crop", floatArrayOf(crop.left, crop.top, crop.right, crop.bottom))
+        out.putFloatArray("hsl", hsl); out.putFloatArray("curve", curve)
         out.putInt("aspect", aspect); out.putFloatArray("values", values); out.putString("film", film?.id); out.putFloat("strength", filmStrength); out.putInt("tool", tool)
         out.putIntArray("sc", strokes.map { it.color }.toIntArray()); out.putFloatArray("sw", strokes.map { it.width }.toFloatArray())
         out.putFloatArray("sp", strokes.flatMap { s -> listOf(s.points.size.toFloat()) + s.points.flatMap { listOf(it.x, it.y) } }.toFloatArray())
     }
     private fun restore(s: Bundle) {
         turns = s.getInt("turns"); flipped = s.getBoolean("flipped"); s.getFloatArray("crop")?.let { crop.set(it[0], it[1], it[2], it[3]) }
-        aspect = s.getInt("aspect"); s.getFloatArray("values")?.copyInto(values); film = Films.byId(s.getString("film")); filmStrength = s.getFloat("strength", 1f); tool = s.getInt("tool")
+        s.getFloatArray("hsl")?.takeIf { it.size == hsl.size }?.copyInto(hsl); s.getFloatArray("curve")?.takeIf { it.size == 5 }?.copyInto(curve)
+        aspect = s.getInt("aspect"); s.getFloatArray("values")?.takeIf { it.size == values.size }?.copyInto(values); film = Films.byId(s.getString("film")); filmStrength = s.getFloat("strength", 1f); tool = s.getInt("tool")
         val colors = s.getIntArray("sc") ?: return; val widths = s.getFloatArray("sw") ?: return; val pts = s.getFloatArray("sp") ?: return
         var k = 0
         for (i in colors.indices) { val n = pts[k++].toInt(); val st = Stroke(colors[i], widths[i]); repeat(n) { st.points += PointF(pts[k], pts[k + 1]); k += 2 }; strokes += st }
@@ -377,8 +426,33 @@ class PhotoEditorActivity : ComponentActivity() {
         fun turnedSize(): Pair<Int, Int> { val b = bitmap ?: return 0 to 0; val (_, s) = orient(b.width, b.height); return s.x to s.y }
         private var glide: android.animation.ValueAnimator? = null
         /** Redraws the edit; with [animate] the picture glides from where it was to its new place (crop ↔ other tools). */
+        /** The picture with the develop settings, rendered off the main thread; null until the first one is ready. */
+        private var shown: Bitmap? = null; private var spare: Bitmap? = null
+        private var source: IntArray? = null
+        private var rendering = false; private var again = false
+        private val worker = java.util.concurrent.Executors.newSingleThreadExecutor()
+        /** Renders the newest settings; while one render runs, later changes collapse into a single follow-up. */
+        private fun develop() {
+            val b = bitmap ?: return
+            if (rendering) { again = true; return }
+            rendering = true; again = false
+            val d = this@PhotoEditorActivity.develop()
+            val back = spare?.takeIf { !it.isRecycled && it.width == b.width && it.height == b.height } ?: Bitmap.createBitmap(b.width, b.height, Bitmap.Config.ARGB_8888)
+            spare = null
+            worker.execute {
+                val src = source ?: IntArray(b.width * b.height).also { b.getPixels(it, 0, b.width, 0, 0, b.width, b.height); source = it }
+                val work = src.copyOf()
+                runCatching { d.apply(work, b.width, b.height); back.setPixels(work, 0, b.width, 0, 0, b.width, b.height) }
+                post {
+                    rendering = false
+                    if (isAttachedToWindow) { spare = shown; shown = back; invalidate() }
+                    if (again) develop()
+                }
+            }
+        }
+        override fun onDetachedFromWindow() { worker.shutdownNow(); super.onDetachedFromWindow() }
         fun refresh(animate: Boolean = false) {
-            paint.colorFilter = ColorMatrixColorFilter(colour())
+            develop()
             val fromImage = RectF(image); val fromClip = RectF(clip)
             glide?.cancel(); layoutImage()
             if (animate && !Glass.reduced(context) && !fromImage.isEmpty && width > 0) {
@@ -420,11 +494,10 @@ class PhotoEditorActivity : ComponentActivity() {
         override fun onDraw(c: Canvas) {
             val b = bitmap ?: return
             c.save(); c.clipRect(clip)
-            paint.colorFilter = if (original) null else ColorMatrixColorFilter(colour())
-            c.drawBitmap(b, draw, paint)
+            c.drawBitmap(if (original) b else shown ?: b, draw, paint)
             if (!original) {
                 val visible = if (mode == 0) cropRect() else clip
-                drawVignette(c, visible, values.last())
+                drawVignette(c, visible, values[Develop.VIGNETTE])
                 val (sw, sh) = turnedSize()
                 drawStrokes(c, strokes, { x -> image.left + x * image.width() }, { y -> image.top + y * image.height() }, min(sw, sh) * image.width() / max(1, sw))
             }
@@ -448,7 +521,7 @@ class PhotoEditorActivity : ComponentActivity() {
         override fun onTouchEvent(e: MotionEvent): Boolean {
             if (bitmap == null) return false
             if (mode == 0) return cropTouch(e)
-            if (mode == 3) return penTouch(e)
+            if (mode == PEN) return penTouch(e)
             return false
         }
         private fun cropTouch(e: MotionEvent): Boolean {

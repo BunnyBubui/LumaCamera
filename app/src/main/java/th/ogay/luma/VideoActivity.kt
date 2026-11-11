@@ -106,6 +106,26 @@ class VideoActivity:ComponentActivity(){
         return infos.firstOrNull{it.lensFacing==facing}
     }
     @Suppress("DEPRECATION")
+    private lateinit var frozen:android.widget.ImageView
+    /** Holds the last frame over the preview (blurred) while the camera rebinds, so the switch never flashes black. */
+    private fun freeze(turn:Boolean){
+        val full=runCatching{preview.bitmap}.getOrNull()?:return
+        val b=android.graphics.Bitmap.createScaledBitmap(full,(full.width/4).coerceAtLeast(1),(full.height/4).coerceAtLeast(1),true).also{if(it!==full)full.recycle()}
+        val old=(frozen.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
+        frozen.animate().cancel();frozen.setImageBitmap(b);old?.takeIf{it!==b}?.recycle()
+        frozen.layoutParams=(frozen.layoutParams as FrameLayout.LayoutParams).apply{width=preview.width;height=preview.height;gravity=(preview.layoutParams as FrameLayout.LayoutParams).gravity}
+        frozen.translationX=preview.translationX;frozen.translationY=preview.translationY
+        frozen.alpha=1f;frozen.rotationY=0f;Glass.blur(frozen,18f)
+        if(turn&&!Glass.reduced(this)){frozen.cameraDistance=8000*resources.displayMetrics.density;frozen.animate().rotationY(180f).setInterpolator(Glass.EASE).setDuration(460).start()}
+        thawAt=android.os.SystemClock.uptimeMillis()+380
+    }
+    private var thawAt=0L
+    private fun thaw(){
+        if(!::frozen.isInitialized||frozen.alpha<=0f)return
+        // Let the turn finish before fading, so the new picture appears from behind the turning card.
+        val wait=(thawAt-android.os.SystemClock.uptimeMillis()).coerceAtLeast(0)
+        frozen.postDelayed({frozen.animate().alpha(0f).setDuration(260).withEndAction{Glass.blur(frozen,0f);frozen.rotationY=0f}.start()},wait)
+    }
     private fun bind(){
         if(recording!=null||starting||finalizing)return
         val p=provider?:return;stopTracking();shutter.isEnabled=false;shutter.alpha=0.45f;status.text="กำลังตรวจชุดวิดีโอ…"
@@ -383,7 +403,11 @@ class VideoActivity:ComponentActivity(){
         // Landscape keeps the dock beside the preview instead of under it.
         val body=LinearLayout(this).apply{orientation=if(landscape)LinearLayout.HORIZONTAL else LinearLayout.VERTICAL};column.addView(body,LinearLayout.LayoutParams(-1,0,1f))
         stage=FrameLayout(this);body.addView(stage,if(landscape)LinearLayout.LayoutParams(0,-1,1f) else LinearLayout.LayoutParams(-1,0,1f))
-        preview=PreviewView(this).apply{implementationMode=PreviewView.ImplementationMode.COMPATIBLE;scaleType=PreviewView.ScaleType.FILL_CENTER};stage.addView(preview,FrameLayout.LayoutParams(-1,-1,Gravity.CENTER));stage.addOnLayoutChangeListener{_,_,_,_,_,_,_,_,_->stage.post{fitPreview()}};faces=FaceOverlay(this).apply{fill=false};stage.addView(faces,-1,-1)
+        // SurfaceView (PERFORMANCE) hands frames straight to the display: smoother and lower latency than a TextureView.
+        preview=PreviewView(this).apply{implementationMode=if(prefs.getBoolean("video_fast_preview",true))PreviewView.ImplementationMode.PERFORMANCE else PreviewView.ImplementationMode.COMPATIBLE;scaleType=PreviewView.ScaleType.FILL_CENTER};stage.addView(preview,FrameLayout.LayoutParams(-1,-1,Gravity.CENTER))
+        // Switching cameras: the last frame stays, blurred, turns like a card and fades once the new camera streams.
+        frozen=android.widget.ImageView(this).apply{scaleType=android.widget.ImageView.ScaleType.CENTER_CROP;alpha=0f;importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_NO};stage.addView(frozen,FrameLayout.LayoutParams(-1,-1,Gravity.CENTER))
+        preview.previewStreamState.observe(this){st->if(st==PreviewView.StreamState.STREAMING)thaw()};stage.addOnLayoutChangeListener{_,_,_,_,_,_,_,_,_->stage.post{fitPreview()}};faces=FaceOverlay(this).apply{fill=false};stage.addView(faces,-1,-1)
         val overlay=CompositionOverlay(this).apply{gridKind=Grids.kind(prefs);movie=false};vOverlay=overlay;stage.addView(overlay,-1,-1)
         expRail=EdgeRail(this,false);stage.addView(expRail,FrameLayout.LayoutParams(dp(150),-1,Gravity.START))
         focusRail=EdgeRail(this,true);stage.addView(focusRail,FrameLayout.LayoutParams(dp(170),-1,Gravity.END))
@@ -449,7 +473,7 @@ class VideoActivity:ComponentActivity(){
             setOnClickListener{if(this@VideoActivity.recording!=null)stopRecording()else if(!starting&&!finalizing){if(mic&&ContextCompat.checkSelfPermission(this@VideoActivity,Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED)audioPermission.launch(Manifest.permission.RECORD_AUDIO)else startRecording()}}}
         actions.addView(shutter,dp(88),dp(88));actions.space()
         val flipIcon=IconView(this,Icons.FLIP)
-        flip=roundButton(flipIcon,56,"สลับกล้องวิดีโอ"){if(!busy()&&!dual){flipIcon.animate().rotationBy(180f).setInterpolator(Glass.EASE).setDuration(420).start();rear=!rear;selectedCameraId=null;manualFocusOff();bind()}}
+        flip=roundButton(flipIcon,56,"สลับกล้องวิดีโอ"){if(!busy()&&!dual){flipIcon.animate().rotationBy(180f).setInterpolator(Glass.EASE).setDuration(420).start();freeze(true);rear=!rear;selectedCameraId=null;manualFocusOff();bind()}}
         if(dual)flip.alpha=0.35f
         actions.addView(flip,dp(56),dp(56));dock.addView(actions,-1,dp(104))
         val pinch=android.view.ScaleGestureDetector(this,object:android.view.ScaleGestureDetector.SimpleOnScaleGestureListener(){override fun onScale(d:android.view.ScaleGestureDetector):Boolean{if(zoomLocked())return true;val s=camera?.cameraInfo?.zoomState?.value?:return false;zoomTo((if(zFollow?.isRunning==true)zGoal else zNow(s))*d.scaleFactor);return true}})

@@ -23,7 +23,16 @@ class ManualControls(private val context:Context, val camera:Camera, private val
     var plainColor=false
     val canManual get()=info.getCameraCharacteristic(CC.REQUEST_AVAILABLE_CAPABILITIES)?.contains(CC.REQUEST_AVAILABLE_CAPABILITIES_MANUAL_SENSOR)==true
     private val key="manual.${info.cameraId}.${if(video)"video" else "photo"}."
+    // A slider can move twenty times a second; the camera gets at most one new request per frame or two, and always
+    // the last value, so dragging stays smooth instead of queueing requests behind each other.
+    private var lastApply=0L
+    private val pending=Runnable{applyNow()}
     fun apply(){
+        val now=android.os.SystemClock.uptimeMillis();main.removeCallbacks(pending)
+        if(now-lastApply>=60)applyNow() else main.postDelayed(pending,60-(now-lastApply))
+    }
+    private fun applyNow(){
+        lastApply=android.os.SystemClock.uptimeMillis()
         if(persistent)prefs.edit().putInt(key+"iso",iso?:-1).putLong(key+"ns",ns?:-1).putInt(key+"wb",wb).putFloat(key+"focus",focus?:-1f).apply()
         prefs.edit().putInt(key+"tint",tint).putInt(key+"edge",edge?:-1).putInt(key+"nr",nr?:-1).putInt(key+"contrast",contrast).apply()
         val b=CaptureRequestOptions.Builder()

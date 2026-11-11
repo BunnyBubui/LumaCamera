@@ -14,6 +14,10 @@ import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.audio.SpeedProvider
+import androidx.media3.common.audio.AudioProcessor
+import androidx.media3.common.audio.ChannelMixingAudioProcessor
+import androidx.media3.common.audio.ChannelMixingMatrix
+import androidx.media3.effect.ScaleAndRotateTransformation
 import androidx.media3.common.util.Clock
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.common.util.Util
@@ -39,19 +43,32 @@ data class VideoEditSpec(
     val source: Uri, val from: Long, val to: Long, val videoW: Int, val videoH: Int,
     val speed: Float = 1f, val crop: Float = 0f,
     val caption: String = "", val place: Int = 2, val textColor: Int = Color.WHITE, val textBig: Boolean = false,
-    val look: ColorMatrix? = null, val music: Uri? = null, val keepAudio: Boolean = true)
+    val look: ColorMatrix? = null, val music: Uri? = null, val keepAudio: Boolean = true,
+    /** Quarter turns clockwise and a left–right mirror, applied before the crop. */
+    val turns: Int = 0, val mirror: Boolean = false,
+    /** Loudness of the clip's own sound and of the music (1 = as recorded). */
+    val volume: Float = 1f, val musicVolume: Float = 1f,
+    /** A middle part [cutFrom, cutTo) taken out; the two sides are joined in one file. */
+    val cutFrom: Long = -1L, val cutTo: Long = -1L,
+    /** A dark box behind the caption. */
+    val textBox: Boolean = false)
 
 @androidx.annotation.OptIn(markerClass = [UnstableApi::class])
 object VideoEdit {
     /** The edit as a media3 composition: clipped, sped up or slowed, look, crop and caption; music as a looping second sequence. */
+    /** Sound louder or quieter for mono and stereo tracks. */
+    private fun gain(v: Float): AudioProcessor = ChannelMixingAudioProcessor().apply { for (n in 1..2) putChannelMixingMatrix(ChannelMixingMatrix.create(n, n).scaleBy(v)) }
     fun composition(s: VideoEditSpec): Composition {
-        val item = MediaItem.Builder().setUri(s.source).setClippingConfiguration(MediaItem.ClippingConfiguration.Builder().setStartPositionMs(s.from).setEndPositionMs(s.to).build()).build()
+        val cut = s.cutFrom in (s.from + 1) until s.cutTo && s.cutTo < s.to
+        val ranges = if (cut) listOf(s.from to s.cutFrom, s.cutTo to s.to) else listOf(s.from to s.to)
         val effects = mutableListOf<Effect>()
+        if (s.turns % 4 != 0 || s.mirror) effects += ScaleAndRotateTransformation.Builder().setScale(if (s.mirror) -1f else 1f, 1f).setRotationDegrees(360f - (s.turns % 4) * 90f).build()
         if (s.speed != 1f && !s.keepAudio) effects += SpeedChangeEffect(s.speed)
         s.look?.let { effects += SingleColorLut.createFromCube(EditorKit.cube(it)) }
         if (s.crop > 0f) effects += Presentation.createForAspectRatio(s.crop, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP)
         if (s.caption.isNotBlank()) {
-            val text = SpannableString(s.caption).apply { setSpan(ForegroundColorSpan(s.textColor), 0, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE) }
+            val text = SpannableString(s.caption).apply { setSpan(ForegroundColorSpan(s.textColor), 0, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                if (s.textBox) setSpan(android.text.style.BackgroundColorSpan(0x99000000.toInt()), 0, length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE) }
             // TextOverlay draws at 100 px; scale it to a share of the (cropped) frame height like the preview.
             val frameH = if (s.crop > 0f && s.crop > s.videoW.toFloat() / s.videoH) s.videoW / s.crop else s.videoH.toFloat()
             val scale = ((if (s.textBig) 0.11f else 0.07f) * frameH / TextOverlay.TEXT_SIZE_PIXELS).coerceAtLeast(0.2f)
@@ -59,13 +76,18 @@ object VideoEdit {
             val settings = StaticOverlaySettings.Builder().setScale(scale, scale).setBackgroundFrameAnchor(0f, y).setOverlayFrameAnchor(0f, if (s.place == 1) 0f else if (s.place == 0) 1f else -1f).build()
             effects += OverlayEffect(listOf<TextureOverlay>(TextOverlay.createStaticTextOverlay(text, settings)))
         }
-        val edited = EditedMediaItem.Builder(item).setEffects(Effects(emptyList(), effects)).setRemoveAudio(!s.keepAudio)
-        // With sound, setSpeed changes picture and sound together. Without a sound track it stalls the export (no
-        // output sample ever reaches the muxer), so a picture-only clip changes speed through a video effect instead.
-        if (s.speed != 1f && s.keepAudio) edited.setSpeed(object : SpeedProvider { override fun getSpeed(timeUs: Long) = s.speed; override fun getNextSpeedChangeTimeUs(timeUs: Long) = C.TIME_UNSET })
-        val main = if (s.keepAudio) EditedMediaItemSequence.withAudioAndVideoFrom(listOf(edited.build())) else EditedMediaItemSequence.withVideoFrom(listOf(edited.build()))
+        val sound = if (s.keepAudio && s.volume != 1f) listOf(gain(s.volume)) else emptyList()
+        val items = ranges.map { (a, b) ->
+            val item = MediaItem.Builder().setUri(s.source).setClippingConfiguration(MediaItem.ClippingConfiguration.Builder().setStartPositionMs(a).setEndPositionMs(b).build()).build()
+            val edited = EditedMediaItem.Builder(item).setEffects(Effects(sound, effects)).setRemoveAudio(!s.keepAudio)
+            // With sound, setSpeed changes picture and sound together. Without a sound track it stalls the export (no
+            // output sample ever reaches the muxer), so a picture-only clip changes speed through a video effect instead.
+            if (s.speed != 1f && s.keepAudio) edited.setSpeed(object : SpeedProvider { override fun getSpeed(timeUs: Long) = s.speed; override fun getNextSpeedChangeTimeUs(timeUs: Long) = C.TIME_UNSET })
+            edited.build()
+        }
+        val main = if (s.keepAudio) EditedMediaItemSequence.withAudioAndVideoFrom(items) else EditedMediaItemSequence.withVideoFrom(items)
         val song = s.music ?: return Composition.Builder(main).build()
-        val track = EditedMediaItem.Builder(MediaItem.fromUri(song)).setRemoveVideo(true).build()
+        val track = EditedMediaItem.Builder(MediaItem.fromUri(song)).setRemoveVideo(true).setEffects(Effects(if (s.musicVolume != 1f) listOf(gain(s.musicVolume)) else emptyList(), emptyList())).build()
         val audio = EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_AUDIO)).addItem(track).setIsLooping(true).build()
         return Composition.Builder(main, audio).build()
     }

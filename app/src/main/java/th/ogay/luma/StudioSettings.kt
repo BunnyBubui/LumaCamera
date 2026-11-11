@@ -133,6 +133,7 @@ fun Activity.showStudioSettings(rawAvailable: Boolean, changed: () -> Unit) {
     choose("ภาพถ่าย: เฟรมเรตบนจอ", Icons.FILM, "fps_lock", listOf("ตามระบบ", "ล็อก 24 fps", "ล็อก 30 fps", "ล็อก 60 fps"), listOf("off", "24", "30", "60"), "off", listOf("ระบบลดเฟรมเองในที่มืด", "จอไม่ต่ำกว่า 24", "จอคงที่ 30", "ลื่นสุด ถ้ากล้องรองรับ"))
     toggle("ภาพถ่าย: ชัตเตอร์ตามแสงตอนกดถ่าย", Icons.TIMER, "fps_free_shot", true, "เฟรมเรตที่ล็อกใช้กับจอเท่านั้น ตอนกดถ่ายกล้องเลือกความเร็วชัตเตอร์เองตามแสง ภาพจึงไม่มืดหรือเสียรายละเอียด")
     choose("วิดีโอ: เฟรมเรต", Icons.FPS, "video_fps_s", listOf("24 fps", "30 fps", "60 fps"), listOf("24", "30", "60"), "30", listOf("แบบภาพยนตร์", "มาตรฐาน", "ลื่น · ใช้เลนส์ 1× ขึ้นไป"))
+    toggle("วิดีโอ: พรีวิวลื่นพิเศษ", Icons.MOTION, "video_fast_preview", true, "ส่งภาพตรงไปที่จอ ลื่นและหน่วงน้อยกว่า ปิดถ้าพื้นหลังเบลอหลังแผงตั้งค่าดูแปลก")
     toggle("ลดแถบดำจากแสงไฟ", Icons.FLASH, "anti_flicker", true, "ใต้หลอดไฟที่กะพริบ โหมดถ่ายเร็วจะไม่ใช้ชัตเตอร์สั้นกว่า 1/100 วินาที")
     toggle("RAW: บันทึก JPEG คู่", Icons.FILE, "raw_jpeg", true, "ปิดเพื่อเก็บเฉพาะไฟล์ DNG")
     toggle("วิดีโอ: บันทึกเสียง", Icons.MIC, "video_mic", true)

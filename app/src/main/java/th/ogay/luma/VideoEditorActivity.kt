@@ -53,6 +53,7 @@ import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 /**
  * Video editor: trim, split, speed, crop, text, film look and music. The preview plays the source with the look,
@@ -79,6 +80,12 @@ class VideoEditorActivity : ComponentActivity() {
     private var caption = ""; private var place = 2; private var textColor = Color.WHITE; private var textBig = false
     private var film: Film? = null; private var filmStrength = 1f
     private var music: Uri? = null; private var musicName = ""; private var keepSound = true
+    private val adjust = FloatArray(EditorKit.ADJUSTMENTS.size); private var adjustIndex = 0
+    private var turns = 0; private var mirror = false
+    private var volume = 1f; private var musicVolume = 1f
+    private var cutFrom = -1L; private var cutTo = -1L
+    private var textBox = false
+    private fun cutValid() = cutFrom >= 0 && cutTo > cutFrom
 
     // ---- Views ----
     private lateinit var stage: FrameLayout
@@ -103,6 +110,7 @@ class VideoEditorActivity : ComponentActivity() {
         if (prepared && p.isPlaying) {
             val pos = p.currentPosition.toLong()
             if (pos >= end - 30) { p.seekTo(start.toInt()); musicPlayer?.seekTo(0) }
+            else if (cutValid() && pos in cutFrom until cutTo) p.seekTo(cutTo.toInt())
             trim.playhead = pos.coerceIn(start, end); showTime()
         }
         handler.postDelayed(this, 33)
@@ -172,7 +180,7 @@ class VideoEditorActivity : ComponentActivity() {
         root.addView(trim, LinearLayout.LayoutParams(-1, dp(64)).apply { setMargins(dp(12), dp(4), dp(12), dp(4)) })
         tools = FrameLayout(this).apply { clipChildren = false }
         root.addView(tools, LinearLayout.LayoutParams(-1, dp(124)))
-        toolBar = EditorKit.ToolBar(this, listOf(EditorKit.SCISSORS to "ตัด", EditorKit.SPLIT to "แยก", EditorKit.SPEED to "ความเร็ว", EditorKit.CROP to "ครอบ", EditorKit.TEXT to "ข้อความ", Icons.FILM to "ฟิลเตอร์", EditorKit.MUSIC to "เพลง")) { showTool(it) }
+        toolBar = EditorKit.ToolBar(this, listOf(EditorKit.SCISSORS to "ตัด", EditorKit.SPLIT to "แยก", EditorKit.SPEED to "ความเร็ว", EditorKit.CROP to "ครอบ", EditorKit.TEXT to "ข้อความ", Icons.FILM to "ฟิลเตอร์", EditorKit.MUSIC to "เพลง", EditorKit.ADJUST to "ปรับ", EditorKit.ROTATE to "หมุน", Icons.SOUND to "เสียง")) { showTool(it) }
         root.addView(toolBar, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(4), 0, dp(4), dp(8)) })
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) { override fun handleOnBackPressed() = leave() })
 
@@ -240,7 +248,7 @@ class VideoEditorActivity : ComponentActivity() {
         val m = music ?: return
         musicPlayer = runCatching { MediaPlayer().apply { setDataSource(this@VideoEditorActivity, m); isLooping = true; prepare() } }.getOrElse { notice("เปิดเพลงนี้ไม่ได้"); music = null; null }
     }
-    private fun applySound() { val v = if (keepSound) 1f else 0f; player?.runCatching { setVolume(v, v) } }
+    private fun applySound() { val v = if (keepSound) volume.coerceAtMost(1f) else 0f; player?.runCatching { setVolume(v, v) }; musicPlayer?.runCatching { setVolume(musicVolume.coerceAtMost(1f), musicVolume.coerceAtMost(1f)) } }
     private fun togglePlay() {
         val p = player ?: return; if (!prepared) return
         if (p.isPlaying) { p.pause(); musicPlayer?.pause(); playIcon.path = "M9 6.5v11l9-5.5z" }
@@ -267,9 +275,13 @@ class VideoEditorActivity : ComponentActivity() {
         if (stage.width == 0) return
         val pad = dp(8)
         val aw = stage.width - 2 * pad; val ah = stage.height - 2 * pad
-        val k = min(aw.toFloat() / videoW, ah.toFloat() / videoH)
-        val w = (videoW * k).toInt(); val h = (videoH * k).toInt()
-        (texture.layoutParams as FrameLayout.LayoutParams).let { if (it.width != w || it.height != h) { it.width = w; it.height = h; texture.layoutParams = it } }
+        // A quarter turn swaps the picture's sides: fit the turned shape, then turn the view itself.
+        val side = turns % 2 == 1; val ew = if (side) videoH else videoW; val eh = if (side) videoW else videoH
+        val k = min(aw.toFloat() / ew, ah.toFloat() / eh)
+        val tw = (videoW * k).toInt(); val th = (videoH * k).toInt()
+        (texture.layoutParams as FrameLayout.LayoutParams).let { if (it.width != tw || it.height != th) { it.width = tw; it.height = th; texture.layoutParams = it } }
+        texture.rotation = turns * 90f; texture.scaleX = if (mirror) -1f else 1f
+        val w = (ew * k).toInt(); val h = (eh * k).toInt()
         val video = RectF((stage.width - w) / 2f, (stage.height - h) / 2f, (stage.width + w) / 2f, (stage.height + h) / 2f)
         val visible = cropRect(video); mask.set(video, visible)
         captionView.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, (if (textBig) 0.11f else 0.07f) * visible.height())
@@ -286,9 +298,11 @@ class VideoEditorActivity : ComponentActivity() {
         return if (r > now) { val h = video.width() / r; RectF(video.left, video.centerY() - h / 2, video.right, video.centerY() + h / 2) }
         else { val w = video.height() * r; RectF(video.centerX() - w / 2, video.top, video.centerX() + w / 2, video.bottom) }
     }
-    private fun colour(): ColorMatrix = EditorKit.film(film, filmStrength)
+    private fun colour(): ColorMatrix = EditorKit.film(film, filmStrength).apply { postConcat(EditorKit.adjust(adjust)) }
+    private fun looked() = film != null || adjust.any { it != 0f }
     private fun applyLook() {
-        texture.setLayerPaint(if (film == null) null else Paint().apply { colorFilter = ColorMatrixColorFilter(colour()) })
+        texture.setLayerPaint(if (!looked()) null else Paint().apply { colorFilter = ColorMatrixColorFilter(colour()) })
+        captionView.setBackgroundColor(if (textBox) 0x99000000.toInt() else 0); captionView.setPadding(if (textBox) dp(8) else 0, 0, if (textBox) dp(8) else 0, 0)
         captionView.text = caption; captionView.setTextColor(textColor); captionView.visibility = if (caption.isBlank()) View.GONE else View.VISIBLE
         layoutVideo(); if (::timeLabel.isInitialized) showTime()
     }
@@ -300,14 +314,20 @@ class VideoEditorActivity : ComponentActivity() {
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_VERTICAL }
         fun note(s: String) = col.addView(text(s, 12f, Glass.TEXT2, true).apply { maxLines = 1; gravity = Gravity.CENTER; setPadding(dp(16), 0, dp(16), dp(6)) }, -1, -2)
         when (i) {
-            0 -> col.addView(EditorKit.actions(this, listOf(
+            0 -> { if (cutValid()) note("ตัดช่วง ${clock(cutFrom - start)}–${clock(cutTo - start)} ออก")
+                col.addView(EditorKit.actions(this, listOf(
                     EditorKit.action(this, EditorKit.START, "เริ่มที่นี่") { setRange(trim.playhead, end) },
                     EditorKit.action(this, EditorKit.END, "จบที่นี่") { setRange(start, trim.playhead) },
-                    EditorKit.action(this, Icons.RESET, "ทั้งคลิป") { setRange(0, duration) })), -1, -2)
+                    EditorKit.action(this, Icons.RESET, "ทั้งคลิป") { setRange(0, duration); cutFrom = -1; cutTo = -1; showTool(0, false) })), -1, -2)
+                // Take a middle part out: mark where it starts and ends with the playhead.
+                col.addView(EditorKit.actions(this, listOf(
+                    EditorKit.action(this, CUT_IN, "เริ่มตัดออก", cutFrom >= 0) { cutFrom = trim.playhead; if (cutTo <= cutFrom) cutTo = -1; split = -1; trim.split = -1; showTool(0, false) },
+                    EditorKit.action(this, CUT_OUT, "จบตัดออก", cutValid()) { if (cutFrom < 0 || trim.playhead - cutFrom < 300) notice("เลื่อนไปหลังจุดเริ่มตัดออกก่อน") else { cutTo = trim.playhead; split = -1; trim.split = -1; showTime(); showTool(0, false) } },
+                    EditorKit.action(this, Icons.CLOSE, "ไม่ตัดออก") { cutFrom = -1; cutTo = -1; showTool(0, false) })), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) }) }
             1 -> { if (split >= 0) note("2 คลิป · แยกที่ ${clock(split - start)}")
                 col.addView(EditorKit.actions(this, listOf(
                     EditorKit.action(this, EditorKit.SPLIT, "แยกที่นี่", split >= 0) {
-                        val at = trim.playhead; if (at - start < 300 || end - at < 300) notice("เลื่อนให้ห่างจากขอบช่วงอย่างน้อย 0.3 วินาที") else { split = at; trim.split = split; showTime(); showTool(1, false) } },
+                        val at = trim.playhead; if (at - start < 300 || end - at < 300) notice("เลื่อนให้ห่างจากขอบช่วงอย่างน้อย 0.3 วินาที") else { split = at; trim.split = split; cutFrom = -1; cutTo = -1; showTime(); showTool(1, false) } },
                     EditorKit.action(this, Icons.CLOSE, "ไม่แยก") { split = -1; trim.split = -1; showTime(); showTool(1, false) })), -1, -2) }
             2 -> { val items = SPEEDS.map { EditorKit.StripItem(this, "", speedName(it), 15f) }
                 // Sliding through the speeds plays the preview at each one.
@@ -319,7 +339,14 @@ class VideoEditorActivity : ComponentActivity() {
                     LinearLayout.LayoutParams(-1, dp(70))) }
             4 -> textTools(col)
             5 -> filmTools(col)
-            else -> musicTools(col)
+            6 -> musicTools(col)
+            7 -> adjustTools(col)
+            8 -> col.addView(EditorKit.actions(this, listOf(
+                    EditorKit.action(this, EditorKit.ROTATE, "หมุน 90°") { turns = (turns + 1) % 4; layoutVideo()
+                        if (!Glass.reduced(this)) { texture.rotation = texture.rotation - 90f; texture.animate().rotation(turns * 90f).setInterpolator(Glass.EASE).setDuration(320).start() } },
+                    EditorKit.action(this, Icons.MIRROR, "กลับด้าน", mirror) { mirror = !mirror; layoutVideo(); showTool(8, false) },
+                    EditorKit.action(this, Icons.RESET, "คืนค่า") { turns = 0; mirror = false; layoutVideo(); showTool(8, false) })), -1, -2)
+            else -> soundTools(col)
         }
         EditorKit.swap(tools, col, dir)
     }
@@ -349,6 +376,7 @@ class VideoEditorActivity : ComponentActivity() {
             LinearLayout.LayoutParams(dp(42), dp(42)).apply { rightMargin = dp(6) })
         listOf(EditorKit.TOP to "ข้อความด้านบน", EditorKit.MIDDLE to "ข้อความตรงกลาง", EditorKit.BOTTOM to "ข้อความด้านล่าง").forEachIndexed { k, (icon, desc) -> small(icon, desc, k == place) { place = k; layoutVideo(); showTool(4, false) } }
         small(EditorKit.TEXT, "ตัวใหญ่", textBig) { textBig = !textBig; layoutVideo(); showTool(4, false) }
+        small("M4 6h16v12H4z M8 10h8 M8 14h5", "กล่องพื้นหลัง", textBox) { textBox = !textBox; applyLook(); showTool(4, false) }
         row.addView(View(this), LinearLayout.LayoutParams(dp(4), 1))
         TEXT_COLORS.forEach { color -> row.addView(View(this).apply { isClickable = true; contentDescription = "สีข้อความ"; setOnClickListener { Glass.tick(this); textColor = color; applyLook(); showTool(4, false) }
             background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(color); setStroke(dp(if (color == textColor) 3 else 1), if (color == textColor) Color.WHITE else 0x66ffffff) } },
@@ -369,6 +397,37 @@ class VideoEditorActivity : ComponentActivity() {
         mark(start)
     }
 
+    private val CUT_IN = "M6 4v16 M10 8l4 4-4 4 M18 4v16"
+    private val CUT_OUT = "M6 4v16 M14 8l-4 4 4 4 M18 4v16"
+    private fun sign(v: Float) = (v * 100).roundToInt().let { if (it > 0) "+$it" else "$it" }
+    /** Light and colour for the whole clip: dials to choose, a slider to set (shown live on the preview). */
+    private fun adjustTools(col: LinearLayout) {
+        val value = text("", 13f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER }
+        val names = EditorKit.ADJUSTMENTS.dropLast(1)
+        val dials = names.mapIndexed { k, n -> EditorKit.Dial(this, EditorKit.ADJUST_ICONS[k], n).apply { amount = adjust[k] } }
+        val slider = GlassSlider(this).apply { values = (-100..100).map { if (it > 0) "+$it" else "$it" }; grad = intArrayOf(0xff8e8e93.toInt(), Color.WHITE, Glass.ACCENT) }
+        fun show(k: Int) { adjustIndex = k; dials.forEachIndexed { j, d -> d.lit = j == k }; value.text = "${names[k]}  ${sign(adjust[k])}"; slider.index = (adjust[k] * 100).roundToInt() + 100; slider.contentDescription = names[k] }
+        col.addView(value, -1, -2)
+        col.addView(EditorKit.strip(this, dials.map { it to 58 }, adjustIndex.coerceIn(0, names.size - 1), 0, { k -> show(k) },
+            tapAgain = { k -> adjust[k] = 0f; dials[k].amount = 0f; show(k); applyLook() }) { k -> show(k) }, LinearLayout.LayoutParams(-1, dp(56)))
+        slider.onChange = { i -> adjust[adjustIndex] = (i - 100) / 100f; dials[adjustIndex].amount = adjust[adjustIndex]; value.text = "${names[adjustIndex]}  ${sign(adjust[adjustIndex])}"; applyLook() }
+        col.addView(slider, LinearLayout.LayoutParams(-1, dp(40)).apply { setMargins(dp(12), 0, dp(12), 0) })
+        show(adjustIndex.coerceIn(0, names.size - 1))
+    }
+    /** Loudness of the clip's sound and of the music, 0–200 %. */
+    private fun soundTools(col: LinearLayout) {
+        fun row(icon: String, label: String, value: Float, enabled: Boolean, set: (Float) -> Unit) {
+            val r = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), 0, dp(12), 0); alpha = if (enabled) 1f else 0.4f }
+            r.addView(IconView(this, icon, 2f).apply { tint = Glass.TEXT2 }, dp(20), dp(20))
+            r.addView(text(label, 12f, Glass.TEXT2, true).apply { setPadding(dp(8), 0, 0, 0) }, dp(84), -2)
+            r.addView(GlassSlider(this).apply { values = (0..200 step 5).map { "$it%" }; index = (value * 20).roundToInt(); grad = intArrayOf(0xff8e8e93.toInt(), Glass.ACCENT); contentDescription = label; isEnabled = enabled
+                onChange = { i -> set(i / 20f); applySound() } }, LinearLayout.LayoutParams(0, dp(44), 1f))
+            col.addView(r, -1, -2)
+        }
+        row(Icons.SOUND, "เสียงคลิป", volume, hasAudio && keepSound) { volume = it }
+        row(EditorKit.MUSIC, "เพลง", musicVolume, music != null) { musicVolume = it }
+        if (music == null) col.addView(text("เลือกเพลงได้ที่แท็บเพลง", 11.5f, Glass.TEXT3).apply { gravity = Gravity.CENTER }, -1, -2)
+    }
     private fun musicTools(col: LinearLayout) {
         if (music != null) col.addView(text(musicName, 12f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.MIDDLE; setPadding(dp(16), 0, dp(16), dp(6)) }, -1, -2)
         val items = mutableListOf<View>(EditorKit.action(this, EditorKit.MUSIC, if (music == null) "เลือกเพลง" else "เปลี่ยนเพลง", music != null) { pickMusic.launch(arrayOf("audio/*")) })
@@ -377,7 +436,7 @@ class VideoEditorActivity : ComponentActivity() {
         col.addView(EditorKit.actions(this, items), -1, -2)
     }
 
-    private fun changed() = start != 0L || end != duration || split >= 0 || speed != 1f || cropIndex != 0 || caption.isNotBlank() || film != null || music != null || !keepSound
+    private fun changed() = start != 0L || end != duration || split >= 0 || speed != 1f || cropIndex != 0 || caption.isNotBlank() || film != null || music != null || !keepSound || looked() || turns != 0 || mirror || volume != 1f || cutValid()
     private fun leave() {
         if (transformer != null) { cancelExport(); return }
         if (!changed()) { finish(); return }
@@ -429,8 +488,9 @@ class VideoEditorActivity : ComponentActivity() {
         handler.postDelayed(this, 300)
     } }
 
-    private fun composition(from: Long, to: Long): Composition = VideoEdit.composition(VideoEditSpec(source, from, to, videoW, videoH,
-        speed, CROPS[cropIndex].second, caption, place, textColor, textBig, if (film != null) colour() else null, music, hasAudio && keepSound))
+    private fun composition(from: Long, to: Long): Composition = VideoEdit.composition(VideoEditSpec(source, from, to, if (turns % 2 == 1) videoH else videoW, if (turns % 2 == 1) videoW else videoH,
+        speed, CROPS[cropIndex].second, caption, place, textColor, textBig, if (looked()) colour() else null, music, hasAudio && keepSound,
+        turns, mirror, volume, musicVolume, if (cutValid() && cutFrom >= from && cutTo <= to) cutFrom else -1L, cutTo, textBox))
 
     /** Export problems stay on screen until dismissed, so the reason can be read (and reported). */
     private fun failed(reason: String) { if (!isFinishing) GlassDialog.show(this, "ส่งออกไม่ได้", "$reason\nวิดีโอต้นฉบับยังอยู่ครบ ลองปิดฟิลเตอร์หรือข้อความแล้วส่งออกอีกครั้ง") }
@@ -459,12 +519,16 @@ class VideoEditorActivity : ComponentActivity() {
         out.putString("caption", caption); out.putInt("place", place); out.putInt("textColor", textColor); out.putBoolean("big", textBig)
         out.putString("film", film?.id); out.putFloat("strength", filmStrength); out.putString("music", music?.toString()); out.putString("musicName", musicName)
         out.putBoolean("sound", keepSound); out.putInt("tool", tool)
+        out.putFloatArray("adjust", adjust); out.putInt("turns", turns); out.putBoolean("mirror", mirror); out.putFloat("volume", volume); out.putFloat("musicVolume", musicVolume)
+        out.putLong("cutFrom", cutFrom); out.putLong("cutTo", cutTo); out.putBoolean("textBox", textBox)
     }
     private fun restore(s: Bundle) {
         start = s.getLong("start"); end = s.getLong("end", duration).coerceIn(start, duration); split = s.getLong("split", -1); speed = s.getFloat("speed", 1f); cropIndex = s.getInt("crop")
         caption = s.getString("caption") ?: ""; place = s.getInt("place", 2); textColor = s.getInt("textColor", Color.WHITE); textBig = s.getBoolean("big")
         film = Films.byId(s.getString("film")); filmStrength = s.getFloat("strength", 1f); music = s.getString("music")?.let { Uri.parse(it) }; musicName = s.getString("musicName") ?: ""
         keepSound = s.getBoolean("sound", true); tool = s.getInt("tool")
+        s.getFloatArray("adjust")?.takeIf { it.size == adjust.size }?.copyInto(adjust); turns = s.getInt("turns"); mirror = s.getBoolean("mirror"); volume = s.getFloat("volume", 1f); musicVolume = s.getFloat("musicVolume", 1f)
+        cutFrom = s.getLong("cutFrom", -1L); cutTo = s.getLong("cutTo", -1L); textBox = s.getBoolean("textBox")
     }
 
     /** Darkens what the crop removes and outlines what stays. */

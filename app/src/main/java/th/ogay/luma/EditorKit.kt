@@ -222,10 +222,16 @@ object EditorKit {
         }.show()
     }
 
-    /** Evenly spaced tool tabs (icon over a small name) with an accent pill that springs to the chosen one. */
+    /**
+     * Tool tabs (icon over a small name) with an accent pill that springs to the chosen one. Up to six share the
+     * width; more become a row that scrolls and glides the chosen tab towards the middle.
+     */
     class ToolBar(c: Context, list: List<Pair<String, String>>, private val pick: (Int) -> Unit) : FrameLayout(c) {
+        private val scrolls = list.size > 6
         private val pill = View(c).apply { background = c.glass(16, Glass.ACCENT_SOFT) }
         private val row = LinearLayout(c)
+        private val inner = FrameLayout(c).apply { clipChildren = false }
+        private val scroller: HorizontalScrollView? = if (scrolls) HorizontalScrollView(c).apply { isHorizontalScrollBarEnabled = false; isFillViewport = true; overScrollMode = View.OVER_SCROLL_NEVER } else null
         var selected = -1; private set
         val tabs: List<LinearLayout> = list.mapIndexed { i, (icon, name) -> LinearLayout(c).apply {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; isClickable = true; isFocusable = true; contentDescription = name; minimumHeight = c.dp(60)
@@ -235,9 +241,10 @@ object EditorKit {
         } }
         init {
             clipChildren = false
-            addView(pill, LayoutParams(c.dp(52), c.dp(32)))
-            tabs.forEach { row.addView(it, LinearLayout.LayoutParams(0, -2, 1f)) }
-            addView(row, LayoutParams(-1, -2))
+            inner.addView(pill, LayoutParams(c.dp(52), c.dp(32)))
+            tabs.forEach { row.addView(it, if (scrolls) LinearLayout.LayoutParams(c.dp(66), -2) else LinearLayout.LayoutParams(0, -2, 1f)) }
+            inner.addView(row, LayoutParams(if (scrolls) -2 else -1, -2))
+            if (scroller != null) { scroller.addView(inner, LayoutParams(-2, -2)); addView(scroller, LayoutParams(-1, -2)) } else addView(inner, LayoutParams(-1, -2))
         }
         fun select(i: Int, animate: Boolean = true) {
             val first = selected < 0; selected = i
@@ -252,9 +259,10 @@ object EditorKit {
         private fun place(animate: Boolean) {
             if (width == 0 || selected < 0) return
             val t = tabs[selected]; val ic = t.getChildAt(0)
-            val x = t.left + (t.width - pill.width.coerceAtLeast(context.dp(52))) / 2f; val y = t.top + ic.top + ic.height / 2f - context.dp(16)
+            val x = t.left + (t.width - context.dp(52)) / 2f; val y = t.top + ic.top + ic.height / 2f - context.dp(16)
             pill.translationY = y
             if (animate && !Glass.reduced(context)) pill.animate().translationX(x).setInterpolator(Glass.SPRING).setDuration(460).start() else { pill.animate().cancel(); pill.translationX = x }
+            scroller?.let { s -> val to = (t.left + t.width / 2 - s.width / 2).coerceAtLeast(0); if (animate) s.smoothScrollTo(to, 0) else s.scrollTo(to, 0) }
         }
         override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) { super.onLayout(changed, l, t, r, b); if (changed) place(false) }
     }

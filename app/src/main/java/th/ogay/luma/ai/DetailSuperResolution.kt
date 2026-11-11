@@ -76,6 +76,7 @@ class DetailSuperResolution(private val context: Context) {
                                     android.os.Trace.beginSection("Lumora.ai.tile")
                                     val enhanced = try { runtime.run(pixels) } finally { android.os.Trace.endSection() }
                                     inferMs += SystemClock.elapsedRealtime()-t
+                                    AiPace.afterTile(context, SystemClock.elapsedRealtime()-t)
                                     renders[slot] = renderExec.submit { timed(renderT) { DetailResampler.copyCore(enhanced,pixels,spec.scale,spec.strength,w,h,stripe,output.w,left*spec.scale) } }
                                     slot = 1-slot
                                     count++
