@@ -78,7 +78,7 @@ class EditorFlowTest {
             device.findObject(By.desc("ข้อความ")).click()
             device.wait(Until.findObject(By.desc("ข้อความบนวิดีโอ")), 5000)!!.text = "Lumora"
             device.findObject(By.desc("ส่งออก")).click()
-            assertNotNull("Export did not start · ${GlassNav.dump(device)}", device.wait(Until.findObject(By.textStartsWith("กำลังส่งออก")), 8000) ?: device.findObject(By.text("ส่งออกไม่ได้")))
+            // A short clip can finish (and the editor close) before the progress card is ever seen, so only the result is checked.
             until(150000, "No edited clip was published") { device.findObject(By.text("ส่งออกไม่ได้")) != null || MediaLedger.all(context).any { it.uri.toString() !in before && it.title.startsWith("Lumora_EDIT_") } }
             assertTrue("Export failed · ${device.findObject(By.textContains("วิดีโอต้นฉบับยังอยู่ครบ"))?.text}", device.findObject(By.text("ส่งออกไม่ได้")) == null)
         }
