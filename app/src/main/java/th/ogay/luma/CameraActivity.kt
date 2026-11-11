@@ -410,15 +410,9 @@ class CameraActivity : ComponentActivity() {
         // A swipe up on the dock, a second tap on the active mode, or the small arrow above it opens the options sheet.
         // Edge items fade out over a wider band and the strip keeps a margin, so a half-visible name never sits on the screen edge.
         modeStrip = CenterStrip(this).apply { onSelect = { i -> pickBar(i) }; onLive = { i -> styleModes(i) }; contentDescription = "แถบโหมด"; fadeDp = 64f }
-        val stripBox = FrameLayout(this).apply { clipChildren = false; setPadding(dp(10), 0, dp(10), 0) }
-        stripBox.addView(modeStrip, FrameLayout.LayoutParams(-1, dp(58 * grow())))
-        // 48 dp touch box; the chevron is drawn at its top so it overlaps the top edge of the selected-mode capsule.
-        modeArrow = ArrowTab(this, modeStrip).apply {
-            contentDescription = "ตัวเลือกกล้อง แตะเพื่อเปิด"
-            setOnClickListener { Glass.tick(this); openPanel() }
-            addView(IconView(this@CameraActivity, Icons.CHEVRON_UP, 2.4f).apply { tint = Color.WHITE; shadow = true }, FrameLayout.LayoutParams(dp(24), dp(16), Gravity.TOP or Gravity.CENTER_HORIZONTAL))
-        }
-        stripBox.addView(modeArrow, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP or Gravity.CENTER_HORIZONTAL))
+        // The arrow sits in its own band above the strip, a little apart from the selected-mode capsule.
+        val (stripBox, arrow) = ArrowTab.wrap(this, modeStrip, dp(58 * grow())) { openPanel() }
+        modeArrow = arrow
         dock.clipChildren = false
         dock.addView(stripBox, -1, -2)
         if (android.os.Build.VERSION.SDK_INT >= 29) modeStrip.addOnLayoutChangeListener { v, l, t, r, b, _, _, _, _ -> v.systemGestureExclusionRects = listOf(android.graphics.Rect(0, 0, r - l, b - t)) }
@@ -1809,7 +1803,7 @@ class CameraActivity : ComponentActivity() {
         busy=true;refresh();captureFeedback()
         val time=System.currentTimeMillis();val id=UUID.randomUUID().toString();val isRear=rear;val zoom=ratio;val rotation=targetRotation
         val dng=File(cacheDir,"raw-$id.dng");val jpg=File(cacheDir,"raw-$id.jpg")
-        val lens=LensMeta.describe(this,cameraId,null,zoom,minOf(zoom,hardwareMax()),isRear)
+        val lens=LensMeta.describe(this,cameraId,null,zoom,minOf(zoom,hardwareMax()),isRear);val outFormat=output
         freezeFrame();provider?.unbindAll();capture=null;boundKey=null
         RawStill.capture(applicationContext,cameraId,rotation,isRear,minOf(zoom,hardwareMax()),dng,jpg){error->
             luma.fileIo.execute{
@@ -1822,7 +1816,7 @@ class CameraActivity : ComponentActivity() {
                     val dims=PhotoMedia.dimensions(jpg)
                     // RAW only: the DNG itself is the shot; the JPEG was only taken to finish the capture and is dropped.
                     val uri=if(withJpeg)PhotoMedia.publish(this,jpg,"Lumora_${time}_${id}.jpg",time) else dngUri
-                    luma.shots.insert(Shot(id,time,uri,dims,zoom,isRear,cameraId,null,Decision.OFF,Stage.ORIGINAL,null,0,null,false))
+                    luma.shots.insert(Shot(id,time,uri,dims,zoom,isRear,cameraId,null,Decision.OFF,Stage.ORIGINAL,null,0,null,false,raw=dngUri,output=outFormat))
                 }catch(e:Throwable){message="ถ่าย RAW ไม่สำเร็จ · ${e.localizedMessage}"}
                 finally{dng.delete();jpg.delete()}
                 runOnUiThread{pendingBind=true};complete(message)

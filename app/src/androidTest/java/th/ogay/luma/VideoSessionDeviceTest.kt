@@ -34,11 +34,11 @@ class VideoSessionDeviceTest {
                 fun settled() = device.findObject(By.desc("เริ่มบันทึกวิดีโอ"))?.isEnabled == true || device.findObject(By.textContains("ชุดนี้ใช้ไม่ได้")) != null
                 waitFor { settled() }
                 assertEquals("60", prefs.getString("video_fps_s", null))
-                assertNotNull(device.findObject(By.textContains("60")))
+                assertNotNull("60 is not shown · ${GlassNav.dump(device)}", device.findObject(By.textContains("60")))
                 activity.recreate()
                 waitFor { settled() }
                 assertEquals("60", prefs.getString("video_fps_s", null))
-                assertNotNull(device.findObject(By.textContains("60")))
+                assertNotNull("60 is not shown · ${GlassNav.dump(device)}", device.findObject(By.textContains("60")))
             }
         } finally { prefs.edit().apply { if (before == null) remove("video_fps_s") else putString("video_fps_s", before) }.commit() }
     }

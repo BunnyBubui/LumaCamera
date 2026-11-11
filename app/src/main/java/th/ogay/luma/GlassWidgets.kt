@@ -1059,4 +1059,27 @@ class ArrowTab(context: Context, private val strip: View) : FrameLayout(context)
         return true
     }
     override fun onDetachedFromWindow() { down?.recycle(); down = null; super.onDetachedFromWindow() }
+
+    companion object {
+        /** Gap between the chevron and the top of the mode strip, so the arrow does not touch the selected-mode capsule. */
+        const val GAP_DP = 14
+        /**
+         * Puts [strip] in a box with the small up-arrow centred above it. The arrow sits in its own band [GAP_DP] tall;
+         * its 48 dp touch box reaches down over the strip and hands sideways drags to it. Used by every camera screen.
+         */
+        fun wrap(context: Context, strip: View, stripHeight: Int, onOpen: () -> Unit): Pair<FrameLayout, ArrowTab> {
+            val d = context.resources.displayMetrics.density
+            fun dp(v: Int) = (v * d).toInt()
+            val box = FrameLayout(context).apply { clipChildren = false; setPadding(dp(10), 0, dp(10), 0) }
+            box.addView(strip, LayoutParams(-1, stripHeight).apply { topMargin = dp(GAP_DP) })
+            val arrow = ArrowTab(context, strip).apply {
+                contentDescription = "ตัวเลือกกล้อง แตะเพื่อเปิด"
+                setOnClickListener { Glass.tick(this); onOpen() }
+                addView(IconView(context, Icons.CHEVRON_UP, 2.4f).apply { tint = android.graphics.Color.WHITE; shadow = true },
+                    LayoutParams(dp(22), dp(12), Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = dp(1) })
+            }
+            box.addView(arrow, LayoutParams(dp(48), dp(48), Gravity.TOP or Gravity.CENTER_HORIZONTAL))
+            return box to arrow
+        }
+    }
 }

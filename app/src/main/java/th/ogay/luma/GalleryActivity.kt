@@ -436,7 +436,12 @@ class GalleryActivity : ComponentActivity() {
                 return true
             }
         }.apply { background = glass(20, 0x24ffffff) }
-        val knob = View(this).apply { background = glass(17, Glass.ACCENT_SOFT) }; knobRef = knob
+        // The knob must not set the height of the tabs: a plain View asked for "match parent" inside a box that wraps
+        // its content takes all the space it is offered, which stretched the tabs over the whole screen and hid the grid.
+        // It reports zero height until the box measures it again at the height of the tab row.
+        val knob = object : View(this) {
+            override fun onMeasure(w: Int, h: Int) = setMeasuredDimension(MeasureSpec.getSize(w), if (MeasureSpec.getMode(h) == MeasureSpec.EXACTLY) MeasureSpec.getSize(h) else 0)
+        }.apply { background = glass(17, Glass.ACCENT_SOFT) }; knobRef = knob
         tabs.addView(knob, FrameLayout.LayoutParams(0, -1).apply { setMargins(dp(3), dp(3), dp(3), dp(3)) })
         val tabRow = LinearLayout(this)
         listOf("ถ่ายด้วย Lumora", "ทั้งเครื่อง").forEachIndexed { i, t ->

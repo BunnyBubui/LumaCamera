@@ -52,7 +52,8 @@ class SpecialVideoActivity:ComponentActivity(){
         val dock=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setBackgroundColor(BG)}
         val strip=CenterStrip(this).apply{contentDescription="แถบโหมด"}
         ModeBar.fill(this,strip,"TIMELAPSE"){key->if(recording||working){notice("หยุดคลิปก่อนเปลี่ยนโหมด");false}else{ModeBar.go(this,key);true}}
-        dock.addView(strip,-1,dp(58))
+        dock.clipChildren=false
+        dock.addView(ArrowTab.wrap(this,strip,dp(58)){settings()}.first,-1,-2)
         shutter=Glyph(this,"shutter","เริ่มบันทึก Time-lapse"){if(!working){if(recording)stop()else start()}}.apply{video=true;isEnabled=false}
         val actions=FrameLayout(this);actions.addView(shutter,FrameLayout.LayoutParams(dp(82),dp(82),Gravity.CENTER))
         actions.addView(FrameLayout(this).apply{background=glass(28);contentDescription="แกลเลอรีวิดีโอ Lumora";isClickable=true;glassTouch()

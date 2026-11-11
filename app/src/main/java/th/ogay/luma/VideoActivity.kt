@@ -433,7 +433,8 @@ class VideoActivity:ComponentActivity(){
         val grow=((resources.configuration.fontScale+1f)/2f).coerceAtLeast(1f)
         dock.addView(chipFrame,LinearLayout.LayoutParams(-1,(dp(56)*grow).roundToInt()).apply{setMargins(dp(16),dp(6),dp(16),dp(4))})
         modeStrip=CenterStrip(this).apply{onSelect={i->pickMode(i)};onLive={i->styleModes(i)};contentDescription="แถบโหมด"}
-        dock.addView(modeStrip,-1,(dp(58)*grow).roundToInt())
+        dock.clipChildren=false
+        dock.addView(ArrowTab.wrap(this,modeStrip,(dp(58)*grow).roundToInt()){settings(true)}.first,-1,-2)
         if(android.os.Build.VERSION.SDK_INT>=29)modeStrip.addOnLayoutChangeListener{v,l,t,r,b,_,_,_,_->v.systemGestureExclusionRects=listOf(android.graphics.Rect(0,0,r-l,b-t))}
         buildModeStrip()
         val actions=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(dp(36),0,dp(36),0)}
