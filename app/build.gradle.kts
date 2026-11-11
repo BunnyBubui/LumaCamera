@@ -18,6 +18,8 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Native HDR EF2 links the OpenCV AAR's libopencv_java4.so, which is built against c++_shared.
         externalNativeBuild { cmake { arguments += listOf("-DANDROID_STL=c++_shared") } }
+        // Phones are arm64; x86_64 stays for the CI emulator. 32-bit copies of OpenCV/LiteRT only made the APK bigger.
+        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }
     externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" } }
     buildFeatures { prefab = true }
@@ -59,6 +61,8 @@ kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarg
 dependencies {
     // Standalone CompiledModel: offline GPU FP16 with explicit CPU fallback.
     implementation("com.google.ai.edge.litert:litert:2.1.6")
+    // Installs the baseline profile below so the first launches run precompiled code instead of interpreting.
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     implementation("androidx.activity:activity-ktx:1.9.3")
     implementation("androidx.camera:camera-camera2:1.6.2")
     implementation("androidx.camera:camera-lifecycle:1.6.2")

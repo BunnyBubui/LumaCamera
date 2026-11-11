@@ -44,37 +44,54 @@ class DetailSuperResolution(private val context: Context) {
                 DetailRuntime(context).use { runtime ->
                     val modelInitMs = SystemClock.elapsedRealtime()-initStart
                     StripJpeg(file, output.w, output.h).use { jpeg ->
-                        val stripe = IntArray(output.w*minOf(EnhanceSpec.CORE,source.h)*spec.scale)
-                        val pixels = IntArray(EnhanceSpec.INPUT*EnhanceSpec.INPUT)
-                        for (top in 0 until source.h step EnhanceSpec.CORE) {
-                            val h = minOf(EnhanceSpec.CORE,source.h-top)
-                            // One decode per row of tiles instead of one per tile: neighbouring tiles overlap by the halo.
-                            var t0 = SystemClock.elapsedRealtime()
-                            val row = Row.decode(decoder,top)
-                            decodeMs += SystemClock.elapsedRealtime()-t0
-                            for (left in 0 until source.w step EnhanceSpec.CORE) {
+                        // Three stages overlap: the next strip is decoded and the finished strip is encoded on their own
+                        // threads, and each tile's resampling runs while the GPU works on the next tile.
+                        val decodeExec = java.util.concurrent.Executors.newSingleThreadExecutor()
+                        val renderExec = java.util.concurrent.Executors.newSingleThreadExecutor()
+                        val encodeExec = java.util.concurrent.Executors.newSingleThreadExecutor()
+                        val decodeT = java.util.concurrent.atomic.AtomicLong(); val renderT = java.util.concurrent.atomic.AtomicLong(); val encodeT = java.util.concurrent.atomic.AtomicLong()
+                        fun timed(acc: java.util.concurrent.atomic.AtomicLong, f: () -> Unit) { val t = SystemClock.elapsedRealtime(); f(); acc.addAndGet(SystemClock.elapsedRealtime()-t) }
+                        try {
+                            val stripeLen = output.w*minOf(EnhanceSpec.CORE,source.h)*spec.scale
+                            val stripes = arrayOf(IntArray(stripeLen), IntArray(stripeLen))
+                            val stripeWrites = arrayOfNulls<java.util.concurrent.Future<*>>(2)
+                            val buffers = Array(2) { IntArray(EnhanceSpec.INPUT*EnhanceSpec.INPUT) }
+                            val renders = arrayOfNulls<java.util.concurrent.Future<*>>(2)
+                            fun decodeRow(top: Int) = decodeExec.submit(java.util.concurrent.Callable { var r: Row? = null; timed(decodeT) { r = Row.decode(decoder,top) }; r!! })
+                            var nextRow = decodeRow(0)
+                            var stripeIndex = 0; var slot = 0
+                            for (top in 0 until source.h step EnhanceSpec.CORE) {
+                                val h = minOf(EnhanceSpec.CORE,source.h-top)
+                                val row = nextRow.get()
+                                if (top+EnhanceSpec.CORE < source.h) nextRow = decodeRow(top+EnhanceSpec.CORE)
+                                stripeWrites[stripeIndex]?.get()
+                                val stripe = stripes[stripeIndex]
+                                for (left in 0 until source.w step EnhanceSpec.CORE) {
+                                    checkpoint()
+                                    val w = minOf(EnhanceSpec.CORE,source.w-left)
+                                    renders[slot]?.get()
+                                    val pixels = buffers[slot]
+                                    timed(decodeT) { row.tile(left,pixels) }
+                                    val t = SystemClock.elapsedRealtime()
+                                    android.os.Trace.beginSection("Lumora.ai.tile")
+                                    val enhanced = try { runtime.run(pixels) } finally { android.os.Trace.endSection() }
+                                    inferMs += SystemClock.elapsedRealtime()-t
+                                    renders[slot] = renderExec.submit { timed(renderT) { DetailResampler.copyCore(enhanced,pixels,spec.scale,spec.strength,w,h,stripe,output.w,left*spec.scale) } }
+                                    slot = 1-slot
+                                    count++
+                                    val percent = (count*99/(columns*rows)).coerceAtMost(99)
+                                    if (percent != lastProgress) { lastProgress = percent; progress(percent) }
+                                }
+                                renders.forEach { it?.get() }
                                 checkpoint()
-                                val w = minOf(EnhanceSpec.CORE,source.w-left)
-                                var t = SystemClock.elapsedRealtime()
-                                row.tile(left,pixels)
-                                decodeMs += SystemClock.elapsedRealtime()-t
-                                t = SystemClock.elapsedRealtime()
-                                android.os.Trace.beginSection("Lumora.ai.tile")
-                                val enhanced = try { runtime.run(pixels) } finally { android.os.Trace.endSection() }
-                                inferMs += SystemClock.elapsedRealtime()-t
-                                checkpoint()
-                                t = SystemClock.elapsedRealtime()
-                                DetailResampler.copyCore(enhanced,pixels,spec.scale,spec.strength,w,h,stripe,output.w,left*spec.scale)
-                                renderMs += SystemClock.elapsedRealtime()-t
-                                count++
-                                val percent = (count*99/(columns*rows)).coerceAtMost(99)
-                                if (percent != lastProgress) { lastProgress = percent; progress(percent) }
+                                val rowsOut = h*spec.scale
+                                stripeWrites[stripeIndex] = encodeExec.submit { timed(encodeT) { jpeg.write(stripe,rowsOut) } }
+                                stripeIndex = 1-stripeIndex
                             }
-                            checkpoint()
-                            val encodeStart=SystemClock.elapsedRealtime()
-                            jpeg.write(stripe,h*spec.scale)
-                            encodeMs+=SystemClock.elapsedRealtime()-encodeStart
-                        }
+                            stripeWrites.forEach { it?.get() }
+                        } catch (e: java.util.concurrent.ExecutionException) { throw e.cause ?: e }
+                        finally { decodeExec.shutdownNow(); renderExec.shutdownNow(); encodeExec.shutdown(); encodeExec.awaitTermination(30, java.util.concurrent.TimeUnit.SECONDS) }
+                        decodeMs = decodeT.get(); renderMs = renderT.get(); encodeMs = encodeT.get()
                         checkpoint()
                         val encodeStart=SystemClock.elapsedRealtime()
                         jpeg.finish()
