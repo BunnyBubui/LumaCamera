@@ -58,7 +58,10 @@ class VideoActivity:ComponentActivity(){
     private lateinit var chipFrame:FrameLayout;private lateinit var chips:CenterStrip;private val chipTexts=mutableListOf<Pair<TextView,TextView>>()
     private lateinit var dial:LinearLayout;private lateinit var dialTitle:TextView;private lateinit var dialValue:TextView;private lateinit var slider:GlassSlider
     private var category=1;private var openChip:String?=null;private var zoomStops:List<Float> = emptyList()
-    private val rebind=Runnable{bind()}
+    // The last frame stays over the preview while the camera reopens, so a changed setting never flashes black.
+    private val rebind=Runnable{if(recording==null&&!starting&&!finalizing)freeze(false);bind()}
+    /** A choice from the sheet rebinds after the menu has closed, so its closing animation is not cut by the camera reopening. */
+    private fun rebindSoon(after:()->Unit={}){configPending();handler.removeCallbacks(rebind);handler.postDelayed(rebind,300);handler.postDelayed({after()},360)}
     private val sounds=MediaActionSound()
     private val kind get()=(intent.getStringExtra("mode")?:"VIDEO").let{k->if(CameraActivity.ALL.any{it.key==k})k else "VIDEO"}
     private val dual get()=kind=="DUAL"
@@ -71,7 +74,7 @@ class VideoActivity:ComponentActivity(){
     private lateinit var orientation:OrientationEventListener
     private var rateLabel="30 fps"
     private var selectedCameraId:String?=null
-    private fun capabilities(info:CameraInfo)=if(slow)Recorder.getHighSpeedVideoCapabilities(info)?:error("กล้องนี้ไม่เปิด high-speed ให้แอป · ดูรายงานความสามารถ")else Recorder.getVideoCapabilities(info)
+    private fun capabilities(info:CameraInfo)=if(slow)sessions.highSpeed(info)?:error("กล้องนี้ไม่เปิด high-speed ให้แอป · ดูรายงานความสามารถ")else sessions.caps(info)
     private val permission=registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()){if(ContextCompat.checkSelfPermission(this,Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED)bind()else status.text="อนุญาตกล้องเพื่อเริ่มวิดีโอ"}
     private val audioPermission=registerForActivityResult(ActivityResultContracts.RequestPermission()){allowed->if(!allowed){mic=false;notice("ปิดไมค์สำหรับคลิปนี้ เพราะยังไม่ได้อนุญาตเสียง")};startRecording()}
     override fun onCreate(state:Bundle?){
@@ -102,7 +105,7 @@ class VideoActivity:ComponentActivity(){
         val selected=infos.firstOrNull{Camera2CameraInfo.from(it).cameraId==selectedCameraId}
         if(selected!=null)return selected
         val facing=if(rear)CameraSelector.LENS_FACING_BACK else CameraSelector.LENS_FACING_FRONT
-        if(slow)return infos.sortedBy{if(it.lensFacing==facing)0 else 1}.firstOrNull{runCatching{Recorder.getHighSpeedVideoCapabilities(it)?.getSupportedQualities(DynamicRange.SDR)?.isNotEmpty()==true}.getOrDefault(false)}?:infos.firstOrNull{it.lensFacing==facing}
+        if(slow)return infos.sortedBy{if(it.lensFacing==facing)0 else 1}.firstOrNull{runCatching{sessions.highSpeed(it)?.getSupportedQualities(DynamicRange.SDR)?.isNotEmpty()==true}.getOrDefault(false)}?:infos.firstOrNull{it.lensFacing==facing}
         return infos.firstOrNull{it.lensFacing==facing}
     }
     @Suppress("DEPRECATION")
@@ -243,7 +246,7 @@ class VideoActivity:ComponentActivity(){
         return if(k=="auto"||k !in Aspects.keys)null else Aspects.value(k,true)}
     private fun settings(interactive:Boolean=false){if(recording!=null||starting||finalizing){notice("หยุดคลิปก่อนเปลี่ยนรูปแบบวิดีโอ");return}
         val first=info()?:return
-        if(slow&&Recorder.getHighSpeedVideoCapabilities(first)==null){Capabilities.show(this);return}
+        if(slow&&sessions.highSpeed(first)==null){Capabilities.show(this);return}
         if(vPanel.showing)return
         closeDial()
         // The same sheet as photo mode: it rises with the finger, tiles open a menu right at the tile.
@@ -259,10 +262,10 @@ class VideoActivity:ComponentActivity(){
                             addView(IconView(this@VideoActivity,icon).apply{tint=if(on)Glass.ACCENT else Glass.TEXT2},dp(24),dp(24))
                             addView(text(title,12f).apply{gravity=Gravity.CENTER},-2,-2)
                             addView(text("$value ▾",11.5f,if(on)Glass.ACCENT else Glass.TEXT2,true).apply{gravity=Gravity.CENTER},-2,-2)},-2,-2)}
-                    t.pressMenu(vMenu){v->vMenu.show(v,title,items,selected){n->pick(n);bind();grid.post{fill();turnNow()}}}
+                    t.pressMenu(vMenu){v->vMenu.show(v,title,items,selected){n->pick(n);rebindSoon{fill();turnNow()}}}
                     grid.addView(t,android.widget.GridLayout.LayoutParams(android.widget.GridLayout.spec(android.widget.GridLayout.UNDEFINED),android.widget.GridLayout.spec(android.widget.GridLayout.UNDEFINED,1f)).apply{width=0;setMargins(dp(4),dp(4),dp(4),dp(4))})
                 }
-                val candidates=provider?.availableCameraInfos.orEmpty().filter{cam->runCatching{if(slow)Recorder.getHighSpeedVideoCapabilities(cam)?.getSupportedQualities(DynamicRange.SDR)?.isNotEmpty()==true else Recorder.getVideoCapabilities(cam).getSupportedQualities(DynamicRange.SDR).isNotEmpty()}.getOrDefault(false)}
+                val candidates=provider?.availableCameraInfos.orEmpty().filter{cam->runCatching{if(slow)sessions.highSpeed(cam)?.getSupportedQualities(DynamicRange.SDR)?.isNotEmpty()==true else sessions.caps(cam).getSupportedQualities(DynamicRange.SDR).isNotEmpty()}.getOrDefault(false)}
                 val currentId=Camera2CameraInfo.from(i).cameraId
                 tile("กล้อง",if(i.lensFacing==CameraSelector.LENS_FACING_BACK)"หลัง" else "หน้า",Icons.FLIP,false,candidates.map{GlassMenu.Option(if(it.lensFacing==CameraSelector.LENS_FACING_BACK)"กล้องหลัง" else "กล้องหน้า",Icons.FLIP,"กล้อง ${Camera2CameraInfo.from(it).cameraId}")},candidates.indexOfFirst{Camera2CameraInfo.from(it).cameraId==currentId}){n->selectedCameraId=Camera2CameraInfo.from(candidates[n]).cameraId}
                 val caps=capabilities(i);val qualities=caps.getSupportedQualities(dynamic)
@@ -289,7 +292,7 @@ class VideoActivity:ComponentActivity(){
                     addView(IconView(this@VideoActivity,Icons.CHEVRON_RIGHT,2f).apply{tint=0x80ffffff.toInt()},dp(16),dp(16))},-1,dp(52))
             }
             fun line()=links.addView(View(this).apply{setBackgroundColor(0x1affffff)},LinearLayout.LayoutParams(-1,1).apply{leftMargin=dp(48)})
-            if(!slow){link("คืนค่า 1080p · 30 · SDR",Icons.RESET){dynamic=DynamicRange.SDR;fps=30;quality=Quality.FHD;hevc=false;stabilization=false;bind();grid.post{fill();turnNow()}};line()}
+            if(!slow){link("คืนค่า 1080p · 30 · SDR",Icons.RESET){dynamic=DynamicRange.SDR;fps=30;quality=Quality.FHD;hevc=false;stabilization=false;rebindSoon{fill();turnNow()}};line()}
             link("ปรับแต่งแถบโหมด",Icons.BAR){sheet.close{prefs.edit().putBoolean("pending_editor",true).putString("pending_mode","PHOTO").apply();finish();noAnimation()}};line()
             link("ตั้งค่าทั้งหมด",Icons.GEAR){sheet.close{showStudioSettings(false){loadSettings();vOverlay?.gridKind=Grids.kind(prefs);handler.removeCallbacks(rebind);handler.postDelayed(rebind,420)}}}
             box.addView(links,LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(6)})
@@ -635,7 +638,7 @@ class VideoActivity:ComponentActivity(){
     private fun qualities()=info()?.let{allQualities(it)}?.takeIf{it.isNotEmpty()}?:listOf(quality)
     private fun allQualities(info:CameraInfo):List<Quality>{
         if(slow)return runCatching{capabilities(info).getSupportedQualities(dynamic)}.getOrDefault(emptyList())
-        val found=listOf(Recorder.VIDEO_CAPABILITIES_SOURCE_CAMCORDER_PROFILE,Recorder.VIDEO_CAPABILITIES_SOURCE_CODEC_CAPABILITIES).flatMap{src->runCatching{Recorder.getVideoCapabilities(info,src).getSupportedQualities(dynamic)}.getOrDefault(emptyList())}
+        val found=listOf(Recorder.VIDEO_CAPABILITIES_SOURCE_CAMCORDER_PROFILE,Recorder.VIDEO_CAPABILITIES_SOURCE_CODEC_CAPABILITIES).flatMap{src->runCatching{sessions.caps(info,src).getSupportedQualities(dynamic)}.getOrDefault(emptyList())}
         return listOf(Quality.UHD,Quality.FHD,Quality.HD,Quality.SD).filter{it in found}
     }
     /** FPS offered for the current quality/HDR/EIS set, as the session query reports it (never the camera-wide AE list). */
@@ -734,7 +737,8 @@ class VideoActivity:ComponentActivity(){
     /** Flat "Log" look for grading: a logarithmic tone curve, no in-camera sharpening, light noise reduction.
      *  It is not Canon C-Log or any vendor profile; HLG10 under ช่วงไดนามิก is the true 10-bit option. */
     private var logProfile=LogProfile.STANDARD
-    private fun logSupported(info:CameraInfo)=runCatching{Camera2CameraInfo.from(info).getCameraCharacteristic(android.hardware.camera2.CameraCharacteristics.TONEMAP_AVAILABLE_TONE_MAP_MODES)?.contains(android.hardware.camera2.CaptureRequest.TONEMAP_MODE_CONTRAST_CURVE)==true}.getOrDefault(false)
+    private val logCache=HashMap<CameraInfo,Boolean>()
+    private fun logSupported(info:CameraInfo)=logCache.getOrPut(info){runCatching{Camera2CameraInfo.from(info).getCameraCharacteristic(android.hardware.camera2.CameraCharacteristics.TONEMAP_AVAILABLE_TONE_MAP_MODES)?.contains(android.hardware.camera2.CaptureRequest.TONEMAP_MODE_CONTRAST_CURVE)==true}.getOrDefault(false)}
     private fun <T> applyLog(info:CameraInfo,e:Camera2Interop.Extender<T>){
         val cc=Camera2CameraInfo.from(info)
         val pts=logProfile.curve()

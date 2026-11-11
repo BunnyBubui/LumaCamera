@@ -18,13 +18,21 @@ class VideoSessions {
     private data class Key(val camera: CameraInfo, val quality: Quality, val dynamic: DynamicRange, val eis: Boolean, val slow: Boolean)
     data class Mode(val range: Range<Int>, val source: Int) { val lower get() = range.lower; val upper get() = range.upper }
     private val cache = mutableMapOf<Key, List<Mode>>()
+    // Recorder.getVideoCapabilities builds a new object on every call (encoder profiles and codec checks). The chips
+    // asked for it several times per slider step, which is what made the video menus stutter; once per camera is enough.
+    private val capsCache = HashMap<Pair<CameraInfo, Int>, androidx.camera.video.VideoCapabilities>()
+    private val highSpeedCache = HashMap<CameraInfo, androidx.camera.video.VideoCapabilities?>()
+    fun caps(info: CameraInfo, source: Int = Recorder.VIDEO_CAPABILITIES_SOURCE_CAMCORDER_PROFILE): androidx.camera.video.VideoCapabilities =
+        capsCache.getOrPut(info to source) { Recorder.getVideoCapabilities(info, source) }
+    fun highSpeed(info: CameraInfo): androidx.camera.video.VideoCapabilities? =
+        if (highSpeedCache.containsKey(info)) highSpeedCache[info] else Recorder.getHighSpeedVideoCapabilities(info).also { highSpeedCache[info] = it }
     private val errors = mutableMapOf<Key, MutableList<String>>()
     fun rates(info: CameraInfo, quality: Quality, dynamic: DynamicRange, eis: Boolean, slow: Boolean = false): List<Mode> =
         cache.getOrPut(Key(info, quality, dynamic, eis, slow)) {
             val sources = if (slow) listOf(Recorder.VIDEO_CAPABILITIES_SOURCE_CAMCORDER_PROFILE) else listOf(Recorder.VIDEO_CAPABILITIES_SOURCE_CAMCORDER_PROFILE, Recorder.VIDEO_CAPABILITIES_SOURCE_CODEC_CAPABILITIES)
             val modes = sources.flatMap { source ->
                 runCatching {
-                    val caps = if (slow) Recorder.getHighSpeedVideoCapabilities(info) ?: return@runCatching emptyList<Mode>() else Recorder.getVideoCapabilities(info, source)
+                    val caps = if (slow) highSpeed(info) ?: return@runCatching emptyList<Mode>() else caps(info, source)
                     if (quality !in caps.getSupportedQualities(dynamic)) return@runCatching emptyList<Mode>()
                     val recorder = Recorder.Builder().setVideoCapabilitiesSource(source).setQualitySelector(QualitySelector.from(quality)).build()
                     val capture = VideoCapture.Builder(recorder).setDynamicRange(dynamic).setVideoStabilizationEnabled(eis).build()

@@ -53,7 +53,13 @@ class EnhanceWorker(context: Context, params: WorkerParameters) : Worker(context
             val input = if (shot.output.enhance && hasBurst) {
                 val fusion = MultiFrameFusion(context).process(shot) { stopped() }
                 db.fusionProgress(key,fusion.used)
-                shot.copy(uri=Uri.fromFile(fusion.file),size=fusion.size)
+                // Portrait long exposure: blur the background of the merged picture, then add watermark, frame and look.
+                val portraitF = File(burstFolder,BurstCapture.PORTRAIT_NOTE).takeIf { it.exists() }?.readText()?.trim()?.toFloatOrNull()
+                if (portraitF != null) {
+                    PhotoEffects.portrait(fusion.file,portraitF)
+                    PhotoEffects.decorate(context,fusion.file,shot.rear)
+                }
+                shot.copy(uri=Uri.fromFile(fusion.file),size=if (portraitF != null) PhotoMedia.dimensions(fusion.file) else fusion.size)
             } else shot
             var report: String? = null
             val output = when (shot.aiModel) {

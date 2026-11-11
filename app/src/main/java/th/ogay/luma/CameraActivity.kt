@@ -81,7 +81,9 @@ class CameraActivity : ComponentActivity() {
             BarMode("QUICK", "ถ่ายเร็ว", Icons.FLASH), BarMode("FILM", "ฟิล์ม", Icons.FILM))
         /** Flash-fast, flash-quick and sport share one bar entry; a chip picks which. */
         /** Modes where the long-exposure button is offered (they share the multi-frame capture path). */
-        val LONG_MODES = listOf(PhotoMode.PHOTO, PhotoMode.PRO, PhotoMode.FILM, PhotoMode.NIGHT)
+        // Long exposure merges frames, so it fits every mode that takes one still picture. Not offered where it would fight
+        // the mode: sport (fast shutter), flash, HDR (its own bracket), panorama, full-sensor and document capture.
+        val LONG_MODES = listOf(PhotoMode.PHOTO, PhotoMode.PRO, PhotoMode.FILM, PhotoMode.NIGHT, PhotoMode.PORTRAIT)
         /** Frames merged per second of long exposure. */
         const val LONG_FRAMES = 6
         val QUICK_MODES = listOf(PhotoMode.FLASH_NIGHT, PhotoMode.FLASH_FAST, PhotoMode.SPORT)
@@ -1414,7 +1416,7 @@ class CameraActivity : ComponentActivity() {
                         val key=listOf(rear,activeExtension,if(activeExtension)extension else ExtensionMode.NONE,output.needsRaw,
                 // The three quick kinds share one stream set; their exposure and flash are per-request settings,
                 // so switching between them keeps the session instead of closing and reopening the camera.
-                mode==PhotoMode.HIRES,mode in listOf(PhotoMode.PRO,PhotoMode.HDR,PhotoMode.HIRES,PhotoMode.NIGHT),prefs.getString("aspect","4:3"),prefs.getString("jpeg_quality","95"))
+                mode==PhotoMode.HIRES,mode in listOf(PhotoMode.HDR,PhotoMode.HIRES,PhotoMode.NIGHT),prefs.getString("aspect","4:3"),prefs.getString("jpeg_quality","95"))
             if(key==boundKey&&capture?.let{provider.isBound(it)}==true){
                 // Same stream combination: keep the session, refresh only per-mode state.
                 boundPreview?.setSurfaceProvider(preview.surfaceProvider);capture?.targetRotation=targetRotation
@@ -1435,7 +1437,10 @@ class CameraActivity : ComponentActivity() {
             // Mains lighting flickers at 50/60 Hz; the camera's own anti-banding keeps the shutter on a multiple of it when it can.
             runCatching{androidx.camera.camera2.interop.Camera2Interop.Extender(previewBuilder).setCaptureRequestOption(android.hardware.camera2.CaptureRequest.CONTROL_AE_ANTIBANDING_MODE,android.hardware.camera2.CaptureRequest.CONTROL_AE_ANTIBANDING_MODE_AUTO)}
             val previewCase=previewBuilder.build().apply { surfaceProvider=preview.surfaceProvider }
-            val builder=ImageCapture.Builder().setCaptureMode(if(mode in listOf(PhotoMode.PRO,PhotoMode.HIRES))ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY else ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+            // PRO shares the photo session (same streams, same capture mode): switching between them used to close and reopen
+            // the camera, which was most of the wait when opening PRO. Its own exposure, focus, sharpening and noise
+            // reduction are per-request settings, so the picture is the same.
+            val builder=ImageCapture.Builder().setCaptureMode(if(mode==PhotoMode.HIRES)ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY else ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
                 .setJpegQuality(prefs.getString("jpeg_quality","95")!!.toInt())
                 .setResolutionSelector(framing.setResolutionStrategy(ResolutionStrategy(Size(4000,3000),ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER)).build())
                 .setTargetRotation(targetRotation)
@@ -1633,7 +1638,8 @@ class CameraActivity : ComponentActivity() {
                 manual?.apply()
                 burst = null
                 complete(message)
-            }
+            },
+            portraitF = if (mode == PhotoMode.PORTRAIT && !activeExtension && longActive()) prefs.getFloat("portrait_f", 2.8f) else null
         )
         val active = camera
         if (active == null) {

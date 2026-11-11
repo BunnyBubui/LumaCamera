@@ -19,7 +19,8 @@ data class EnhanceSpec(val scale: Int = 2, val strength: Int = 100) {
     }
     companion object {
         const val MODEL = "DetailSR2"
-        const val CORE = 128
+        // Must match model/build_detail.py (the model's input is CORE + 2 * HALO square).
+        const val CORE = 192
         // SRVGG: 34 consecutive 3x3 convolutions => radius 34, plus resize gutter.
         const val HALO = 36
         const val INPUT = CORE + 2 * HALO
