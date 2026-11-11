@@ -143,7 +143,21 @@ class GalleryActivity : ComponentActivity() {
         val ledger = MediaLedger.all(this).filter { it.uri.toString() !in known && it.mime != "application/json" }.map {
             Item("ledger:${it.uri}", it.uri, it.time, it.mime.startsWith("video/"), it.title, "Lumora", null, it.mime, it.note)
         }
-        return (shots + ledger).sortedByDescending { it.time }
+        // Files already in the Lumora folders from an earlier install (the app's database went with the uninstall)
+        // join the list again as phone items, so they are seen and can still go through the AI.
+        val seen = known + ledger.map { it.uri.toString() }
+        val earlier = mutableListOf<Item>()
+        fun read(base: Uri, video: Boolean) = runCatching {
+            contentResolver.query(base, arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DATE_ADDED, MediaStore.MediaColumns.DISPLAY_NAME),
+                "bucket_display_name = ?", arrayOf("Lumora"), null)?.use { c ->
+                while (c.moveToNext()) {
+                    val uri = ContentUris.withAppendedId(base, c.getLong(0))
+                    if (uri.toString() !in seen) earlier += Item("device:$uri", uri, c.getLong(1) * 1000, video, c.getString(2) ?: "", "Lumora", null)
+                }
+            }
+        }
+        read(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, false); read(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, true)
+        return (shots + ledger + earlier).sortedByDescending { it.time }
     }
     private fun deviceItems(): List<Item> {
         val out = mutableListOf<Item>()

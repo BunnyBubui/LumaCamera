@@ -711,7 +711,7 @@ class CameraActivity : ComponentActivity() {
     /** Zoom gestures pause while an adjuster, menu or sheet is open, so they never fight with it. */
     private fun zoomLocked() = openChip != null || panel.showing || editor.showing || lookSheet.showing || menu.showing
     private var dragZoom0 = 1f
-    private fun zoomDragStart() { if (zoomLocked()) return; dragZoom0 = if (zoomFollower?.isRunning == true) zoomGoal else ratio; dialing = true; wheel.removeCallbacks(hideWheel); zoomAnimation?.cancel(); zooms.animate().alpha(0f).setDuration(200).start(); wheel.show(true) }
+    private fun zoomDragStart() { if (zoomLocked()) return; dragZoom0 = if (zoomFollower?.isRunning == true) zoomGoal else ratio; dialing = true; wheel.removeCallbacks(hideWheel); zoomAnimation?.cancel(); zooms.animate().alpha(0f).setDuration(200).start(); chipFrame.animate().alpha(0f).setDuration(160).start(); wheel.show(true) }
     private fun zoomDragMove(dx: Float) {
         if (zoomLocked()) return
         val (lo, hi) = range()
@@ -733,7 +733,8 @@ class CameraActivity : ComponentActivity() {
             on
         }
     }
-    private val hideWheel = Runnable { dialing = false; wheel.show(false); zooms.animate().alpha(1f).setDuration(200).start(); refresh() }
+    // The chip strip steps aside while the zoom wheel is out (they overlapped in PRO and ถ่ายเร็ว).
+    private val hideWheel = Runnable { dialing = false; wheel.show(false); zooms.animate().alpha(1f).setDuration(200).start(); chipFrame.animate().alpha(1f).setDuration(200).start(); refresh() }
     private var lastShot = 0L
     /** Keeps one small frame per lens for the minimap; never more than two, each about 240 px wide. */
     private fun snapshotLens(lens: Float) {
@@ -1222,7 +1223,8 @@ class CameraActivity : ComponentActivity() {
     // ---------- Refresh ----------
     private fun refreshZoomPills() {
         val (lo, hi) = range()
-        val stops = (listOfNotNull(lo.takeIf { it < 0.98f }, 1f, 2f, 3.5f).filter { it in lo..hi }).distinct()
+        // The front camera gets its own pills (it has no tele lens): 1×, 2×, 5×, then pinch/drag up to 20×.
+        val stops = (if (rear) listOfNotNull(lo.takeIf { it < 0.98f }, 1f, 2f, 3.5f) else listOf(1f, 2f, 5f)).filter { it in lo..hi }.distinct()
         if (stops != renderedZooms || zooms.childCount != stops.size) {
             zooms.removeAllViews(); renderedZooms = stops; zooms.post { turnNow() }
             stops.forEach { v ->
@@ -1254,7 +1256,7 @@ class CameraActivity : ComponentActivity() {
         fun lit(v: FrameLayout, on: Boolean) { (v.background as? GlassDrawable)?.let { if ((it.fill == Glass.ACCENT) != on) { it.fill = if (on) Glass.ACCENT else Glass.FILL; v.invalidate() } }; (v.getChildAt(0) as IconView).tint = if (on) Glass.ON_ACCENT else Color.WHITE }
         lit(macroButton, macro); lit(nightButton, nightActive())
         refreshZoomPills()
-        zooms.visibility = if (capture != null && renderedZooms.size > 1 && rear && prefs.getBoolean("show_zoom", true)) View.VISIBLE else View.GONE
+        zooms.visibility = if (capture != null && renderedZooms.size > 1 && prefs.getBoolean("show_zoom", true)) View.VISIBLE else View.GONE
         preview.contentDescription = "ช่องมองภาพ กล้อง${if (rear) "หลัง" else "หน้า"} ${zoomText(ratio)} แตะเพื่อโฟกัส ปัดขึ้นลงเพื่อปรับความสว่าง"
         val chipped = mode == PhotoMode.PRO || mode in QUICK_MODES
         if (chipped && (chipFrame.visibility != View.VISIBLE || chipKeys().size != chipTexts.size)) rebuildChips()
@@ -1327,7 +1329,11 @@ class CameraActivity : ComponentActivity() {
             val single=Build.VERSION.SDK_INT>=28 && caps!=null && !caps.contains(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_LOGICAL_MULTI_CAMERA)
             val frames=FrameMetadata(single)
             val framing=ResolutionSelector.Builder().setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
-            val previewCase=Preview.Builder().setResolutionSelector(framing.build()).build().apply { surfaceProvider=preview.surfaceProvider }
+            // Optional frame-rate lock: the viewfinder keeps 24/30/60 fps in dim light instead of the phone slowing it down.
+            val lockFps=prefs.getString("fps_lock","off")?.toIntOrNull()
+            val previewBuilder=Preview.Builder().setResolutionSelector(framing.build())
+            if(lockFps!=null)runCatching{androidx.camera.camera2.interop.Camera2Interop.Extender(previewBuilder).setCaptureRequestOption(android.hardware.camera2.CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,android.util.Range(lockFps,lockFps))}
+            val previewCase=previewBuilder.build().apply { surfaceProvider=preview.surfaceProvider }
             val builder=ImageCapture.Builder().setCaptureMode(if(mode in listOf(PhotoMode.PRO,PhotoMode.HIRES))ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY else ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
                 .setJpegQuality(prefs.getString("jpeg_quality","95")!!.toInt())
                 .setResolutionSelector(framing.setResolutionStrategy(ResolutionStrategy(Size(4000,3000),ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER)).build())
@@ -1639,6 +1645,8 @@ class CameraActivity : ComponentActivity() {
                     val actualZoom=if(!useSoftware && frame?.ratio!=null && frame.ratio!=1f) frame.ratio else zoom
                     val reason=decide(allowAuto,isRear,actualZoom,size.pixels,crop)
                     val uri=if(outFormat==CaptureOutput.PNG||outFormat==CaptureOutput.WEBP){
+                        // PNG/WebP encoding takes seconds on a 12 MP frame; the shutter is free again while it runs.
+                        runOnUiThread{if(busy){busy=false;refresh();hint(if(outFormat==CaptureOutput.PNG)"กำลังบันทึก PNG…" else "กำลังบันทึก WebP…",1200)}}
                         val converted=PhotoEffects.convert(original,outFormat,prefs.getString("jpeg_quality","95")!!.toInt())
                         try{PhotoMedia.publish(this@CameraActivity,converted,"Lumora_${time}_${id}.${if(outFormat==CaptureOutput.PNG)"png" else "webp"}",time,if(outFormat==CaptureOutput.PNG)"image/png" else "image/webp")}finally{converted.delete()}
                     }else PhotoMedia.publish(this@CameraActivity,original,"Lumora_${time}_${id}.jpg",time)
@@ -1697,13 +1705,15 @@ class CameraActivity : ComponentActivity() {
         freezeFrame();provider?.unbindAll();capture=null;boundKey=null
         RawStill.capture(applicationContext,cameraId,rotation,isRear,minOf(zoom,hardwareMax()),dng,jpg){error->
             luma.fileIo.execute{
-                var message="บันทึก RAW + JPEG แล้ว"
+                var message=if(prefs.getBoolean("raw_jpeg",true))"บันทึก RAW + JPEG แล้ว" else "บันทึก RAW (DNG) แล้ว"
                 try{
                     if(error!=null)throw error
-                    PhotoMedia.publish(this,dng,"Lumora_${time}_${id}.dng",time,"image/x-adobe-dng")
-                    LensMeta.stamp(jpg,lens);PhotoEffects.decorate(this,jpg,isRear)
+                    val dngUri=PhotoMedia.publish(this,dng,"Lumora_${time}_${id}.dng",time,"image/x-adobe-dng")
+                    val withJpeg=prefs.getBoolean("raw_jpeg",true)
+                    if(withJpeg){LensMeta.stamp(jpg,lens);PhotoEffects.decorate(this,jpg,isRear)}
                     val dims=PhotoMedia.dimensions(jpg)
-                    val uri=PhotoMedia.publish(this,jpg,"Lumora_${time}_${id}.jpg",time)
+                    // RAW only: the DNG itself is the shot; the JPEG was only taken to finish the capture and is dropped.
+                    val uri=if(withJpeg)PhotoMedia.publish(this,jpg,"Lumora_${time}_${id}.jpg",time) else dngUri
                     luma.shots.insert(Shot(id,time,uri,dims,zoom,isRear,cameraId,null,Decision.OFF,Stage.ORIGINAL,null,0,null,false))
                 }catch(e:Throwable){message="ถ่าย RAW ไม่สำเร็จ · ${e.localizedMessage}"}
                 finally{dng.delete();jpg.delete()}

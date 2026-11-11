@@ -129,6 +129,8 @@ fun Activity.showStudioSettings(rawAvailable: Boolean, changed: () -> Unit) {
     toggle("HDR แบบ native EF2 (ทดลอง)", Icons.HDR, HdrCapture.NATIVE_KEY, note = "รวมภาพ HDR ด้วย OpenCV เพื่อเทียบกับ EF1 ยังไม่มีระบบกันเงาซ้อน")
     toggle("ความละเอียดสูง: ขยายด้วย AI", Icons.AI, "hires_ai", true, "เครื่องไม่เปิดเซนเซอร์ 50 MP ให้แอปอื่น โหมดนี้ถ่ายขนาดสูงสุดที่เปิดให้แล้วขยาย ×2 ด้วย AI ในเครื่อง ปิดไว้ถ้าอยากได้เฉพาะต้นฉบับ")
     choose("ถ่ายเร็ว: เริ่มต้นที่", Icons.FLASH, "quick_kind", listOf("แฟลชเร็ว", "แฟลชเร็วพิเศษ", "ถ่ายเร็ว (กีฬา)"), listOf("FLASH_NIGHT", "FLASH_FAST", "SPORT"), "FLASH_NIGHT")
+    choose("ล็อกเฟรมเรตภาพสด", Icons.FILM, "fps_lock", listOf("ปิด (ตามระบบ)", "24 fps", "30 fps", "60 fps"), listOf("off", "24", "30", "60"), "off", listOf("ระบบลดเฟรมเองในที่มืด", "ภาพสดไม่ต่ำกว่า 24", "ภาพสดคงที่ 30", "ลื่นสุด ถ้ากล้องรองรับ"))
+    toggle("RAW: บันทึก JPEG คู่", Icons.FILE, "raw_jpeg", true, "ปิดเพื่อเก็บเฉพาะไฟล์ DNG")
     toggle("วิดีโอ: บันทึกเสียง", Icons.MIC, "video_mic", true)
     toggle("วิดีโอ: กันสั่น", Icons.STAB, "video_eis", false)
     toggle("วิดีโอ: ซูมเกิน 20×", Icons.SEARCH, "video_superzoom", false, "ครอปภาพด้วย GPU ระหว่างอัด ซูมได้ถึง 500× ใช้แบตมากขึ้น ใช้กับวิดีโอ SDR")
