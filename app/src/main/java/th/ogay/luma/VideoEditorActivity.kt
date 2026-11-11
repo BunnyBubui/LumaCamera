@@ -151,7 +151,9 @@ class VideoEditorActivity : ComponentActivity() {
         captionView = text("", 20f, Color.WHITE, true).apply { gravity = Gravity.CENTER; maxLines = 3; setShadowLayer(6f, 0f, 2f, 0x99000000.toInt()); importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
         stage.addView(captionView, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
         stage.setOnClickListener { togglePlay() }; stage.contentDescription = "พรีวิววิดีโอ แตะเพื่อเล่นหรือหยุด"
-        stage.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> stage.post { layoutVideo() } }
+        // Only a real size change re-fits the video: a layout pass alone must not, or setting the caption's width
+        // asks for another layout and the page re-lays itself every frame.
+        stage.addOnLayoutChangeListener { _, l, t, r, b, ol, ot, or_, ob -> if (r - l != or_ - ol || b - t != ob - ot) stage.post { layoutVideo() } }
         root.addView(stage, LinearLayout.LayoutParams(-1, 0, 1f))
 
         val transport = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(6), dp(14), dp(2)) }
@@ -273,7 +275,7 @@ class VideoEditorActivity : ComponentActivity() {
         val video = RectF((stage.width - w) / 2f, (stage.height - h) / 2f, (stage.width + w) / 2f, (stage.height + h) / 2f)
         val visible = cropRect(video); mask.set(video, visible)
         captionView.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, (if (textBig) 0.11f else 0.07f) * visible.height())
-        captionView.maxWidth = visible.width().toInt() - dp(16)
+        val widest = visible.width().toInt() - dp(16); if (captionView.maxWidth != widest) captionView.maxWidth = widest
         captionView.post {
             captionView.translationX = visible.centerX() - stage.width / 2f
             val y = when (place) { 0 -> visible.top + visible.height() * 0.06f + captionView.height / 2f; 1 -> visible.centerY(); else -> visible.bottom - visible.height() * 0.06f - captionView.height / 2f }
