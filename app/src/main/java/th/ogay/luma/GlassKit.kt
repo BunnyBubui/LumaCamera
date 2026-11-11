@@ -489,3 +489,38 @@ object GlassDialog {
         d.show()
     }
 }
+
+/** A portrait rectangle with the ratio's real proportions, so 21:9 looks long and 1:1 square (icon path on a 24 grid). */
+fun aspectIconPath(name: String): String {
+    val p = name.split(':').mapNotNull { it.trim().toFloatOrNull() }
+    val r = if (p.size == 2 && p[1] > 0f) maxOf(p[0], p[1]) / minOf(p[0], p[1]) else 4f / 3f
+    val h = 20f; val w = h / r; val x = 12f - w / 2; val y = 12f - h / 2
+    return String.format(java.util.Locale.US, "M%.2f %.2fh%.2fv%.2fh%.2fz", x, y, w, h, -w)
+}
+
+/**
+ * Strip cell whose content (icon and label, or title and value) turns with the phone as one piece.
+ * The content keeps its own width, so the cell can be narrow while the phone is held sideways.
+ */
+fun android.content.Context.turnCell(content: View, contentWidthDp: Int, desc: String): android.widget.FrameLayout = android.widget.FrameLayout(this).apply {
+    isClickable = true; isFocusable = true; contentDescription = desc
+    content.tag = IconTurner.TAG
+    addView(content, android.widget.FrameLayout.LayoutParams(dp(contentWidthDp), -2, android.view.Gravity.CENTER))
+}
+
+/**
+ * Keeps a top-centre notice at the top of the picture as the phone is held: it turns with the phone and moves to the
+ * edge that is "up" (the right edge for +90 degrees, the left for -90), [insetPx] away from it.
+ */
+fun View.turnTo(angle: Float, insetPx: Int, animate: Boolean) {
+    val p = parent as? View ?: return
+    if (width == 0 || p.width == 0) { rotation = angle; return }
+    val side = kotlin.math.abs(angle) == 90f
+    val cx = left + width / 2f; val cy = top + height / 2f
+    val tx = when { !side -> 0f; angle > 0 -> p.width - insetPx - height / 2f - cx; else -> insetPx + height / 2f - cx }
+    val ty = if (side) (p.height - p.paddingBottom) / 2f - cy else 0f
+    var to = angle; while (to - rotation > 180) to -= 360; while (to - rotation < -180) to += 360
+    if (animate) animate().rotation(to).translationX(tx).translationY(ty).setInterpolator(Glass.SPRING).setDuration(420).start()
+    else { animate().cancel(); rotation = to; translationX = tx; translationY = ty }
+}
+

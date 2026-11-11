@@ -507,6 +507,24 @@ class SwipeColumn(context: Context) : LinearLayout(context) {
     private var downX = 0f; private var downY = 0f; private var fired = false
     private var tracker: android.view.VelocityTracker? = null
     init { orientation = VERTICAL }
+    /** While set, a touch that starts on this view's on-screen box goes to it (the zoom capsule slides over the dock while recording). */
+    var forward: View? = null
+    private var forwarding = false
+    override fun dispatchTouchEvent(e: MotionEvent): Boolean {
+        val f = forward
+        if (f != null && f.isAttachedToWindow) {
+            val a = IntArray(2); f.getLocationOnScreen(a)
+            if (e.actionMasked == MotionEvent.ACTION_DOWN) forwarding = e.rawX >= a[0] && e.rawX <= a[0] + f.width && e.rawY >= a[1] && e.rawY <= a[1] + f.height
+            if (forwarding) {
+                val me = IntArray(2); getLocationOnScreen(me)
+                val c = MotionEvent.obtain(e); c.offsetLocation((me[0] - a[0]).toFloat(), (me[1] - a[1]).toFloat())
+                f.dispatchTouchEvent(c); c.recycle()
+                if (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL) forwarding = false
+                return true
+            }
+        } else forwarding = false
+        return super.dispatchTouchEvent(e)
+    }
     override fun onInterceptTouchEvent(e: MotionEvent): Boolean {
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> { downX = e.rawX; downY = e.rawY; fired = false }

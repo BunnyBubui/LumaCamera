@@ -88,9 +88,9 @@ class VideoActivity:ComponentActivity(){
     }
     /** Settings of the current kind (slow-motion keeps its own resolution, fps and camera). */
     private fun loadSettings(){
-        mic=prefs.getBoolean("video_mic",true);prefs.getStringSet("force60_failed_ids",emptySet())?.forEach{sessions.failed60.add(it)}
+        mic=prefs.getBoolean("video_mic",true);prefs.getStringSet("force60_failed_v2",emptySet())?.forEach{sessions.failed60.add(it)}
         quality=when(prefs.getString("video_quality","FHD")){"UHD"->Quality.UHD;"HD"->Quality.HD;"SD"->Quality.SD;else->Quality.FHD}
-        logProfile=LogProfile.fromPrefs(prefs);fps=prefs.getInt("video_fps",30);bitrate=prefs.getInt("video_bitrate",20_000_000);stabilization=prefs.getBoolean("video_eis",false)
+        logProfile=LogProfile.fromPrefs(prefs);fps=prefs.getString("video_fps_s",null)?.toIntOrNull()?:prefs.getInt("video_fps",30);bitrate=prefs.getInt("video_bitrate",20_000_000);stabilization=prefs.getBoolean("video_eis",false)
         dynamic=when(prefs.getString("video_dynamic","SDR")){"HLG"->DynamicRange.HLG_10_BIT;"HDR10"->DynamicRange.HDR10_10_BIT;else->DynamicRange.SDR}
         if(slow){mic=false;dynamic=DynamicRange.SDR;stabilization=false;fps=prefs.getInt("slow_fps",120);quality=when(prefs.getString("slow_quality","FHD")){"UHD"->Quality.UHD;"HD"->Quality.HD;"SD"->Quality.SD;else->Quality.FHD}}
         selectedCameraId=prefs.getString(if(slow)"slow_camera"else "video_camera",null)
@@ -176,6 +176,7 @@ class VideoActivity:ComponentActivity(){
     private val V_ASPECTS get()=listOf("auto")+Aspects.available(prefs)
     private fun aspectLabel(k:String)=when(k){"auto"->"ตามเซนเซอร์";"2.39"->"2.39:1";else->k}
     private var dockRef:android.view.View?=null
+    private lateinit var vPanel:GlassSheet;private lateinit var vMenu:GlassMenu;private var sideways=false
     /** While recording only the zoom stays (it glides down to where the tabs and chips were); everything returns after. */
     private fun focusRecording(on:Boolean){
         val hide=listOfNotNull(if(::tabs.isInitialized)tabs else null,chipFrame,modeStrip,flip,if(::expRail.isInitialized)expRail else null,if(::expRail.isInitialized)focusRail else null)
@@ -185,6 +186,9 @@ class VideoActivity:ComponentActivity(){
         stage.clipChildren=false;(stage.parent as? android.view.ViewGroup)?.clipChildren=false
         val drop=if(on&&!land)(dockRef?.let{dock->val loc=IntArray(2);chipFrame.getLocationInWindow(loc);val z=IntArray(2);zooms.getLocationInWindow(z);(loc[1]-z[1]).toFloat().coerceAtLeast(0f)}?:0f) else 0f
         zooms.animate().translationY(drop).setInterpolator(Glass.EASE).setDuration(if(d==0L)0 else 420).start()
+        // The zoom now sits over the dock: the dock stops dimming it and hands touches on it through.
+        (dockRef as? SwipeColumn)?.forward=if(on)zooms else null
+        if(on)dockRef?.setBackgroundColor(0) else applyStageShape()
     }
     /** As in photo mode: tall shapes (16:9 and longer) run under the control dock, which turns see-through. */
     private fun applyStageShape(){
@@ -195,7 +199,7 @@ class VideoActivity:ComponentActivity(){
         val lp=dock.layoutParams as LinearLayout.LayoutParams
         val want=if(tall)-dock.height else 0
         if(lp.topMargin!=want){lp.topMargin=want;dock.layoutParams=lp}
-        dock.setBackgroundColor(if(tall)0x66070b16 else 0)
+        dock.setBackgroundColor(if(tall&&recording==null)0x66070b16 else 0)
         stage.clipToPadding=false
         val pad=if(tall)dock.height else 0
         if(stage.paddingBottom!=pad)stage.setPadding(0,0,0,pad)
@@ -216,50 +220,58 @@ class VideoActivity:ComponentActivity(){
     }
     private fun videoRatio():Float?{val k=prefs.getString("video_aspect","auto")?:"auto"
         return if(k=="auto"||k !in Aspects.keys)null else Aspects.value(k,true)}
-    private fun settings(){if(recording!=null||starting||finalizing){notice("หยุดคลิปก่อนเปลี่ยนรูปแบบวิดีโอ");return}
-        val i=info()?:return
-        if(slow&&Recorder.getHighSpeedVideoCapabilities(i)==null){Capabilities.show(this);return}
-        studioSheet("วิดีโอ"){box,d->
-            // Same look as photo quick settings: a grid of icon tiles; a tap opens that setting's choices right below.
+    private fun settings(interactive:Boolean=false){if(recording!=null||starting||finalizing){notice("หยุดคลิปก่อนเปลี่ยนรูปแบบวิดีโอ");return}
+        val first=info()?:return
+        if(slow&&Recorder.getHighSpeedVideoCapabilities(first)==null){Capabilities.show(this);return}
+        if(vPanel.showing)return
+        closeDial()
+        // The same sheet as photo mode: it rises with the finger, tiles open a menu right at the tile.
+        vPanel.open(interactive){box,sheet->
+            box.addView(text("วิดีโอ",14f,0xdbffffff.toInt(),true).apply{setPadding(dp(2),dp(4),0,dp(8))})
             val grid=android.widget.GridLayout(this).apply{columnCount=3}
-            val choices=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL}
-            var openTitle:String?=null
-            fun tile(title:String,value:String,icon:String,on:Boolean,items:List<String>,selected:Int,pick:(Int)->Unit){
-                val t=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER;background=glass(22,if(on)0x2affffff else 0x14ffffff);minimumHeight=dp(96);setPadding(dp(4),dp(8),dp(4),dp(8));isClickable=true;glassTouch();contentDescription="$title $value"
-                    addView(LinearLayout(this@VideoActivity).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER;tag=IconTurner.TAG
-                        addView(IconView(this@VideoActivity,icon).apply{tint=if(on)Glass.ACCENT else Glass.TEXT2},dp(24),dp(24))
-                        addView(text(title,12f).apply{gravity=Gravity.CENTER;setPadding(0,dp(4),0,0)},-2,-2)
-                        addView(text("$value ▾",11.5f,if(on)Glass.ACCENT else Glass.TEXT2,true).apply{gravity=Gravity.CENTER},-2,-2)},-2,-2)}
-                t.setOnClickListener{
-                    Glass.tick(t);choices.removeAllViews()
-                    if(openTitle==title){openTitle=null;return@setOnClickListener}
-                    openTitle=title
-                    choices.addView(label(title,13f,MUTED).apply{setPadding(dp(6),dp(12),0,dp(6))},-1,-2)
-                    val row=LinearLayout(this).apply{setPadding(dp(2),0,dp(2),0)}
-                    items.forEachIndexed{n,item->row.addView(text(item,13.5f,if(n==selected)Glass.ACCENT else WHITE,n==selected).apply{gravity=Gravity.CENTER;background=glass(20,if(n==selected)0x2affffff else 0x14ffffff);setPadding(dp(14),0,dp(14),0);isClickable=true;glassTouch()
-                        setOnClickListener{Glass.tick(this);pick(n);d.dismiss();bind()}},LinearLayout.LayoutParams(-2,dp(44)).apply{setMargins(dp(4),0,dp(4),0)})}
-                    choices.addView(android.widget.HorizontalScrollView(this).apply{isHorizontalScrollBarEnabled=false;addView(row)},-1,-2)
+            fun fill(){
+                grid.removeAllViews()
+                val i=info()?:return
+                fun tile(title:String,value:String,icon:String,on:Boolean,items:List<GlassMenu.Option>,selected:Int,pick:(Int)->Unit){
+                    val t=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER;background=glass(20,if(on)Glass.ACCENT_SOFT else 0x12ffffff);minimumHeight=dp(96);setPadding(dp(4),dp(8),dp(4),dp(8));isClickable=true;contentDescription="$title $value"
+                        addView(LinearLayout(this@VideoActivity).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER;tag=IconTurner.TAG
+                            addView(IconView(this@VideoActivity,icon).apply{tint=if(on)Glass.ACCENT else Glass.TEXT2},dp(24),dp(24))
+                            addView(text(title,12f).apply{gravity=Gravity.CENTER},-2,-2)
+                            addView(text("$value ▾",11.5f,if(on)Glass.ACCENT else Glass.TEXT2,true).apply{gravity=Gravity.CENTER},-2,-2)},-2,-2)}
+                    t.pressMenu(vMenu){v->vMenu.show(v,title,items,selected){n->pick(n);bind();grid.post{fill();turnNow()}}}
+                    grid.addView(t,android.widget.GridLayout.LayoutParams(android.widget.GridLayout.spec(android.widget.GridLayout.UNDEFINED),android.widget.GridLayout.spec(android.widget.GridLayout.UNDEFINED,1f)).apply{width=0;setMargins(dp(4),dp(4),dp(4),dp(4))})
                 }
-                grid.addView(t,android.widget.GridLayout.LayoutParams(android.widget.GridLayout.spec(android.widget.GridLayout.UNDEFINED),android.widget.GridLayout.spec(android.widget.GridLayout.UNDEFINED,1f)).apply{width=0;setMargins(dp(5),dp(5),dp(5),dp(5))})
+                val candidates=provider?.availableCameraInfos.orEmpty().filter{cam->runCatching{if(slow)Recorder.getHighSpeedVideoCapabilities(cam)?.getSupportedQualities(DynamicRange.SDR)?.isNotEmpty()==true else Recorder.getVideoCapabilities(cam).getSupportedQualities(DynamicRange.SDR).isNotEmpty()}.getOrDefault(false)}
+                val currentId=Camera2CameraInfo.from(i).cameraId
+                tile("กล้อง",if(i.lensFacing==CameraSelector.LENS_FACING_BACK)"หลัง" else "หน้า",Icons.FLIP,false,candidates.map{GlassMenu.Option(if(it.lensFacing==CameraSelector.LENS_FACING_BACK)"กล้องหลัง" else "กล้องหน้า",Icons.FLIP,"กล้อง ${Camera2CameraInfo.from(it).cameraId}")},candidates.indexOfFirst{Camera2CameraInfo.from(it).cameraId==currentId}){n->selectedCameraId=Camera2CameraInfo.from(candidates[n]).cameraId}
+                val caps=capabilities(i);val qualities=caps.getSupportedQualities(dynamic)
+                tile("ความละเอียด",qualityName(quality),Icons.RES,quality!=Quality.FHD,qualities.map{GlassMenu.Option(qualityName(it),Icons.RES)},qualities.indexOf(quality)){n->quality=qualities[n]}
+                val aspects=V_ASPECTS;val aspect=prefs.getString("video_aspect","auto")?:"auto"
+                tile("ขนาดภาพ",aspectLabel(aspect),if(aspect=="auto")Icons.FRAME else aspectIconPath(if(aspect=="2.39")"2.39:1" else aspect),aspect!="auto",aspects.map{GlassMenu.Option(aspectLabel(it),if(it=="auto")Icons.FRAME else aspectIconPath(if(it=="2.39")"2.39:1" else it))},aspects.indexOf(aspect)){n->prefs.edit().putString("video_aspect",aspects[n]).apply()}
+                val frames=offered(i)
+                tile("FPS","$fps",Icons.FPS,fps!=30,frames.map{GlassMenu.Option(rateName(it),Icons.FPS)},frames.indexOfFirst{it.upper==fps}){n->fps=frames[n].upper}
+                val ranges=listOf(DynamicRange.SDR,DynamicRange.HLG_10_BIT,DynamicRange.HDR10_10_BIT).filter{it in caps.supportedDynamicRanges}
+                fun rangeName(r:DynamicRange)=when(r){DynamicRange.SDR->"SDR";DynamicRange.HLG_10_BIT->"HLG10";else->"HDR10"}
+                if(!slow)tile("ช่วงไดนามิก",rangeName(dynamic),Icons.HDR,dynamic!=DynamicRange.SDR,ranges.map{GlassMenu.Option(rangeName(it),Icons.HDR)},ranges.indexOf(dynamic)){n->dynamic=ranges[n]}
+                val rates=listOf(8,20,40,80)
+                tile("Bitrate","${bitrate/1_000_000}M",Icons.FILE,bitrate!=20_000_000,rates.map{GlassMenu.Option("$it Mbps",Icons.FILE,when(it){8->"ไฟล์เล็ก";20->"มาตรฐาน";40->"คมขึ้น ไฟล์ใหญ่";else->"สูงสุด"})},rates.indexOf(bitrate/1_000_000)){n->bitrate=rates[n]*1_000_000}
+                if(!slow&&caps.isStabilizationSupported)tile("กันสั่น",if(stabilization)"เปิด" else "ปิด",Icons.STAB,stabilization,listOf(GlassMenu.Option("ปิด",Icons.STAB),GlassMenu.Option("เปิด",Icons.STAB,"ภาพนิ่งขึ้น มุมแคบลงเล็กน้อย")),if(stabilization)1 else 0){n->stabilization=n==1;prefs.edit().putBoolean("video_eis",stabilization).apply()}
+                if(!slow)tile("ไมค์",if(mic)"เปิด" else "ปิด",Icons.MIC,!mic,listOf(GlassMenu.Option("ปิดไมค์",Icons.MIC),GlassMenu.Option("บันทึกเสียง",Icons.MIC)),if(mic)1 else 0){n->mic=n==1;prefs.edit().putBoolean("video_mic",mic).apply()}
+                val g0=Grids.kind(prefs)
+                tile("เส้นกริด",Grids.names[g0],Grids.icons[g0],g0>0,Grids.names.mapIndexed{n,name->GlassMenu.Option(name,Grids.icons[n],Grids.notes[n])},g0){n->Grids.set(prefs,n);vOverlay?.gridKind=n}
             }
-            val candidates=provider?.availableCameraInfos.orEmpty().filter{cam->runCatching{if(slow)Recorder.getHighSpeedVideoCapabilities(cam)?.getSupportedQualities(DynamicRange.SDR)?.isNotEmpty()==true else Recorder.getVideoCapabilities(cam).getSupportedQualities(DynamicRange.SDR).isNotEmpty()}.getOrDefault(false)}
-            val currentId=Camera2CameraInfo.from(i).cameraId
-            tile("กล้อง","$currentId",Icons.FLIP,false,candidates.map{"${Camera2CameraInfo.from(it).cameraId} · ${if(it.lensFacing==CameraSelector.LENS_FACING_BACK)"หลัง" else "หน้า"}"},candidates.indexOfFirst{Camera2CameraInfo.from(it).cameraId==currentId}){n->selectedCameraId=Camera2CameraInfo.from(candidates[n]).cameraId}
-            val caps=capabilities(i);val qualities=caps.getSupportedQualities(dynamic)
-            tile("ความละเอียด",qualityName(quality),Icons.RES,quality!=Quality.FHD,qualities.map{qualityName(it)},qualities.indexOf(quality)){n->quality=qualities[n]}
-            val aspects=V_ASPECTS;val aspect=prefs.getString("video_aspect","auto")?:"auto"
-            tile("ขนาดภาพ",aspectLabel(aspect),Icons.FRAME,aspect!="auto",aspects.map{aspectLabel(it)},aspects.indexOf(aspect)){n->prefs.edit().putString("video_aspect",aspects[n]).apply()}
-            val frames=offered(i)
-            tile("FPS","$fps",Icons.FPS,fps!=30,frames.map{rateName(it)},frames.indexOfFirst{it.upper==fps}){n->fps=frames[n].upper}
-            val ranges=listOf(DynamicRange.SDR,DynamicRange.HLG_10_BIT,DynamicRange.HDR10_10_BIT).filter{it in caps.supportedDynamicRanges}
-            fun rangeName(r:DynamicRange)=when(r){DynamicRange.SDR->"SDR";DynamicRange.HLG_10_BIT->"HLG10";else->"HDR10"}
-            if(!slow)tile("ช่วงไดนามิก",rangeName(dynamic),Icons.HDR,dynamic!=DynamicRange.SDR,ranges.map{rangeName(it)},ranges.indexOf(dynamic)){n->dynamic=ranges[n]}
-            val rates=listOf(8,20,40,80)
-            tile("Bitrate","${bitrate/1_000_000}M",Icons.FILE,bitrate!=20_000_000,rates.map{"$it Mbps"},rates.indexOf(bitrate/1_000_000)){n->bitrate=rates[n]*1_000_000}
-            if(!slow&&caps.isStabilizationSupported)tile("กันสั่น",if(stabilization)"เปิด" else "ปิด",Icons.STAB,stabilization,listOf("ปิด","เปิด"),if(stabilization)1 else 0){n->stabilization=n==1;prefs.edit().putBoolean("video_eis",stabilization).apply()}
-            if(!slow)tile("ไมค์",if(mic)"เปิด" else "ปิด",Icons.MIC,!mic,listOf("ปิดไมค์","บันทึกเสียง"),if(mic)1 else 0){n->mic=n==1;prefs.edit().putBoolean("video_mic",mic).apply()}
-            if(!slow)tile("คืนค่า","1080p30",Icons.RESET,false,listOf("คืนค่า 1080p · 30 · SDR"),-1){dynamic=DynamicRange.SDR;fps=30;quality=Quality.FHD;hevc=false;stabilization=false}
-            box.addView(grid,-1,-2);box.addView(choices,-1,-2)
+            fill();box.addView(grid,-1,-2)
+            val links=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;background=glass(20)}
+            fun link(title:String,icon:String,act:()->Unit){
+                links.addView(LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(dp(16),0,dp(16),0);isClickable=true;contentDescription=title;glassTouch();setOnClickListener{act()}
+                    addView(IconView(this@VideoActivity,icon),dp(20),dp(20));addView(text(title,14f).apply{setPadding(dp(12),0,0,0)},LinearLayout.LayoutParams(0,-2,1f))
+                    addView(IconView(this@VideoActivity,Icons.CHEVRON_RIGHT,2f).apply{tint=0x80ffffff.toInt()},dp(16),dp(16))},-1,dp(52))
+            }
+            fun line()=links.addView(View(this).apply{setBackgroundColor(0x1affffff)},LinearLayout.LayoutParams(-1,1).apply{leftMargin=dp(48)})
+            if(!slow){link("คืนค่า 1080p · 30 · SDR",Icons.RESET){dynamic=DynamicRange.SDR;fps=30;quality=Quality.FHD;hevc=false;stabilization=false;bind();grid.post{fill();turnNow()}};line()}
+            link("ปรับแต่งแถบโหมด",Icons.BAR){sheet.close{prefs.edit().putBoolean("pending_editor",true).putString("pending_mode","PHOTO").apply();finish();noAnimation()}};line()
+            link("ตั้งค่าทั้งหมด",Icons.GEAR){sheet.close{showStudioSettings(false){loadSettings();vOverlay?.gridKind=Grids.kind(prefs);handler.removeCallbacks(rebind);handler.postDelayed(rebind,420)}}}
+            box.addView(links,LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(6)})
             box.post{turnNow()}
         }
     }
@@ -280,7 +292,7 @@ class VideoActivity:ComponentActivity(){
                 var pending=r.prepareRecording(this,options)
                 if(mic&&ContextCompat.checkSelfPermission(this,Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED)pending=pending.withAudioEnabled()
                 recording=pending.start(main){event->when(event){
-                    is VideoRecordEvent.Start->{Glass.quiet=true;focusRecording(true);diagnostics.active(true);status.announceForAccessibility("เริ่มบันทึกวิดีโอ");starting=false;shutter.isEnabled=true;shutter.recording=true;shutter.contentDescription="หยุดบันทึกวิดีโอ";pause.isEnabled=true;recordingUi(true)}
+                    is VideoRecordEvent.Start->{Glass.quiet=true;wideUsed=(camera?.cameraInfo?.zoomState?.value?.zoomRatio?:1f)<0.95f;focusRecording(true);diagnostics.active(true);status.announceForAccessibility("เริ่มบันทึกวิดีโอ");starting=false;shutter.isEnabled=true;shutter.recording=true;shutter.contentDescription="หยุดบันทึกวิดีโอ";pause.isEnabled=true;recordingUi(true)}
                     is VideoRecordEvent.Status->{val seconds=event.recordingStats.recordedDurationNanos/1_000_000_000;status.text=String.format(Locale.US,"%02d:%02d  ·  %.1f MB%s",seconds/60,seconds%60,event.recordingStats.numBytesRecorded/1e6,if(paused)" · พัก" else "")}
                     is VideoRecordEvent.Pause->{diagnostics.active(false);paused=true;pauseIcon.path=Icons.VIDEO;pause.contentDescription="ต่อการบันทึก"}
                     is VideoRecordEvent.Resume->{diagnostics.active(true);paused=false;pauseIcon.path=PAUSE;pause.contentDescription="พักการบันทึก"}
@@ -297,7 +309,10 @@ class VideoActivity:ComponentActivity(){
                             }else MediaLedger.add(this,uri,name,"video/mp4",if(event.hasError())"คลิปจบบางส่วน · รหัส ${event.error}" else "${qualityName(quality)} · เป้าหมาย $fps fps · ${if(dynamic==DynamicRange.SDR)"SDR" else "HDR"}")
                             if(!(half60&&!event.hasError()))status.text=if(event.hasError())"เก็บคลิปที่ได้รับแล้ว · ${event.error}" else "บันทึกวิดีโอแล้ว"
                             val capture=JSONObject(boundConfig.toString());val wasForced=forced60;val camKey=camera?.cameraInfo?.let{sessions.cameraKey(it)}?:"?";luma.fileIo.execute{ClipInspector.record(this,uri,name,requested,sensor,playback,capture)
-                                if(wasForced&&!event.hasError())runCatching{val m=ClipInspector.inspect(this,uri).optDouble("measuredFps");if(m<50.0){sessions.failed60.add(camKey);prefs.edit().putStringSet("force60_failed_ids",HashSet(sessions.failed60)).apply();runOnUiThread{if(!isDestroyed)notice("คลิปนี้ได้ ${"%.0f".format(m)} fps ไม่ถึง 60 · ครั้งหน้าจะใช้แบบแปลงจาก 120")}}}}
+                                if(wasForced&&!event.hasError())runCatching{val j=ClipInspector.inspect(this,uri);val m=j.optDouble("measuredFps");val longEnough=j.optLong("lastSampleUs")-j.optLong("firstSampleUs")>4_000_000L
+                                    // The ultra-wide lens only gives 30 fps, and dim light slows any lens: neither says the camera cannot do 60, so the option stays.
+                                    if(m<50.0)runOnUiThread{if(!isDestroyed)notice(if(wideUsed)"เลนส์กว้าง 0.6× ได้ ${"%.0f".format(m)} fps · ใช้ 1× ขึ้นไปเพื่อให้ได้ 60" else "คลิปนี้ได้ ${"%.0f".format(m)} fps · แสงน้อยทำให้เฟรมลดลง")}
+                                    if(m<40.0&&!wideUsed&&longEnough&&++low60>=3){sessions.failed60.add(camKey);prefs.edit().putStringSet("force60_failed_v2",HashSet(sessions.failed60)).apply()} else if(m>=50.0)low60=0}}
                         }else status.text="บันทึกไม่สำเร็จ · ${event.cause?.localizedMessage?:event.error}"
                         status.announceForAccessibility(status.text)
                     }
@@ -315,13 +330,14 @@ class VideoActivity:ComponentActivity(){
         modeStrip.setItems(barKeys.map{k->val m=all.first{it.key==k}
             val icon=IconView(this,m.icon).apply{tint=Glass.TEXT2};val label=text(m.title,12.5f,Glass.TEXT2).apply{gravity=Gravity.CENTER}
             modeLabels+=label to icon
-            CenterStrip.Item(k,((paint.measureText(m.title)/resources.displayMetrics.density)+24).roundToInt().coerceAtLeast(56),LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER;contentDescription="โหมด${m.title}";isClickable=true;isFocusable=true;addView(icon,dp(20),dp(20));addView(label,-2,-2)})
+            val wide=((paint.measureText(m.title)/resources.displayMetrics.density)+24).roundToInt().coerceAtLeast(56)
+            CenterStrip.Item(k,if(sideways)54 else wide,turnCell(LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER;addView(icon,dp(20),dp(20));addView(label,-2,-2)},wide,"โหมด${m.title}"))
         },barKeys.indexOf(kind).coerceAtLeast(0))
     }
     private fun styleModes(live:Int){modeLabels.forEachIndexed{i,(t,ic)->val on=i==live;t.setTextColor(if(on)Glass.ACCENT else Glass.TEXT2);t.typeface=if(on)android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT;ic.tint=if(on)Glass.ACCENT else Glass.TEXT2}}
     private fun pickMode(i:Int){
         val key=barKeys.getOrNull(i)?:return
-        if(key==kind)return
+        if(key==kind){if(modeStrip.byTap)settings();return}
         if(busy()){notice("หยุดคลิปก่อนเปลี่ยนโหมด");modeStrip.select(barKeys.indexOf(kind),true);return}
         when(key){
             "VIDEO","MOVIE","SLOW"->{handler.removeCallbacks(rebind);intent=intent.putExtra("mode",key);loadSettings();openChip=null;category=1;provider?.unbindAll();camera=null;buildScreen();bind()}
@@ -332,11 +348,22 @@ class VideoActivity:ComponentActivity(){
     }
     @Suppress("DEPRECATION") private fun noAnimation()=overridePendingTransition(0,0)
     private val turner=IconTurner()
-    private fun turnViews():List<android.view.View> = listOfNotNull(library.getChildAt(0),flip.getChildAt(0))+modeLabels.map{it.second}+(if(::zooms.isInitialized)(0 until zooms.childCount).map{zooms.getChildAt(it)} else emptyList())+IconTurner.tagged(window.decorView)
-    private fun turnIcons(degrees:Int){turner.update(degrees,{turnViews()},Glass.reduced(this));if(::expRail.isInitialized){expRail.contentAngle=turner.angle;focusRail.contentAngle=turner.angle}}
-    private fun turnNow(){turner.apply(turnViews());if(::expRail.isInitialized){expRail.contentAngle=turner.angle;focusRail.contentAngle=turner.angle}}
+    private fun turnViews():List<android.view.View> = listOfNotNull(library.getChildAt(0),flip.getChildAt(0))+tabLabels+(if(::zooms.isInitialized)(0 until zooms.childCount).map{zooms.getChildAt(it)} else emptyList())+IconTurner.tagged(window.decorView)
+    private fun turnIcons(degrees:Int){val before=turner.angle;turner.update(degrees,{turnViews()},Glass.reduced(this));if(::expRail.isInitialized){expRail.contentAngle=turner.angle;focusRail.contentAngle=turner.angle}
+        if(turner.angle!=before){turnLayout();if(::status.isInitialized)status.turnTo(turner.angle,dp(64),!Glass.reduced(this))}}
+    /** Sideways the strips grow tall and their cells narrow, so turned labels have room; upright they return. */
+    private fun turnLayout(){
+        val side=kotlin.math.abs(turner.angle)==90f;if(side==sideways||!::modeStrip.isInitialized)return
+        sideways=side
+        val grow=((resources.configuration.fontScale+1f)/2f).coerceAtLeast(1f)
+        modeStrip.layoutParams=modeStrip.layoutParams.apply{height=if(side)dp(104) else (dp(58)*grow).roundToInt()};modeStrip.capsuleHeightDp=if(side)96 else 52
+        chipFrame.layoutParams=chipFrame.layoutParams.apply{height=if(side)dp(104) else (dp(56)*grow).roundToInt()};chips.capsuleHeightDp=if(side)94 else 44
+        if(::tabs.isInitialized&&tabs.parent===dockRef)tabs.layoutParams=tabs.layoutParams.apply{height=if(side)dp(78) else dp(48)}
+        buildModeStrip();refreshChips();modeStrip.post{turnNow();slideKnob(false)}
+    }
+    private fun turnNow(){if(::status.isInitialized)status.post{status.turnTo(turner.angle,dp(64),false)};turner.apply(turnViews());if(::expRail.isInitialized){expRail.contentAngle=turner.angle;focusRail.contentAngle=turner.angle}}
     private fun stopRecording(){animator?.cancel();finalizing=true;shutter.isEnabled=false;pause.isEnabled=false;status.text="กำลังปิดไฟล์…";recording?.stop()}
-    private fun saveSettings(){prefs.edit().putString(if(slow)"slow_camera"else "video_camera",selectedCameraId).apply();if(slow){prefs.edit().putInt("slow_fps",fps).putString("slow_quality",when(quality){Quality.UHD->"UHD";Quality.HD->"HD";Quality.SD->"SD";else->"FHD"}).apply();return};prefs.edit().putString("video_quality",when(quality){Quality.UHD->"UHD";Quality.HD->"HD";Quality.SD->"SD";else->"FHD"}).putInt("video_fps",fps).putInt("video_bitrate",bitrate).putBoolean("video_eis",stabilization).putString("video_dynamic",when(dynamic){DynamicRange.HLG_10_BIT->"HLG";DynamicRange.HDR10_10_BIT->"HDR10";else->"SDR"}).apply()}
+    private fun saveSettings(){if(!slow)prefs.edit().putString("video_fps_s","$fps").apply();prefs.edit().putString(if(slow)"slow_camera"else "video_camera",selectedCameraId).apply();if(slow){prefs.edit().putInt("slow_fps",fps).putString("slow_quality",when(quality){Quality.UHD->"UHD";Quality.HD->"HD";Quality.SD->"SD";else->"FHD"}).apply();return};prefs.edit().putString("video_quality",when(quality){Quality.UHD->"UHD";Quality.HD->"HD";Quality.SD->"SD";else->"FHD"}).putInt("video_fps",fps).putInt("video_bitrate",bitrate).putBoolean("video_eis",stabilization).putString("video_dynamic",when(dynamic){DynamicRange.HLG_10_BIT->"HLG";DynamicRange.HDR10_10_BIT->"HDR10";else->"SDR"}).apply()}
     override fun onResume(){super.onResume();orientation.enable();if(recording==null&&!starting&&!finalizing&&useCase!=null){shutter.isEnabled=true;config.isEnabled=true}}
     override fun onPause(){stopTracking();if(::zooms.isInitialized){zooms.finish();wheel.removeCallbacks(hideWheel);hideWheel.run()};orientation.disable();if(starting&&recording==null){requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT};starting=false;animator?.cancel();handler.removeCallbacksAndMessages(null);recording?.stop();super.onPause()}
     override fun onDestroy(){Glass.quiet=false;sounds.release();zoomEffect?.release();super.onDestroy()}
@@ -349,6 +376,7 @@ class VideoActivity:ComponentActivity(){
     private fun busy()=recording!=null||starting||finalizing
     private fun buildScreen(){
         val host=FrameLayout(this);installRoot(host)
+        vMenu=GlassMenu(host){on->if(vPanel.showing)vPanel.recede(on)};vPanel=GlassSheet(host,{dp(150).toFloat()}){f->if(::stage.isInitialized)stage.alpha=1f-0.4f*f};vMenu.over={vPanel.showing}
         val landscape=resources.configuration.orientation==android.content.res.Configuration.ORIENTATION_LANDSCAPE
         val column=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL};host.addView(column,-1,-1)
         // Landscape keeps the dock beside the preview instead of under it.
@@ -385,10 +413,10 @@ class VideoActivity:ComponentActivity(){
         dial.addView(srow,-1,-2)
         stage.addView(dial,FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM).apply{setMargins(dp(16),0,dp(16),dp(54))})
 
-        val dock=SwipeColumn(this).apply{gravity=Gravity.CENTER_VERTICAL;onSwipeUp={settings()}};if(landscape)body.addView(dock,dp(320),-1) else body.addView(dock,-1,-2)
+        val dock=SwipeColumn(this).apply{gravity=Gravity.CENTER_VERTICAL;onSwipeUp={settings(true)};onDrag={dy->if(vPanel.showing)vPanel.follow(dy)};onRelease={_,v->if(vPanel.showing)vPanel.release(true,v)}};if(landscape)body.addView(dock,dp(320),-1) else body.addView(dock,-1,-2)
         dockRef=dock;dock.addOnLayoutChangeListener{_,_,t,_,b,_,ot,_,ob->if(b-t!=ob-ot)dock.post{applyStageShape()}}
         androidx.core.view.ViewCompat.addAccessibilityAction(dock,"เปิดตั้งค่าวิดีโอ"){_,_->settings();true}
-        if(!slow)dock.addView(IconView(this,Icons.CHEVRON_UP,1.6f).apply{tint=Glass.TEXT3;contentDescription="ตั้งค่าวิดีโอ ปัดขึ้นหรือแตะเพื่อเปิด";isClickable=true;setOnClickListener{settings()}},LinearLayout.LayoutParams(dp(120),dp(36)).apply{gravity=Gravity.CENTER_HORIZONTAL;bottomMargin=-dp(6)})
+        // No arrow: a swipe up on the dock, or a second tap on the active mode, opens the settings sheet.
         if(!slow){
             tabs=FrameLayout(this).apply{background=glass(20,0x1fffffff)}
             knob=android.view.View(this).apply{background=glass(17,0x38ffffff)};tabs.addView(knob,FrameLayout.LayoutParams(0,-1).apply{setMargins(dp(3),dp(3),dp(3),dp(3))})
@@ -447,6 +475,7 @@ class VideoActivity:ComponentActivity(){
                 if(axis==1){if(zone==2)setVideoFocus(if(fd0>0f)fd0 else null) else setVideoEv(ev0)};axis=0}
             pinch.onTouchEvent(e);if(!multi)taps.onTouchEvent(e);true}
         refreshChips()
+        if(sideways){sideways=false;turnLayout()}
     }
     private fun slideKnob(animate:Boolean){
         if(!::tabs.isInitialized)return
@@ -484,7 +513,9 @@ class VideoActivity:ComponentActivity(){
     private var extraZoom=1f
     private fun zMax(z:androidx.camera.core.ZoomState)=if(zoomEffect!=null)maxOf(500f,z.maxZoomRatio) else z.maxZoomRatio
     private fun zNow(z:androidx.camera.core.ZoomState)=z.zoomRatio*extraZoom
+    private var wideUsed=false;private var low60=0
     private fun setZoom(t:Float){
+        if(t<0.95f&&recording!=null)wideUsed=true
         val cam=camera?:return;val z=cam.cameraInfo.zoomState.value?:return
         val hw=minOf(t,z.maxZoomRatio);val extra=if(zoomEffect!=null)(t/hw).coerceAtLeast(1f) else 1f
         val changed=extra!=extraZoom;extraZoom=extra;zoomEffect?.zoom=extra
@@ -620,8 +651,9 @@ class VideoActivity:ComponentActivity(){
         chips.setItems(keys.map{k->val t=text(chipTitle(k),10.5f,Glass.TEXT2).apply{gravity=Gravity.CENTER;maxLines=1};val v=text(chipValues(k).getOrElse(chipIndex(k)){"–"},13f,WHITE,true).apply{gravity=Gravity.CENTER;maxLines=1}
             chipTexts+=t to v
             val wDp=(chipValues(k).plus(chipTitle(k)).maxOf{v.paint.measureText(it)}/resources.displayMetrics.density+24).roundToInt().coerceAtLeast(78)
-            CenterStrip.Item(k,wDp,LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER;isClickable=true;contentDescription=chipTitle(k);addView(t,-2,-2);addView(v,-2,-2)})},
+            CenterStrip.Item(k,if(sideways)52 else wDp,turnCell(LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER;addView(t,-2,-2);addView(v,-2,-2)},wDp,chipTitle(k)))},
             keys.indexOf(openChip).coerceAtLeast(0))
+        chips.post{turnNow()}
         chipFrame.alpha=if(recording!=null&&!(!slow&&category==0))0.45f else 1f
     }
     private fun styleChips(live:Int){val keys=chipKeys();chipTexts.forEachIndexed{i,(t,v)->val on=i==live;t.setTextColor(if(on)WHITE else Glass.TEXT3);v.text=chipValues(keys[i]).getOrElse(chipIndex(keys[i])){"–"}}}

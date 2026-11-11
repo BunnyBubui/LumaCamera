@@ -160,7 +160,6 @@ class CameraActivity : ComponentActivity() {
     private lateinit var dialReset: TextView
     private lateinit var slider: GlassSlider
     private lateinit var modeStrip: CenterStrip
-    private lateinit var handle: IconView
     private lateinit var shutter: ShutterButton
     private lateinit var flip: FrameLayout
     private lateinit var flipIcon: IconView
@@ -172,10 +171,20 @@ class CameraActivity : ComponentActivity() {
     private val turner = IconTurner()
     /** Contents that turn upright in landscape: round buttons' icons, the gallery thumb, lens pills and mode icons. */
     private fun turnables(): List<View> = listOfNotNull(thumb, flipIcon, macroButton.getChildAt(0), nightButton.getChildAt(0), apertureButton, lookButton.getChildAt(0), lockIcon, dialValue) +
-        modeLabels.map { it.second } + (0 until statusRow.childCount).map { statusRow.getChildAt(it) } +
+        (0 until statusRow.childCount).map { statusRow.getChildAt(it) } +
         (0 until zooms.childCount).map { zooms.getChildAt(it) } + IconTurner.tagged(window.decorView)
     /** New views (a sheet that just opened, rebuilt zoom pills) take the current angle at once. */
-    private fun turnNow() { turner.apply(turnables()); expRail.contentAngle = turner.angle; focusRail.contentAngle = turner.angle }
+    private fun turnNow() { turner.apply(turnables()); expRail.contentAngle = turner.angle; focusRail.contentAngle = turner.angle; if (::viewfinderNotice.isInitialized) viewfinderNotice.post { viewfinderNotice.turnTo(turner.angle, dp(64), false) } }
+    private var sideways = false
+    /** Sideways the mode strip and the adjuster chips grow tall and their cells narrow, so turned names have room; upright they return. */
+    private fun turnLayout() {
+        val side = abs(turner.angle) == 90f; if (side == sideways || !::modeStrip.isInitialized) return
+        sideways = side
+        modeStrip.layoutParams = modeStrip.layoutParams.apply { height = if (side) dp(104) else dp(58 * grow()) }; modeStrip.capsuleHeightDp = if (side) 96 else 52
+        chipFrame.layoutParams = chipFrame.layoutParams.apply { height = if (side) dp(104) else dp(56 * grow()) }; chips.capsuleHeightDp = if (side) 94 else 44
+        (dial.layoutParams as? FrameLayout.LayoutParams)?.let { it.bottomMargin = if (side) dp(178) else dp(130); dial.layoutParams = it }
+        rebuildModeStrip(); rebuildChips()
+    }
     private var barKeys: List<String> = emptyList()
     private var ev = 0f
     private var aeLock = false
@@ -233,8 +242,10 @@ class CameraActivity : ComponentActivity() {
             override fun onOrientationChanged(degrees: Int) {
                 if (degrees == ORIENTATION_UNKNOWN) return
                 val next = when (degrees) { in 45..134 -> Surface.ROTATION_270; in 135..224 -> Surface.ROTATION_180; in 225..314 -> Surface.ROTATION_90; else -> Surface.ROTATION_0 }
+                val before = turner.angle
                 turner.update(degrees, { turnables() }, Glass.reduced(this@CameraActivity))
                 expRail.contentAngle = turner.angle; focusRail.contentAngle = turner.angle
+                if (turner.angle != before) { turnLayout(); viewfinderNotice.turnTo(turner.angle, dp(64), !Glass.reduced(this@CameraActivity)) }
                 if (next != targetRotation) { targetRotation = next; if (!busy) capture?.targetRotation = targetRotation }
             }
         }
@@ -267,6 +278,7 @@ class CameraActivity : ComponentActivity() {
         if (::modeStrip.isInitialized) syncModeStrip(false)
         // The video screen hands back a photo mode picked on its mode strip.
         prefs.getString("pending_mode", null)?.let { k -> prefs.edit().remove("pending_mode").apply(); if (::modeStrip.isInitialized) { val i = barKeys.indexOf(k); if (i >= 0) { modeStrip.select(i, false); pickBar(i) } else runCatching { PhotoMode.valueOf(k) }.getOrNull()?.let { selectMode(it) } } }
+        if (prefs.getBoolean("pending_editor", false)) { prefs.edit().remove("pending_editor").apply(); host.postDelayed({ if (!isDestroyed) openEditor() }, 250) }
         if (granted() && provider != null && capture == null) bind()
         if (!granted()) showPermission()
     }
@@ -325,7 +337,7 @@ class CameraActivity : ComponentActivity() {
         mask.addView(preview, -1, -1)
         portraitView = ImageView(this).apply { scaleType = ImageView.ScaleType.FIT_XY; alpha = 0f; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
         mask.addView(portraitView, -1, -1)
-        portraitLive?.close(); portraitLive = PortraitPreview(preview, portraitView) { prefs.getFloat("portrait_f", 2.8f) }
+        portraitLive?.close(); portraitLive = PortraitPreview(preview, portraitView, { prefs.getFloat("portrait_f", 2.8f) }, { null }, { on -> if (!on) applyLogView() })
         qr?.close(); qr = QrWatcher(preview, stage)
         overlay = CompositionOverlay(this).apply { gridKind = Grids.kind(prefs) }
         mask.addView(overlay, -1, -1)
@@ -385,9 +397,7 @@ class CameraActivity : ComponentActivity() {
         dock.addOnLayoutChangeListener { _, _, t, _, b, _, ot, _, ob -> if (b - t != ob - ot) dock.post { applyStageShape() } }
         androidx.core.view.ViewCompat.addAccessibilityAction(dock, "เปิดตัวเลือกกล้อง") { _, _ -> openPanel(); true }
         if (landscape) { dock.gravity = Gravity.CENTER_VERTICAL; column.addView(dock, dp(320), -1) } else column.addView(dock, -1, -2)
-        handle = IconView(this, Icons.CHEVRON_UP, 1.6f).apply { tint = Glass.TEXT3; contentDescription = "ตัวเลือกกล้อง ปัดขึ้นหรือแตะเพื่อเปิด"; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES; isClickable = true; isFocusable = true; setPadding(dp(46), dp(19), dp(46), dp(19)); setOnClickListener { openPanel() } }
-        dock.addView(handle, LinearLayout.LayoutParams(dp(120), dp(48)).apply { gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = -dp(10) })
-        nudge()
+        // No arrow: a swipe up on the dock, or a second tap on the active mode, opens the options sheet.
         modeStrip = CenterStrip(this).apply { onSelect = { i -> pickBar(i) }; onLive = { i -> styleModes(i) }; contentDescription = "แถบโหมด" }
         dock.addView(modeStrip, -1, dp(58 * grow()))
         if (android.os.Build.VERSION.SDK_INT >= 29) modeStrip.addOnLayoutChangeListener { v, l, t, r, b, _, _, _, _ -> v.systemGestureExclusionRects = listOf(android.graphics.Rect(0, 0, r - l, b - t)) }
@@ -451,19 +461,9 @@ class CameraActivity : ComponentActivity() {
         }
         false
     }
-    private fun nudge() {
-        if (Glass.reduced(this) || prefs.getBoolean("panel_hint_seen", false)) return
-        var count = 0
-        val bounce = object : Runnable { override fun run() {
-            if (!handle.isAttachedToWindow || count++ >= 3) return
-            handle.animate().translationY(-dp(4).toFloat()).setDuration(160).withEndAction { handle.animate().translationY(0f).setInterpolator(Glass.SPRING).setDuration(320).start() }.start()
-            handle.postDelayed(this, 3200)
-        } }
-        handle.postDelayed(bounce, 1200)
-    }
     private fun handlePivot(): Float {
-        val loc = IntArray(2); val h = IntArray(2); handle.getLocationInWindow(loc); host.getLocationInWindow(h)
-        return (host.height - (loc[1] - h[1] + handle.height / 2f) - dp(8)).coerceAtLeast(0f)
+        val loc = IntArray(2); val h = IntArray(2); modeStrip.getLocationInWindow(loc); host.getLocationInWindow(h)
+        return (host.height - (loc[1] - h[1]).toFloat()).coerceAtLeast(0f)
     }
     private var dockView: View? = null
     private lateinit var apertureButton: TextView
@@ -563,14 +563,15 @@ class CameraActivity : ComponentActivity() {
             val m = ALL.first { it.key == k }
             val icon = IconView(this, m.icon).apply { tint = Glass.TEXT2 }
             val label = text(m.title, 12.5f, Glass.TEXT2).apply { gravity = Gravity.CENTER }
-            val cell = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; contentDescription = "โหมด${m.title}"; isClickable = true; isFocusable = true
-                addView(icon, dp(20), dp(20)); addView(label, -2, -2) }
-            modeLabels += label to icon
             val w = ((paint.measureText(m.title) / resources.displayMetrics.density) + 24).roundToInt().coerceAtLeast(56)
-            CenterStrip.Item(k, w, cell)
-        } + CenterStrip.Item("+", 52, LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; contentDescription = "ปรับแต่งแถบโหมด"; isClickable = true
-            addView(IconView(this@CameraActivity, Icons.PLUS).apply { tint = Glass.TEXT2 }, dp(20), dp(20)); addView(text("ปรับ", 12.5f, Glass.TEXT2), -2, -2) })
+            // Icon and name turn as one piece; sideways the cell is narrow and the strip tall, so the turned name has room.
+            val cell = turnCell(LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; addView(icon, dp(20), dp(20)); addView(label, -2, -2) }, w, "โหมด${m.title}")
+            modeLabels += label to icon
+            CenterStrip.Item(k, if (sideways) 54 else w, cell)
+        } + CenterStrip.Item("+", 52, turnCell(LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
+            addView(IconView(this@CameraActivity, Icons.PLUS).apply { tint = Glass.TEXT2 }, dp(20), dp(20)); addView(text("ปรับ", 12.5f, Glass.TEXT2), -2, -2) }, 52, "ปรับแต่งแถบโหมด"))
         modeStrip.setItems(items, barKeys.indexOf(barKey(mode)).coerceAtLeast(0))
+        modeStrip.post { turnNow() }
     }
     private fun styleModes(live: Int) {
         modeLabels.forEachIndexed { i, (t, ic) -> val on = i == live; t.setTextColor(if (on) Glass.ACCENT else Glass.TEXT2); t.typeface = if (on) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT; ic.tint = if (on) Glass.ACCENT else Glass.TEXT2 }
@@ -580,6 +581,7 @@ class CameraActivity : ComponentActivity() {
         // "+" opens the editor only when tapped; a swipe that ends past the last mode settles on that mode.
         if (i >= barKeys.size) { if (modeStrip.byTap) { syncModeStrip(true); openEditor() } else { modeStrip.select(barKeys.size - 1, true); pickBar(barKeys.size - 1) }; return }
         val key = barKeys[i]
+        if (modeStrip.byTap && key == barKey(mode)) { openPanel(); return }
         when (key) {
             "VIDEO" -> openVideo("VIDEO")
             "TIMELAPSE" -> openSpecial("TIMELAPSE")
@@ -588,13 +590,7 @@ class CameraActivity : ComponentActivity() {
             else -> runCatching { PhotoMode.valueOf(key) }.getOrNull()?.let { selectMode(it) }
         }
     }
-    /** A portrait rectangle with the ratio's real proportions, so 21:9 looks long and 1:1 square. */
-    private fun aspectIcon(name: String): String {
-        val p = name.split(':').mapNotNull { it.trim().toFloatOrNull() }
-        val r = if (p.size == 2 && p[1] > 0f) maxOf(p[0], p[1]) / minOf(p[0], p[1]) else 4f / 3f
-        val h = 20f; val w = h / r; val x = 12f - w / 2; val y = 12f - h / 2
-        return String.format(java.util.Locale.US, "M%.2f %.2fh%.2fv%.2fh%.2fz", x, y, w, h, -w)
-    }
+    private fun aspectIcon(name: String) = aspectIconPath(name)
     private fun quickMode() = runCatching { PhotoMode.valueOf(prefs.getString("quick_kind", "FLASH_NIGHT") ?: "") }.getOrNull()?.takeIf { it in QUICK_MODES } ?: PhotoMode.FLASH_NIGHT
     private fun step(dir: Int) { val i = barKeys.indexOf(barKey(mode)) + dir; if (i in barKeys.indices) { modeStrip.select(i, true); pickBar(i) } }
 
@@ -713,15 +709,29 @@ class CameraActivity : ComponentActivity() {
     /** Zoom gestures pause while an adjuster, menu or sheet is open, so they never fight with it. */
     private fun zoomLocked() = openChip != null || panel.showing || editor.showing || lookSheet.showing || menu.showing
     private var dragZoom0 = 1f
-    private fun zoomDragStart() { if (zoomLocked()) return; dragZoom0 = if (zoomFollower?.isRunning == true) zoomGoal else ratio; dialing = true; wheel.removeCallbacks(hideWheel); zoomAnimation?.cancel(); zooms.animate().alpha(0f).setDuration(200).start(); chipFrame.animate().alpha(0f).setDuration(160).start(); wheel.show(true) }
+    private fun zoomDragStart() { if (zoomLocked()) return; dragZoom0 = if (zoomFollower?.isRunning == true) zoomGoal else ratio; dragLastZ = dragZoom0; dragLastAt = 0L; dragSpeed = 0f; dialing = true; wheel.removeCallbacks(hideWheel); zoomAnimation?.cancel(); zooms.animate().alpha(0f).setDuration(200).start(); chipFrame.animate().alpha(0f).setDuration(160).start(); wheel.show(true) }
     private fun zoomDragMove(dx: Float) {
         if (zoomLocked()) return
         val (lo, hi) = range()
         var z = (dragZoom0 * 2f.pow(-dx / dp(80))).coerceIn(lo, hi)
         renderedZooms.firstOrNull { abs(ln(z / it) / ln(2f)) < 0.075f }?.let { lens -> if (abs(ratio - lens) > 0.001f) Glass.tick(wheel); z = lens }
+        // Speed of the drag in octaves per second, smoothed, for the glide after the finger lifts.
+        val now = android.os.SystemClock.uptimeMillis(); val oct = ln(z / dragLastZ.coerceAtLeast(0.01f)) / ln(2f)
+        if (dragLastAt > 0 && now > dragLastAt) dragSpeed = dragSpeed * 0.6f + 0.4f * (oct * 1000f / (now - dragLastAt))
+        dragLastAt = now; dragLastZ = z
         zoomTo(z); wheel.zoom = zoomGoal
     }
-    private fun zoomDragEnd() { wheel.removeCallbacks(hideWheel); wheel.postDelayed(hideWheel, 1300) }
+    private var dragSpeed = 0f; private var dragLastAt = 0L; private var dragLastZ = 1f
+    private fun zoomDragEnd() {
+        wheel.removeCallbacks(hideWheel); wheel.postDelayed(hideWheel, 1300)
+        // A quick drag keeps going a little, like a wheel with some weight, and settles on a lens stop if it lands near one.
+        if (!zoomLocked() && abs(dragSpeed) > 0.8f && android.os.SystemClock.uptimeMillis() - dragLastAt < 120) {
+            val (lo, hi) = range(); var z = (zoomGoal * 2f.pow((dragSpeed * 0.14f).coerceIn(-0.9f, 0.9f))).coerceIn(lo, hi)
+            renderedZooms.firstOrNull { abs(ln(z / it) / ln(2f)) < 0.11f }?.let { z = it }
+            zoomTo(z, true); wheel.zoom = zoomGoal
+        }
+        dragSpeed = 0f; dragLastAt = 0L
+    }
     private fun installZoomDrag() {
         zooms.onStart = { zoomDragStart() }; zooms.onDrag = { zoomDragMove(it) }; zooms.onEnd = { zoomDragEnd() }
         // While the wheel is showing it keeps the drag: a finger on the wheel continues from the current zoom.
@@ -804,8 +814,9 @@ class CameraActivity : ComponentActivity() {
             chipTexts += t to v
             // Width follows the longest text at the current font scale so large fonts are not clipped.
             val wDp = (chipValues(k).plus(chipTitle(k)).maxOf { v.paint.measureText(it) } / resources.displayMetrics.density + 24).roundToInt().coerceAtLeast(72)
-            CenterStrip.Item(k, wDp, LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; isClickable = true; contentDescription = chipTitle(k); addView(t, -2, -2); addView(v, -2, -2) })
+            CenterStrip.Item(k, if (sideways) 52 else wDp, turnCell(LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; addView(t, -2, -2); addView(v, -2, -2) }, wDp, chipTitle(k)))
         }
+        chips.post { turnNow() }
         chips.setItems(items, keys.indexOf(openChip ?: prefs.getString("pro_chip", "ISO")).coerceAtLeast(0))
     }
     private fun styleChips(live: Int) {
@@ -879,6 +890,7 @@ class CameraActivity : ComponentActivity() {
         val first = openChip == null; openChip = k
         dialTitle.text = chipTitle(k); val values = chipValues(k)
         slider.lo = if (chipSep(k)) 1 else 0; slider.values = values; slider.grad = chipGrad(k); slider.index = chipIndex(k)
+        dialReset.visibility = if (k == "KIND") View.GONE else View.VISIBLE
         dialReset.text = if (k == "EV" || k == "TINT" || k == "CON") "±0" else if (k == "F") "f/2.8" else "AUTO"; if (k == "F") dialTitle.text = "เบลอพื้นหลัง · " + blurWord(F_STEPS[chipIndex("F")]); updateDialValue(k)
         if (first || dial.visibility != View.VISIBLE) { dial.visibility = View.VISIBLE; Liquid.show(dial, dial.width / 2f, dial.height.toFloat(), false) }
         else Liquid.show(dial, dial.width / 2f, dial.height.toFloat(), false)
@@ -1274,6 +1286,7 @@ class CameraActivity : ComponentActivity() {
         viewfinderNotice.accessibilityLiveRegion=View.ACCESSIBILITY_LIVE_REGION_POLITE
         val wasShown = viewfinderNotice.visibility == View.VISIBLE
         viewfinderNotice.text=text
+        viewfinderNotice.post { viewfinderNotice.turnTo(turner.angle, dp(64), false) }
         if (!wasShown) { viewfinderNotice.visibility = View.VISIBLE; viewfinderNotice.post { Liquid.show(viewfinderNotice, viewfinderNotice.width / 2f, viewfinderNotice.height / 2f, false) } }
         val delay=if(Build.VERSION.SDK_INT>=29)(getSystemService(ACCESSIBILITY_SERVICE) as android.view.accessibility.AccessibilityManager).getRecommendedTimeoutMillis(ms.toInt(),android.view.accessibility.AccessibilityManager.FLAG_CONTENT_TEXT).toLong()else ms
         viewfinderNotice.postDelayed({if(version==hintVersion) Liquid.hide(viewfinderNotice, viewfinderNotice.width / 2f, viewfinderNotice.height / 2f, false)},delay)
@@ -1336,6 +1349,8 @@ class CameraActivity : ComponentActivity() {
             val lockFps=prefs.getString("fps_lock","off")?.toIntOrNull()
             val previewBuilder=Preview.Builder().setResolutionSelector(framing.build())
             if(lockFps!=null)runCatching{androidx.camera.camera2.interop.Camera2Interop.Extender(previewBuilder).setCaptureRequestOption(android.hardware.camera2.CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,android.util.Range(lockFps,lockFps))}
+            // Mains lighting flickers at 50/60 Hz; the camera's own anti-banding keeps the shutter on a multiple of it when it can.
+            runCatching{androidx.camera.camera2.interop.Camera2Interop.Extender(previewBuilder).setCaptureRequestOption(android.hardware.camera2.CaptureRequest.CONTROL_AE_ANTIBANDING_MODE,android.hardware.camera2.CaptureRequest.CONTROL_AE_ANTIBANDING_MODE_AUTO)}
             val previewCase=previewBuilder.build().apply { surfaceProvider=preview.surfaceProvider }
             val builder=ImageCapture.Builder().setCaptureMode(if(mode in listOf(PhotoMode.PRO,PhotoMode.HIRES))ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY else ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
                 .setJpegQuality(prefs.getString("jpeg_quality","95")!!.toInt())
@@ -1386,17 +1401,23 @@ class CameraActivity : ComponentActivity() {
             prefs.edit().putInt("sport_kind", i).apply(); applySport(); refresh()
         }
     }
+    private var flickerTold = false
     private fun sportIndex() = prefs.getInt("sport_kind", 1).coerceIn(0, SPORT_KINDS.size - 1)
     /** Fast-shot mode: a fixed short shutter with a matching ISO, chosen by the kind of subject. */
     private fun applySport() {
         val m = manual ?: return; val k = SPORT_KINDS[sportIndex()]
         if (m.isoValues.isEmpty()) { hint("กล้องนี้ไม่เปิดชัตเตอร์แมนนวลให้แอป", 2200); return }
-        val iso = m.isoValues.minBy { kotlin.math.abs(it - k.third) }
-        m.setIso(iso); m.setShutter(k.second)
+        // Under flickering mains light a very short shutter catches the lamp half-off and leaves dark bands across the
+        // picture. When the camera reports flicker, the shutter is held at one full cycle (1/100 s at 50 Hz, 1/120 s at 60 Hz).
+        val safe = if (prefs.getBoolean("anti_flicker", true)) when (CameraState.flicker) { 1 -> 10_000_000L; 2 -> 8_333_333L; else -> 0L } else 0L
+        val ns = if (safe > 0 && k.second < safe) safe else k.second
+        val iso = m.isoValues.minBy { kotlin.math.abs(it - (k.third * (k.second.toDouble() / ns)).toInt().coerceAtLeast(50)) }
+        m.setIso(iso); m.setShutter(ns)
+        if (ns != k.second && !flickerTold) { flickerTold = true; hint("พบแสงไฟกะพริบ · ใช้ชัตเตอร์ 1/${1_000_000_000L / ns} เพื่อไม่ให้มีแถบดำ", 2600) }
     }
     private lateinit var faces: FaceOverlay
     /** RAW Log shows the flat Log look on the live preview only; the DNG stays untouched sensor data. */
-    private fun applyLogView(){ if(::preview.isInitialized) LogPreview.apply(preview, output==CaptureOutput.RAW_LOG && mode in listOf(PhotoMode.PHOTO,PhotoMode.PRO)) }
+    private fun applyLogView(){ if(portraitLive?.shaderOn==true) return; if(::preview.isInitialized) LogPreview.apply(preview, output==CaptureOutput.RAW_LOG && mode in listOf(PhotoMode.PHOTO,PhotoMode.PRO)) }
     /** A reused session keeps streaming, so the frozen frame must be lifted here instead of on the next STREAMING state. */
     private fun unfreeze() {
         if (frozen.alpha <= 0f) return
@@ -1452,37 +1473,34 @@ class CameraActivity : ComponentActivity() {
      * Lens-ring zoom: gestures move a goal and the zoom follows it every display frame with a short exponential
      * ease in log space, so pinch steps and lens changes blend instead of jumping.
      */
-    private fun zoomTo(goal: Float) {
-        val (lo,hi)=range(); zoomGoal=goal.coerceIn(lo,hi)
+    private var zoomVel=0.0
+    private var zoomSoft=false
+    /** How fast the zoom catches up (rad/s). Lens-pill jumps use the softer value; a finger on the ring the firmer one. */
+    private fun zoomOmega():Double{val k=when(prefs.getString("zoom_speed","normal")){"slow"->0.65;"fast"->1.6;else->1.0};return (if(zoomSoft)7.5 else 12.0)*k}
+    private fun zoomTo(goal: Float, soft: Boolean = false) {
+        val (lo,hi)=range(); zoomGoal=goal.coerceIn(lo,hi); zoomSoft=soft
         zoomAnimation?.cancel()
         if(Glass.reduced(this)){applyZoom(zoomGoal);return}
         if(zoomFollower?.isRunning==true)return
         zoomFollower=android.animation.TimeAnimator().apply{
             setTimeListener{a,_,dt->
-                val cur=kotlin.math.ln(ratio.toDouble());val tgt=kotlin.math.ln(zoomGoal.toDouble())
-                val k=1-kotlin.math.exp(-dt.coerceAtLeast(1)/95.0)
-                val next=cur+(tgt-cur)*k
-                if(abs(tgt-next)<0.002){applyZoom(zoomGoal,true);a.end();refresh()}
-                else applyZoom(kotlin.math.exp(next).toFloat(),true)
+                if(busy||camera==null){zoomVel=0.0;a.end();return@setTimeListener}
+                // Critically damped spring: the zoom speeds up and slows down smoothly and never overshoots,
+                // and a moving goal (pinch, ring drag) is followed without a jerk because the speed carries over.
+                val h=dt.coerceIn(1L,48L)/1000.0;val w=zoomOmega()
+                val g=kotlin.math.ln(zoomGoal.toDouble());val y=kotlin.math.ln(ratio.toDouble())-g
+                val e=kotlin.math.exp(-w*h);val t=(zoomVel+w*y)*h
+                val ny=(y+t)*e;zoomVel=(zoomVel-w*t)*e
+                if(abs(ny)<0.0015&&abs(zoomVel)<0.03){zoomVel=0.0;applyZoom(zoomGoal,true);a.end();refresh()}
+                else applyZoom(kotlin.math.exp(g+ny).toFloat(),true)
             }
             start()
         }
     }
     private fun animateZoom(target: Float) {
         zoomAnimation?.cancel()
-        if (prefs.getBoolean("reduce_motion", false)) {
-            applyZoom(target)
-            return
-        }
-        val start = kotlin.math.ln(ratio.toDouble()).toFloat()
-        val end = kotlin.math.ln(target.toDouble()).toFloat()
-        zoomFollower?.end(); zoomGoal=target
-        zoomAnimation = ValueAnimator.ofFloat(start, end).apply {
-            duration = when(prefs.getString("zoom_speed","normal")){"slow"->700;"fast"->220;else->420}
-            interpolator = Glass.EASE
-            addUpdateListener { applyZoom(kotlin.math.exp((it.animatedValue as Float).toDouble()).toFloat(), it.animatedFraction < 1f) }
-            start()
-        }
+        if (prefs.getBoolean("reduce_motion", false)) { applyZoom(target); return }
+        zoomTo(target, true)
     }
 
     // ---------- Capture (logic unchanged except night and shutter feedback) ----------
@@ -1576,7 +1594,32 @@ class CameraActivity : ComponentActivity() {
             shutter.postDelayed({tick(left-1)},1000)
         };tick(seconds)
     }
+    private var aeFreed=false
+    private fun wideFpsRange():android.util.Range<Int>?=camera?.let{c->runCatching{Camera2CameraInfo.from(c.cameraInfo).getCameraCharacteristic(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)}.getOrNull()}?.filter{it.upper>=24}?.minWithOrNull(compareBy({it.lower},{-it.upper}))
+    private fun setFpsRange(r:android.util.Range<Int>){val c=camera?:return;runCatching{Camera2CameraControl.from(c.cameraControl).addCaptureRequestOptions(CaptureRequestOptions.Builder().setCaptureRequestOption(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,r).build())}}
+    private val relockFps=object:Runnable{override fun run(){
+        if(isDestroyed||!aeFreed)return
+        if(busy||timerRunning){shutter.postDelayed(this,400);return}
+        aeFreed=false;prefs.getString("fps_lock","off")?.toIntOrNull()?.let{setFpsRange(android.util.Range(it,it))}
+    }}
+    /**
+     * The frame-rate lock keeps the viewfinder smooth, but it also caps the shutter time (1/60 s at 60 fps), which in dim
+     * light means a dark, noisy picture. So when the light is that low, the lock is lifted just before the picture,
+     * the camera gets a moment to pick its own shutter time, and the lock returns afterwards.
+     */
+    private fun freeExposureThen(go:()->Unit){
+        val lock=prefs.getString("fps_lock","off")?.toIntOrNull()
+        val pinned=lock!=null&&CameraState.exposureNs>=(0.8*1_000_000_000L/lock).toLong()
+        val wide=if(pinned&&!aeFreed&&prefs.getBoolean("fps_free_shot",true)&&mode!=PhotoMode.PRO&&mode!=PhotoMode.SPORT)wideFpsRange() else null
+        if(wide==null||lock==null||wide.lower>=lock){go();return}
+        aeFreed=true;setFpsRange(wide)
+        shutter.removeCallbacks(relockFps)
+        shutter.postDelayed({if(!isDestroyed)go();shutter.postDelayed(relockFps,1200)},420)
+    }
     private fun captureWithLight(){
+        freeExposureThen{captureWithLightNow()}
+    }
+    private fun captureWithLightNow(){
         if(!rear&&prefs.getBoolean("screen_flash",false)){
             illuminating=true;val token=timerGeneration;mask.foreground=android.graphics.drawable.ColorDrawable(android.graphics.Color.WHITE);window.attributes=window.attributes.apply{screenBrightness=1f}
             shutter.postDelayed({illuminating=false;if(token==timerGeneration)captureNow();shutter.postDelayed({mask.foreground=null;window.attributes=window.attributes.apply{screenBrightness=-1f}},400)},300)

@@ -84,7 +84,7 @@ object PhotoEffects {
         }
     }
     /** [aperture] sets the simulated blur: f/1.4 ≈ the old fixed strength, f/16 almost none. */
-    fun portrait(file:File,aperture:Float=2.8f){
+    fun portrait(file:File,aperture:Float=2.8f,focus:Pair<Float,Float>?=null){
         check(OpenCVLoader.initLocal()){ "เปิดระบบภาพ Portrait ไม่สำเร็จ" }
         val image=read(file,8_000_000);val processor=Segmentation.getClient(SelfieSegmenterOptions.Builder().setDetectorMode(SelfieSegmenterOptions.SINGLE_IMAGE_MODE).build())
         try{
@@ -93,7 +93,9 @@ object PhotoEffects {
             val background=Bitmap.createBitmap(image.width,image.height,Bitmap.Config.ARGB_8888);Utils.matToBitmap(blurred,background);source.release();blurred.release()
             val a=IntArray(image.width*image.height);val b=IntArray(a.size);image.getPixels(a,0,image.width,0,0,image.width,image.height);background.getPixels(b,0,image.width,0,0,image.width,image.height)
             val confidence=mask.buffer;confidence.rewind();val weights=FloatArray(mask.width*mask.height);confidence.asFloatBuffer().get(weights)
-            for(y in 0 until image.height)for(x in 0 until image.width){val i=y*image.width+x;val f=((weights[(y*mask.height/image.height)*mask.width+x*mask.width/image.width]-0.15f)/0.7f).coerceIn(0f,1f);var color=0xff000000.toInt();for(shift in intArrayOf(16,8,0)){val v=(((a[i] ushr shift)and 255)*f+((b[i] ushr shift)and 255)*(1-f)).toInt();color=color or(v shl shift)};a[i]=color}
+            // Same subject mask as the live view: a feathered person, or a focus falloff when nobody is in the picture.
+            PortraitMask.subject(weights,mask.width,mask.height,focus)
+            for(y in 0 until image.height)for(x in 0 until image.width){val i=y*image.width+x;val f=weights[(y*mask.height/image.height)*mask.width+x*mask.width/image.width];var color=0xff000000.toInt();for(shift in intArrayOf(16,8,0)){val v=(((a[i] ushr shift)and 255)*f+((b[i] ushr shift)and 255)*(1-f)).toInt();color=color or(v shl shift)};a[i]=color}
             image.setPixels(a,0,image.width,0,0,image.width,image.height);rewrite(image,file);PhotoMedia.tag(file,0);ExifInterface(file).apply{setAttribute(ExifInterface.TAG_SOFTWARE,"Lumora Portrait · simulated f/$aperture · ML Kit selfie segmentation beta");saveAttributes()};background.recycle()
         }finally{processor.close();image.recycle()}
     }
