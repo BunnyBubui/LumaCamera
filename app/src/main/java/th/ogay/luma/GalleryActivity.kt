@@ -475,7 +475,8 @@ class GalleryActivity : ComponentActivity() {
         // GridView cannot hold a header, so the header sits above it in a column that shares the space.
         val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; addView(header, -1, -2); addView(FrameLayout(this@GalleryActivity).apply { addView(grid, -1, -1); addView(empty, -1, -1) }, LinearLayout.LayoutParams(-1, 0, 1f)) }
         root.addView(column, LinearLayout.LayoutParams(-1, 0, 1f))
-        if (albumKind == null) root.addView(bottomNav(), LinearLayout.LayoutParams(-1, dp(64)).apply { setMargins(dp(40), dp(4), dp(40), dp(10)) })
+        if (albumKind == null) root.addView(bottomNav(), LinearLayout.LayoutParams(-1, dp(60)).apply { setMargins(dp(40), dp(4), dp(40), dp(12)) })
+        pageView = if (albumKind == null) column else null; swipeKeep = strip
         slideIn(column)
         var shown = all
         val adapter = object : BaseAdapter() {
@@ -593,36 +594,87 @@ class GalleryActivity : ComponentActivity() {
         return list.sortedWith(compareBy<Album> { it.name !in pinned }.thenBy { at(it.name) }.thenByDescending { it.count })
     }
 
-    /** Glass bar at the bottom: รูปภาพ | อัลบั้ม, with a sliding highlight. */
-    private fun bottomNav(): View {
-        val nav = FrameLayout(this).apply { background = glass(30, Glass.FILL_STRONG); elevation = dp(6).toFloat() }
-        val knob = View(this).apply { background = glass(26, Glass.ACCENT_SOFT) }
-        nav.addView(knob, FrameLayout.LayoutParams(0, -1).apply { setMargins(dp(3), dp(3), dp(3), dp(3)) })
-        val row = LinearLayout(this)
-        listOf(Icons.ALBUM to "รูปภาพ", Icons.STACK to "อัลบั้ม").forEachIndexed { i, (icon, name) ->
-            val on = i == section
-            row.addView(LinearLayout(this).apply {
-                gravity = Gravity.CENTER; isClickable = true; contentDescription = name; isSelected = on
-                androidx.core.view.ViewCompat.setStateDescription(this, if (on) "เลือกอยู่" else null)
-                addView(IconView(this@GalleryActivity, icon, 2f).apply { tint = if (on) Glass.ACCENT else Color.WHITE }, dp(20), dp(20))
-                addView(text(name, 14f, if (on) Glass.ACCENT else Glass.TEXT2, true).apply { setPadding(dp(8), 0, 0, 0) })
-                setOnClickListener {
-                    if (i == section) return@setOnClickListener
-                    Glass.tick(this); slideKnob(knob, nav, i); tabMove = if (i > section) 1 else -1
-                    section = i; managing = false; albumKind = null; album = null; prefs.edit().putInt("gallery_section", i).apply(); endSelection()
-                    postDelayed({ if (!isDestroyed) reload() }, if (Glass.reduced(this@GalleryActivity)) 0 else 140)
+    /** Glass bar at the bottom: รูปภาพ | อัลบั้ม, with a highlight that follows a swipe between the two pages. */
+    private fun bottomNav(): View = GlassTabs(this, listOf(Icons.ALBUM to "รูปภาพ", Icons.STACK to "อัลบั้ม"), section) { i ->
+        if (i != section) { Glass.tick(root); navTabs?.animateTo(i); switchSection(i, false) }
+    }.also { navTabs = it }
+    private fun switchSection(i: Int, swiped: Boolean) {
+        tabMove = if (i > section) 1 else -1; swipeEnter = swiped
+        section = i; managing = false; albumKind = null; album = null; prefs.edit().putInt("gallery_section", i).apply(); endSelection()
+        if (swiped) reload() else root.postDelayed({ if (!isDestroyed) reload() }, if (Glass.reduced(this)) 0 else 120)
+    }
+
+    // ---------- Swiping between the two tabs ----------
+    private var navTabs: GlassTabs? = null
+    /** The tab page that a sideways swipe moves (the grid column or the albums list); null on other screens. */
+    private var pageView: View? = null
+    /** A view that keeps its own sideways drags (the category strip). */
+    private var swipeKeep: View? = null
+    private var swipeEnter = false
+    private var swX = 0f; private var swY = 0f; private var swiping = false; private var swOff = false
+    private var swTracker: android.view.VelocityTracker? = null
+    private fun canSwipe() = pageView?.isAttachedToWindow == true && selected == null && albumKind == null && !selecting && peek == null && !managing && !sortMenu.showing
+    private fun inside(v: View?, e: MotionEvent): Boolean {
+        if (v == null || !v.isShown) return false
+        val at = IntArray(2); v.getLocationOnScreen(at)
+        return e.rawX >= at[0] && e.rawX <= at[0] + v.width && e.rawY >= at[1] && e.rawY <= at[1] + v.height
+    }
+    override fun dispatchTouchEvent(e: MotionEvent): Boolean {
+        val slop = android.view.ViewConfiguration.get(this).scaledTouchSlop
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> { swiping = false; swOff = !canSwipe() || inside(swipeKeep, e) || inside(navTabs, e); swX = e.rawX; swY = e.rawY
+                swTracker?.recycle(); swTracker = android.view.VelocityTracker.obtain().also { it.addMovement(e) } }
+            MotionEvent.ACTION_POINTER_DOWN -> if (!swiping) swOff = true
+            MotionEvent.ACTION_MOVE -> {
+                swTracker?.addMovement(e)
+                val dx = e.rawX - swX; val dy = e.rawY - swY
+                if (!swiping && !swOff) {
+                    if (kotlin.math.abs(dx) > slop * 1.5f && kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.5f) {
+                        val to = section + if (dx < 0) 1 else -1
+                        if (to in 0..1) {
+                            swiping = true; swX = e.rawX - dx
+                            // The page under the finger gives the touch up (a pressed cell is released, a scroll stops).
+                            val c = MotionEvent.obtain(e); c.action = MotionEvent.ACTION_CANCEL; super.dispatchTouchEvent(c); c.recycle()
+                        } else swOff = true
+                    } else if (kotlin.math.abs(dy) > slop * 1.5f) swOff = true
                 }
-            }, LinearLayout.LayoutParams(0, -1, 1f))
+                if (swiping) { dragPage(dx); return true }
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> if (swiping) {
+                swiping = false; val t = swTracker; t?.addMovement(e); t?.computeCurrentVelocity(1000); val vx = t?.xVelocity ?: 0f
+                endPage(e.rawX - swX, if (e.actionMasked == MotionEvent.ACTION_CANCEL) 0f else vx); return true
+            }
         }
-        nav.addView(row, -1, -1)
-        nav.post { slideKnob(knob, nav, section, false) }
-        return nav
+        return super.dispatchTouchEvent(e)
+    }
+    /** The page follows the finger; dragging past the last tab only stretches a little. */
+    private fun dragPage(dx: Float) {
+        val page = pageView ?: return; val w = page.width.coerceAtLeast(1).toFloat()
+        val allowed = if (section == 0) dx.coerceAtMost(0f) else dx.coerceAtLeast(0f)
+        val d = allowed + (dx - allowed) * 0.2f
+        page.translationX = d; page.alpha = 1f - 0.45f * kotlin.math.min(1f, kotlin.math.abs(d) / w)
+        navTabs?.pos = section - d / w
+    }
+    private fun endPage(dx: Float, vx: Float) {
+        val page = pageView ?: return; val w = page.width.coerceAtLeast(1).toFloat()
+        val to = 1 - section; val toward = if (section == 0) -1 else 1
+        val go = (dx * toward > w * 0.28f && vx * toward > -300) || (vx * toward > 900 && dx * toward > 0)
+        if (go) {
+            Glass.tick(page)
+            page.animate().translationX(toward * w * 0.6f).alpha(0f).setInterpolator(Glass.EASE).setDuration(200).start()
+            navTabs?.animateTo(to); switchSection(to, true)
+        } else {
+            page.animate().translationX(0f).alpha(1f).setInterpolator(Glass.SPRING).setDuration(420).start()
+            navTabs?.animateTo(section)
+        }
     }
     /** The new page slides in from the side of the tab that was tapped. */
     private fun slideIn(v: View) {
         if (tabMove == 0 || Glass.reduced(this)) return
-        v.alpha = 0f; v.translationX = tabMove * dp(48).toFloat()
-        v.animate().alpha(1f).translationX(0f).setInterpolator(Glass.EASE).setDuration(300).start()
+        // After a swipe the new page carries on from the side the finger pushed it, a little further than after a tap.
+        v.alpha = 0f; v.translationX = tabMove * (if (swipeEnter) resources.displayMetrics.widthPixels * 0.35f else dp(48).toFloat())
+        v.animate().alpha(1f).translationX(0f).setInterpolator(Glass.EASE).setDuration(if (swipeEnter) 380 else 300).start()
+        swipeEnter = false
     }
     private fun accessCard() = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL; background = glass(22); setPadding(dp(16), dp(14), dp(16), dp(14))
@@ -673,7 +725,8 @@ class GalleryActivity : ComponentActivity() {
                 }
             } else col.addView(accessCard(), LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(16), dp(12), dp(16), 0) })
         }
-        root.addView(bottomNav(), LinearLayout.LayoutParams(-1, dp(64)).apply { setMargins(dp(40), dp(4), dp(40), dp(10)) })
+        root.addView(bottomNav(), LinearLayout.LayoutParams(-1, dp(60)).apply { setMargins(dp(40), dp(4), dp(40), dp(12)) })
+        pageView = scroll; swipeKeep = null
         slideIn(scroll)
     }
     private class AlbumCard(val name: String, val count: Int, val cover: Item?, val icon: String, val pinned: Boolean, val open: () -> Unit)
@@ -930,7 +983,7 @@ class GalleryActivity : ComponentActivity() {
             root.removeAllViews()
             viewerBar("ในเครื่อง")
             inspect = viewer(); viewerKind = if (video) "" else "device"
-            toggle = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(dp(8), dp(8), dp(8), dp(14)) }
+            toggle = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(dp(6), dp(6), dp(6), dp(10)) }
             root.addView(toggle, -1, -2)
             if (!Glass.reduced(this)) { inspect.alpha = 0f; inspect.animate().alpha(1f).setDuration(260).start() }
         }
@@ -983,7 +1036,7 @@ class GalleryActivity : ComponentActivity() {
         thumbs.execute { val b = thumbnail(item, 1080); runOnUiThread { if (showingId == item.key && b != null) still.setImageBitmap(b) } }
         status = text(listOf(item.name, item.note, formatTime(item.time)).filter { it.isNotBlank() }.joinToString("\n"), 13f, Glass.TEXT2).apply { gravity = Gravity.CENTER; maxLines = 6; setPadding(dp(16), dp(8), dp(16), dp(6)) }
         root.addView(status, -1, -2)
-        toggle = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(dp(8), 0, dp(8), dp(14)) }
+        toggle = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(dp(6), dp(2), dp(6), dp(10)) }
         root.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; isFillViewport = true; addView(toggle) }, -1, -2)
         chip("แชร์", false, Icons.SHARE) { MediaLedger.share(this, item.uri, item.mime) }
         if (item.video) {
@@ -1012,14 +1065,15 @@ class GalleryActivity : ComponentActivity() {
     }
 
     // ---------- Lumora shot detail (logic unchanged) ----------
-    private fun chip(label: String, active: Boolean, icon: String = "", click: () -> Unit) {
-        val c = LinearLayout(this).apply {
-            gravity = Gravity.CENTER; background = glass(22, if (active) Glass.ACCENT_SOFT else Glass.FILL); setPadding(dp(16), 0, dp(16), 0)
-            isClickable = true; contentDescription = label; glassTouch(); setOnClickListener { Glass.blurPulse(root, 4f, 200); click() }
-            if (icon.isNotEmpty()) addView(IconView(this@GalleryActivity, icon, 2f).apply { tint = if (active) Glass.ACCENT else Color.WHITE }, dp(18), dp(18))
-            addView(text(label, 14f, if (active) Glass.ACCENT else Color.WHITE, active).apply { setPadding(if (icon.isEmpty()) 0 else dp(6), 0, 0, 0) })
-        }
-        toggle.addView(c, LinearLayout.LayoutParams(-2, dp(48)).apply { setMargins(dp(4), 0, dp(4), 0) })
+    /** Viewer action, OPPO style: an icon over a short name, sharing the row equally so nothing runs off the edge. */
+    private fun chip(label: String, active: Boolean, icon: String = "", click: () -> Unit) = toggle.addView(action(icon.ifEmpty { Icons.CLOSE }, label, active, if (icon == TRASH) RED else 0).apply {
+        setOnClickListener { Glass.blurPulse(root, 4f, 200); click() } }, LinearLayout.LayoutParams(0, -2, 1f))
+    private fun action(icon: String, label: String, active: Boolean = false, tint: Int = 0) = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; isClickable = true; isFocusable = true; contentDescription = label; minimumHeight = dp(58); setPadding(dp(2), dp(6), dp(2), dp(4))
+        val c = if (tint != 0) tint else if (active) Glass.ACCENT else Color.WHITE
+        addView(IconView(this@GalleryActivity, icon, 2f).apply { this.tint = c }, LinearLayout.LayoutParams(dp(23), dp(23)))
+        addView(text(label, 11f, if (tint != 0) tint else if (active) Glass.ACCENT else Glass.TEXT2, true).apply { gravity = Gravity.CENTER; maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END; setPadding(0, dp(5), 0, 0) }, -1, -2)
+        glassTouch()
     }
     private fun formatTime(t: Long) = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(t))
     private fun showDetail(s: Shot) {
@@ -1031,7 +1085,7 @@ class GalleryActivity : ComponentActivity() {
             inspect = viewer(); viewerKind = "shot"
             status = text("", 13f, Glass.TEXT2).apply { gravity = Gravity.CENTER; maxLines = 3; ellipsize = null; setPadding(dp(12), dp(6), dp(12), dp(6)) }
             root.addView(status, -1, -2)
-            toggle = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(dp(8), 0, dp(8), dp(14)) }
+            toggle = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(dp(6), dp(2), dp(6), dp(10)) }
             root.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; isFillViewport = true; addView(toggle) }, -1, -2)
             if (!Glass.reduced(this)) { inspect.alpha = 0f; inspect.animate().alpha(1f).setDuration(260).start() }
         }
@@ -1063,14 +1117,13 @@ class GalleryActivity : ComponentActivity() {
         if (s.ai != null && useAi) {
             // One compare button: hold to see the original over the AI picture, release to return. No reload, no flicker.
             inspect.setCompare(s.uri)
-            val compare = FrameLayout(this).apply { background = glass(24, 0x1affffff); isClickable = true; contentDescription = "กดค้างเพื่อดูต้นฉบับ"
-                addView(IconView(this@GalleryActivity, "M12 3v18 M4 6h5v12H4z M15 6h5v12h-5z").apply { tint = Color.WHITE }, FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER))
+            val compare = action("M12 3v18 M4 6h5v12H4z M15 6h5v12h-5z", "ต้นฉบับ").apply { contentDescription = "กดค้างเพื่อดูต้นฉบับ"
                 setOnTouchListener { v, e -> when (e.actionMasked) {
                     MotionEvent.ACTION_DOWN -> { Glass.tick(v); inspect.holdCompare(true); status.text = "ต้นฉบับ   ·   ${pixelsText(s.size.pixels)}"; v.isPressed = true }
                     MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { inspect.holdCompare(false); status.text = "AI ${s.aiModel}   ·   ${pixelsText(s.aiSize.pixels)}"; v.isPressed = false; if (e.actionMasked == MotionEvent.ACTION_UP) v.performClick() }
                 }; true }
                 setOnClickListener { } }
-            toggle.addView(compare, LinearLayout.LayoutParams(dp(48), dp(48)).apply { setMargins(dp(4), 0, dp(4), 0) })
+            toggle.addView(compare, LinearLayout.LayoutParams(0, -2, 1f))
         }
         if (s.stage !in setOf(Stage.RUNNING,Stage.QUEUED,Stage.CAPTURING) && (s.raw == null || s.uri != s.raw))
             chip("แก้ไข", false, EditorKit.PEN) { editPhoto.launch(PhotoEditorActivity.intent(this, if (useAi && s.ai != null) s.ai!! else s.uri)) }

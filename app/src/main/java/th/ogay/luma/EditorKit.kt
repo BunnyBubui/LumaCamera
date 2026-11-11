@@ -1,7 +1,9 @@
 package th.ogay.luma
 
 import android.content.Context
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.ColorMatrix
 import android.view.Gravity
 import android.view.View
@@ -24,6 +26,15 @@ object EditorKit {
     const val SPLIT = "M12 3v18 M5 8l-3 4 3 4 M19 8l3 4-3 4"
     const val MUSIC = "M9 18V6l11-2v12 M9 18a3 3 0 1 1-3-3 3 3 0 0 1 3 3z M20 16a3 3 0 1 1-3-3 3 3 0 0 1 3 3z"
     const val COMPARE = "M12 3v18 M4 6h5v12H4z M15 6h5v12h-5z"
+    const val REDO = "M15 7l5 5-5 5 M20 12H9a5 5 0 0 0 0 10h3"
+    const val FREE = "M4 8V4h4 M16 4h4v4 M20 16v4h-4 M8 20H4v-4"
+    const val START = "M10 4H6v16h4 M13 12h7 M17 9l3 3-3 3"
+    const val END = "M14 4h4v16h-4 M11 12H4 M7 9l-3 3 3 3"
+    const val TOP = "M4 4h16 M7 9h10 M9 13h6"
+    const val MIDDLE = "M7 8h10 M5 12h14 M7 16h10"
+    const val BOTTOM = "M9 11h6 M7 15h10 M4 20h16"
+    const val ERASE = "M5 19h14 M7 15l8-10 4 3-7 9H9z"
+    fun dot(r: Float) = "M12 ${12 - r}a$r $r 0 1 0 0 ${2 * r}a$r $r 0 1 0 0-${2 * r}"
 
     /** One round tool tab with an icon above its name. Returns the tab so its selected state can be changed. */
     fun tab(c: Context, icon: String, name: String, click: () -> Unit): LinearLayout = LinearLayout(c).apply {
@@ -100,5 +111,151 @@ object EditorKit {
             val red = ch(a[0] * R + a[1] * G + a[2] * B + a[4]); val green = ch(a[5] * R + a[6] * G + a[7] * B + a[9]); val blue = ch(a[10] * R + a[11] * G + a[12] * B + a[14])
             (0xff shl 24) or (red shl 16) or (green shl 8) or blue
         } } }
+    }
+    /** Round glass icon button with a small caption under it (the caption is also its name for TalkBack). */
+    fun action(c: Context, icon: String, label: String, on: Boolean = false, click: () -> Unit): LinearLayout = LinearLayout(c).apply {
+        orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; isClickable = true; isFocusable = true; contentDescription = label
+        val disc = FrameLayout(c).apply { background = c.glass(24, if (on) Glass.ACCENT_SOFT else 0x26ffffff); addView(IconView(c, icon, 2f).apply { tint = if (on) Glass.ACCENT else Color.WHITE }, FrameLayout.LayoutParams(c.dp(21), c.dp(21), Gravity.CENTER)) }
+        addView(disc, LinearLayout.LayoutParams(c.dp(48), c.dp(48)))
+        addView(c.text(label, 10.5f, if (on) Glass.ACCENT else Glass.TEXT2, true).apply { gravity = Gravity.CENTER; maxLines = 1; setPadding(0, c.dp(4), 0, 0) })
+        isSelected = on; ViewCompat.setStateDescription(this, if (on) "เลือกอยู่" else null)
+        glassTouch(); setOnClickListener { click() }
+    }
+    /** A centred row of [action] buttons. */
+    fun actions(c: Context, items: List<View>): LinearLayout = LinearLayout(c).apply {
+        gravity = Gravity.CENTER; items.forEach { addView(it, LinearLayout.LayoutParams(c.dp(72), -2)) }
+    }
+    /** Accent round button with an icon (save, export). */
+    fun roundAccent(c: Context, icon: String, desc: String, click: () -> Unit) = FrameLayout(c).apply {
+        background = c.glass(24, Glass.ACCENT); contentDescription = desc; isClickable = true; glassTouch()
+        addView(IconView(c, icon, 2.4f).apply { tint = Glass.ON_ACCENT }, FrameLayout.LayoutParams(c.dp(22), c.dp(22), Gravity.CENTER)); setOnClickListener { click() }
+    }
+
+    /**
+     * Swaps the tool panel: the old one fades away to one side and the new one glides in from the side of the
+     * chosen tool, like moving between pages. [dir] 0 swaps at once.
+     */
+    fun swap(host: FrameLayout, next: View, dir: Int) {
+        val old = (0 until host.childCount).map { host.getChildAt(it) }
+        host.addView(next, -1, -1)
+        if (dir == 0 || Glass.reduced(host.context)) { old.forEach { host.removeView(it) }; return }
+        val d = host.context.dp(40).toFloat()
+        old.forEach { o -> o.isEnabled = false; o.animate().cancel(); o.animate().alpha(0f).translationX(-dir * d).setInterpolator(Glass.EASE).setDuration(170).withEndAction { host.removeView(o) }.start() }
+        next.alpha = 0f; next.translationX = dir * d
+        next.animate().alpha(1f).translationX(0f).setInterpolator(Glass.EASE).setDuration(340).start()
+    }
+
+    /**
+     * Slide-to-choose row: the chosen item always sits in the middle. [live] runs while the row moves (for a
+     * preview), [pick] when it settles or an item is tapped; [tapAgain] when the item already in the middle is tapped.
+     */
+    fun strip(c: Context, items: List<Pair<View, Int>>, selected: Int, capsuleDp: Int, live: (Int) -> Unit, tapAgain: (Int) -> Unit = {}, pick: (Int) -> Unit): CenterStrip {
+        val strip = CenterStrip(c, 6)
+        if (capsuleDp > 0) strip.capsuleHeightDp = capsuleDp else strip.capsule.visibility = View.INVISIBLE
+        var current = selected
+        strip.onLive = { i -> live(i) }
+        strip.onSelect = { i -> if (strip.byTap && i == current) tapAgain(i) else { current = i; pick(i) } }
+        strip.setItems(items.mapIndexed { i, (v, w) -> CenterStrip.Item("$i", w, v) }, selected)
+        return strip
+    }
+
+    /** Strip item: icon over a small name, or a name alone; [lit] marks the one in the middle. */
+    class StripItem(c: Context, icon: String, name: String, labelSp: Float = 10.5f) : LinearLayout(c) {
+        private val iconView = IconView(c, icon, 2f)
+        private val label = c.text(name, labelSp, Glass.TEXT2, true)
+        init {
+            orientation = VERTICAL; gravity = Gravity.CENTER; contentDescription = name; isClickable = true
+            if (icon.isNotEmpty()) addView(iconView, LayoutParams(c.dp(22), c.dp(22)))
+            addView(label.apply { gravity = Gravity.CENTER; maxLines = 1; setPadding(0, if (icon.isEmpty()) 0 else c.dp(4), 0, 0) })
+        }
+        fun lit(on: Boolean) {
+            iconView.tint = if (on) Glass.ACCENT else Color.WHITE; label.setTextColor(if (on) Color.WHITE else Glass.TEXT2)
+            if (!Glass.reduced(context)) animate().scaleX(if (on) 1.08f else 1f).scaleY(if (on) 1.08f else 1f).setInterpolator(Glass.SPRING).setDuration(300).start()
+        }
+    }
+
+    /** Adjustment dial: a ring whose accent arc shows the value, with the adjustment's icon inside. */
+    class Dial(c: Context, icon: String, name: String) : FrameLayout(c) {
+        private val ic = IconView(c, icon, 1.9f)
+        private val ring = object : View(c) {
+            val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
+            override fun onDraw(cv: Canvas) {
+                val d = resources.displayMetrics.density; val r = minOf(width, height) / 2f - 3 * d; val cx = width / 2f; val cy = height / 2f
+                p.strokeWidth = 2 * d; p.color = if (lit) 0x59ffffff else 0x2effffff; cv.drawCircle(cx, cy, r, p)
+                if (amount != 0f) { p.strokeWidth = 2.8f * d; p.color = if (lit) Glass.ACCENT else 0xb3ffffff.toInt(); cv.drawArc(cx - r, cy - r, cx + r, cy + r, -90f, amount * 360f, false, p) }
+            }
+        }
+        var amount = 0f; set(v) { field = v; ring.invalidate() }
+        var lit = false; set(v) {
+            if (field != v && !Glass.reduced(context)) animate().scaleX(if (v) 1.12f else 1f).scaleY(if (v) 1.12f else 1f).setInterpolator(Glass.SPRING).setDuration(320).start()
+            field = v; ic.tint = if (v) Glass.ACCENT else Color.WHITE; ring.invalidate() }
+        init {
+            contentDescription = name; isClickable = true
+            addView(ring, LayoutParams(c.dp(48), c.dp(48), Gravity.CENTER)); addView(ic, LayoutParams(c.dp(20), c.dp(20), Gravity.CENTER))
+        }
+    }
+
+    /** Film look card for a strip: the picture with the look, and its name. */
+    class FilmCard(c: Context, thumb: android.graphics.Bitmap?, val film: Film?) : LinearLayout(c) {
+        private val name = c.text(film?.name ?: "ไม่มี", 10f, Glass.TEXT2, true)
+        init {
+            orientation = VERTICAL; gravity = Gravity.CENTER; isClickable = true; contentDescription = "ฟิลเตอร์ ${film?.name ?: "ไม่มี"}"
+            addView(android.widget.ImageView(c).apply {
+                scaleType = android.widget.ImageView.ScaleType.CENTER_CROP; setImageBitmap(thumb); clipToOutline = true; background = c.glass(14, 0x22ffffff)
+                if (film != null) colorFilter = android.graphics.ColorMatrixColorFilter(Films.matrix(film))
+                if (film == null && thumb == null) setImageDrawable(null)
+            }, LayoutParams(c.dp(56), c.dp(56)))
+            addView(name.apply { gravity = Gravity.CENTER; maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END; setPadding(0, c.dp(4), 0, 0) }, LayoutParams(c.dp(66), -2))
+        }
+        fun lit(on: Boolean) {
+            name.setTextColor(if (on) Glass.ACCENT else Glass.TEXT2)
+            if (!Glass.reduced(context)) getChildAt(0).animate().scaleX(if (on) 1.1f else 1f).scaleY(if (on) 1.1f else 1f).setInterpolator(Glass.SPRING).setDuration(320).start()
+        }
+    }
+
+    /** Leaving an editor with changes: save, leave without saving, or stay. */
+    fun askSave(a: android.app.Activity, title: String, note: String, saveLabel: String, save: () -> Unit, discard: () -> Unit) {
+        GlassDialog.panel(a, title) { col, d ->
+            col.addView(a.text(note, 13.5f, Glass.TEXT2).apply { maxLines = 4 })
+            col.addView(GlassDialog.actions(a, "ไม่บันทึก" to { d.dismiss(); discard() }, saveLabel to { d.dismiss(); save() }), LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(16) })
+            col.addView(a.text("แก้ต่อ", 14f, Color.WHITE, true).apply { gravity = Gravity.CENTER; minHeight = a.dp(46); isClickable = true; contentDescription = "แก้ต่อ"; setOnClickListener { d.dismiss() } }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(4) })
+        }.show()
+    }
+
+    /** Evenly spaced tool tabs (icon over a small name) with an accent pill that springs to the chosen one. */
+    class ToolBar(c: Context, list: List<Pair<String, String>>, private val pick: (Int) -> Unit) : FrameLayout(c) {
+        private val pill = View(c).apply { background = c.glass(16, Glass.ACCENT_SOFT) }
+        private val row = LinearLayout(c)
+        var selected = -1; private set
+        val tabs: List<LinearLayout> = list.mapIndexed { i, (icon, name) -> LinearLayout(c).apply {
+            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; isClickable = true; isFocusable = true; contentDescription = name; minimumHeight = c.dp(60)
+            addView(IconView(c, icon, 2f), LinearLayout.LayoutParams(c.dp(22), c.dp(22)))
+            addView(c.text(name, 10.5f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; maxLines = 1; setPadding(0, c.dp(5), 0, 0) })
+            glassTouch(); setOnClickListener { if (i != selected) pick(i) }
+        } }
+        init {
+            clipChildren = false
+            addView(pill, LayoutParams(c.dp(52), c.dp(32)))
+            tabs.forEach { row.addView(it, LinearLayout.LayoutParams(0, -2, 1f)) }
+            addView(row, LayoutParams(-1, -2))
+        }
+        fun select(i: Int, animate: Boolean = true) {
+            val first = selected < 0; selected = i
+            tabs.forEachIndexed { k, t ->
+                val on = k == i; val ic = t.getChildAt(0) as IconView
+                ic.tint = if (on) Glass.ACCENT else Color.WHITE; (t.getChildAt(1) as TextView).setTextColor(if (on) Color.WHITE else Glass.TEXT2)
+                t.isSelected = on; ViewCompat.setStateDescription(t, if (on) "เลือกอยู่" else null)
+                if (on && animate && !Glass.reduced(context)) { ic.scaleX = 0.72f; ic.scaleY = 0.72f; ic.animate().scaleX(1f).scaleY(1f).setInterpolator(Glass.SPRING).setDuration(440).start() }
+            }
+            place(animate && !first)
+        }
+        private fun place(animate: Boolean) {
+            if (width == 0 || selected < 0) return
+            val t = tabs[selected]; val ic = t.getChildAt(0)
+            val x = t.left + (t.width - pill.width.coerceAtLeast(context.dp(52))) / 2f; val y = t.top + ic.top + ic.height / 2f - context.dp(16)
+            pill.translationY = y
+            if (animate && !Glass.reduced(context)) pill.animate().translationX(x).setInterpolator(Glass.SPRING).setDuration(460).start() else { pill.animate().cancel(); pill.translationX = x }
+        }
+        override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) { super.onLayout(changed, l, t, r, b); if (changed) place(false) }
     }
 }

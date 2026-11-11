@@ -36,19 +36,35 @@ object PhotoEffects {
         val fmt=if(format==CaptureOutput.PNG)Bitmap.CompressFormat.PNG else if(android.os.Build.VERSION.SDK_INT>=30)Bitmap.CompressFormat.WEBP_LOSSY else @Suppress("DEPRECATION")Bitmap.CompressFormat.WEBP
         try{out.outputStream().buffered(1 shl 20).use{check(b.compress(fmt,if(format==CaptureOutput.PNG)100 else quality.coerceIn(60,92),it))}}finally{b.recycle()};return out
     }
-    /** Lumora mark (no name) with the date beside it, bottom-left, drawn at the photo's own resolution. */
+    /**
+     * Small Lumora logo (mark, name and "shot on lumora") at the bottom left and the time and date at the bottom right,
+     * drawn at the photo's own resolution with a soft shadow so both read on any background.
+     */
     fun drawWatermark(c:Context,canvas:Canvas,w:Int,h:Int){
         val unit=minOf(w,h)/100f
-        val mark=android.graphics.BitmapFactory.decodeResource(c.resources,R.drawable.lumora_mark)?:return
-        val mh=unit*7.5f;val mw=mh*mark.width/mark.height
-        val x=unit*4f;val base=h-unit*4f
-        val dst=RectF(x,base-mh,x+mw,base)
-        val shadowPaint=Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply{colorFilter=android.graphics.PorterDuffColorFilter(0x66000000,android.graphics.PorterDuff.Mode.SRC_IN);maskFilter=android.graphics.BlurMaskFilter(unit*0.5f,android.graphics.BlurMaskFilter.Blur.NORMAL)}
-        canvas.drawBitmap(mark,null,RectF(dst).apply{offset(0f,unit*0.18f)},shadowPaint)
-        canvas.drawBitmap(mark,null,dst,Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
-        val small=Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply{color=0xe6ffffff.toInt();typeface=Typeface.create("sans-serif-condensed",Typeface.NORMAL);textSize=unit*1.9f;letterSpacing=0.16f;setShadowLayer(unit*0.4f,0f,unit*0.1f,0x66000000)}
-        canvas.drawText(java.text.SimpleDateFormat("dd.MM.yyyy   HH:mm",java.util.Locale.US).format(java.util.Date()),dst.right+unit*2f,base-mh*0.3f,small)
-        mark.recycle()
+        val shade=0x73000000
+        val margin=unit*3.6f;val base=h-margin
+        val logo=android.graphics.BitmapFactory.decodeResource(c.resources,R.drawable.lumora_mark)
+        if(logo!=null){
+            val lh=unit*4.6f;val lw=lh*logo.width/logo.height
+            val dst=RectF(margin,base-lh,margin+lw,base)
+            val glow=Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply{colorFilter=PorterDuffColorFilter(shade,PorterDuff.Mode.SRC_IN);maskFilter=BlurMaskFilter(unit*0.45f,BlurMaskFilter.Blur.NORMAL)}
+            canvas.drawBitmap(logo,null,RectF(dst).apply{offset(0f,unit*0.15f)},glow)
+            canvas.drawBitmap(logo,null,dst,Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+            logo.recycle()
+        }
+        val now=java.util.Date()
+        val time=Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply{color=Color.WHITE;typeface=Typeface.create("sans-serif-thin",Typeface.NORMAL);textSize=unit*3.3f;letterSpacing=0.04f;textAlign=Paint.Align.RIGHT;setShadowLayer(unit*0.45f,0f,unit*0.12f,shade)}
+        val date=Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply{color=0xebffffff.toInt();typeface=Typeface.create("sans-serif-condensed",Typeface.NORMAL);textSize=unit*1.25f;letterSpacing=0.32f;textAlign=Paint.Align.RIGHT;setShadowLayer(unit*0.35f,0f,unit*0.1f,shade)}
+        val right=w-margin
+        val dateText=java.text.SimpleDateFormat("EEE  ·  dd MMM yyyy",java.util.Locale.US).format(now).uppercase(java.util.Locale.US)
+        // Letter spacing adds room after the last letter too; shift by it so the right edges line up.
+        canvas.drawText(dateText,right+date.letterSpacing*date.textSize,base-unit*0.1f,date)
+        val timeBase=base-unit*0.1f-date.textSize*2.1f
+        canvas.drawText(java.text.SimpleDateFormat("HH:mm",java.util.Locale.US).format(now),right,timeBase,time)
+        // A short accent rule between the two lines.
+        val rule=Paint(Paint.ANTI_ALIAS_FLAG).apply{color=0xccff9f43.toInt();strokeWidth=unit*0.16f;strokeCap=Paint.Cap.ROUND;setShadowLayer(unit*0.3f,0f,0f,shade)}
+        val ry=timeBase+date.textSize*0.7f;canvas.drawLine(right-unit*5.5f,ry,right,ry,rule)
     }
     fun write(bitmap:Bitmap,file:File,quality:Int=95){file.outputStream().use{check(bitmap.compress(Bitmap.CompressFormat.JPEG,quality,it))}}
     /** Re-encodes [file] in place but keeps the camera's EXIF (exposure, ISO, lens, time, GPS), which a plain compress drops. */

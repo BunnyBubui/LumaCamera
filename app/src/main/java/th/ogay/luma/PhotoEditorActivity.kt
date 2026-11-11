@@ -21,6 +21,7 @@ import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 /**
  * Photo editor: crop and rotate, light and colour, film looks and a pen. Nothing touches the original; "บันทึก"
@@ -49,53 +50,90 @@ class PhotoEditorActivity : ComponentActivity() {
 
     private lateinit var canvasView: EditCanvas
     private lateinit var tools: FrameLayout
-    private val tabs = mutableListOf<LinearLayout>()
+    private lateinit var toolBar: EditorKit.ToolBar
     private var tool = 0
     private var exif = ExifInterface.ORIENTATION_NORMAL
     private var saving = false
     private lateinit var saveButton: View
+    private lateinit var source: Uri
+
+    // ---- Undo / redo: a snapshot after each finished change ----
+    private class Snap(val turns: Int, val flipped: Boolean, val crop: RectF, val aspect: Int, val values: FloatArray, val film: Film?, val strength: Float, val strokes: List<Stroke>)
+    private val history = mutableListOf<Snap>(); private var at = -1
+    private lateinit var undoButton: View; private lateinit var redoButton: View
+    private val commitLater = Runnable { commit() }
+    private fun copyStrokes(list: List<Stroke>) = list.map { s -> Stroke(s.color, s.width, s.points.map { PointF(it.x, it.y) }.toMutableList()) }
+    private fun snap() = Snap(turns, flipped, RectF(crop), aspect, values.copyOf(), film, filmStrength, copyStrokes(strokes))
+    private fun same(a: Snap, b: Snap) = a.turns == b.turns && a.flipped == b.flipped && a.crop == b.crop && a.aspect == b.aspect && a.values.contentEquals(b.values) &&
+        a.film?.id == b.film?.id && a.strength == b.strength && a.strokes.size == b.strokes.size && a.strokes.zip(b.strokes).all { (x, y) -> x.color == y.color && x.points.size == y.points.size }
+    private fun commit() {
+        canvasView.removeCallbacks(commitLater)
+        val s = snap(); if (at >= 0 && same(history[at], s)) return
+        while (history.size > at + 1) history.removeAt(history.lastIndex)
+        history += s; if (history.size > 50) history.removeAt(0); at = history.lastIndex; markHistory()
+    }
+    /** A change that may continue (a slider): the preview follows at once, the undo step is taken once it rests. */
+    private fun edited() { canvasView.refresh(); canvasView.removeCallbacks(commitLater); canvasView.postDelayed(commitLater, 450) }
+    private fun stepHistory(d: Int) {
+        commit()
+        val t = at + d; if (t !in history.indices) return
+        at = t; val s = history[at]
+        turns = s.turns; flipped = s.flipped; crop.set(s.crop); aspect = s.aspect; s.values.copyInto(values); film = s.film; filmStrength = s.strength
+        strokes.clear(); strokes += copyStrokes(s.strokes)
+        markHistory(); showTool(tool, false); canvasView.refresh(true)
+    }
+    private fun markHistory() {
+        if (!::undoButton.isInitialized) return
+        val u = at > 0; val r = at < history.lastIndex
+        undoButton.isEnabled = u; redoButton.isEnabled = r
+        undoButton.animate().alpha(if (u) 1f else 0.32f).setDuration(160).start(); redoButton.animate().alpha(if (r) 1f else 0.32f).setDuration(160).start()
+    }
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
         requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-        val uri = intent.data ?: run { finish(); return }
+        source = intent.data ?: run { finish(); return }
         state?.let { restore(it) }
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         installRoot(root)
+        // Top: close on the left; undo, redo, compare and save on the right. Icons only.
         val bar = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(10), dp(14), dp(6)) }
-        bar.addView(EditorKit.round(this, Icons.CLOSE, "ยกเลิกการแก้ไข") { leave() }, dp(48), dp(48))
-        bar.addView(text("แก้ไขภาพ", 19f, Color.WHITE, true).apply { setPadding(dp(12), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
+        bar.addView(EditorKit.round(this, Icons.CLOSE, "ปิดตัวแก้ไข") { leave() }, dp(48), dp(48))
+        bar.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+        undoButton = EditorKit.round(this, EditorKit.UNDO, "ย้อนกลับขั้นก่อน") { stepHistory(-1) }
+        redoButton = EditorKit.round(this, EditorKit.REDO, "ทำซ้ำ") { stepHistory(1) }
+        bar.addView(undoButton, LinearLayout.LayoutParams(dp(44), dp(44)).apply { rightMargin = dp(6) })
+        bar.addView(redoButton, LinearLayout.LayoutParams(dp(44), dp(44)).apply { rightMargin = dp(14) })
         // Hold to see the original, release to return to the edit.
         bar.addView(FrameLayout(this).apply {
             background = glass(24, 0x40ffffff); contentDescription = "กดค้างเพื่อดูต้นฉบับ"; isClickable = true
             addView(IconView(this@PhotoEditorActivity, EditorKit.COMPARE, 2f), FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER))
             setOnTouchListener { v, e -> when (e.actionMasked) {
-                MotionEvent.ACTION_DOWN -> { Glass.tick(v); canvasView.original = true; v.isPressed = true }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { canvasView.original = false; v.isPressed = false; if (e.actionMasked == MotionEvent.ACTION_UP) v.performClick() }
+                MotionEvent.ACTION_DOWN -> { Glass.tick(v); canvasView.original = true; v.animate().scaleX(0.9f).scaleY(0.9f).setDuration(120).start() }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { canvasView.original = false; v.animate().scaleX(1f).scaleY(1f).setInterpolator(Glass.SPRING).setDuration(360).start(); if (e.actionMasked == MotionEvent.ACTION_UP) v.performClick() }
             }; true }
             setOnClickListener { }
         }, LinearLayout.LayoutParams(dp(48), dp(48)).apply { rightMargin = dp(8) })
-        saveButton = EditorKit.primary(this, "บันทึก") { save(uri) }
-        bar.addView(saveButton, LinearLayout.LayoutParams(-2, dp(48)))
+        saveButton = EditorKit.roundAccent(this, Icons.CHECK, "บันทึก") { save() }
+        bar.addView(saveButton, LinearLayout.LayoutParams(dp(48), dp(48)))
         root.addView(bar, -1, -2)
 
         canvasView = EditCanvas(this)
         root.addView(canvasView, LinearLayout.LayoutParams(-1, 0, 1f))
-        tools = FrameLayout(this)
+        tools = FrameLayout(this).apply { clipChildren = false }
         root.addView(tools, LinearLayout.LayoutParams(-1, dp(150)))
-        val tabRow = LinearLayout(this).apply { setPadding(dp(8), 0, dp(8), dp(8)) }
-        listOf(EditorKit.CROP to "ครอบตัด", EditorKit.ADJUST to "ปรับ", Icons.FILM to "ฟิลเตอร์", EditorKit.PEN to "วาด").forEachIndexed { i, (icon, name) ->
-            val t = EditorKit.tab(this, icon, name) { showTool(i) }; tabs += t; tabRow.addView(t, LinearLayout.LayoutParams(0, -2, 1f))
-        }
-        root.addView(tabRow, -1, -2)
+        toolBar = EditorKit.ToolBar(this, listOf(EditorKit.CROP to "ครอบตัด", EditorKit.ADJUST to "ปรับ", Icons.FILM to "ฟิลเตอร์", EditorKit.PEN to "วาด")) { showTool(it) }
+        root.addView(toolBar, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(8), dp(2), dp(8), dp(8)) })
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) { override fun handleOnBackPressed() = leave() })
+        markHistory()
 
         luma.readIo.execute {
-            val loaded = runCatching { load(uri, 2_400_000) }.getOrNull()
+            val loaded = runCatching { load(source, 2_400_000) }.getOrNull()
             runOnUiThread {
                 if (isDestroyed) return@runOnUiThread
                 if (loaded == null) { notice("เปิดภาพนี้ไม่ได้"); finish(); return@runOnUiThread }
-                canvasView.bitmap = loaded; canvasView.refresh(); showTool(tool)
+                canvasView.bitmap = loaded; canvasView.refresh(); showTool(tool, false); commit()
+                if (!Glass.reduced(this)) { canvasView.alpha = 0f; canvasView.scaleX = 0.96f; canvasView.scaleY = 0.96f; canvasView.animate().alpha(1f).scaleX(1f).scaleY(1f).setInterpolator(Glass.EASE).setDuration(320).start() }
             }
         }
     }
@@ -104,50 +142,52 @@ class PhotoEditorActivity : ComponentActivity() {
     private fun leave() {
         if (saving) return
         if (!changed()) { finish(); return }
-        GlassDialog.panel(this, "ทิ้งการแก้ไข?") { col, d ->
-            col.addView(text("การแก้ไขที่ยังไม่บันทึกจะหายไป ต้นฉบับยังอยู่ครบ", 13.5f, Glass.TEXT2).apply { maxLines = 4 })
-            col.addView(GlassDialog.actions(this, "แก้ต่อ" to { d.dismiss() }, "ทิ้ง" to { d.dismiss(); finish() }), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(14) })
-        }
+        EditorKit.askSave(this, "บันทึกการแก้ไขไหม", "บันทึกเป็นภาพใหม่ ต้นฉบับยังอยู่ครบ", "บันทึก", { save() }, { finish() })
     }
 
     // ---------- Tools ----------
-    private fun showTool(i: Int) {
-        tool = i; tabs.forEachIndexed { k, t -> EditorKit.select(t, k == i) }
-        canvasView.mode = i; canvasView.refresh()
-        tools.removeAllViews()
+    private fun showTool(i: Int, animate: Boolean = true) {
+        val dir = if (animate) i.compareTo(tool) else 0
+        val modeChange = (tool == 0) != (i == 0) || (tool == 3) != (i == 3)
+        tool = i; toolBar.select(i, animate)
+        canvasView.mode = i; canvasView.refresh(animate && modeChange)
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_VERTICAL }
-        tools.addView(col, -1, -1)
         when (i) {
             0 -> cropTools(col)
             1 -> adjustTools(col)
             2 -> filmTools(col)
             else -> penTools(col)
         }
-        if (!Glass.reduced(this)) { col.alpha = 0f; col.translationY = dp(10).toFloat(); col.animate().alpha(1f).translationY(0f).setInterpolator(Glass.EASE).setDuration(220).start() }
+        EditorKit.swap(tools, col, dir)
     }
 
     private fun cropTools(col: LinearLayout) {
-        val chips = mutableListOf<LinearLayout>()
-        ASPECTS.forEachIndexed { k, (name, _) -> chips += EditorKit.chip(this, name, aspectIconPath(name), k == aspect) { aspect = k; chips.forEachIndexed { j, c -> EditorKit.mark(c, j == k) }; fitAspect(); canvasView.refresh() } }
-        col.addView(EditorKit.row(this, chips), -1, -2)
-        col.addView(EditorKit.row(this, listOf(
-            EditorKit.chip(this, "หมุน 90°", EditorKit.ROTATE) { turn() },
-            EditorKit.chip(this, "กลับด้าน", Icons.MIRROR) { flip() },
-            EditorKit.chip(this, "คืนค่า", Icons.RESET) { turns = 0; flipped = false; crop.set(0f, 0f, 1f, 1f); aspect = 0; showTool(0) })), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
+        val items = ASPECTS.map { (name, _) -> EditorKit.StripItem(this, when (name) { "อิสระ" -> EditorKit.FREE; "ต้นฉบับ" -> Icons.PHOTO; else -> aspectIconPath(name) }, name) }
+        col.addView(EditorKit.strip(this, items.map { it to 62 }, aspect, 60, { k -> items.forEachIndexed { j, v -> v.lit(j == k) } }) { k ->
+            aspect = k; fitAspect(); canvasView.refresh(true); commit()
+        }, LinearLayout.LayoutParams(-1, dp(68)))
+        col.addView(EditorKit.actions(this, listOf(
+            EditorKit.action(this, EditorKit.ROTATE, "หมุน 90°") { turn() },
+            EditorKit.action(this, Icons.MIRROR, "กลับด้าน") { flip() },
+            EditorKit.action(this, Icons.RESET, "คืนค่า") { turns = 0; flipped = false; crop.set(0f, 0f, 1f, 1f); aspect = 0; commit(); showTool(0, false); canvasView.refresh(true) })),
+            LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
     }
     /** Turn a quarter clockwise. A turn of a mirrored picture equals a mirror of a picture turned the other way. */
     private fun turn() {
         turns = ((if (flipped) turns - 1 else turns + 1) + 4) % 4
         crop.set(1f - crop.bottom, crop.left, 1f - crop.top, crop.right)
         strokes.forEach { s -> s.points.forEach { p -> val u = p.x; p.x = 1f - p.y; p.y = u } }
-        val r = ASPECTS[aspect].second; if (r > 0f) { aspect = ASPECTS.indexOfFirst { abs(it.second - 1f / r) < 0.01f }.takeIf { it >= 0 } ?: 0; showTool(0) }
-        canvasView.refresh()
+        val r = ASPECTS[aspect].second; if (r > 0f) { aspect = ASPECTS.indexOfFirst { abs(it.second - 1f / r) < 0.01f }.takeIf { it >= 0 } ?: 0; showTool(0, false) }
+        canvasView.refresh(); commit()
+        // The new picture turns in from where the old one was.
+        if (!Glass.reduced(this)) { canvasView.rotation = -90f; canvasView.scaleX = 0.86f; canvasView.scaleY = 0.86f; canvasView.animate().rotation(0f).scaleX(1f).scaleY(1f).setInterpolator(Glass.EASE).setDuration(380).start() }
     }
     private fun flip() {
         flipped = !flipped
         crop.set(1f - crop.right, crop.top, 1f - crop.left, crop.bottom)
         strokes.forEach { s -> s.points.forEach { p -> p.x = 1f - p.x } }
-        canvasView.refresh()
+        canvasView.refresh(); commit()
+        if (!Glass.reduced(this)) { canvasView.scaleX = -1f; canvasView.animate().scaleX(1f).setInterpolator(Glass.EASE).setDuration(380).start() }
     }
     /** Largest centred crop with the chosen shape. */
     private fun fitAspect() {
@@ -160,59 +200,71 @@ class PhotoEditorActivity : ComponentActivity() {
         crop.set((1f - cw) / 2, (1f - ch) / 2, (1f + cw) / 2, (1f + ch) / 2)
     }
 
+    private fun sign(v: Float) = (v * 100).roundToInt().let { if (it > 0) "+$it" else "$it" }
     private fun adjustTools(col: LinearLayout) {
-        val slider = GlassSlider(this).apply {
-            values = (-100..100).map { if (it > 0) "+$it" else "$it" }; grad = intArrayOf(0xff8e8e93.toInt(), Color.WHITE, Glass.ACCENT)
-            contentDescription = EditorKit.ADJUSTMENTS[adjustIndex]
+        val name = text("", 12f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER }
+        val value = text("", 17f, Color.WHITE, true).apply { gravity = Gravity.CENTER }
+        col.addView(LinearLayout(this).apply { gravity = Gravity.CENTER; addView(name); addView(value.apply { setPadding(dp(8), 0, 0, 0) }) }, -1, -2)
+        val dials = EditorKit.ADJUSTMENTS.mapIndexed { k, n -> EditorKit.Dial(this, EditorKit.ADJUST_ICONS[k], n).apply { amount = values[k] } }
+        val slider = GlassSlider(this).apply { values = (-100..100).map { if (it > 0) "+$it" else "$it" }; grad = intArrayOf(0xff8e8e93.toInt(), Color.WHITE, Glass.ACCENT) }
+        fun show(k: Int) {
+            adjustIndex = k; dials.forEachIndexed { j, d -> d.lit = j == k }
+            name.text = EditorKit.ADJUSTMENTS[k]; value.text = sign(values[k]); value.setTextColor(if (values[k] == 0f) Glass.TEXT2 else Glass.ACCENT)
+            slider.index = (values[k] * 100).roundToInt() + 100; slider.contentDescription = EditorKit.ADJUSTMENTS[k]
         }
-        val chips = mutableListOf<LinearLayout>()
-        fun pick(k: Int) { adjustIndex = k; chips.forEachIndexed { j, c -> EditorKit.mark(c, j == k) }; slider.index = (this.values[k] * 100).toInt() + 100; slider.contentDescription = EditorKit.ADJUSTMENTS[k] }
-        EditorKit.ADJUSTMENTS.forEachIndexed { k, name -> chips += EditorKit.chip(this, name, EditorKit.ADJUST_ICONS[k], k == adjustIndex) { pick(k) } }
-        slider.onChange = { idx -> values[adjustIndex] = (idx - 100) / 100f; canvasView.refresh() }
-        col.addView(EditorKit.row(this, chips), -1, -2)
-        col.addView(slider, LinearLayout.LayoutParams(-1, dp(56)).apply { setMargins(dp(12), dp(8), dp(12), 0) })
-        pick(adjustIndex)
+        // Slide the dials to choose; tap the one in the middle to put it back to zero.
+        col.addView(EditorKit.strip(this, dials.map { it to 60 }, adjustIndex, 0, { k -> show(k) },
+            tapAgain = { k -> if (values[k] != 0f) { values[k] = 0f; dials[k].amount = 0f; Glass.tick(dials[k]); show(k); edited() } }) { k -> show(k) },
+            LinearLayout.LayoutParams(-1, dp(62)).apply { topMargin = dp(4) })
+        var zero = values[adjustIndex] == 0f
+        slider.onChange = { idx ->
+            val v = (idx - 100) / 100f; values[adjustIndex] = v; dials[adjustIndex].amount = v
+            value.text = sign(v); value.setTextColor(if (v == 0f) Glass.TEXT2 else Glass.ACCENT)
+            // A firmer tick when the value passes through zero, like a detent.
+            if ((v == 0f) != zero) { zero = v == 0f; if (zero) Glass.tick(slider, android.view.HapticFeedbackConstants.CONTEXT_CLICK) }
+            edited()
+        }
+        col.addView(slider, LinearLayout.LayoutParams(-1, dp(52)).apply { setMargins(dp(12), dp(2), dp(12), 0) })
+        show(adjustIndex)
     }
 
     private fun filmTools(col: LinearLayout) {
-        val thumb = canvasView.bitmap?.let { b -> val s = 132f / max(b.width, b.height); Bitmap.createScaledBitmap(b, max(1, (b.width * s).toInt()), max(1, (b.height * s).toInt()), true) }
-        val row = LinearLayout(this).apply { gravity = Gravity.BOTTOM; setPadding(dp(12), 0, dp(12), 0) }
-        val cards = mutableListOf<Pair<Film?, View>>()
+        val thumb = canvasView.bitmap?.let { b -> val s = 144f / max(b.width, b.height); Bitmap.createScaledBitmap(b, max(1, (b.width * s).toInt()), max(1, (b.height * s).toInt()), true) }
+        val looks = listOf<Film?>(null) + Films.groups.flatMap { Films.inGroup(it) }
+        val cards = looks.map { EditorKit.FilmCard(this, thumb, it) }
         val strength = GlassSlider(this).apply { values = (0..100).map { "$it%" }; index = (filmStrength * 100).toInt(); grad = intArrayOf(0xff8e8e93.toInt(), Glass.ACCENT); contentDescription = "ความเข้มฟิลเตอร์" }
-        fun mark() { cards.forEach { (f, v) -> val on = f?.id == film?.id; v.background = glass(14, if (on) Glass.ACCENT else 0x00000000); v.isSelected = on }; strength.visibility = if (film == null) View.INVISIBLE else View.VISIBLE }
-        fun card(f: Film?, group: String?): View = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; isClickable = true; contentDescription = "ฟิลเตอร์ ${f?.name ?: "ไม่มี"}"
-            addView(text(group ?: "", 10.5f, Glass.TEXT3, true).apply { setPadding(dp(2), 0, 0, dp(2)) }, dp(64), -2)
-            val frame = FrameLayout(this@PhotoEditorActivity).apply { setPadding(dp(2), dp(2), dp(2), dp(2)) }
-            val img = ImageView(this@PhotoEditorActivity).apply { scaleType = ImageView.ScaleType.CENTER_CROP; setImageBitmap(thumb); clipToOutline = true; background = glass(12, 0x22ffffff)
-                if (f != null) colorFilter = ColorMatrixColorFilter(Films.matrix(f)) }
-            frame.addView(img, -1, -1); addView(frame, dp(64), dp(64)); cards += f to frame
-            addView(text(f?.name ?: "ไม่มี", 10.5f, Color.WHITE).apply { gravity = Gravity.CENTER; setPadding(0, dp(3), 0, 0) }, dp(66), -2)
-            glassTouch(); setOnClickListener { Glass.tick(this); film = f; if (f != null && filmStrength == 0f) { filmStrength = 1f; strength.index = 100 }; mark(); canvasView.refresh() }
-        }
-        row.addView(card(null, null), LinearLayout.LayoutParams(-2, -2).apply { rightMargin = dp(6) })
-        Films.groups.forEach { g -> Films.inGroup(g).forEachIndexed { k, f -> row.addView(card(f, if (k == 0) g else null), LinearLayout.LayoutParams(-2, -2).apply { rightMargin = dp(6) }) } }
-        strength.onChange = { i -> filmStrength = i / 100f; canvasView.refresh() }
-        col.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(row) }, -1, -2)
-        col.addView(strength, LinearLayout.LayoutParams(-1, dp(40)).apply { setMargins(dp(12), dp(2), dp(12), 0) })
-        mark()
+        fun mark(k: Int) { cards.forEachIndexed { j, c -> c.lit(j == k) }; strength.animate().alpha(if (looks[k] == null) 0f else 1f).setDuration(180).start(); strength.isEnabled = looks[k] != null }
+        val start = looks.indexOfFirst { it?.id == film?.id }.coerceAtLeast(0)
+        // The look follows the strip while it moves, so sliding through the looks previews each one.
+        col.addView(EditorKit.strip(this, cards.map { it to 70 }, start, 90, { k -> mark(k); if (film?.id != looks[k]?.id) { film = looks[k]; if (film != null && filmStrength == 0f) { filmStrength = 1f; strength.index = 100 }; canvasView.refresh() } }) { k ->
+            film = looks[k]; mark(k); edited()
+        }, LinearLayout.LayoutParams(-1, dp(96)))
+        strength.onChange = { i -> filmStrength = i / 100f; edited() }
+        col.addView(strength, LinearLayout.LayoutParams(-1, dp(44)).apply { setMargins(dp(12), 0, dp(12), 0) })
+        mark(start)
     }
 
     private fun penTools(col: LinearLayout) {
         val swatches = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(dp(12), 0, dp(12), 0) }
         val dots = mutableListOf<View>()
-        fun markDots() = dots.forEachIndexed { k, v -> v.background = android.graphics.drawable.GradientDrawable().apply { shape = android.graphics.drawable.GradientDrawable.OVAL; setColor(COLORS[k]); setStroke(dp(if (COLORS[k] == penColor) 3 else 1), if (COLORS[k] == penColor) Glass.ACCENT else 0x66ffffff) }; v.isSelected = COLORS[k] == penColor }
-        COLORS.forEachIndexed { k, color ->
-            val v = View(this).apply { isClickable = true; contentDescription = "สีปากกา ${k + 1}"; setOnClickListener { Glass.tick(this); penColor = color; markDots() } }
-            dots += v; swatches.addView(v, LinearLayout.LayoutParams(dp(34), dp(34)).apply { setMargins(dp(5), dp(7), dp(5), dp(7)) })
+        fun markDots(animate: Boolean) = dots.forEachIndexed { k, v ->
+            val on = COLORS[k] == penColor
+            v.background = android.graphics.drawable.GradientDrawable().apply { shape = android.graphics.drawable.GradientDrawable.OVAL; setColor(COLORS[k]); setStroke(dp(if (on) 3 else 1), if (on) Color.WHITE else 0x66ffffff) }
+            v.isSelected = on
+            val s = if (on) 1.18f else 1f
+            if (animate && !Glass.reduced(this)) v.animate().scaleX(s).scaleY(s).setInterpolator(Glass.SPRING).setDuration(320).start() else { v.scaleX = s; v.scaleY = s }
         }
-        markDots()
-        col.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(swatches) }, -1, -2)
-        val sizeChips = mutableListOf<LinearLayout>()
-        SIZES.forEachIndexed { k, (name, _) -> sizeChips += EditorKit.chip(this, name, "", k == penSize) { penSize = k; sizeChips.forEachIndexed { j, c -> EditorKit.mark(c, j == k) } } }
-        col.addView(EditorKit.row(this, sizeChips + listOf(
-            EditorKit.chip(this, "ย้อน", EditorKit.UNDO) { if (strokes.isNotEmpty()) { strokes.removeAt(strokes.lastIndex); canvasView.refresh() } },
-            EditorKit.chip(this, "ล้าง", Icons.RESET) { strokes.clear(); canvasView.refresh() })), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(6) })
+        COLORS.forEachIndexed { k, color ->
+            val v = View(this).apply { isClickable = true; contentDescription = "สีปากกา ${k + 1}"; setOnClickListener { Glass.tick(this); penColor = color; markDots(true) } }
+            dots += v; swatches.addView(v, LinearLayout.LayoutParams(dp(32), dp(32)).apply { setMargins(dp(6), dp(8), dp(6), dp(8)) })
+        }
+        markDots(false)
+        col.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; clipToPadding = false; addView(swatches) }, -1, -2)
+        val sizes = SIZES.mapIndexed { k, (n, _) -> EditorKit.action(this, EditorKit.dot(2.5f + k * 2.5f), n, k == penSize) { penSize = k; showTool(3, false) } }
+        col.addView(EditorKit.actions(this, sizes + listOf(
+            EditorKit.action(this, EditorKit.UNDO, "ลบเส้นล่าสุด") { if (strokes.isNotEmpty()) { strokes.removeAt(strokes.lastIndex); canvasView.refresh(); commit() } },
+            EditorKit.action(this, EditorKit.ERASE, "ล้างทั้งหมด") { if (strokes.isNotEmpty()) { strokes.clear(); canvasView.refresh(); commit() } })).apply { setPadding(dp(4), 0, dp(4), 0) },
+            LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
     }
 
     // ---------- Pixels ----------
@@ -258,7 +310,8 @@ class PhotoEditorActivity : ComponentActivity() {
         return out
     }
 
-    private fun save(uri: Uri) {
+    private fun save() {
+        val uri = source
         if (saving || canvasView.bitmap == null) return
         if (!changed()) { notice("ยังไม่มีการแก้ไข"); return }
         saving = true; saveButton.alpha = 0.5f; notice("กำลังบันทึก…")
@@ -322,11 +375,30 @@ class PhotoEditorActivity : ComponentActivity() {
 
         init { contentDescription = "ภาพที่กำลังแก้ไข" }
         fun turnedSize(): Pair<Int, Int> { val b = bitmap ?: return 0 to 0; val (_, s) = orient(b.width, b.height); return s.x to s.y }
-        fun refresh() { paint.colorFilter = ColorMatrixColorFilter(colour()); layoutImage(); invalidate() }
+        private var glide: android.animation.ValueAnimator? = null
+        /** Redraws the edit; with [animate] the picture glides from where it was to its new place (crop ↔ other tools). */
+        fun refresh(animate: Boolean = false) {
+            paint.colorFilter = ColorMatrixColorFilter(colour())
+            val fromImage = RectF(image); val fromClip = RectF(clip)
+            glide?.cancel(); layoutImage()
+            if (animate && !Glass.reduced(context) && !fromImage.isEmpty && width > 0) {
+                val toImage = RectF(image); val toClip = RectF(clip)
+                fun mix(out: RectF, a: RectF, b: RectF, t: Float) = out.set(a.left + (b.left - a.left) * t, a.top + (b.top - a.top) * t, a.right + (b.right - a.right) * t, a.bottom + (b.bottom - a.bottom) * t)
+                glide = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
+                    duration = 380; interpolator = Glass.EASE
+                    addUpdateListener { val t = it.animatedValue as Float; mix(image, fromImage, toImage, t); mix(clip, fromClip, toClip, t); place(); invalidate() }
+                    start()
+                }
+            }
+            invalidate()
+        }
+        private val base = Matrix(); private var turnedW = 1; private var turnedH = 1
+        private fun place() { draw.set(base); draw.postScale(image.width() / turnedW, image.height() / turnedH); draw.postTranslate(image.left, image.top) }
 
         private fun layoutImage() {
             val b = bitmap ?: return; if (width == 0) return
             val (m, s) = orient(b.width, b.height)
+            base.set(m); turnedW = max(1, s.x); turnedH = max(1, s.y)
             val pad = dp(if (mode == 0) 28 else 12).toFloat()
             val aw = width - 2 * pad; val ah = height - 2 * pad
             if (mode == 0) {
@@ -339,7 +411,7 @@ class PhotoEditorActivity : ComponentActivity() {
                 image.set(clip.left - crop.left * s.x * k, clip.top - crop.top * s.y * k, 0f, 0f)
                 image.right = image.left + s.x * k; image.bottom = image.top + s.y * k
             }
-            draw.set(m); draw.postScale(image.width() / s.x, image.height() / s.y); draw.postTranslate(image.left, image.top)
+            place()
         }
         override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) { layoutImage() }
 
@@ -397,7 +469,7 @@ class PhotoEditorActivity : ComponentActivity() {
                     val dx = (e.x - lastX) / image.width(); val dy = (e.y - lastY) / image.height(); lastX = e.x; lastY = e.y
                     moveCrop(dx, dy); invalidate()
                 }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> grab = 0
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { if (grab != 0) commit(); grab = 0 }
             }
             return true
         }
@@ -425,7 +497,7 @@ class PhotoEditorActivity : ComponentActivity() {
                 MotionEvent.ACTION_DOWN -> { parent?.requestDisallowInterceptTouchEvent(true); stroke = Stroke(penColor, SIZES[penSize].second).also { it.points += PointF(u, v); strokes += it } }
                 MotionEvent.ACTION_MOVE -> { val s = stroke ?: return true; val p = s.points.last()
                     if (hypot((u - p.x) * image.width(), (v - p.y) * image.height()) > 2f) s.points += PointF(u, v) }
-                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> stroke = null
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { if (stroke != null) commit(); stroke = null }
             }
             invalidate(); return true
         }

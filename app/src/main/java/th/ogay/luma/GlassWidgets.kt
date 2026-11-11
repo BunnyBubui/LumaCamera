@@ -1100,3 +1100,50 @@ class ArrowTab(context: Context, private val strip: View) : FrameLayout(context)
         }
     }
 }
+
+/**
+ * Glass tab bar with a highlight that can sit anywhere between tabs ([pos] is 0..n-1, fractional while a page is
+ * being swiped), so it can follow the finger and then spring onto a tab. The highlight is placed in onLayout, so it
+ * is right even when the bar is built before it has a size.
+ */
+class GlassTabs(context: Context, list: List<Pair<String, String>>, selected: Int, private val pick: (Int) -> Unit) : FrameLayout(context) {
+    private val knob = View(context).apply { background = context.glass(26, Glass.ACCENT_SOFT) }
+    private val row = LinearLayout(context)
+    private val inset = context.dp(4)
+    private var anim: ValueAnimator? = null
+    val tabs: List<LinearLayout> = list.mapIndexed { i, (icon, name) -> LinearLayout(context).apply {
+        gravity = Gravity.CENTER; isClickable = true; contentDescription = name
+        addView(IconView(context, icon, 2f), LinearLayout.LayoutParams(context.dp(20), context.dp(20)))
+        addView(context.text(name, 14f, Glass.TEXT2, true).apply { setPadding(context.dp(8), 0, 0, 0); maxLines = 1 })
+        setOnClickListener { pick(i) }
+    } }
+    var pos = selected.toFloat(); set(v) { field = v.coerceIn(0f, (tabs.size - 1).toFloat()); place() }
+    init {
+        background = context.glass(30, Glass.FILL_STRONG); elevation = context.dp(6).toFloat()
+        clipToOutline = true
+        addView(knob, LayoutParams(0, LayoutParams.MATCH_PARENT))
+        tabs.forEach { row.addView(it, LinearLayout.LayoutParams(0, -1, 1f)) }
+        addView(row, LayoutParams(-1, -1))
+        place()
+    }
+    private fun slot() = ((width - 2 * inset) / tabs.size.coerceAtLeast(1)).coerceAtLeast(0)
+    private fun place() {
+        knob.translationX = inset + pos * slot()
+        tabs.forEachIndexed { i, t ->
+            val on = (1f - abs(pos - i)).coerceIn(0f, 1f)
+            (t.getChildAt(0) as IconView).tint = Glass.mix(intArrayOf(Color.WHITE, Glass.ACCENT), on)
+            (t.getChildAt(1) as TextView).setTextColor(Glass.mix(intArrayOf(Glass.TEXT2, Glass.ACCENT), on))
+            t.isSelected = on > 0.5f; androidx.core.view.ViewCompat.setStateDescription(t, if (on > 0.5f) "เลือกอยู่" else null)
+        }
+    }
+    fun animateTo(i: Int) {
+        anim?.cancel()
+        if (Glass.reduced(context)) { pos = i.toFloat(); return }
+        anim = ValueAnimator.ofFloat(pos, i.toFloat()).apply { duration = 440; interpolator = Glass.SPRING; addUpdateListener { pos = it.animatedValue as Float }; start() }
+    }
+    override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
+        super.onLayout(changed, l, t, r, b)
+        val w = slot(); knob.layout(0, inset, w, b - t - inset); place()
+    }
+    override fun onDetachedFromWindow() { anim?.cancel(); super.onDetachedFromWindow() }
+}

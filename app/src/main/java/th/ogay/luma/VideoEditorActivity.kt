@@ -90,7 +90,7 @@ class VideoEditorActivity : ComponentActivity() {
     private lateinit var trim: TrimBar
     private lateinit var tools: FrameLayout
     private lateinit var exportButton: TextView
-    private val tabs = mutableListOf<LinearLayout>()
+    private lateinit var toolBar: EditorKit.ToolBar
     private var tool = 0
     private var firstFrame: Bitmap? = null
 
@@ -118,7 +118,7 @@ class VideoEditorActivity : ComponentActivity() {
             runCatching { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
             music = uri
             musicName = runCatching { contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c -> if (c.moveToFirst()) c.getString(0) else null } }.getOrNull() ?: "เพลงที่เลือก"
-            prepareMusic(); showTool(tool)
+            prepareMusic(); showTool(tool, false)
         }
     }
 
@@ -138,8 +138,8 @@ class VideoEditorActivity : ComponentActivity() {
         }
 
         val bar = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(10), dp(14), dp(6)) }
-        bar.addView(EditorKit.round(this, Icons.CLOSE, "ยกเลิกการตัดต่อ") { leave() }, dp(48), dp(48))
-        bar.addView(text("ตัดต่อวิดีโอ", 19f, Color.WHITE, true).apply { setPadding(dp(12), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
+        bar.addView(EditorKit.round(this, Icons.CLOSE, "ปิดตัวตัดต่อ") { leave() }, dp(48), dp(48))
+        bar.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
         exportButton = EditorKit.primary(this, "ส่งออก") { export() }
         bar.addView(exportButton, LinearLayout.LayoutParams(-2, dp(48)))
         root.addView(bar, -1, -2)
@@ -170,18 +170,16 @@ class VideoEditorActivity : ComponentActivity() {
         trim.onRange = { s, e -> start = s; end = e; if (split !in (s + 300)..(e - 300)) split = -1; trim.split = split; seek(trim.playhead.coerceIn(s, e)); showTime() }
         trim.onSeek = { ms -> seek(ms) }
         root.addView(trim, LinearLayout.LayoutParams(-1, dp(64)).apply { setMargins(dp(12), dp(4), dp(12), dp(4)) })
-        tools = FrameLayout(this)
-        root.addView(tools, LinearLayout.LayoutParams(-1, dp(118)))
-        val tabRow = LinearLayout(this).apply { setPadding(dp(4), 0, dp(4), dp(8)) }
-        listOf(EditorKit.SCISSORS to "ตัด", EditorKit.SPLIT to "แยก", EditorKit.SPEED to "ความเร็ว", EditorKit.CROP to "ครอบ", EditorKit.TEXT to "ข้อความ", Icons.FILM to "ฟิลเตอร์", EditorKit.MUSIC to "เพลง")
-            .forEachIndexed { i, (icon, name) -> val t = EditorKit.tab(this, icon, name) { showTool(i) }; tabs += t; tabRow.addView(t, LinearLayout.LayoutParams(0, -2, 1f)) }
-        root.addView(tabRow, -1, -2)
+        tools = FrameLayout(this).apply { clipChildren = false }
+        root.addView(tools, LinearLayout.LayoutParams(-1, dp(124)))
+        toolBar = EditorKit.ToolBar(this, listOf(EditorKit.SCISSORS to "ตัด", EditorKit.SPLIT to "แยก", EditorKit.SPEED to "ความเร็ว", EditorKit.CROP to "ครอบ", EditorKit.TEXT to "ข้อความ", Icons.FILM to "ฟิลเตอร์", EditorKit.MUSIC to "เพลง")) { showTool(it) }
+        root.addView(toolBar, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(4), 0, dp(4), dp(8)) })
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) { override fun handleOnBackPressed() = leave() })
 
         trim.duration = duration; trim.start = start; trim.end = end; trim.split = split
         luma.readIo.execute {
             val frames = frames(10)
-            runOnUiThread { if (!isDestroyed) { trim.frames = frames; firstFrame = frames.firstOrNull(); if (tool == 5) showTool(5) } }
+            runOnUiThread { if (!isDestroyed) { trim.frames = frames; firstFrame = frames.firstOrNull(); if (tool == 5) showTool(5, false) } }
         }
         texture.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
             override fun onSurfaceTextureAvailable(s: SurfaceTexture, w: Int, h: Int) { surface = Surface(s); openPlayer() }
@@ -189,7 +187,7 @@ class VideoEditorActivity : ComponentActivity() {
             override fun onSurfaceTextureDestroyed(s: SurfaceTexture): Boolean { releasePlayer(); surface?.release(); surface = null; return true }
             override fun onSurfaceTextureUpdated(s: SurfaceTexture) {}
         }
-        applyLook(); showTool(tool); showTime()
+        applyLook(); showTool(tool, false); showTime()
         if (music != null) prepareMusic()
     }
 
@@ -296,34 +294,34 @@ class VideoEditorActivity : ComponentActivity() {
     }
 
     // ---------- Tools ----------
-    private fun showTool(i: Int) {
-        tool = i; tabs.forEachIndexed { k, t -> EditorKit.select(t, k == i) }
-        tools.removeAllViews()
+    private fun showTool(i: Int, animate: Boolean = true) {
+        val dir = if (animate) i.compareTo(tool) else 0
+        tool = i; toolBar.select(i, animate)
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_VERTICAL }
-        tools.addView(col, -1, -1)
-        fun note(s: String) = col.addView(text(s, 12.5f, Glass.TEXT2).apply { maxLines = 3; gravity = Gravity.CENTER; setPadding(dp(16), 0, dp(16), dp(8)) }, -1, -2)
+        fun note(s: String) = col.addView(text(s, 12f, Glass.TEXT2, true).apply { maxLines = 1; gravity = Gravity.CENTER; setPadding(dp(16), 0, dp(16), dp(6)) }, -1, -2)
         when (i) {
-            0 -> { note("ลากขอบซ้ายหรือขวาบนแถบภาพเพื่อเลือกช่วงที่เก็บไว้ แตะบนแถบเพื่อเลื่อนไปจุดนั้น")
-                col.addView(EditorKit.row(this, listOf(EditorKit.chip(this, "เริ่มที่นี่", EditorKit.SCISSORS) { setRange(trim.playhead, end) },
-                    EditorKit.chip(this, "จบที่นี่", EditorKit.SCISSORS) { setRange(start, trim.playhead) },
-                    EditorKit.chip(this, "ทั้งคลิป", Icons.RESET) { setRange(0, duration) })), -1, -2) }
-            1 -> { note(if (split >= 0) "จะส่งออกเป็น 2 คลิป แยกที่ ${clock(split - start)}" else "เลื่อนไปจุดที่ต้องการแล้วแตะ \"แยกที่นี่\" จะได้ 2 คลิปตอนส่งออก")
-                col.addView(EditorKit.row(this, listOf(EditorKit.chip(this, "แยกที่นี่", EditorKit.SPLIT, split >= 0) {
-                        val at = trim.playhead; if (at - start < 300 || end - at < 300) notice("เลื่อนให้ห่างจากขอบช่วงอย่างน้อย 0.3 วินาที") else { split = at; trim.split = at; showTime(); showTool(1) } },
-                    EditorKit.chip(this, "ไม่แยก", Icons.CLOSE) { split = -1; trim.split = -1; showTime(); showTool(1) })), -1, -2) }
-            2 -> { note("ความเร็วของคลิปที่ส่งออก เสียงเร่งหรือช้าตามภาพ")
-                val chips = mutableListOf<LinearLayout>()
-                SPEEDS.forEachIndexed { k, s -> chips += EditorKit.chip(this, speedName(s), "", s == speed) { speed = s; chips.forEachIndexed { j, c -> EditorKit.mark(c, j == k) }
-                    player?.let { p -> if (p.isPlaying) runCatching { p.playbackParams = p.playbackParams.setSpeed(s) } }; showTime() } }
-                col.addView(EditorKit.row(this, chips), -1, -2) }
-            3 -> { val chips = mutableListOf<LinearLayout>()
-                CROPS.forEachIndexed { k, (name, _) -> chips += EditorKit.chip(this, name, aspectIconPath(name), k == cropIndex) { cropIndex = k; chips.forEachIndexed { j, c -> EditorKit.mark(c, j == k) }; layoutVideo() } }
-                note("ครอบภาพจากกึ่งกลาง ส่วนที่มืดจะถูกตัดออก"); col.addView(EditorKit.row(this, chips), -1, -2) }
+            0 -> col.addView(EditorKit.actions(this, listOf(
+                    EditorKit.action(this, EditorKit.START, "เริ่มที่นี่") { setRange(trim.playhead, end) },
+                    EditorKit.action(this, EditorKit.END, "จบที่นี่") { setRange(start, trim.playhead) },
+                    EditorKit.action(this, Icons.RESET, "ทั้งคลิป") { setRange(0, duration) })), -1, -2)
+            1 -> { if (split >= 0) note("2 คลิป · แยกที่ ${clock(split - start)}")
+                col.addView(EditorKit.actions(this, listOf(
+                    EditorKit.action(this, EditorKit.SPLIT, "แยกที่นี่", split >= 0) {
+                        val at = trim.playhead; if (at - start < 300 || end - at < 300) notice("เลื่อนให้ห่างจากขอบช่วงอย่างน้อย 0.3 วินาที") else { split = at; trim.split = split; showTime(); showTool(1, false) } },
+                    EditorKit.action(this, Icons.CLOSE, "ไม่แยก") { split = -1; trim.split = -1; showTime(); showTool(1, false) })), -1, -2) }
+            2 -> { val items = SPEEDS.map { EditorKit.StripItem(this, "", speedName(it), 15f) }
+                // Sliding through the speeds plays the preview at each one.
+                col.addView(EditorKit.strip(this, items.map { it to 62 }, SPEEDS.indexOf(speed).coerceAtLeast(0), 46, { k -> items.forEachIndexed { j, v -> v.lit(j == k) }
+                    player?.let { p -> if (p.isPlaying) runCatching { p.playbackParams = p.playbackParams.setSpeed(SPEEDS[k]) } } }) { k -> speed = SPEEDS[k]; showTime() },
+                    LinearLayout.LayoutParams(-1, dp(64))) }
+            3 -> { val items = CROPS.map { (name, _) -> EditorKit.StripItem(this, if (name == "ต้นฉบับ") Icons.VIDEO else aspectIconPath(name), name) }
+                col.addView(EditorKit.strip(this, items.map { it to 64 }, cropIndex, 60, { k -> items.forEachIndexed { j, v -> v.lit(j == k) } }) { k -> cropIndex = k; layoutVideo() },
+                    LinearLayout.LayoutParams(-1, dp(70))) }
             4 -> textTools(col)
             5 -> filmTools(col)
             else -> musicTools(col)
         }
-        if (!Glass.reduced(this)) { col.alpha = 0f; col.translationY = dp(10).toFloat(); col.animate().alpha(1f).translationY(0f).setInterpolator(Glass.EASE).setDuration(220).start() }
+        EditorKit.swap(tools, col, dir)
     }
     private fun speedName(s: Float) = (if (s == s.toInt().toFloat()) "${s.toInt()}" else "$s") + "×"
     private fun setRange(s: Long, e: Long) {
@@ -334,7 +332,7 @@ class VideoEditorActivity : ComponentActivity() {
 
     private fun textTools(col: LinearLayout) {
         val field = EditText(this).apply {
-            hint = "พิมพ์ข้อความบนวิดีโอ"; setHintTextColor(Glass.TEXT3); setTextColor(Color.WHITE); textSize = 15f; setSingleLine(); setText(caption)
+            hint = "พิมพ์ข้อความ"; setHintTextColor(Glass.TEXT3); setTextColor(Color.WHITE); textSize = 15f; setSingleLine(); setText(caption)
             background = glass(20, 0x24ffffff); setPadding(dp(14), 0, dp(14), 0); contentDescription = "ข้อความบนวิดีโอ"
             addTextChangedListener(object : TextWatcher {
                 override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
@@ -342,57 +340,48 @@ class VideoEditorActivity : ComponentActivity() {
                 override fun afterTextChanged(s: Editable?) { caption = s.toString(); applyLook() }
             })
         }
-        col.addView(field, LinearLayout.LayoutParams(-1, dp(46)).apply { setMargins(dp(16), 0, dp(16), dp(8)) })
-        val chips = mutableListOf<LinearLayout>()
-        PLACES.forEachIndexed { k, n -> chips += EditorKit.chip(this, n, "", k == place) { place = k; chips.forEachIndexed { j, c -> EditorKit.mark(c, j == k) }; layoutVideo() } }
-        lateinit var big: LinearLayout
-        big = EditorKit.chip(this, "ตัวใหญ่", EditorKit.TEXT, textBig) { textBig = !textBig; EditorKit.mark(big, textBig); layoutVideo() }
-        val dots = TEXT_COLORS.map { color -> View(this).apply { isClickable = true; contentDescription = "สีข้อความ"; setOnClickListener { Glass.tick(this); textColor = color; applyLook(); showTool(4) }
-            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(color); setStroke(dp(if (color == textColor) 3 else 1), if (color == textColor) Glass.ACCENT else 0x66ffffff) }
-            layoutParams = LinearLayout.LayoutParams(dp(32), dp(32)) } }
-        col.addView(EditorKit.row(this, chips + big + dots), -1, -2)
+        col.addView(field, LinearLayout.LayoutParams(-1, dp(44)).apply { setMargins(dp(16), 0, dp(16), dp(8)) })
+        // Place, size and colour as small icon buttons in one row.
+        val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(12), 0, dp(12), 0) }
+        fun small(icon: String, desc: String, on: Boolean, click: () -> Unit) = row.addView(FrameLayout(this).apply {
+            background = glass(20, if (on) Glass.ACCENT_SOFT else 0x26ffffff); contentDescription = desc; isClickable = true; isSelected = on; glassTouch(); setOnClickListener { click() }
+            addView(IconView(this@VideoEditorActivity, icon, 2f).apply { tint = if (on) Glass.ACCENT else Color.WHITE }, FrameLayout.LayoutParams(dp(19), dp(19), Gravity.CENTER)) },
+            LinearLayout.LayoutParams(dp(42), dp(42)).apply { rightMargin = dp(6) })
+        listOf(EditorKit.TOP to "ข้อความด้านบน", EditorKit.MIDDLE to "ข้อความตรงกลาง", EditorKit.BOTTOM to "ข้อความด้านล่าง").forEachIndexed { k, (icon, desc) -> small(icon, desc, k == place) { place = k; layoutVideo(); showTool(4, false) } }
+        small(EditorKit.TEXT, "ตัวใหญ่", textBig) { textBig = !textBig; layoutVideo(); showTool(4, false) }
+        row.addView(View(this), LinearLayout.LayoutParams(dp(4), 1))
+        TEXT_COLORS.forEach { color -> row.addView(View(this).apply { isClickable = true; contentDescription = "สีข้อความ"; setOnClickListener { Glass.tick(this); textColor = color; applyLook(); showTool(4, false) }
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(color); setStroke(dp(if (color == textColor) 3 else 1), if (color == textColor) Color.WHITE else 0x66ffffff) } },
+            LinearLayout.LayoutParams(dp(28), dp(28)).apply { rightMargin = dp(6) }) }
+        col.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(row) }, -1, -2)
     }
 
     private fun filmTools(col: LinearLayout) {
-        val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(12), 0, dp(12), 0) }
-        val frames = mutableListOf<Pair<Film?, View>>()
+        val looks = listOf<Film?>(null) + Films.groups.flatMap { Films.inGroup(it) }
+        val cards = looks.map { EditorKit.FilmCard(this, firstFrame, it) }
         val strength = GlassSlider(this).apply { values = (0..100).map { "$it%" }; index = (filmStrength * 100).toInt(); grad = intArrayOf(0xff8e8e93.toInt(), Glass.ACCENT); contentDescription = "ความเข้มฟิลเตอร์" }
-        fun mark() { frames.forEach { (f, v) -> v.background = glass(12, if (f?.id == film?.id) Glass.ACCENT else 0); v.isSelected = f?.id == film?.id }; strength.visibility = if (film == null) View.INVISIBLE else View.VISIBLE }
-        fun card(f: Film?) = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; isClickable = true; contentDescription = "ฟิลเตอร์ ${f?.name ?: "ไม่มี"}"
-            val frame = FrameLayout(this@VideoEditorActivity).apply { setPadding(dp(2), dp(2), dp(2), dp(2)) }
-            frame.addView(ImageView(this@VideoEditorActivity).apply { scaleType = ImageView.ScaleType.CENTER_CROP; setImageBitmap(firstFrame); clipToOutline = true; background = glass(10, 0x22ffffff)
-                if (f != null) colorFilter = ColorMatrixColorFilter(Films.matrix(f)) }, -1, -1)
-            addView(frame, dp(52), dp(52)); frames += f to frame
-            addView(text(f?.name ?: "ไม่มี", 10f, Color.WHITE).apply { gravity = Gravity.CENTER; setPadding(0, dp(2), 0, 0) }, dp(58), -2)
-            glassTouch(); setOnClickListener { Glass.tick(this); film = f; mark(); applyLook() }
-        }
-        row.addView(card(null))
-        Films.groups.forEach { g -> Films.inGroup(g).forEach { row.addView(card(it), LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(6) }) } }
+        fun mark(k: Int) { cards.forEachIndexed { j, c -> c.lit(j == k) }; strength.animate().alpha(if (looks[k] == null) 0f else 1f).setDuration(180).start(); strength.isEnabled = looks[k] != null }
+        val start = looks.indexOfFirst { it?.id == film?.id }.coerceAtLeast(0)
+        col.addView(EditorKit.strip(this, cards.map { it to 70 }, start, 88, { k -> mark(k); if (film?.id != looks[k]?.id) { film = looks[k]; applyLook() } }) { k -> film = looks[k]; mark(k); applyLook() },
+            LinearLayout.LayoutParams(-1, dp(92)))
         strength.onChange = { i -> filmStrength = i / 100f; applyLook() }
-        col.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(row) }, -1, -2)
-        col.addView(strength, LinearLayout.LayoutParams(-1, dp(36)).apply { setMargins(dp(12), dp(2), dp(12), 0) })
-        mark()
+        col.addView(strength, LinearLayout.LayoutParams(-1, dp(32)).apply { setMargins(dp(12), 0, dp(12), 0) })
+        mark(start)
     }
 
     private fun musicTools(col: LinearLayout) {
-        col.addView(text(if (music == null) "ยังไม่มีเพลง · เพลงจะวนซ้ำจนจบคลิป" else "เพลง: $musicName", 12.5f, Glass.TEXT2).apply { gravity = Gravity.CENTER; setPadding(dp(16), 0, dp(16), dp(8)) }, -1, -2)
-        lateinit var sound: LinearLayout
-        sound = EditorKit.chip(this, if (keepSound) "เสียงต้นฉบับ เปิด" else "เสียงต้นฉบับ ปิด", Icons.SOUND, keepSound) { keepSound = !keepSound; applySound(); showTool(6) }
-        val items = mutableListOf<View>(EditorKit.chip(this, if (music == null) "เลือกเพลง" else "เปลี่ยนเพลง", EditorKit.MUSIC) { pickMusic.launch(arrayOf("audio/*")) })
-        if (hasAudio) items += sound
-        if (music != null) items += EditorKit.chip(this, "ลบเพลง", Icons.CLOSE) { music = null; musicName = ""; musicPlayer?.runCatching { release() }; musicPlayer = null; showTool(6) }
-        col.addView(EditorKit.row(this, items), -1, -2)
+        if (music != null) col.addView(text(musicName, 12f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.MIDDLE; setPadding(dp(16), 0, dp(16), dp(6)) }, -1, -2)
+        val items = mutableListOf<View>(EditorKit.action(this, EditorKit.MUSIC, if (music == null) "เลือกเพลง" else "เปลี่ยนเพลง", music != null) { pickMusic.launch(arrayOf("audio/*")) })
+        if (hasAudio) items += EditorKit.action(this, Icons.SOUND, "เสียงคลิป", keepSound) { keepSound = !keepSound; applySound(); showTool(6, false) }
+        if (music != null) items += EditorKit.action(this, Icons.CLOSE, "ลบเพลง") { music = null; musicName = ""; musicPlayer?.runCatching { release() }; musicPlayer = null; showTool(6, false) }
+        col.addView(EditorKit.actions(this, items), -1, -2)
     }
 
     private fun changed() = start != 0L || end != duration || split >= 0 || speed != 1f || cropIndex != 0 || caption.isNotBlank() || film != null || music != null || !keepSound
     private fun leave() {
         if (transformer != null) { cancelExport(); return }
         if (!changed()) { finish(); return }
-        GlassDialog.panel(this, "ทิ้งการตัดต่อ?") { col, d ->
-            col.addView(text("การตัดต่อที่ยังไม่ส่งออกจะหายไป วิดีโอต้นฉบับยังอยู่ครบ", 13.5f, Glass.TEXT2).apply { maxLines = 4 })
-            col.addView(GlassDialog.actions(this, "แก้ต่อ" to { d.dismiss() }, "ทิ้ง" to { d.dismiss(); finish() }), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(14) })
-        }
+        EditorKit.askSave(this, "บันทึกการตัดต่อไหม", "ส่งออกเป็นคลิปใหม่ วิดีโอต้นฉบับยังอยู่ครบ", "ส่งออก", { export() }, { finish() })
     }
 
     // ---------- Export ----------
