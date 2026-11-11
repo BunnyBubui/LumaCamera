@@ -397,9 +397,9 @@ class CameraActivity : ComponentActivity() {
         stage.addView(apertureButton, FrameLayout.LayoutParams(-2, dp(48), Gravity.BOTTOM or Gravity.START).apply { setMargins(dp(10), 0, 0, dp(12)) })
         // Long exposure: a moon pill above the left buttons; it turns yellow and shows the time when on.
         longIcon = IconView(this, Icons.NIGHT, 2f); longLabel = text("", 14f, 0xff1a1a1a.toInt(), true).apply { setPadding(dp(6), 0, dp(2), 0) }
-        longButton = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(dp(12), 0, dp(12), 0); minimumWidth = dp(44); isClickable = true; isFocusable = true
+        longButton = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(dp(14), 0, dp(14), 0); minimumWidth = dp(48); isClickable = true; isFocusable = true
             addView(longIcon, dp(20), dp(20)); addView(longLabel); pressMenu(menu) { chooseLong(it) } }
-        stage.addView(longButton, FrameLayout.LayoutParams(-2, dp(44), Gravity.BOTTOM or Gravity.START).apply { setMargins(dp(14), 0, 0, dp(72)) })
+        stage.addView(longButton, FrameLayout.LayoutParams(-2, dp(48), Gravity.BOTTOM or Gravity.START).apply { setMargins(dp(14), 0, 0, dp(72)) })
         nightButton = glassButton(IconView(this, Icons.NIGHT), 48, "ถ่ายกลางคืน กดค้างเพื่อเลือกเวลา") { toggleNight() }
         nightButton.setOnLongClickListener { chooseNightLength(nightButton); true }
         stage.addView(nightButton, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.BOTTOM or Gravity.END).apply { setMargins(0, 0, dp(14), dp(12)) })
