@@ -98,6 +98,7 @@ class InspectView(context: Context) : View(context) {
     override fun performClick():Boolean {super.performClick();return true}
     fun show(uri:Uri) {
         if(source==uri) return
+        setCompare(null);otherShown=0f
         source=uri; tile?.takeIf{it!==base}?.image?.recycle();base?.image?.recycle();tile=null;base=null;zoom=1f;cx=0.5f;cy=0.5f;invalidate();change()
     }
     private fun change(){version++;invalidate();schedule()}
@@ -157,6 +158,31 @@ class InspectView(context: Context) : View(context) {
             }
         }
     }
+    // ---- Hold-to-compare: a second picture (the original) fitted once, cross-faded over the shown one, no reload flicker.
+    private var other:Bitmap?=null;private var otherUri:Uri?=null;private var otherShown=0f
+    private val otherPaint=Paint(Paint.FILTER_BITMAP_FLAG)
+    private var otherAnim:android.animation.ValueAnimator?=null
+    fun setCompare(uri:Uri?){
+        if(uri==otherUri)return
+        otherUri=uri;other?.recycle();other=null
+        if(uri==null||dead)return
+        val longSide=2*maxOf(width,height,1080)
+        io.execute{
+            val b=runCatching{
+                val r=context.contentResolver
+                val bounds=BitmapFactory.Options().apply{inJustDecodeBounds=true};r.openInputStream(uri)?.use{BitmapFactory.decodeStream(it,null,bounds)}
+                var sample=1;while(maxOf(bounds.outWidth,bounds.outHeight)/(sample*2)>=longSide)sample*=2
+                val rot=r.openInputStream(uri)?.use{ExifInterface(it).rotationDegrees}?:0
+                val d=r.openInputStream(uri)?.use{BitmapFactory.decodeStream(it,null,BitmapFactory.Options().apply{inSampleSize=sample})}
+                if(d==null||rot==0)d else Bitmap.createBitmap(d,0,0,d.width,d.height,Matrix().apply{setRotate(rot.toFloat())},true).also{if(it!==d)d.recycle()}
+            }.getOrNull()
+            post{if(!dead&&otherUri==uri){other=b;invalidate()}else b?.recycle()}
+        }
+    }
+    fun holdCompare(on:Boolean){
+        otherAnim?.cancel()
+        otherAnim=android.animation.ValueAnimator.ofFloat(otherShown,if(on)1f else 0f).apply{duration=140;addUpdateListener{otherShown=it.animatedValue as Float;invalidate()};start()}
+    }
     private val fade=Paint();private val fadeBottom=Paint();private val placed=RectF()
     private fun place(t:Tile,cur:RectF):RectF{val k=cur.width()/t.frame.width().coerceAtLeast(1f)
         placed.set(cur.left+(t.area.left-t.frame.left)*k,cur.top+(t.area.top-t.frame.top)*k,cur.left+(t.area.right-t.frame.left)*k,cur.top+(t.area.bottom-t.frame.top)*k);return placed}
@@ -170,7 +196,8 @@ class InspectView(context: Context) : View(context) {
         val cur=box(width,height,aspect,zoom,cx,cy)
         base?.let{if(it!==tile)c.drawBitmap(it.image,null,place(it,cur),paint)}
         tile?.let{c.drawBitmap(it.image,null,place(it,cur),paint)}
+        other?.let{o->if(otherShown>0f){otherPaint.alpha=(255*otherShown).toInt();c.drawBitmap(o,null,cur,otherPaint)}}
         val e=30*resources.displayMetrics.density
         c.drawRect(0f,0f,width.toFloat(),e,fade);c.drawRect(0f,height-e,width.toFloat(),height.toFloat(),fadeBottom)}
-    override fun onDetachedFromWindow(){dead=true;runCatching{io.execute{dec?.recycle();dec=null}};io.shutdown();tile?.takeIf{it!==base}?.image?.recycle();base?.image?.recycle();tile=null;base=null;super.onDetachedFromWindow()}
+    override fun onDetachedFromWindow(){dead=true;otherAnim?.cancel();other?.recycle();other=null;runCatching{io.execute{dec?.recycle();dec=null}};io.shutdown();tile?.takeIf{it!==base}?.image?.recycle();base?.image?.recycle();tile=null;base=null;super.onDetachedFromWindow()}
 }

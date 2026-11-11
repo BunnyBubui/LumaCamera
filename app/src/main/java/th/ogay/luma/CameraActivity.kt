@@ -281,13 +281,13 @@ class CameraActivity : ComponentActivity() {
         menu.dismiss(false)
         zooms.finish(); wheel.removeCallbacks(hideWheel); hideWheel.run()
         clearLensShots()
-        portraitLive?.stop()
+        portraitLive?.stop(); qr?.stop()
         super.onPause()
     }
     override fun onDestroy() {
         shutterSound.release()
         tones.release()
-        portraitLive?.close()
+        portraitLive?.close(); qr?.close()
         super.onDestroy()
     }
     override fun onSaveInstanceState(out: Bundle) { super.onSaveInstanceState(out); out.putBoolean("rear",rear); out.putFloat("zoom",ratio) }
@@ -326,6 +326,7 @@ class CameraActivity : ComponentActivity() {
         portraitView = ImageView(this).apply { scaleType = ImageView.ScaleType.FIT_XY; alpha = 0f; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
         mask.addView(portraitView, -1, -1)
         portraitLive?.close(); portraitLive = PortraitPreview(preview, portraitView) { prefs.getFloat("portrait_f", 2.8f) }
+        qr?.close(); qr = QrWatcher(preview, stage)
         overlay = CompositionOverlay(this).apply { gridKind = Grids.kind(prefs) }
         mask.addView(overlay, -1, -1)
         overlay.monitor(preview)
@@ -468,6 +469,7 @@ class CameraActivity : ComponentActivity() {
     private lateinit var apertureButton: TextView
     private lateinit var portraitView: ImageView
     private var portraitLive: PortraitPreview? = null
+    private var qr: QrWatcher? = null
     private var chromeBlurred = false
     /**
      * Everything behind an open sheet or menu (0..1) fades into one blurred, darkened still of the camera that covers
@@ -1246,6 +1248,7 @@ class CameraActivity : ComponentActivity() {
         val showSide = !dialing && openChip == null && !nightRunning && capture != null
         val portrait = mode == PhotoMode.PORTRAIT && !activeExtension
         // Live background blur while composing; paused behind sheets and menus, and while a photo is being taken.
+        qr?.let { if (mode == PhotoMode.PHOTO && prefs.getBoolean("qr_scan", true) && capture != null && !busy && !lookSheet.showing && !panel.showing && !editor.showing) it.start() else it.stop() }
         portraitLive?.let { if (portrait && prefs.getBoolean("portrait_live", true) && capture != null && !busy && !lookSheet.showing && !panel.showing && !editor.showing) it.start() else it.stop() }
         macroButton.visibility = if (showSide && rear && !portrait && mode != PhotoMode.SPORT && macroLens != null) View.VISIBLE else View.GONE
         apertureButton.visibility = if (showSide && (portrait || mode == PhotoMode.SPORT)) View.VISIBLE else View.GONE

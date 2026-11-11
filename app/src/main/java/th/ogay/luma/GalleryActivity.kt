@@ -703,9 +703,17 @@ class GalleryActivity : ComponentActivity() {
                 catch (_: android.content.ActivityNotFoundException) { notice("บันทึก DNG ใน Pictures/Lumora แล้ว เปิดด้วยแอปที่รองรับ RAW") }
             }
         }
-        if (s.ai != null) {
-            chip(if (s.output.rawOnly) "ตัวอย่าง RAW" else "ต้นฉบับ", !useAi) { useAi = false; showDetail(s) }
-            chip("ภาพ AI", useAi, Icons.AI) { useAi = true; showDetail(s) }
+        if (s.ai != null && useAi) {
+            // One compare button: hold to see the original over the AI picture, release to return. No reload, no flicker.
+            inspect.setCompare(s.uri)
+            val compare = FrameLayout(this).apply { background = glass(24, 0x1affffff); isClickable = true; contentDescription = "กดค้างเพื่อดูต้นฉบับ"
+                addView(IconView(this@GalleryActivity, "M12 3v18 M4 6h5v12H4z M15 6h5v12h-5z").apply { tint = Color.WHITE }, FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER))
+                setOnTouchListener { v, e -> when (e.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> { Glass.tick(v); inspect.holdCompare(true); status.text = "ต้นฉบับ   ·   ${pixelsText(s.size.pixels)}"; v.isPressed = true }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { inspect.holdCompare(false); status.text = "AI ${s.aiModel}   ·   ${pixelsText(s.aiSize.pixels)}"; v.isPressed = false; if (e.actionMasked == MotionEvent.ACTION_UP) v.performClick() }
+                }; true }
+                setOnClickListener { } }
+            toggle.addView(compare, LinearLayout.LayoutParams(dp(48), dp(48)).apply { setMargins(dp(4), 0, dp(4), 0) })
         }
         if (s.stage !in setOf(Stage.RUNNING,Stage.QUEUED,Stage.CAPTURING)) {
             chip(if (s.ai != null) "ปรับ AI ใหม่" else "ปรับด้วย AI",false,Icons.AI) { EnhanceUi.show(this,s) }

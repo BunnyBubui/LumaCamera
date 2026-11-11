@@ -220,22 +220,47 @@ class VideoActivity:ComponentActivity(){
         val i=info()?:return
         if(slow&&Recorder.getHighSpeedVideoCapabilities(i)==null){Capabilities.show(this);return}
         studioSheet("วิดีโอ"){box,d->
-            fun choose(title:String,items:List<String>,action:(Int)->Unit){box.addView(pill(title){AlertDialog.Builder(this).setTitle(title).setItems(items.toTypedArray()){_,n->action(n);d.dismiss();bind()}.setNegativeButton("ปิด",null).show()},-1,-2)}
+            // Same look as photo quick settings: a grid of icon tiles; a tap opens that setting's choices right below.
+            val grid=android.widget.GridLayout(this).apply{columnCount=3}
+            val choices=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL}
+            var openTitle:String?=null
+            fun tile(title:String,value:String,icon:String,on:Boolean,items:List<String>,selected:Int,pick:(Int)->Unit){
+                val t=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER;background=glass(22,if(on)0x2affffff else 0x14ffffff);minimumHeight=dp(96);setPadding(dp(4),dp(8),dp(4),dp(8));isClickable=true;glassTouch();contentDescription="$title $value"
+                    addView(LinearLayout(this@VideoActivity).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER;tag=IconTurner.TAG
+                        addView(IconView(this@VideoActivity,icon).apply{tint=if(on)Glass.ACCENT else Glass.TEXT2},dp(24),dp(24))
+                        addView(text(title,12f).apply{gravity=Gravity.CENTER;setPadding(0,dp(4),0,0)},-2,-2)
+                        addView(text("$value ▾",11.5f,if(on)Glass.ACCENT else Glass.TEXT2,true).apply{gravity=Gravity.CENTER},-2,-2)},-2,-2)}
+                t.setOnClickListener{
+                    Glass.tick(t);choices.removeAllViews()
+                    if(openTitle==title){openTitle=null;return@setOnClickListener}
+                    openTitle=title
+                    choices.addView(label(title,13f,MUTED).apply{setPadding(dp(6),dp(12),0,dp(6))},-1,-2)
+                    val row=LinearLayout(this).apply{setPadding(dp(2),0,dp(2),0)}
+                    items.forEachIndexed{n,item->row.addView(text(item,13.5f,if(n==selected)Glass.ACCENT else WHITE,n==selected).apply{gravity=Gravity.CENTER;background=glass(20,if(n==selected)0x2affffff else 0x14ffffff);setPadding(dp(14),0,dp(14),0);isClickable=true;glassTouch()
+                        setOnClickListener{Glass.tick(this);pick(n);d.dismiss();bind()}},LinearLayout.LayoutParams(-2,dp(44)).apply{setMargins(dp(4),0,dp(4),0)})}
+                    choices.addView(android.widget.HorizontalScrollView(this).apply{isHorizontalScrollBarEnabled=false;addView(row)},-1,-2)
+                }
+                grid.addView(t,android.widget.GridLayout.LayoutParams(android.widget.GridLayout.spec(android.widget.GridLayout.UNDEFINED),android.widget.GridLayout.spec(android.widget.GridLayout.UNDEFINED,1f)).apply{width=0;setMargins(dp(5),dp(5),dp(5),dp(5))})
+            }
             val candidates=provider?.availableCameraInfos.orEmpty().filter{cam->runCatching{if(slow)Recorder.getHighSpeedVideoCapabilities(cam)?.getSupportedQualities(DynamicRange.SDR)?.isNotEmpty()==true else Recorder.getVideoCapabilities(cam).getSupportedQualities(DynamicRange.SDR).isNotEmpty()}.getOrDefault(false)}
-            choose("กล้อง / เลนส์ · ${Camera2CameraInfo.from(i).cameraId}",candidates.map{"กล้อง ${Camera2CameraInfo.from(it).cameraId} · ${if(it.lensFacing==CameraSelector.LENS_FACING_BACK)"หลัง"else "หน้า"}"}){selectedCameraId=Camera2CameraInfo.from(candidates[it]).cameraId}
+            val currentId=Camera2CameraInfo.from(i).cameraId
+            tile("กล้อง","$currentId",Icons.FLIP,false,candidates.map{"${Camera2CameraInfo.from(it).cameraId} · ${if(it.lensFacing==CameraSelector.LENS_FACING_BACK)"หลัง" else "หน้า"}"},candidates.indexOfFirst{Camera2CameraInfo.from(it).cameraId==currentId}){n->selectedCameraId=Camera2CameraInfo.from(candidates[n]).cameraId}
             val caps=capabilities(i);val qualities=caps.getSupportedQualities(dynamic)
-            choose("ความละเอียด · ${qualityName(quality)}",qualities.map{qualityName(it)}){quality=qualities[it]}
-            val aspects=V_ASPECTS
-            choose("ขนาดภาพ · ${aspectLabel(prefs.getString("video_aspect","auto")?:"auto")}",aspects.map{aspectLabel(it)}){prefs.edit().putString("video_aspect",aspects[it]).apply()}
+            tile("ความละเอียด",qualityName(quality),Icons.RES,quality!=Quality.FHD,qualities.map{qualityName(it)},qualities.indexOf(quality)){n->quality=qualities[n]}
+            val aspects=V_ASPECTS;val aspect=prefs.getString("video_aspect","auto")?:"auto"
+            tile("ขนาดภาพ",aspectLabel(aspect),Icons.FRAME,aspect!="auto",aspects.map{aspectLabel(it)},aspects.indexOf(aspect)){n->prefs.edit().putString("video_aspect",aspects[n]).apply()}
             val frames=offered(i)
-            choose("FPS · $fps",frames.map{rateName(it)}){fps=frames[it].upper}
+            tile("FPS","$fps",Icons.FPS,fps!=30,frames.map{rateName(it)},frames.indexOfFirst{it.upper==fps}){n->fps=frames[n].upper}
             val ranges=listOf(DynamicRange.SDR,DynamicRange.HLG_10_BIT,DynamicRange.HDR10_10_BIT).filter{it in caps.supportedDynamicRanges}
-            if(!slow)choose("SDR / HDR",ranges.map{when(it){DynamicRange.SDR->"SDR 8-bit";DynamicRange.HLG_10_BIT->"HLG10";else->"HDR10"}}){dynamic=ranges[it]}
-            choose("Bitrate · ${bitrate/1_000_000} Mbps",listOf("8 Mbps","20 Mbps","40 Mbps","80 Mbps")){bitrate=listOf(8,20,40,80)[it]*1_000_000}
-            box.addView(label("Codec กล้องเลือกตามโปรไฟล์ · เลือก H.264/HEVC ได้ตอนส่งออกคลิป",13f,MUTED),-1,-2)
-            if(!slow&&caps.isStabilizationSupported)choose("กันสั่น EIS · $stabilization",listOf("ปิด","เปิด")){stabilization=it==1;prefs.edit().putBoolean("video_eis",stabilization).apply()}
-            if(!slow)choose("ไมโครโฟน · ${if(mic)"เปิด" else "ปิด"}",listOf("ปิดไมค์","บันทึกเสียง")){mic=it==1;prefs.edit().putBoolean("video_mic",mic).apply()}
-            if(!slow)box.addView(pill("คืนค่าชุดพื้นฐาน 1080p30 SDR"){dynamic=DynamicRange.SDR;fps=30;quality=Quality.FHD;hevc=false;stabilization=false;d.dismiss();bind()},-1,-2)
+            fun rangeName(r:DynamicRange)=when(r){DynamicRange.SDR->"SDR";DynamicRange.HLG_10_BIT->"HLG10";else->"HDR10"}
+            if(!slow)tile("ช่วงไดนามิก",rangeName(dynamic),Icons.HDR,dynamic!=DynamicRange.SDR,ranges.map{rangeName(it)},ranges.indexOf(dynamic)){n->dynamic=ranges[n]}
+            val rates=listOf(8,20,40,80)
+            tile("Bitrate","${bitrate/1_000_000}M",Icons.FILE,bitrate!=20_000_000,rates.map{"$it Mbps"},rates.indexOf(bitrate/1_000_000)){n->bitrate=rates[n]*1_000_000}
+            if(!slow&&caps.isStabilizationSupported)tile("กันสั่น",if(stabilization)"เปิด" else "ปิด",Icons.STAB,stabilization,listOf("ปิด","เปิด"),if(stabilization)1 else 0){n->stabilization=n==1;prefs.edit().putBoolean("video_eis",stabilization).apply()}
+            if(!slow)tile("ไมค์",if(mic)"เปิด" else "ปิด",Icons.MIC,!mic,listOf("ปิดไมค์","บันทึกเสียง"),if(mic)1 else 0){n->mic=n==1;prefs.edit().putBoolean("video_mic",mic).apply()}
+            if(!slow)tile("คืนค่า","1080p30",Icons.RESET,false,listOf("คืนค่า 1080p · 30 · SDR"),-1){dynamic=DynamicRange.SDR;fps=30;quality=Quality.FHD;hevc=false;stabilization=false}
+            box.addView(grid,-1,-2);box.addView(choices,-1,-2)
+            box.post{turnNow()}
         }
     }
     private fun startRecording(){

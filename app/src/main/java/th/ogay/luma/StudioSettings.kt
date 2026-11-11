@@ -121,6 +121,7 @@ fun Activity.showStudioSettings(rawAvailable: Boolean, changed: () -> Unit) {
     choose("ครอปจากเลนส์", Icons.SEARCH, "crop_from", listOf("ปิด", "เลนส์หลัก 1×", "เลนส์ 2×", "เลนส์เทเล 3.5×"), listOf("0", "1", "2", "3.5"), if (prefs.getBoolean("software", false)) "1" else "0", listOf("สลับเลนส์ตามระยะซูม", "ซูมด้วยการครอปจากเลนส์หลัก", "ครอปจากระยะ 2×", "ครอปจากระยะ 3.5×"))
     section("หน้าจอกล้อง")
     toggle("ปุ่มซูม", Icons.SEARCH, "show_zoom", true)
+    toggle("สแกน QR อัตโนมัติ", Icons.SEARCH, "qr_scan", true, "หันกล้องไปที่ QR ในโหมดภาพถ่าย แล้วแตะเพื่อเปิด")
     toggle("ปุ่มปรับแต่งภาพ", Icons.FILM, "show_look", true)
     toggle("ไอคอนสถานะด้านบน", Icons.INFO, "show_status", true)
     section("ตั้งค่ารายโหมด")
