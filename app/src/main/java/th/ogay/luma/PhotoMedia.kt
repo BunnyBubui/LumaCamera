@@ -50,6 +50,7 @@ object PhotoMedia {
         val resolver = context.contentResolver
         val existing = lookup(context, name)
         if (existing != null && !existing.pending) return existing.uri
+        if (mime == "image/jpeg") brand(file)
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, name)
             put(MediaStore.Images.Media.MIME_TYPE, mime)
@@ -83,6 +84,16 @@ object PhotoMedia {
         @Suppress("DEPRECATION")
         values.put(MediaStore.Images.Media.DATA, target.absolutePath)
         return resolver.insert(collection, values) ?: throw IOException("เพิ่มรูปในแกลเลอรีไม่ได้")
+    }
+
+    /** Every saved photo names the camera as Lumora Camera (the phone stays in Make and in the lens model). */
+    fun brand(file: File) = runCatching {
+        ExifInterface(file).apply {
+            if (getAttribute(ExifInterface.TAG_MAKE).isNullOrBlank()) setAttribute(ExifInterface.TAG_MAKE, android.os.Build.MANUFACTURER)
+            setAttribute(ExifInterface.TAG_MODEL, ExifCarry.MODEL)
+            if (getAttribute(ExifInterface.TAG_SOFTWARE).isNullOrBlank()) setAttribute(ExifInterface.TAG_SOFTWARE, "Lumora Camera")
+            saveAttributes()
+        }
     }
 
     fun tag(file: File, degrees: Int, originalTime: String? = null, ai: Boolean = false, version: String = MODEL_VERSION) {

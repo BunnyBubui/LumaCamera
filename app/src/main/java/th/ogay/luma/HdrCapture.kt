@@ -27,7 +27,7 @@ class HdrCapture(private val c:Context,private val camera:Camera,private val cap
     /** Frames are decoded while the next one is being shot, so the merge starts with them ready. */
     private val decoder=java.util.concurrent.Executors.newSingleThreadExecutor()
     private val decoded=java.util.concurrent.ConcurrentHashMap<Int,java.util.concurrent.Future<Bitmap>>()
-    private val target:Long by lazy{val r=Runtime.getRuntime();val available=r.maxMemory()-(r.totalMemory()-r.freeMemory());minOf(3_000_000L,maxOf(320_000L,available/120))}
+    private val target:Long by lazy{val r=Runtime.getRuntime();val available=r.maxMemory()-(r.totalMemory()-r.freeMemory());(available/40).coerceIn(1_000_000L,8_000_000L)}
     /** Gallery label of the engine that actually produced the file. */
     var label="HDR EF1 · Exposure fusion SDR";private set
     val requestedFrames get()=levels.size
@@ -85,6 +85,7 @@ class HdrCapture(private val c:Context,private val camera:Camera,private val cap
             }catch(e:java.util.concurrent.CancellationException){throw e}catch(e:Throwable){note=", EF2 failed: ${e.javaClass.simpleName}";ef1()}
             label=if(engine=="EF2")"HDR EF2 · OpenCV fusion + local tone SDR" else "HDR EF1 · Exposure fusion SDR"
             val file=File(folder,"hdr-result.jpg");try{PhotoEffects.write(result,file)}finally{result.recycle()}
+            ExifCarry.copy(files.first(),file)
             PhotoMedia.tag(file,0,ExifInterface(files.first()).getAttribute(ExifInterface.TAG_DATETIME_ORIGINAL))
             val software=if(engine=="EF2")"Lumora HDR EF2 · OpenCV Mertens + L* detail SDR" else "Lumora HDR EF1 · exposure fusion SDR"
             ExifInterface(file).apply{setAttribute(ExifInterface.TAG_SOFTWARE,software);setAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION,"HDR $engine: captured ${files.size}/${levels.size}, aligned $usedFrames, EV ${if(measured)"EXIF exposure×ISO" else "requested compensation"}$note");saveAttributes()}

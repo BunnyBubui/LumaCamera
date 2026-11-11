@@ -328,11 +328,11 @@ class CameraActivity : ComponentActivity() {
         mask.addView(frozen, -1, -1)
         if (!previewObserved) { previewObserved = true; preview.previewStreamState.observe(this) { if (it == PreviewView.StreamState.STREAMING) unfreeze() } }
 
-        expRail = EdgeRail(this, false); stage.addView(expRail, FrameLayout.LayoutParams(dp(150), -1, Gravity.START))
-        focusRail = EdgeRail(this, true); stage.addView(focusRail, FrameLayout.LayoutParams(dp(170), -1, Gravity.END))
+        expRail = EdgeRail(this, false); stage.addView(expRail, FrameLayout.LayoutParams(dp(150), -1, Gravity.START).apply { bottomMargin = dp(136) })
+        focusRail = EdgeRail(this, true); stage.addView(focusRail, FrameLayout.LayoutParams(dp(170), -1, Gravity.END).apply { bottomMargin = dp(136) })
         lockIcon = IconView(this, Icons.UNLOCK, 2f)
         lockButton = glassButton(lockIcon, 48, "ล็อกความสว่าง") { toggleAeLock() }.apply { alpha = 0f; visibility = View.GONE }
-        stage.addView(lockButton, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.START or Gravity.CENTER_VERTICAL).apply { leftMargin = dp(8); topMargin = dp(150) })
+        stage.addView(lockButton, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.START or Gravity.BOTTOM).apply { leftMargin = dp(8); bottomMargin = dp(140) })
 
         statusRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL or Gravity.END; contentDescription = "สิ่งที่เปิดอยู่"; minimumWidth = dp(48); isClickable = true; setOnClickListener { openPanel() } }
         stage.addView(statusRow, FrameLayout.LayoutParams(-2, dp(48), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(6), dp(12), 0) })
@@ -1311,7 +1311,7 @@ class CameraActivity : ComponentActivity() {
                 .setResolutionSelector(framing.setResolutionStrategy(ResolutionStrategy(Size(4000,3000),ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER)).build())
                 .setTargetRotation(targetRotation)
             if(mode==PhotoMode.HIRES)builder.setResolutionSelector(ResolutionSelector.Builder().setAllowedResolutionMode(ResolutionSelector.PREFER_HIGHER_RESOLUTION_OVER_CAPTURE_RATE).setResolutionStrategy(ResolutionStrategy.HIGHEST_AVAILABLE_STRATEGY).build())
-            if (output.needsRaw && rawAvailable) builder.setOutputFormat(ImageCapture.OUTPUT_FORMAT_RAW_JPEG)
+            // RAW is taken by RawStill (Camera2); the CameraX capture stays JPEG.
             Camera2Interop.Extender(builder).setSessionCaptureCallback(frames)
             val useCase=builder.build()
             camera?.cameraInfo?.zoomState?.removeObservers(this)
@@ -1569,6 +1569,11 @@ class CameraActivity : ComponentActivity() {
             val current=camera?.let{runCatching{Camera2CameraInfo.from(it.cameraInfo).cameraId}.getOrNull()}
             HiResShot.find(this,current,rear)?.let{(id,size)->if(size.width.toLong()*size.height>20_000_000L){takeHiRes(id,size);return}}
         }
+        // RAW goes through Camera2: CameraX's RAW+JPEG fails on this phone with "unsupported format".
+        if (output.needsRaw) {
+            val current=camera?.let{runCatching{Camera2CameraInfo.from(it.cameraInfo).cameraId}.getOrNull()}
+            if (current != null) { takeRaw(current); return }
+        }
         if (output.needsRaw || output.enhance || (nightOn && mode == PhotoMode.PHOTO) || (mode == PhotoMode.NIGHT && !activeExtension)) {
             takeBurst()
             return
@@ -1596,7 +1601,7 @@ class CameraActivity : ComponentActivity() {
                         }
                     } finally { image.close() }
                     val frame=frames?.forTimestamp(ts)
-                    val original=if(useSoftware && cropBy>1f) { PhotoMedia.crop(full,cropBy,cut);cut } else full
+                    val original=if(useSoftware && cropBy>1f) { PhotoMedia.crop(full,cropBy,cut);ExifCarry.copy(full,cut);cut } else full
                     val date=SimpleDateFormat("yyyy:MM:dd HH:mm:ss",Locale.US).format(Date(time))
                     PhotoMedia.tag(original,rot,date)
                     if(photoMode==PhotoMode.PORTRAIT&&!nativeEffect){
@@ -1658,6 +1663,28 @@ class CameraActivity : ComponentActivity() {
                     message="บันทึกเต็มเซนเซอร์ ${dims.w}×${dims.h} · ${pixelsText(dims.pixels)}"
                 }catch(e:Throwable){hiResFailed=true;message="ถ่ายเต็มเซนเซอร์ไม่สำเร็จ · ${e.localizedMessage} · ครั้งต่อไปใช้ขนาดปกติ"}
                 finally{file.delete()}
+                runOnUiThread{pendingBind=true};complete(message)
+            }
+        }
+    }
+    private fun takeRaw(cameraId:String){
+        busy=true;refresh();captureFeedback()
+        val time=System.currentTimeMillis();val id=UUID.randomUUID().toString();val isRear=rear;val zoom=ratio;val rotation=targetRotation
+        val dng=File(cacheDir,"raw-$id.dng");val jpg=File(cacheDir,"raw-$id.jpg")
+        val lens=LensMeta.describe(this,cameraId,null,zoom,minOf(zoom,hardwareMax()),isRear)
+        freezeFrame();provider?.unbindAll();capture=null;boundKey=null
+        RawStill.capture(applicationContext,cameraId,rotation,isRear,minOf(zoom,hardwareMax()),dng,jpg){error->
+            luma.fileIo.execute{
+                var message="บันทึก RAW + JPEG แล้ว"
+                try{
+                    if(error!=null)throw error
+                    PhotoMedia.publish(this,dng,"LUMA_${time}_${id}.dng",time,"image/x-adobe-dng")
+                    LensMeta.stamp(jpg,lens);PhotoEffects.decorate(this,jpg,isRear)
+                    val dims=PhotoMedia.dimensions(jpg)
+                    val uri=PhotoMedia.publish(this,jpg,"LUMA_${time}_${id}.jpg",time)
+                    luma.shots.insert(Shot(id,time,uri,dims,zoom,isRear,cameraId,null,Decision.OFF,Stage.ORIGINAL,null,0,null,false))
+                }catch(e:Throwable){message="ถ่าย RAW ไม่สำเร็จ · ${e.localizedMessage}"}
+                finally{dng.delete();jpg.delete()}
                 runOnUiThread{pendingBind=true};complete(message)
             }
         }

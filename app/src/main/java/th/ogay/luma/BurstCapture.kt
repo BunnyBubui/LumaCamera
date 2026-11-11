@@ -161,6 +161,7 @@ class BurstCapture(
             if (softwareCrop && zoom > 1f) {
                 val cropped = File(folder, "cropped.part")
                 PhotoMedia.crop(incoming, zoom, cropped)
+                ExifCarry.copy(incoming, cropped)
                 val degrees = androidx.exifinterface.media.ExifInterface(incoming).rotationDegrees
                 PhotoMedia.tag(cropped, degrees)
                 check(cropped.renameTo(complete)) { "บันทึกเฟรมครอปไม่ได้" }

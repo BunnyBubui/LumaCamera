@@ -37,6 +37,8 @@ object PhotoEffects {
         try{out.outputStream().use{check(b.compress(fmt,quality.coerceIn(60,100),it))}}finally{b.recycle()};return out
     }
     fun write(bitmap:Bitmap,file:File,quality:Int=95){file.outputStream().use{check(bitmap.compress(Bitmap.CompressFormat.JPEG,quality,it))}}
+    /** Re-encodes [file] in place but keeps the camera's EXIF (exposure, ISO, lens, time, GPS), which a plain compress drops. */
+    fun rewrite(bitmap:Bitmap,file:File,quality:Int=95){val kept=ExifCarry.read(file);write(bitmap,file,quality);ExifCarry.write(file,kept)}
     fun decorate(c:Context,file:File,rear:Boolean){
         val p=c.getSharedPreferences("camera",0);val aspect=p.getString("aspect","4:3")!!
         val mirror=!rear&&p.getBoolean("mirror_selfie",false);val watermark=p.getBoolean("watermark",false)
@@ -52,7 +54,7 @@ object PhotoEffects {
             canvas.drawBitmap(cropped,0f,0f,null);if(mirror)canvas.restore()
             if(look!=null){val styled=Films.render(image,look.first,look.second);canvas.drawBitmap(styled,0f,0f,null);styled.recycle()}
             if(watermark){val paint=Paint(Paint.ANTI_ALIAS_FLAG).apply{color=Color.WHITE;textSize=w*0.026f;setShadowLayer(3f,0f,1f,Color.BLACK)};canvas.drawText(p.getString("watermark_name","Lumora")+"  ·  "+java.text.SimpleDateFormat("yyyy.MM.dd HH:mm",java.util.Locale.US).format(java.util.Date()),w*0.04f,h*0.96f,paint)}
-            write(image,file,p.getString("jpeg_quality","95")!!.toInt());image.recycle();if(cropped!==source)cropped.recycle();source.recycle();PhotoMedia.tag(file,0)
+            rewrite(image,file,p.getString("jpeg_quality","95")!!.toInt());image.recycle();if(cropped!==source)cropped.recycle();source.recycle();PhotoMedia.tag(file,0)
         }
         if(p.getBoolean("gps",false)&&ContextCompat.checkSelfPermission(c,Manifest.permission.ACCESS_COARSE_LOCATION)==PackageManager.PERMISSION_GRANTED){
             runCatching{val manager=c.getSystemService(Context.LOCATION_SERVICE) as LocationManager;val location=manager.getProviders(true).mapNotNull{manager.getLastKnownLocation(it)}.maxByOrNull{it.time};if(location!=null&&System.currentTimeMillis()-location.time<15*60*1000)ExifInterface(file).apply{setGpsInfo(location);saveAttributes()}}
@@ -61,15 +63,15 @@ object PhotoEffects {
     /** [aperture] sets the simulated blur: f/1.4 ≈ the old fixed strength, f/16 almost none. */
     fun portrait(file:File,aperture:Float=2.8f){
         check(OpenCVLoader.initLocal()){ "เปิดระบบภาพ Portrait ไม่สำเร็จ" }
-        val image=read(file);val processor=Segmentation.getClient(SelfieSegmenterOptions.Builder().setDetectorMode(SelfieSegmenterOptions.SINGLE_IMAGE_MODE).build())
+        val image=read(file,8_000_000);val processor=Segmentation.getClient(SelfieSegmenterOptions.Builder().setDetectorMode(SelfieSegmenterOptions.SINGLE_IMAGE_MODE).build())
         try{
             val mask=Tasks.await(processor.process(InputImage.fromBitmap(image,0)),30,TimeUnit.SECONDS)
-            val source=Mat();val blurred=Mat();Utils.bitmapToMat(image,source);Imgproc.GaussianBlur(source,blurred,Size(0.0,0.0),(22.0*1.4/aperture.coerceIn(1f,22f)).coerceIn(1.0,26.0))
+            val source=Mat();val blurred=Mat();Utils.bitmapToMat(image,source);Imgproc.GaussianBlur(source,blurred,Size(0.0,0.0),(22.0*1.4/aperture.coerceIn(1f,22f)*image.width/2000.0).coerceIn(1.0,60.0))
             val background=Bitmap.createBitmap(image.width,image.height,Bitmap.Config.ARGB_8888);Utils.matToBitmap(blurred,background);source.release();blurred.release()
             val a=IntArray(image.width*image.height);val b=IntArray(a.size);image.getPixels(a,0,image.width,0,0,image.width,image.height);background.getPixels(b,0,image.width,0,0,image.width,image.height)
             val confidence=mask.buffer;confidence.rewind();val weights=FloatArray(mask.width*mask.height);confidence.asFloatBuffer().get(weights)
             for(y in 0 until image.height)for(x in 0 until image.width){val i=y*image.width+x;val f=((weights[(y*mask.height/image.height)*mask.width+x*mask.width/image.width]-0.15f)/0.7f).coerceIn(0f,1f);var color=0xff000000.toInt();for(shift in intArrayOf(16,8,0)){val v=(((a[i] ushr shift)and 255)*f+((b[i] ushr shift)and 255)*(1-f)).toInt();color=color or(v shl shift)};a[i]=color}
-            image.setPixels(a,0,image.width,0,0,image.width,image.height);write(image,file);PhotoMedia.tag(file,0);ExifInterface(file).apply{setAttribute(ExifInterface.TAG_SOFTWARE,"Lumora Portrait · simulated f/$aperture · ML Kit selfie segmentation beta");saveAttributes()};background.recycle()
+            image.setPixels(a,0,image.width,0,0,image.width,image.height);rewrite(image,file);PhotoMedia.tag(file,0);ExifInterface(file).apply{setAttribute(ExifInterface.TAG_SOFTWARE,"Lumora Portrait · simulated f/$aperture · ML Kit selfie segmentation beta");saveAttributes()};background.recycle()
         }finally{processor.close();image.recycle()}
     }
 }
