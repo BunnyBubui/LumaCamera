@@ -88,7 +88,7 @@ class InspectView(context: Context) : View(context) {
     fun show(uri:Uri,placeholder:Bitmap?){
         if(source==uri){pageX=0f;invalidate();return}
         show(uri);stale?.free();stale=null
-        if(placeholder!=null&&!placeholder.isRecycled&&width>0&&height>0){aspect=placeholder.width.toFloat()/placeholder.height;val f=box(width,height,aspect,1f,0.5f,0.5f);base=Tile(placeholder,RectF(f),RectF(f),false);tile=base}
+        if(placeholder!=null&&!placeholder.isRecycled&&width>0&&height>0){aspect=placeholder.width.toFloat()/placeholder.height;val f=box(width,height,aspect,1f,0.5f,0.5f);base=Tile(placeholder,RectF(f),RectF(f),false);tile=base;glowFrom(placeholder)}
         pageAnim?.cancel();pageX=0f;invalidate()
     }
     /** No picture that way: back to rest. */
@@ -112,7 +112,7 @@ class InspectView(context: Context) : View(context) {
                 val rect=box(width,height,aspect,zoom,cx,cy);cx-=vx*tau*step/rect.width();cy-=vy*tau*step/rect.height();clamp();change()}
             start()}
     }
-    init { setBackgroundColor(0xff05070f.toInt()); contentDescription="ภาพถ่าย บีบเพื่อซูม ลากเพื่อเลื่อน หรือแตะสองครั้ง" }
+    init { contentDescription="ภาพถ่าย บีบเพื่อซูม ลากเพื่อเลื่อน หรือแตะสองครั้ง" }
     private fun box(w:Int,h:Int,ratio:Float,z:Float,x:Float,y:Float):RectF {
         val sw=minOf(w.toFloat(),h*ratio)*z
         val sh=sw/ratio
@@ -128,6 +128,7 @@ class InspectView(context: Context) : View(context) {
         scale.onTouchEvent(e)
         // At fit-to-screen a sideways drag moves the picture with the finger; letting go past a fifth of the width (or a flick) turns the page.
         if(e.actionMasked==MotionEvent.ACTION_DOWN)motion?.cancel()
+        if(zoom<=1.05f&&onDismiss!=null&&!paging&&dismissTouch(e))return true
         if(zoom<=1.05f&&onSwipe!=null) when(e.actionMasked){
             MotionEvent.ACTION_DOWN->{dragX0=e.rawX-pageX;dragY0=e.rawY;paging=pageAnim?.isRunning==true;pageAnim?.cancel();tracker?.recycle();tracker=android.view.VelocityTracker.obtain()}
             MotionEvent.ACTION_POINTER_DOWN->if(paging){paging=false;stay()}
@@ -207,7 +208,7 @@ class InspectView(context: Context) : View(context) {
                 working=false
                 if(!dead && uri==source) {
                     // A tile decoded for an older position is still used: it is drawn mapped to where the picture is now.
-                    if(next!=null){aspect=ratio;tile?.takeIf{it!==base}?.free();tile=next;if(base==null&&z<=1.001f)base=next;stale?.free();stale=null;invalidate()}
+                    if(next!=null){aspect=ratio;tile?.takeIf{it!==base}?.free();tile=next;if(base==null&&z<=1.001f){base=next;glowFrom(next.image)};stale?.free();stale=null;invalidate()}
                     else if(job==version&&tile==null) context.notice("เปิดภาพไม่ได้ อาจถูกลบออกจากแกลเลอรี")
                 } else next?.image?.recycle()
                 if(job!=version) schedule()
@@ -240,16 +241,83 @@ class InspectView(context: Context) : View(context) {
         otherAnim=android.animation.ValueAnimator.ofFloat(otherShown,if(on)1f else 0f).apply{duration=140;addUpdateListener{otherShown=it.animatedValue as Float;invalidate()};start()}
     }
     private val fade=Paint();private val fadeBottom=Paint();private val placed=RectF()
+    /** Heights of the shades under the floating bars (set by the gallery from its bar sizes). */
+    var shadeTop=110*context.resources.displayMetrics.density
+    var shadeBottom=170*context.resources.displayMetrics.density
+    private val bgPaint=Paint().apply{color=0xff05070f.toInt()}
+    // ---- Reflection: a tiny copy of the picture, stretched (which blurs it) and mirrored past each edge.
+    private var glow:Bitmap?=null
+    private val glowPaint=Paint(Paint.FILTER_BITMAP_FLAG).apply{colorFilter=ColorMatrixColorFilter(ColorMatrix().apply{setSaturation(1.15f);postConcat(ColorMatrix().apply{setScale(0.5f,0.5f,0.5f,1f)})})}
+    private fun glowFrom(b:Bitmap){
+        if(b.isRecycled||b.width<=0)return
+        val w=24;val h=(24f*b.height/b.width).toInt().coerceIn(4,96)
+        val small=runCatching{Bitmap.createScaledBitmap(b,w,h,true)}.getOrNull()?:return
+        // Scaled down twice more and back up: a cheap blur that keeps only the broad colours.
+        val tiny=runCatching{Bitmap.createScaledBitmap(small,(w/3).coerceAtLeast(2),(h/3).coerceAtLeast(2),true)}.getOrNull()
+        val soft=tiny?.let{runCatching{Bitmap.createScaledBitmap(it,w,h,true)}.getOrNull()}?:small
+        if(soft!==small)small.recycle();if(tiny!=null&&tiny!==soft)tiny.recycle()
+        glow?.recycle();glow=soft
+    }
+    private fun reflect(c:Canvas,r:RectF){
+        val g=glow?:return;if(g.isRecycled||r.width()<=0f)return
+        glowPaint.alpha=(255*(1f-dismissShown)).toInt()
+        val reach=maxOf(height.toFloat(),width.toFloat())
+        if(r.top>0.5f){c.save();c.clipRect(0f,0f,width.toFloat(),r.top);c.scale(1f,-1f,0f,r.top);c.drawBitmap(g,null,RectF(r.left-reach,r.top,r.right+reach,r.bottom),glowPaint);c.restore()}
+        if(r.bottom<height-0.5f){c.save();c.clipRect(0f,r.bottom,width.toFloat(),height.toFloat());c.scale(1f,-1f,0f,r.bottom);c.drawBitmap(g,null,RectF(r.left-reach,r.top,r.right+reach,r.bottom),glowPaint);c.restore()}
+        if(r.left>0.5f){c.save();c.clipRect(0f,r.top,r.left,r.bottom);c.scale(-1f,1f,r.left,0f);c.drawBitmap(g,null,r,glowPaint);c.restore()}
+        if(r.right<width-0.5f){c.save();c.clipRect(r.right,r.top,width.toFloat(),r.bottom);c.scale(-1f,1f,r.right,0f);c.drawBitmap(g,null,r,glowPaint);c.restore()}
+    }
+    // ---- Swipe down at fit-to-screen to close the photo, following the finger and springing back if let go early.
+    /** Called once the picture has been flicked away (the gallery goes back to the grid). */
+    var onDismiss:(()->Unit)?=null
+    /** 0..1 while dragging down, for fading the bars. */
+    var onDismissDrag:((Float)->Unit)?=null
+    private var dismissY=0f;private var dismissing=false;private var dY0=0f;private var dX0=0f;private var dTracker:android.view.VelocityTracker?=null
+    private var dismissAnim:android.animation.ValueAnimator?=null
+    private val dismissShown get()=(dismissY/(height.coerceAtLeast(1)*0.5f)).coerceIn(0f,1f)
+    private fun setDismiss(y:Float){dismissY=y;onDismissDrag?.invoke(dismissShown);invalidate()}
+    private fun dismissTouch(e:MotionEvent):Boolean{
+        when(e.actionMasked){
+            MotionEvent.ACTION_DOWN->{dismissing=false;dY0=e.rawY;dX0=e.rawX;dTracker?.recycle();dTracker=android.view.VelocityTracker.obtain();dismissAnim?.cancel()}
+            MotionEvent.ACTION_POINTER_DOWN->if(dismissing){dismissing=false;settleDismiss(false)}
+            MotionEvent.ACTION_MOVE->{
+                if(e.pointerCount>1||scale.isInProgress)return dismissing
+                val dy=e.rawY-dY0;val dx=e.rawX-dX0
+                if(!dismissing&&dy>slop*1.5f&&dy>kotlin.math.abs(dx)*1.4f){dismissing=true;dY0=e.rawY;parent?.requestDisallowInterceptTouchEvent(true)}
+                if(dismissing){val m=MotionEvent.obtain(e);m.setLocation(e.rawX,e.rawY);dTracker?.addMovement(m);m.recycle()
+                    val d=e.rawY-dY0;setDismiss(if(d>0)d else d*0.25f);return true}
+            }
+            MotionEvent.ACTION_UP,MotionEvent.ACTION_CANCEL->if(dismissing){
+                dismissing=false;dTracker?.computeCurrentVelocity(1000);val vy=dTracker?.yVelocity?:0f;dTracker?.recycle();dTracker=null
+                settleDismiss(e.actionMasked==MotionEvent.ACTION_UP&&(dismissY>height*0.16f||vy>900*resources.displayMetrics.density/3f*2f)&&vy>-200);return true}
+        }
+        return dismissing
+    }
+    private fun settleDismiss(go:Boolean){
+        dismissAnim?.cancel()
+        if(go){
+            th.ogay.luma.Glass.tick(this)
+            dismissAnim=android.animation.ValueAnimator.ofFloat(dismissY,height*0.55f).apply{duration=220;interpolator=th.ogay.luma.Glass.EASE
+                addUpdateListener{setDismiss(it.animatedValue as Float)}
+                addListener(object:android.animation.AnimatorListenerAdapter(){override fun onAnimationEnd(a:android.animation.Animator){onDismiss?.invoke()}})
+                start()}
+        } else dismissAnim=android.animation.ValueAnimator.ofFloat(dismissY,0f).apply{duration=420;interpolator=th.ogay.luma.Glass.SPRING
+            addUpdateListener{setDismiss(it.animatedValue as Float)};start()}
+    }
     private fun place(t:Tile,cur:RectF):RectF{val k=cur.width()/t.frame.width().coerceAtLeast(1f)
         placed.set(cur.left+(t.area.left-t.frame.left)*k,cur.top+(t.area.top-t.frame.top)*k,cur.left+(t.area.right-t.frame.left)*k,cur.top+(t.area.bottom-t.frame.top)*k);return placed}
     override fun onSizeChanged(w:Int,h:Int,oldw:Int,oldh:Int){super.onSizeChanged(w,h,oldw,oldh)
-        val e=30*resources.displayMetrics.density;val bg=th.ogay.luma.Glass.NAVY_DEEP;val clear=bg and 0x00ffffff
-        fade.shader=android.graphics.LinearGradient(0f,0f,0f,e,bg,clear,android.graphics.Shader.TileMode.CLAMP)
-        fadeBottom.shader=android.graphics.LinearGradient(0f,h-e,0f,h.toFloat(),clear,bg,android.graphics.Shader.TileMode.CLAMP)
+        fade.shader=android.graphics.LinearGradient(0f,0f,0f,shadeTop,0x8c000000.toInt(),0,android.graphics.Shader.TileMode.CLAMP)
+        fadeBottom.shader=android.graphics.LinearGradient(0f,h-shadeBottom,0f,h.toFloat(),0,0xa6000000.toInt(),android.graphics.Shader.TileMode.CLAMP)
         change()}
     /** Draws what is already decoded at the current zoom and position straight away; sharper pixels replace it when they arrive. */
-    override fun onDraw(c:Canvas){super.onDraw(c)
+    override fun onDraw(c:Canvas){
+        bgPaint.alpha=(255*(1f-0.75f*dismissShown)).toInt();c.drawRect(0f,0f,width.toFloat(),height.toFloat(),bgPaint)
+        super.onDraw(c)
         val cur=box(width,height,aspect,zoom,cx,cy)
+        if(dismissY!=0f){val k=1f-0.35f*dismissShown;c.save();c.translate(0f,dismissY*0.85f);c.scale(k,k,width/2f,cur.centerY())}
+        // Around the picture, a soft blurred mirror of its own edges, so it never ends in a hard cut.
+        if(pageX==0f&&zoom<=1.05f)reflect(c,cur)
         if(pageX!=0f){
             // Page turn: this picture and its neighbour move together, like two prints side by side.
             val dir=if(pageX<0)1 else -1
@@ -261,7 +329,9 @@ class InspectView(context: Context) : View(context) {
         tile?.let{if(!it.image.isRecycled)c.drawBitmap(it.image,null,place(it,cur),paint)}
         other?.let{o->if(otherShown>0f){otherPaint.alpha=(255*otherShown).toInt();c.drawBitmap(o,null,cur,otherPaint)}}
         if(pageX!=0f)c.restore()
-        val e=30*resources.displayMetrics.density
-        c.drawRect(0f,0f,width.toFloat(),e,fade);c.drawRect(0f,height-e,width.toFloat(),height.toFloat(),fadeBottom)}
-    override fun onDetachedFromWindow(){dead=true;motion?.cancel();pageAnim?.cancel();otherAnim?.cancel();other?.recycle();other=null;runCatching{io.execute{dec?.recycle();dec=null}};io.shutdown();tile?.takeIf{it!==base}?.free();base?.free();stale?.free();stale=null;tile=null;base=null;super.onDetachedFromWindow()}
+        if(dismissY!=0f)c.restore()
+        // Soft shade under the floating top bar and bottom actions, so they read on any picture.
+        if(dismissShown<1f){fade.alpha=(255*(1f-dismissShown)).toInt();fadeBottom.alpha=fade.alpha
+            c.drawRect(0f,0f,width.toFloat(),shadeTop,fade);c.drawRect(0f,height-shadeBottom,width.toFloat(),height.toFloat(),fadeBottom)}}
+    override fun onDetachedFromWindow(){dead=true;glow?.recycle();glow=null;dismissAnim?.cancel();motion?.cancel();pageAnim?.cancel();otherAnim?.cancel();other?.recycle();other=null;runCatching{io.execute{dec?.recycle();dec=null}};io.shutdown();tile?.takeIf{it!==base}?.free();base?.free();stale?.free();stale=null;tile=null;base=null;super.onDetachedFromWindow()}
 }

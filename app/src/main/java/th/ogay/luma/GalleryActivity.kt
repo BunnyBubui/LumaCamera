@@ -40,7 +40,9 @@ import th.ogay.luma.ai.EnhanceUi
  */
 class GalleryActivity : ComponentActivity() {
     /** One grid cell: a Lumora shot, a Lumora video/file from the media ledger, or a device photo/video. */
-    class Item(val key: String, val uri: Uri, val time: Long, val video: Boolean, val name: String, val album: String, val shot: Shot?, val mime: String = "", val note: String = "") {
+    class Item(val key: String, val uri: Uri, val time: Long, val video: Boolean, val name: String, val album: String, val shot: Shot?, val mime: String = "", val note: String = "", val taken: Long = 0L, val size: Long = 0L) {
+        /** When the picture was taken (falls back to when it was added). */
+        val shotAt get() = if (taken > 0) taken else time
         val file get() = shot == null && !video && !mime.startsWith("image/") && mime.isNotEmpty()
     }
     class Album(val name: String, val count: Int, val cover: Item)
@@ -93,9 +95,13 @@ class GalleryActivity : ComponentActivity() {
     private val mediaChange = registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { r ->
         if (r.resultCode == RESULT_OK && pendingForget.isNotEmpty()) { val ids = pendingForget; luma.fileIo.execute { luma.shots.forget(ids) } }
         if (r.resultCode == RESULT_OK) afterGrant?.invoke()
+        if (r.resultCode == RESULT_OK) pendingNext?.let { selected = it.ifEmpty { null }; useAi = false }
+        pendingNext = null
         afterGrant = null; pendingForget = emptyList(); endSelection(); reload()
     }
     private var afterGrant: (() -> Unit)? = null
+    /** After a system delete request: the picture to show next ("" = back to the grid). */
+    private var pendingNext: String? = null
     private lateinit var aiBadge: AiBadge
     private var aiBusy = false; private var aiRunning: String? = null
     /** "shot" or "device" while that viewer is on screen, so a page turn can reuse it instead of rebuilding the page. */
@@ -119,6 +125,11 @@ class GalleryActivity : ComponentActivity() {
         host.addView(aiBadge, FrameLayout.LayoutParams(dp(46), dp(46), Gravity.TOP or Gravity.END).apply { topMargin = dp(76); rightMargin = dp(14) })
         intent.getStringExtra("open")?.let { if (state == null) selected = it }
         installRoot(host)
+        // The photo viewer runs under the status bar (its bars float over the picture); every other page keeps clear of it.
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(host) { v, insets ->
+            val b = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars() or androidx.core.view.WindowInsetsCompat.Type.displayCutout())
+            bars = android.graphics.Rect(b.left, b.top, b.right, b.bottom); padHost(); insets
+        }
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 when {
@@ -258,7 +269,20 @@ class GalleryActivity : ComponentActivity() {
     }
     private fun deleteSelected() { val items = pickedItems(); if (items.isNotEmpty()) confirmDelete(items) }
     /** The app's own question first, in its own look, with the pictures that are about to go. */
+    /** True when this install created the file, so it may move it to the bin without Android asking again. */
+    private fun ownFile(u: Uri): Boolean = Build.VERSION.SDK_INT < 29 || runCatching {
+        contentResolver.query(u, arrayOf(MediaStore.MediaColumns.OWNER_PACKAGE_NAME), null, null, null)?.use { c -> c.moveToFirst() && c.getString(0) == packageName } ?: false
+    }.getOrDefault(false)
     private fun confirmDelete(items: List<Item>) {
+        // Pictures from other apps: Android shows its own "move to bin?" question, so a second one from Lumora is skipped.
+        if (Build.VERSION.SDK_INT >= 30) {
+            luma.readIo.execute {
+                val anyOwn = items.any { it.shot != null || it.key.startsWith("ledger:") || (it.uri.authority == MediaStore.AUTHORITY && ownFile(it.uri)) }
+                runOnUiThread { if (!isDestroyed) { if (anyOwn) askDelete(items) else trash(items) } }
+            }
+        } else askDelete(items)
+    }
+    private fun askDelete(items: List<Item>) {
         GlassDialog.panel(this, if (items.size == 1) "ลบ${if (items[0].video) "วิดีโอ" else "รูป"}นี้ไหม" else "ลบ ${items.size} รายการไหม") { col, d ->
             val row = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(0, dp(8), 0, dp(10)) }
             items.take(3).forEachIndexed { n, item ->
@@ -283,6 +307,10 @@ class GalleryActivity : ComponentActivity() {
         val ids = items.mapNotNull { it.shot?.id }
         if (android.os.Build.VERSION.SDK_INT < 30) { notice("ต้องใช้ Android 11 ขึ้นไป"); return }
         val open = items.any { (it.shot?.id ?: it.key) == selected || it.key == selected }
+        // The viewer stays open on the picture beside the deleted one (the next, or the previous at the end).
+        val gone = items.map { it.key }.toSet()
+        val next = if (!open) null else listOfNotNull(neighbourItem(1), neighbourItem(-1)).firstOrNull { it.key !in gone && !it.file }
+        val nextId = next?.let { it.shot?.id ?: it.key }
         luma.fileIo.execute {
             // Files this install created can go to the bin directly. For any other file Android insists on asking
             // in its own dialog, so only those are handed to the system request.
@@ -290,9 +318,8 @@ class GalleryActivity : ComponentActivity() {
             if (rest.isEmpty()) runCatching { luma.shots.forget(ids) }
             runOnUiThread {
                 if (isDestroyed) return@runOnUiThread
-                if (open) selected = null
-                if (rest.isEmpty()) { endSelection(); notice("ย้ายไปถังขยะแล้ว"); reload() }
-                else if (android.os.Build.VERSION.SDK_INT >= 30) { pendingForget = ids; runCatching { mediaChange.launch(androidx.activity.result.IntentSenderRequest.Builder(MediaStore.createTrashRequest(contentResolver, rest, true).intentSender).build()) }.onFailure { pendingForget = emptyList(); notice("ลบไม่ได้") } }
+                if (rest.isEmpty()) { if (open) { selected = nextId; useAi = false }; endSelection(); notice("ย้ายไปถังขยะแล้ว"); reload() }
+                else if (android.os.Build.VERSION.SDK_INT >= 30) { pendingForget = ids; pendingNext = if (open) (nextId ?: "") else null; runCatching { mediaChange.launch(androidx.activity.result.IntentSenderRequest.Builder(MediaStore.createTrashRequest(contentResolver, rest, true).intentSender).build()) }.onFailure { pendingForget = emptyList(); notice("ลบไม่ได้") } }
             }
         }
     }
@@ -338,13 +365,13 @@ class GalleryActivity : ComponentActivity() {
         val shots = runCatching { luma.shots.all() }.getOrDefault(emptyList())
         val aiUris = shots.mapNotNull { it.ai?.toString() }.toSet(); val byUri = shots.associateBy { it.uri.toString() }
         fun read(base: Uri, video: Boolean) {
-            val cols = arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DATE_ADDED, MediaStore.MediaColumns.DISPLAY_NAME, "bucket_display_name")
+            val cols = arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DATE_ADDED, MediaStore.MediaColumns.DISPLAY_NAME, "bucket_display_name", "datetaken", MediaStore.MediaColumns.SIZE)
             runCatching {
                 contentResolver.query(base, cols, if (favouritesOnly && android.os.Build.VERSION.SDK_INT >= 30) "is_favorite = 1" else null, null, "${MediaStore.MediaColumns.DATE_ADDED} DESC")?.use { c ->
                     while (c.moveToNext() && out.size < 5000) {
                         val uri = ContentUris.withAppendedId(base, c.getLong(0))
                         if (uri.toString() in aiUris) continue
-                        out += Item("device:$uri", uri, c.getLong(1) * 1000, video, c.getString(2) ?: "", c.getString(3) ?: "อื่น ๆ", byUri[uri.toString()])
+                        out += Item("device:$uri", uri, c.getLong(1) * 1000, video, c.getString(2) ?: "", c.getString(3) ?: "อื่น ๆ", byUri[uri.toString()], taken = if (c.isNull(4)) 0L else c.getLong(4), size = if (c.isNull(5)) 0L else c.getLong(5))
                     }
                 }
             }
@@ -373,11 +400,14 @@ class GalleryActivity : ComponentActivity() {
         addView(text(title, 15f, Color.WHITE, true), LinearLayout.LayoutParams(0, -2, 1f))
         addView(text(end, 12.5f, Glass.TEXT2))
     }
-    private val SORTS = listOf("ใหม่ก่อน", "เก่าก่อน", "วิดีโอก่อน", "AI ก่อน")
+    /** Sort orders, as in the phone's own gallery: by date taken, date added, size and name; then video or AI first. */
+    private val SORTS = listOf("วันที่ถ่าย · ใหม่ก่อน", "วันที่ถ่าย · เก่าก่อน", "วันที่เพิ่ม · ใหม่ก่อน", "ขนาดไฟล์ · ใหญ่ก่อน", "ชื่อไฟล์ · ก–ฮ", "วิดีโอก่อน", "AI ก่อน")
+    private val SORT_ICONS = listOf(Icons.CHEVRON_UP, Icons.UPDOWN, Icons.PLUS, Icons.FILE, "M5 18L9 6l4 12 M6.4 14h5.2 M15 6h5l-5 12h5", Icons.VIDEO, Icons.AI)
+    private val SORT_SHORT = listOf("ใหม่ก่อน", "เก่าก่อน", "เพิ่มล่าสุด", "ใหญ่ก่อน", "ชื่อ", "วิดีโอก่อน", "AI ก่อน")
     private val sortMenu by lazy { GlassMenu(host) }
     private var sortOrder: Int
-        get() = prefs.getInt("gallery_sort", 0).coerceIn(0, 3)
-        set(v) { prefs.edit().putInt("gallery_sort", v).apply() }
+        get() = prefs.getInt("gallery_sort2", 0).coerceIn(0, 6)
+        set(v) { prefs.edit().putInt("gallery_sort2", v).apply() }
     private val LUMA_CATS = listOf("ทั้งหมด", "AI", "RAW", "วิดีโอ", "พิเศษ", "ไฟล์")
     private val TRASH = "M5 7h14 M9 7V4h6v3 M7 7l1 13h8l1-13 M10 11v6 M14 11v6"
     private val HEART = "M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"
@@ -393,7 +423,7 @@ class GalleryActivity : ComponentActivity() {
 
     // ---------- Grid ----------
     private fun showGrid(all: List<Item>) {
-        showingId = null; viewerKind = ""; root.removeAllViews()
+        showingId = null; viewerKind = ""; immersive(false); root.removeAllViews()
         val bar = topBar(if (albumKind != null) albumTitle() else "รูปภาพ") { if (albumKind != null) closeAlbum() else finish() }
         val searchBox = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; background = glass(22, 0x40ffffff); setPadding(dp(14), 0, dp(6), 0) }
         val searchIcon = IconView(this, Icons.SEARCH, 2f)
@@ -477,7 +507,8 @@ class GalleryActivity : ComponentActivity() {
         root.addView(column, LinearLayout.LayoutParams(-1, 0, 1f))
         if (albumKind == null) root.addView(bottomNav(), LinearLayout.LayoutParams(-1, dp(60)).apply { setMargins(dp(40), dp(4), dp(40), dp(12)) })
         pageView = if (albumKind == null) column else null; swipeKeep = strip
-        slideIn(column)
+        if (closingViewer) { closingViewer = false; if (!Glass.reduced(this)) { column.alpha = 0f; column.scaleX = 0.96f; column.scaleY = 0.96f; column.animate().alpha(1f).scaleX(1f).scaleY(1f).setInterpolator(Glass.EASE).setDuration(300).start() } }
+        else slideIn(column)
         var shown = all
         val adapter = object : BaseAdapter() {
             override fun getCount() = shown.size
@@ -491,14 +522,17 @@ class GalleryActivity : ComponentActivity() {
             val picked = all.filter(cats[category].second).filter { inAlbum(it) }
                 .filter { q.isEmpty() || q in "${it.name} ${it.album} ${formatTime(it.time)} ${it.note} ${it.shot?.captureNote ?: ""} ${it.shot?.reason?.description ?: ""}".lowercase() }
             shown = when (sortOrder) {
-                1 -> picked.sortedBy { it.time }
-                2 -> picked.sortedWith(compareBy<Item> { !it.video }.thenByDescending { it.time })
-                3 -> picked.sortedWith(compareBy<Item> { it.shot?.ai == null }.thenByDescending { it.time })
-                else -> picked
+                0 -> picked.sortedByDescending { it.shotAt }
+                1 -> picked.sortedBy { it.shotAt }
+                3 -> picked.sortedByDescending { it.size }
+                4 -> picked.sortedBy { it.name.lowercase() }
+                5 -> picked.sortedWith(compareBy<Item> { !it.video }.thenByDescending { it.shotAt })
+                6 -> picked.sortedWith(compareBy<Item> { it.shot?.ai == null }.thenByDescending { it.shotAt })
+                else -> picked.sortedByDescending { it.time }
             }
             adapter.notifyDataSetChanged()
             gridTitle.text = if (albumKind != null) "" else if (device) "รูปและวิดีโอทั้งหมด" else "ถ่ายด้วย Lumora"
-            (gridHead.getChildAt(1) as TextView).text = "${shown.size} รายการ · ${SORTS[sortOrder]} ▾"
+            (gridHead.getChildAt(1) as TextView).text = "${shown.size} รายการ · ${SORT_SHORT[sortOrder]} ▾"
             empty.text = if (all.isEmpty()) (if (device) "ไม่พบรูปหรือวิดีโอในเครื่อง" else "รูปและวิดีโอที่ถ่ายด้วย Lumora จะปรากฏที่นี่") else "ไม่พบรายการที่ตรงกัน"
             empty.visibility = if (shown.isEmpty()) View.VISIBLE else View.GONE
             if (!Glass.reduced(this)) { grid.alpha = 0.4f; grid.scaleX = 0.97f; grid.scaleY = 0.97f; grid.animate().alpha(1f).scaleX(1f).scaleY(1f).setInterpolator(Glass.SPRING).setDuration(360).start() }
@@ -507,7 +541,7 @@ class GalleryActivity : ComponentActivity() {
         // Sort order: a glass dropdown on the count at the right of the grid heading.
         (gridHead.getChildAt(1) as TextView).apply {
             isClickable = true; minHeight = dp(48); gravity = Gravity.CENTER_VERTICAL; setPadding(dp(10), 0, 0, 0); contentDescription = "เรียงลำดับรายการ"
-            setOnClickListener { v -> sortMenu.show(v, "เรียงตาม", SORTS.mapIndexed { i, n -> GlassMenu.Option(n, listOf(Icons.CHEVRON_UP, Icons.UPDOWN, Icons.VIDEO, Icons.AI)[i]) }, sortOrder) { i -> sortOrder = i; prefs.edit().putInt("gallery_sort", i).apply(); apply(); grid.setSelection(0) } }
+            setOnClickListener { v -> sortMenu.show(v, "เรียงตาม", SORTS.mapIndexed { i, n -> GlassMenu.Option(n, SORT_ICONS[i]) }, sortOrder) { i -> sortOrder = i; apply(); grid.setSelection(0) } }
         }
         field.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
@@ -684,7 +718,7 @@ class GalleryActivity : ComponentActivity() {
     }
 
     private fun showAlbums(items: List<Item>, lumora: List<Item>, favourites: Int) {
-        showingId = null; viewerKind = ""; root.removeAllViews()
+        showingId = null; viewerKind = ""; immersive(false); root.removeAllViews()
         val bar = topBar("อัลบั้ม") { finish() }
         if (device) bar.addView(EditorKit.chip(this, if (managing) "เสร็จ" else "จัดการ", if (managing) Icons.CHECK else Icons.GEAR, managing) { managing = !managing; reload() }, LinearLayout.LayoutParams(-2, dp(48)))
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, 0, 0, dp(16)) }
@@ -885,6 +919,31 @@ class GalleryActivity : ComponentActivity() {
     }
     /** True while swiping to the next/previous photo, which has its own slide and must not bounce. */
     private var stepping = false
+    private var bars = android.graphics.Rect()
+    private var immersive = false
+    private fun padHost() { host.setPadding(bars.left, if (immersive) 0 else bars.top, bars.right, if (immersive) 0 else bars.bottom) }
+    private fun immersive(on: Boolean) { if (immersive != on) { immersive = on; padHost() } }
+    /**
+     * Viewer layout: the picture fills the screen and the top bar and the action row float over it, the picture's
+     * blurred reflection showing through, so there is no band of page colour above or below it.
+     */
+    private fun floatBars() {
+        val frame = inspect.parent as? FrameLayout ?: return
+        val kids = (0 until root.childCount).map { root.getChildAt(it) }.filter { it !== frame }
+        kids.forEach { root.removeView(it) }
+        val top = kids.firstOrNull()
+        val bottom = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, 0, 0, bars.bottom) }
+        kids.drop(1).forEach { bottom.addView(it, -1, -2) }
+        if (top != null) frame.addView(top, FrameLayout.LayoutParams(-1, -2, Gravity.TOP).apply { topMargin = bars.top })
+        frame.addView(bottom, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+        viewerTop = top; viewerBottom = bottom
+        inspect.shadeTop = (bars.top + dp(84)).toFloat(); inspect.shadeBottom = (bars.bottom + dp(130)).toFloat()
+        inspect.onDismissDrag = { p -> val a = 1f - p * 2.2f; viewerTop?.alpha = a.coerceIn(0f, 1f); viewerBottom?.alpha = a.coerceIn(0f, 1f) }
+        inspect.onDismiss = { selected = null; useAi = false; closingViewer = true; reload() }
+    }
+    private var viewerTop: View? = null; private var viewerBottom: View? = null
+    /** True when the grid comes back from a swipe-down, so it fades up instead of sliding. */
+    private var closingViewer = false
 
     // ---------- Long-press peek ----------
     private class PeekAction(val view: FrameLayout, val icon: IconView, val label: String, val tint: Int, val run: () -> Unit)
@@ -985,6 +1044,7 @@ class GalleryActivity : ComponentActivity() {
             inspect = viewer(); viewerKind = if (video) "" else "device"
             toggle = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(dp(6), dp(6), dp(6), dp(10)) }
             root.addView(toggle, -1, -2)
+            if (!video) { immersive(true); floatBars() } else immersive(false)
             if (!Glass.reduced(this)) { inspect.alpha = 0f; inspect.animate().alpha(1f).setDuration(260).start() }
         }
         if (!video) inspect.show(uri)
@@ -1018,7 +1078,7 @@ class GalleryActivity : ComponentActivity() {
     // ---------- Lumora video or file from the ledger ----------
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     private fun showLedgerItem(item: Item) {
-        showingId = item.key; viewerKind = ""; root.removeAllViews()
+        showingId = item.key; viewerKind = ""; immersive(false); root.removeAllViews()
         viewerBar(if (item.video) "วิดีโอ" else "ไฟล์")
         val frame = FrameLayout(this).apply { setBackgroundColor(Glass.NAVY_DEEP) }
         val still = ImageView(this).apply { scaleType = ImageView.ScaleType.FIT_CENTER }
@@ -1087,6 +1147,7 @@ class GalleryActivity : ComponentActivity() {
             root.addView(status, -1, -2)
             toggle = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(dp(6), dp(2), dp(6), dp(10)) }
             root.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; isFillViewport = true; addView(toggle) }, -1, -2)
+            immersive(true); floatBars()
             if (!Glass.reduced(this)) { inspect.alpha = 0f; inspect.animate().alpha(1f).setDuration(260).start() }
         }
         if (showingId != s.id) { showingId = s.id; preloadNear() }
@@ -1097,8 +1158,8 @@ class GalleryActivity : ComponentActivity() {
             Stage.CAPTURING -> "กำลังถ่าย ${s.frames}/${s.requestedFrames} เฟรม"
             Stage.QUEUED, Stage.RUNNING -> ""
             Stage.FAILED -> "AI ยังไม่สำเร็จ · ${s.error}"
-            Stage.DONE -> if (useAi) "AI ${s.aiModel}   ·   ${pixelsText(s.aiSize.pixels)}" else "ต้นฉบับ   ·   ${pixelsText(s.size.pixels)}"
-            Stage.ORIGINAL -> if (s.output.rawOnly) "ภาพตัวอย่าง RAW · DNG เก็บแยก" else pixelsText(s.size.pixels) + if (s.reason == Decision.OFF) "" else "   ·   ${s.reason.description}"
+            Stage.DONE -> ""
+            Stage.ORIGINAL -> if (s.output.rawOnly) "ภาพตัวอย่าง RAW · DNG เก็บแยก" else ""
         }
         status.visibility = if (status.text.isEmpty()) View.GONE else View.VISIBLE
         when (s.stage) {
@@ -1119,8 +1180,8 @@ class GalleryActivity : ComponentActivity() {
             inspect.setCompare(s.uri)
             val compare = action("M12 3v18 M4 6h5v12H4z M15 6h5v12h-5z", "ต้นฉบับ").apply { contentDescription = "กดค้างเพื่อดูต้นฉบับ"
                 setOnTouchListener { v, e -> when (e.actionMasked) {
-                    MotionEvent.ACTION_DOWN -> { Glass.tick(v); inspect.holdCompare(true); status.text = "ต้นฉบับ   ·   ${pixelsText(s.size.pixels)}"; v.isPressed = true }
-                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { inspect.holdCompare(false); status.text = "AI ${s.aiModel}   ·   ${pixelsText(s.aiSize.pixels)}"; v.isPressed = false; if (e.actionMasked == MotionEvent.ACTION_UP) v.performClick() }
+                    MotionEvent.ACTION_DOWN -> { Glass.tick(v); inspect.holdCompare(true); status.text = "ต้นฉบับ"; status.visibility = View.VISIBLE; v.isPressed = true }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { inspect.holdCompare(false); status.text = ""; status.visibility = View.GONE; v.isPressed = false; if (e.actionMasked == MotionEvent.ACTION_UP) v.performClick() }
                 }; true }
                 setOnClickListener { } }
             toggle.addView(compare, LinearLayout.LayoutParams(0, -2, 1f))

@@ -65,6 +65,12 @@ class CameraActivity : ComponentActivity() {
         val SPORT_KINDS = listOf(
             Triple("เดิน · เด็กเล่น", 1_000_000_000L / 500, 400), Triple("วิ่ง · กีฬาทั่วไป", 1_000_000_000L / 1000, 800),
             Triple("รถ · มอเตอร์สปอร์ต", 1_000_000_000L / 2000, 1600), Triple("นกบิน · ลูกบอลเร็ว", 1_000_000_000L / 4000, 3200))
+        /** Walking figure, runner, car, bird in flight: one for each fast-shot type. */
+        val SPORT_ICONS = listOf(
+            "M13 3.5a1.6 1.6 0 1 0 0 .1 M12 7.5l-1.5 6 2.5 3v4.5 M10.5 13.5L8 21 M12 7.5l3 3.5 2.5.5 M12 7.5L9 9.5l-1 3",
+            "M15.5 3.5a1.6 1.6 0 1 0 0 .1 M13 8l-2.5 5 3.5 2.5-1.5 5 M10.5 13L6.5 20 M13 8l3.5 3 3-.5 M13 8l-4.5.5-2 3",
+            "M3 16.5v-3.5l2.2-5h13.6l2.2 5v3.5z M3 13h18 M6.5 16.5v2.5 M17.5 16.5v2.5 M7 14.8h.01 M17 14.8h.01",
+            "M2.5 9.5c3.5-.5 6.5 1.5 9.5 5.5 3-4 6-6 9.5-5.5 M12 15c-.5 2-1.5 3.5-3 4.5 M12 15c.5 2 1.5 3.5 3 4.5")
         val F_STEPS = listOf(1.2f, 1.4f, 1.6f, 1.8f, 2f, 2.2f, 2.5f, 2.8f, 3.2f, 3.5f, 4f, 4.5f, 5f, 5.6f, 6.3f, 7.1f, 8f, 9f, 10f, 11f, 13f, 14f, 16f)
         fun blurWord(f: Float) = when { f <= 1.4f -> "เบลอมากที่สุด"; f <= 2.8f -> "เบลอชัด"; f <= 5.6f -> "เบลอพอดี"; else -> "เบลอน้อย" }
         val APERTURES = listOf(1.2f, 1.4f, 1.8f, 2f, 2.8f, 4f, 5.6f, 8f, 11f, 16f)
@@ -226,6 +232,8 @@ class CameraActivity : ComponentActivity() {
         super.onCreate(state)
         requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT   // the screen stays upright; only the picture and the icons turn
         output = runCatching { CaptureOutput.valueOf(prefs.getString("output", CaptureOutput.JPEG.name)!!) }.getOrDefault(CaptureOutput.JPEG)
+        // RAW Log is no longer offered: anyone who had it keeps plain RAW.
+        if (output == CaptureOutput.RAW_LOG) { output = CaptureOutput.RAW; prefs.edit().putString("output", output.name).apply() }
         if (output.enhance) output = CaptureOutput.JPEG
         if (prefs.getInt("night_frames", 6) > 12 || prefs.getInt("night_frames", 6) < 6) prefs.edit().putInt("night_frames", 6).apply()
         mode = runCatching { PhotoMode.valueOf(prefs.getString("photo_mode", "PHOTO")!!) }.getOrDefault(PhotoMode.PHOTO)
@@ -917,7 +925,7 @@ class CameraActivity : ComponentActivity() {
         else Liquid.show(dial, dial.width / 2f, dial.height.toFloat(), false)
         zooms.animate().alpha(0f).setDuration(160).start()
     }
-    private fun closeDial() { if (openChip == null) return; openChip = null; Liquid.hide(dial, dial.width / 2f, dial.height.toFloat(), false); zooms.animate().alpha(1f).setDuration(200).start() }
+    private fun closeDial() { if (openChip == null) return; openChip = null; Liquid.hide(dial, dial.width / 2f, dial.height.toFloat(), false); zooms.animate().alpha(1f).setDuration(200).start(); refresh() }
     private fun updateDialValue(k: String) { dialValue.text = chipValue(k); dialValue.setTextColor(chipColor(k)); val auto = chipIndex(k) == chipAuto(k); dialReset.setTextColor(if (auto) Glass.ON_ACCENT else Color.WHITE); (dialReset.background as? GlassDrawable)?.let { it.fill = if (auto) Glass.ACCENT else 0x1fffffff; it.invalidateSelf() } }
     private fun sliderChanged(i: Int) { applyChip(openChip ?: return, i) }
     private fun applyChip(k: String, i: Int) {
@@ -1029,7 +1037,7 @@ class CameraActivity : ComponentActivity() {
                         if (!busy) { prefs.edit().putString("aspect", aspects[i]).apply(); applyStageShape(); layoutMask(stage.width, stage.height); freezeFrame(); bind() }; reopen()
                     }
                 }
-                val outs = CaptureOutput.entries.filter { !it.enhance && (!it.needsRaw || rawAvailable) }
+                val outs = CaptureOutput.entries.filter { !it.enhance && it != CaptureOutput.RAW_LOG && (!it.needsRaw || rawAvailable) }
                 tile("รูปแบบไฟล์", Icons.FILE, output.label, output != CaptureOutput.JPEG, isMenu = true) { v ->
                     menu.show(v, "รูปแบบไฟล์", outs.map { GlassMenu.Option(it.label, if (it.needsRaw) Icons.RAW else Icons.FILE, when (it) { CaptureOutput.JPEG -> "ไฟล์เล็ก เปิดได้ทุกที่"; CaptureOutput.PNG -> "ไม่สูญเสียคุณภาพ ไฟล์ใหญ่"; CaptureOutput.WEBP -> "เล็กกว่า JPEG คุณภาพใกล้เคียง"; CaptureOutput.RAW -> "DNG จากเซนเซอร์"; else -> "DNG · ดูภาพแบบ Log แบนขณะถ่าย" }) }, outs.indexOf(output)) { i -> setOutput(outs[i]); reopen() }
                 }
@@ -1436,7 +1444,7 @@ class CameraActivity : ComponentActivity() {
         camera?.let { cam -> configureFaces(faces, cam, mask); if (rear) findMacroLens(cam) else macroLens = null }
     }
     private fun chooseSport(v: View) {
-        menu.show(v, "ประเภทภาพเคลื่อนไหว", SPORT_KINDS.map { GlassMenu.Option(it.first, Icons.MOTION, "ชัตเตอร์ 1/" + (1_000_000_000L / it.second)) }, sportIndex()) { i ->
+        menu.show(v, "ประเภทภาพเคลื่อนไหว", SPORT_KINDS.mapIndexed { k, it -> GlassMenu.Option(it.first, SPORT_ICONS[k], "ชัตเตอร์ 1/" + (1_000_000_000L / it.second)) }, sportIndex()) { i ->
             prefs.edit().putInt("sport_kind", i).apply(); applySport(); refresh()
         }
     }
