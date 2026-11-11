@@ -276,7 +276,9 @@ class VideoActivity:ComponentActivity(){
     }
     @Suppress("DEPRECATION") private fun noAnimation()=overridePendingTransition(0,0)
     private val turner=IconTurner()
-    private fun turnIcons(degrees:Int)=turner.update(degrees,{listOfNotNull(library.getChildAt(0),flip.getChildAt(0))+modeLabels.map{it.second}},Glass.reduced(this))
+    private fun turnViews():List<android.view.View> = listOfNotNull(library.getChildAt(0),flip.getChildAt(0))+modeLabels.map{it.second}+(if(::zooms.isInitialized)(0 until zooms.childCount).map{zooms.getChildAt(it)} else emptyList())+IconTurner.tagged(window.decorView)
+    private fun turnIcons(degrees:Int){turner.update(degrees,{turnViews()},Glass.reduced(this));if(::expRail.isInitialized){expRail.contentAngle=turner.angle;focusRail.contentAngle=turner.angle}}
+    private fun turnNow(){turner.apply(turnViews());if(::expRail.isInitialized){expRail.contentAngle=turner.angle;focusRail.contentAngle=turner.angle}}
     private fun stopRecording(){animator?.cancel();finalizing=true;shutter.isEnabled=false;pause.isEnabled=false;status.text="กำลังปิดไฟล์…";recording?.stop()}
     private fun saveSettings(){prefs.edit().putString(if(slow)"slow_camera"else "video_camera",selectedCameraId).apply();if(slow){prefs.edit().putInt("slow_fps",fps).putString("slow_quality",when(quality){Quality.UHD->"UHD";Quality.HD->"HD";Quality.SD->"SD";else->"FHD"}).apply();return};prefs.edit().putString("video_quality",when(quality){Quality.UHD->"UHD";Quality.HD->"HD";Quality.SD->"SD";else->"FHD"}).putInt("video_fps",fps).putInt("video_bitrate",bitrate).putBoolean("video_eis",stabilization).putString("video_dynamic",when(dynamic){DynamicRange.HLG_10_BIT->"HLG";DynamicRange.HDR10_10_BIT->"HDR10";else->"SDR"}).apply()}
     override fun onResume(){super.onResume();orientation.enable();if(recording==null&&!starting&&!finalizing&&useCase!=null){shutter.isEnabled=true;config.isEnabled=true}}
@@ -409,7 +411,7 @@ class VideoActivity:ComponentActivity(){
         if(stops!=zoomStops){zoomStops=stops;zooms.removeAllViews()
             stops.forEach{v->val cell=FrameLayout(this).apply{isClickable=true;contentDescription="ซูม ${zoomText(v)} ลากซ้ายขวาเพื่อซูมละเอียด"}
                 cell.addView(text(zoomText(v),12f,WHITE,true).apply{setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP,12f);gravity=Gravity.CENTER;background=GlassDrawable(0x1affffff,dp(20).toFloat(),resources.displayMetrics.density)},FrameLayout.LayoutParams(dp(32),dp(32),Gravity.CENTER))
-                cell.setOnClickListener{animateZoom(v)};zooms.addView(cell,LinearLayout.LayoutParams(dp(48),dp(48)).apply{setMargins(dp(1),0,dp(1),0)})}}
+                cell.setOnClickListener{animateZoom(v)};zooms.addView(cell,LinearLayout.LayoutParams(dp(48),dp(48)).apply{setMargins(dp(1),0,dp(1),0)})}};zooms.post{turnNow()}
         zooms.visibility=if(stops.size>1&&!dual)android.view.View.VISIBLE else android.view.View.GONE
         val active=stops.indexOfLast{z.zoomRatio>=it-0.001f}.coerceAtLeast(0)
         stops.forEachIndexed{i,v->val t=(zooms.getChildAt(i) as FrameLayout).getChildAt(0) as TextView;val on=i==active

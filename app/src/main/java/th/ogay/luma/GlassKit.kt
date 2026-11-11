@@ -427,6 +427,15 @@ object Liquid {
  */
 class IconTurner {
     var angle = 0f; private set
+    companion object {
+        /** Views marked with this tag anywhere in the window (sheet tiles, look thumbnails, chips) turn with the phone. */
+        const val TAG = "turn"
+        fun tagged(root: View): List<View> {
+            val out = ArrayList<View>()
+            fun walk(v: View) { if (v.tag == TAG) out += v; if (v is android.view.ViewGroup) for (i in 0 until v.childCount) walk(v.getChildAt(i)) }
+            walk(root); return out
+        }
+    }
     fun update(degrees: Int, views: () -> List<View>, reduced: Boolean) {
         if (degrees < 0) return
         val snapped = listOf(0, 90, 180, 270, 360).minBy { kotlin.math.abs(it - degrees) } % 360

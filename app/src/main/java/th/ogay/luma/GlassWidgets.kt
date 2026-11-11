@@ -293,6 +293,8 @@ class EdgeRail(context: Context, val focusRail: Boolean) : View(context) {
     var value = 0f; set(v) { field = v; invalidate() }
     var label = ""; set(v) { field = v; invalidate() }
     var accent = if (focusRail) Glass.FOCUS_BLUE else Glass.ACCENT
+    /** Icons and the value label turn with the phone while the rail itself stays on its edge. */
+    var contentAngle = 0f; set(v) { field = v; invalidate() }
     private var open = 0f
     private val glass = context.glass(18)
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -329,12 +331,14 @@ class EdgeRail(context: Context, val focusRail: Boolean) : View(context) {
             paint.textSize = 13 * d; paint.typeface = Typeface.DEFAULT_BOLD
             val tw = paint.measureText(label) + 20 * d; val lx = if (focusRail) r.left - 8 * d - tw else r.right + 8 * d
             val lr = RectF(lx, ty - 12 * d, lx + tw, ty + 12 * d)
+            c.save(); c.rotate(contentAngle, lr.centerX(), lr.centerY())
             paint.color = Color.argb((200 * open).toInt(), 30, 30, 32); c.drawRoundRect(lr, 12 * d, 12 * d, paint)
             paint.color = accent; paint.alpha = (255 * open).toInt(); c.drawText(label, lr.left + 10 * d, ty + 4.5f * d, paint); paint.alpha = 255
+            c.restore()
         }
     }
     private fun drawIcon(c: Canvas, d: String, cx: Float, cy: Float, size: Float, pnt: Paint = icon.apply { color = 0xccffffff.toInt() }) {
-        val m = Matrix(); val s = size / 24f; m.setScale(s, s); m.postTranslate(cx - size / 2, cy - size / 2)
+        val m = Matrix(); val s = size / 24f; m.setScale(s, s); m.postTranslate(cx - size / 2, cy - size / 2); m.postRotate(contentAngle, cx, cy)
         val path = Path(); SvgPath.parse(d).transform(m, path); pnt.strokeWidth = 2 * s * 1.1f; c.drawPath(path, pnt)
     }
 }

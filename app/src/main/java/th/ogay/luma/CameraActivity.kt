@@ -169,8 +169,11 @@ class CameraActivity : ComponentActivity() {
     private val modeLabels = mutableListOf<Pair<TextView, IconView>>()
     private val turner = IconTurner()
     /** Contents that turn upright in landscape: round buttons' icons, the gallery thumb, lens pills and mode icons. */
-    private fun turnables(): List<View> = listOfNotNull(thumb, flipIcon, macroButton.getChildAt(0), nightButton.getChildAt(0), apertureButton) +
-        modeLabels.map { it.second } + (0 until statusRow.childCount).map { statusRow.getChildAt(it) }
+    private fun turnables(): List<View> = listOfNotNull(thumb, flipIcon, macroButton.getChildAt(0), nightButton.getChildAt(0), apertureButton, lookButton.getChildAt(0), lockIcon, dialValue) +
+        modeLabels.map { it.second } + (0 until statusRow.childCount).map { statusRow.getChildAt(it) } +
+        (0 until zooms.childCount).map { zooms.getChildAt(it) } + IconTurner.tagged(window.decorView)
+    /** New views (a sheet that just opened, rebuilt zoom pills) take the current angle at once. */
+    private fun turnNow() { turner.apply(turnables()); expRail.contentAngle = turner.angle; focusRail.contentAngle = turner.angle }
     private var barKeys: List<String> = emptyList()
     private var ev = 0f
     private var aeLock = false
@@ -229,6 +232,7 @@ class CameraActivity : ComponentActivity() {
                 if (degrees == ORIENTATION_UNKNOWN) return
                 val next = when (degrees) { in 45..134 -> Surface.ROTATION_270; in 135..224 -> Surface.ROTATION_180; in 225..314 -> Surface.ROTATION_90; else -> Surface.ROTATION_0 }
                 turner.update(degrees, { turnables() }, Glass.reduced(this@CameraActivity))
+                expRail.contentAngle = turner.angle; focusRail.contentAngle = turner.angle
                 if (next != targetRotation) { targetRotation = next; if (!busy) capture?.targetRotation = targetRotation }
             }
         }
@@ -947,11 +951,12 @@ class CameraActivity : ComponentActivity() {
                 val t = LinearLayout(this).apply {
                     orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; background = glass(20, if (on) Glass.ACCENT_SOFT else 0x12ffffff); isClickable = true
                     contentDescription = "$title $value"; if (isMenu) pressMenu(menu) { act(it) } else { setOnClickListener { act(it) }; glassTouch() }
-                    addView(IconView(this@CameraActivity, icon).apply { tint = if (on) Glass.ACCENT else Glass.TEXT2; this.inner = inner }, dp(24), dp(24))
-                    addView(text(title, 12f).apply { gravity = Gravity.CENTER }, -2, -2)
-                    addView(text(value + if (isMenu) " ▾" else "", 11.5f, if (on) Glass.ACCENT else Glass.TEXT2, true).apply { gravity = Gravity.CENTER }, -2, -2)
+                    addView(LinearLayout(this@CameraActivity).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; tag = IconTurner.TAG
+                        addView(IconView(this@CameraActivity, icon).apply { tint = if (on) Glass.ACCENT else Glass.TEXT2; this.inner = inner }, dp(24), dp(24))
+                        addView(text(title, 12f).apply { gravity = Gravity.CENTER }, -2, -2)
+                        addView(text(value + if (isMenu) " ▾" else "", 11.5f, if (on) Glass.ACCENT else Glass.TEXT2, true).apply { gravity = Gravity.CENTER }, -2, -2) }, -2, -2)
                 }
-                t.minimumHeight = dp(88); t.setPadding(dp(4), dp(8), dp(4), dp(8))
+                t.minimumHeight = dp(96); t.setPadding(dp(4), dp(8), dp(4), dp(8)); t.post { turnNow() }
                 grid.addView(t, GridLayout.LayoutParams(GridLayout.spec(GridLayout.UNDEFINED), GridLayout.spec(GridLayout.UNDEFINED, 1f)).apply { width = 0; height = GridLayout.LayoutParams.WRAP_CONTENT; setMargins(dp(4), dp(4), dp(4), dp(4)) })
             }
             // Changing a tile rebuilds only the tile grid; rebuilding the whole sheet made the style strip below flash.
@@ -1037,7 +1042,8 @@ class CameraActivity : ComponentActivity() {
         lookImages += img
         frame.addView(img, -1, -1)
         val name = text(label, 11f, Glass.TEXT2).apply { gravity = Gravity.CENTER; maxLines = 2; ellipsize = null; setPadding(0, dp(6), 0, 0) }
-        cell.addView(frame, dp(80), dp(80)); cell.addView(name, dp(90), -2)
+        frame.tag = IconTurner.TAG
+        cell.addView(frame, dp(80), dp(80)); cell.addView(name, dp(90), -2); cell.post { turnNow() }
         cells += LookCell(frame, name, key)
         return cell
     }
@@ -1202,7 +1208,7 @@ class CameraActivity : ComponentActivity() {
         val (lo, hi) = range()
         val stops = (listOfNotNull(lo.takeIf { it < 0.98f }, 1f, 2f, 3.5f).filter { it in lo..hi }).distinct()
         if (stops != renderedZooms || zooms.childCount != stops.size) {
-            zooms.removeAllViews(); renderedZooms = stops
+            zooms.removeAllViews(); renderedZooms = stops; zooms.post { turnNow() }
             stops.forEach { v ->
                 val cell = FrameLayout(this).apply { isClickable = true; isFocusable = true; contentDescription = "ซูม ${zoomText(v)} ลากซ้ายขวาเพื่อซูมละเอียด" }
                 cell.addView(text(zoomText(v), 12f, Color.WHITE, true).apply { setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 12f); gravity = Gravity.CENTER; background = GlassDrawable(0x1affffff, dp(20).toFloat(), resources.displayMetrics.density) }, FrameLayout.LayoutParams(dp(32), dp(32), Gravity.CENTER))
