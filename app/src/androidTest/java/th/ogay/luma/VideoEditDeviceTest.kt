@@ -29,7 +29,7 @@ class VideoEditDeviceTest {
         val look = EditorKit.film(Films.default, 1f)
         val cases = listOf(
             "plain" to base, "trim" to base.copy(from = 300, to = 1700), "speed" to base.copy(speed = 2f), "crop" to base.copy(crop = 1f),
-            "look" to base.copy(look = look), "caption" to base.copy(caption = "Lumora"), "music" to base.copy(music = song),
+            "look" to base.copy(look = look), "caption" to base.copy(caption = "Lumora"), "music" to base.copy(music = song), "speed+music" to base.copy(speed = 2f, music = song),
             "all" to base.copy(from = 200, to = 1800, speed = 0.5f, crop = 9f / 16, look = look, caption = "Lumora", place = 0, music = song))
         val results = cases.map { (name, spec) -> name to export(spec) }
         assertTrue("Video edit exports · " + results.joinToString(" | ") { "${it.first}: ${it.second}" }, results.all { it.second.startsWith("ok") })

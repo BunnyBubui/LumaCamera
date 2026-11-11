@@ -20,6 +20,7 @@ import androidx.media3.common.util.Util
 import androidx.media3.effect.OverlayEffect
 import androidx.media3.effect.Presentation
 import androidx.media3.effect.SingleColorLut
+import androidx.media3.effect.SpeedChangeEffect
 import androidx.media3.effect.StaticOverlaySettings
 import androidx.media3.effect.TextOverlay
 import androidx.media3.effect.TextureOverlay
@@ -46,6 +47,7 @@ object VideoEdit {
     fun composition(s: VideoEditSpec): Composition {
         val item = MediaItem.Builder().setUri(s.source).setClippingConfiguration(MediaItem.ClippingConfiguration.Builder().setStartPositionMs(s.from).setEndPositionMs(s.to).build()).build()
         val effects = mutableListOf<Effect>()
+        if (s.speed != 1f && !s.keepAudio) effects += SpeedChangeEffect(s.speed)
         s.look?.let { effects += SingleColorLut.createFromCube(EditorKit.cube(it)) }
         if (s.crop > 0f) effects += Presentation.createForAspectRatio(s.crop, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP)
         if (s.caption.isNotBlank()) {
@@ -58,7 +60,9 @@ object VideoEdit {
             effects += OverlayEffect(listOf<TextureOverlay>(TextOverlay.createStaticTextOverlay(text, settings)))
         }
         val edited = EditedMediaItem.Builder(item).setEffects(Effects(emptyList(), effects)).setRemoveAudio(!s.keepAudio)
-        if (s.speed != 1f) edited.setSpeed(object : SpeedProvider { override fun getSpeed(timeUs: Long) = s.speed; override fun getNextSpeedChangeTimeUs(timeUs: Long) = C.TIME_UNSET })
+        // With sound, setSpeed changes picture and sound together. Without a sound track it stalls the export (no
+        // output sample ever reaches the muxer), so a picture-only clip changes speed through a video effect instead.
+        if (s.speed != 1f && s.keepAudio) edited.setSpeed(object : SpeedProvider { override fun getSpeed(timeUs: Long) = s.speed; override fun getNextSpeedChangeTimeUs(timeUs: Long) = C.TIME_UNSET })
         val main = if (s.keepAudio) EditedMediaItemSequence.withAudioAndVideoFrom(listOf(edited.build())) else EditedMediaItemSequence.withVideoFrom(listOf(edited.build()))
         val song = s.music ?: return Composition.Builder(main).build()
         val track = EditedMediaItem.Builder(MediaItem.fromUri(song)).setRemoveVideo(true).build()
