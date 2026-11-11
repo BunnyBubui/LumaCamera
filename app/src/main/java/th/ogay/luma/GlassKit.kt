@@ -194,7 +194,8 @@ object Icons {
     const val DUAL = "M3 6h8v12H3z M13 6h8v12h-8z"
     const val MOVIE = "M3 8h18v12H3z M3 8l3-4h4l-3 4 M10 8l3-4h4l-3 4"
     const val RAWV = "M3.5 7h11v10h-11z M14.5 10.5 20.5 7v10l-6-3.5 M7 14v-4h2a1 1 0 0 1 0 2H7 M9 14l-1-2"
-    const val LIBRARY = "M4 4h7v7H4z M13 4h7v7h-7z M4 13h7v7H4z M13 13h7v7h-7z"
+    /** Gallery: a photo with a second one stacked behind it. */
+    const val LIBRARY = "M8 3.5h10.5a2 2 0 0 1 2 2V16 M5.5 6.5h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-10a2 2 0 0 1-2-2v-10a2 2 0 0 1 2-2z M3.5 17l4-4 3 3 2-2 5 5 M13 10.5h.01"
     const val PLUS = "M12 5v14 M5 12h14"
     const val MINUS = "M5 12h14"
     const val FILM = "M4 4h16v16H4z M8 4v16 M16 4v16 M4 8h4 M4 12h4 M4 16h4 M16 8h4 M16 12h4 M16 16h4"

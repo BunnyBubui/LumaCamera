@@ -278,9 +278,9 @@ class GalleryActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT >= 30) {
             luma.readIo.execute {
                 val anyOwn = items.any { it.shot != null || it.key.startsWith("ledger:") || (it.uri.authority == MediaStore.AUTHORITY && ownFile(it.uri)) }
-                runOnUiThread { if (!isDestroyed) { if (anyOwn) askDelete(items) else trash(items) } }
+                runOnUiThread { if (!isDestroyed) { if (anyOwn && prefs.getBoolean("gallery_ask_delete", true)) askDelete(items) else trash(items) } }
             }
-        } else askDelete(items)
+        } else if (prefs.getBoolean("gallery_ask_delete", true)) askDelete(items) else trash(items)
     }
     private fun askDelete(items: List<Item>) {
         GlassDialog.panel(this, if (items.size == 1) "ลบ${if (items[0].video) "วิดีโอ" else "รูป"}นี้ไหม" else "ลบ ${items.size} รายการไหม") { col, d ->
@@ -363,6 +363,7 @@ class GalleryActivity : ComponentActivity() {
         val out = mutableListOf<Item>()
         // A photo the AI has worked on is one item: the AI file is hidden here and the original opens with the compare button.
         val shots = runCatching { luma.shots.all() }.getOrDefault(emptyList())
+        val mergeAi = prefs.getBoolean("gallery_merge_ai", true)
         val aiUris = shots.mapNotNull { it.ai?.toString() }.toSet(); val byUri = shots.associateBy { it.uri.toString() }
         fun read(base: Uri, video: Boolean) {
             val cols = arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DATE_ADDED, MediaStore.MediaColumns.DISPLAY_NAME, "bucket_display_name", "datetaken", MediaStore.MediaColumns.SIZE)
@@ -370,7 +371,7 @@ class GalleryActivity : ComponentActivity() {
                 contentResolver.query(base, cols, if (favouritesOnly && android.os.Build.VERSION.SDK_INT >= 30) "is_favorite = 1" else null, null, "${MediaStore.MediaColumns.DATE_ADDED} DESC")?.use { c ->
                     while (c.moveToNext() && out.size < 5000) {
                         val uri = ContentUris.withAppendedId(base, c.getLong(0))
-                        if (uri.toString() in aiUris) continue
+                        if (mergeAi && uri.toString() in aiUris) continue
                         out += Item("device:$uri", uri, c.getLong(1) * 1000, video, c.getString(2) ?: "", c.getString(3) ?: "อื่น ๆ", byUri[uri.toString()], taken = if (c.isNull(4)) 0L else c.getLong(4), size = if (c.isNull(5)) 0L else c.getLong(5))
                     }
                 }
@@ -409,6 +410,7 @@ class GalleryActivity : ComponentActivity() {
         get() = prefs.getInt("gallery_sort2", 0).coerceIn(0, 6)
         set(v) { prefs.edit().putInt("gallery_sort2", v).apply() }
     private val LUMA_CATS = listOf("ทั้งหมด", "AI", "RAW", "วิดีโอ", "พิเศษ", "ไฟล์")
+    private val RENAME = "M4 20h16 M6.5 16l5.5-12 5.5 12 M8.5 11.5h7"
     private val TRASH = "M5 7h14 M9 7V4h6v3 M7 7l1 13h8l1-13 M10 11v6 M14 11v6"
     private val HEART = "M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"
     private val EYE = "M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6"
@@ -435,14 +437,17 @@ class GalleryActivity : ComponentActivity() {
         searchBox.contentDescription = "ค้นหา"
         bar.addView(searchBox, LinearLayout.LayoutParams(dp(48), dp(48)).apply { leftMargin = dp(10) })
         lateinit var more: View
-        more = roundButton("M12 5.2v.1 M12 12v.1 M12 18.8v.1", "ตัวเลือกเพิ่มเติม") {
-            val options = listOf(GlassMenu.Option("เลือก", Icons.CHECK), GlassMenu.Option("เลือกทั้งหมด", Icons.STACK), GlassMenu.Option("รายการโปรด", "M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"))
-            sortMenu.show(more, "แกลเลอรี", options, -1) { i -> when (i) {
-                0 -> startSelection(null)
-                1 -> { startSelection(null); picked.addAll(visibleItems.filter { !it.file }.map { it.key }); refreshCells(); updateSelectBar() }
+        fun openMore(anchor: View) {
+            val options = listOf(GlassMenu.Option("ตั้งค่าแกลเลอรี", Icons.GEAR), GlassMenu.Option("เลือก", Icons.CHECK), GlassMenu.Option("เลือกทั้งหมด", Icons.STACK), GlassMenu.Option("รายการโปรด", "M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"))
+            sortMenu.show(anchor, "แกลเลอรี", options, -1) { i -> when (i) {
+                0 -> gallerySettings()
+                1 -> startSelection(null)
+                2 -> { startSelection(null); picked.addAll(visibleItems.filter { !it.file }.map { it.key }); refreshCells(); updateSelectBar() }
                 else -> openAlbum("fav")
             } }
         }
+        more = roundButton("M12 5.2v.1 M12 12v.1 M12 18.8v.1", "ตัวเลือกเพิ่มเติม") { openMore(more) }
+        more.pressMenu(sortMenu) { openMore(it) }
         bar.addView(more, LinearLayout.LayoutParams(dp(48), dp(48)).apply { leftMargin = dp(8) })
         (bar.findViewWithTag<View>("title") as? TextView)?.apply { maxLines = 1; minHeight = dp(48); gravity = Gravity.CENTER_VERTICAL }
         fun morph(open: Boolean, animate: Boolean = true) {
@@ -497,7 +502,7 @@ class GalleryActivity : ComponentActivity() {
         val gridTitle = gridHead.getChildAt(0) as TextView
 
         val grid = GridView(this).apply {
-            contentDescription = "รายการรูปและวิดีโอ"; numColumns = 3; horizontalSpacing = dp(5); verticalSpacing = dp(5); setPadding(dp(8), 0, dp(8), dp(8)); clipToPadding = false; selector = android.graphics.drawable.ColorDrawable(0)
+            contentDescription = "รายการรูปและวิดีโอ"; numColumns = prefs.getInt("gallery_columns", 3).coerceIn(2, 5); horizontalSpacing = dp(5); verticalSpacing = dp(5); setPadding(dp(8), 0, dp(8), dp(8)); clipToPadding = false; selector = android.graphics.drawable.ColorDrawable(0)
             // Longer, softer flings.
             setFriction(android.view.ViewConfiguration.getScrollFriction() * 0.75f); isVerticalScrollBarEnabled = false; overScrollMode = View.OVER_SCROLL_ALWAYS
         }
@@ -541,7 +546,7 @@ class GalleryActivity : ComponentActivity() {
         // Sort order: a glass dropdown on the count at the right of the grid heading.
         (gridHead.getChildAt(1) as TextView).apply {
             isClickable = true; minHeight = dp(48); gravity = Gravity.CENTER_VERTICAL; setPadding(dp(10), 0, 0, 0); contentDescription = "เรียงลำดับรายการ"
-            setOnClickListener { v -> sortMenu.show(v, "เรียงตาม", SORTS.mapIndexed { i, n -> GlassMenu.Option(n, SORT_ICONS[i]) }, sortOrder) { i -> sortOrder = i; apply(); grid.setSelection(0) } }
+            pressMenu(sortMenu) { v -> sortMenu.show(v, "เรียงตาม", SORTS.mapIndexed { i, n -> GlassMenu.Option(n, SORT_ICONS[i]) }, sortOrder) { i -> sortOrder = i; apply(); grid.setSelection(0) } }
         }
         field.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
@@ -654,6 +659,8 @@ class GalleryActivity : ComponentActivity() {
         return e.rawX >= at[0] && e.rawX <= at[0] + v.width && e.rawY >= at[1] && e.rawY <= at[1] + v.height
     }
     override fun dispatchTouchEvent(e: MotionEvent): Boolean {
+        // A dropdown opened by holding a button keeps following that finger: slide to a row and lift to pick it.
+        GlassMenu.route(e) { super.dispatchTouchEvent(it) }?.let { return it }
         val slop = android.view.ViewConfiguration.get(this).scaledTouchSlop
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> { swiping = false; swOff = !canSwipe() || inside(swipeKeep, e) || inside(navTabs, e); swX = e.rawX; swY = e.rawY
@@ -939,7 +946,8 @@ class GalleryActivity : ComponentActivity() {
         viewerTop = top; viewerBottom = bottom
         inspect.shadeTop = (bars.top + dp(84)).toFloat(); inspect.shadeBottom = (bars.bottom + dp(130)).toFloat()
         inspect.onDismissDrag = { p -> val a = 1f - p * 2.2f; viewerTop?.alpha = a.coerceIn(0f, 1f); viewerBottom?.alpha = a.coerceIn(0f, 1f) }
-        inspect.onDismiss = { selected = null; useAi = false; closingViewer = true; reload() }
+        inspect.onDismiss = if (!prefs.getBoolean("gallery_swipe_close", true)) null else ({ selected = null; useAi = false; closingViewer = true; reload() })
+        inspect.reflections = prefs.getBoolean("gallery_reflect", true)
     }
     private var viewerTop: View? = null; private var viewerBottom: View? = null
     /** True when the grid comes back from a swipe-down, so it fades up instead of sliding. */
@@ -989,16 +997,22 @@ class GalleryActivity : ComponentActivity() {
         fun act(icon: String, name: String, tint: Int, run: () -> Unit) {
             val ic = IconView(this, icon, 2f).apply { this.tint = tint }
             val b = FrameLayout(this).apply { background = glass(23, 0x1fffffff); contentDescription = name; isClickable = true; addView(ic, FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER)); setOnClickListener { closePeek(); run() } }
-            rail.addView(b, LinearLayout.LayoutParams(dp(46), dp(46)).apply { setMargins(dp(8), dp(5), dp(4), dp(5)) }); actions += PeekAction(b, ic, name, tint, run)
+            rail.addView(b, LinearLayout.LayoutParams(dp(46), dp(46)).apply { setMargins(dp(8), dp(4), dp(4), dp(4)) }); actions += PeekAction(b, ic, name, tint, run)
         }
         act(HEART, "รายการโปรด", Color.WHITE) { favourite(listOf(item)) }
-        act(PENCIL, "เปลี่ยนชื่อ", Color.WHITE) { rename(item) }
+        if (!item.file) act(EditorKit.ADJUST, if (item.video) "ตัดต่อ" else "แก้ไขภาพ", Color.WHITE) {
+            if (item.video) startActivity(VideoEditorActivity.intent(this, item.uri)) else editPhoto.launch(PhotoEditorActivity.intent(this, item.shot?.ai ?: item.uri)) }
+        if (!item.video && !item.file) act(Icons.AI, "ปรับด้วย AI", Glass.ACCENT) { item.shot?.let { EnhanceUi.show(this, it) } ?: enhanceDevice(item.uri) }
+        act(RENAME, "เปลี่ยนชื่อ", Color.WHITE) { rename(item) }
         act(Icons.SHARE, "แชร์", Color.WHITE) { share(item) }
         act(Icons.INFO, "รายละเอียด", Color.WHITE) { itemInfo(item) }
         act(TRASH, "ลบ", RED) { confirmDelete(listOf(item)) }
         card.addView(rail, LinearLayout.LayoutParams(-2, -1))
         peekActions = actions; peekHot = null
         val layer = FrameLayout(this).apply { addView(dim, -1, -1); addView(card, FrameLayout.LayoutParams(-1, -2, Gravity.CENTER).apply { setMargins(dp(16), 0, dp(16), 0) }) }
+        // The name of the button under the finger floats out to its left, over the picture.
+        val tip = text("", 14f, Color.WHITE, true).apply { background = glass(16, 0xee1c2233.toInt()); setPadding(dp(14), dp(8), dp(14), dp(8)); alpha = 0f; elevation = dp(8).toFloat() }
+        layer.addView(tip, FrameLayout.LayoutParams(-2, -2)); peekTip = tip
         host.addView(layer, -1, -1); peek = layer
         dim.animate().alpha(1f).setDuration(220).start(); Glass.blur(root, 14f)
         thumbs.execute { val b = thumbnail(item, 1080); runOnUiThread { if (peek === layer) { image.setImageBitmap(b); image.invalidateOutline() } } }
@@ -1018,14 +1032,29 @@ class GalleryActivity : ComponentActivity() {
                     peekHot?.let { a -> a.view.animate().scaleX(1f).scaleY(1f).setDuration(160).start(); a.view.background = glass(23, 0x1fffffff); a.icon.tint = a.tint }
                     peekHot = hit
                     if (hit != null) { Glass.tick(hit.view); hit.view.animate().scaleX(1.28f).scaleY(1.28f).setInterpolator(Glass.SPRING).setDuration(260).start(); hit.view.background = glass(23, if (hit.tint == RED) RED else Glass.ACCENT); hit.icon.tint = if (hit.tint == RED) Color.WHITE else Glass.ON_ACCENT }
-                    peekLabel?.let { l -> l.text = hit?.label ?: "เลื่อนนิ้วไปที่ปุ่มแล้วปล่อย"; l.setTextColor(if (hit != null) Color.WHITE else Glass.TEXT3) }
+                    peekLabel?.animate()?.alpha(if (hit != null) 0f else 1f)?.setDuration(160)?.start()
+                    peekTip?.let { t -> showTip(t, hit) }
                 }
             }
             MotionEvent.ACTION_UP -> { val run = peekHot?.run; closePeek(); run?.invoke() }
             MotionEvent.ACTION_CANCEL -> closePeek()
         }
     }
+    private var peekTip: TextView? = null
+    /** Moves the floating name next to the button and pops it in from the button's side (or hides it). */
+    private fun showTip(t: TextView, hit: PeekAction?) {
+        if (hit == null) { t.animate().alpha(0f).translationX(t.translationX + dp(10)).scaleX(0.9f).scaleY(0.9f).setDuration(140).start(); return }
+        t.text = hit.label; t.setTextColor(if (hit.tint == RED) RED else Color.WHITE)
+        t.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED)
+        val at = IntArray(2); val base = IntArray(2); hit.view.getLocationInWindow(at); (t.parent as View).getLocationInWindow(base)
+        val x = at[0] - base[0] - t.measuredWidth - dp(14).toFloat(); val y = at[1] - base[1] + hit.view.height / 2f - t.measuredHeight / 2f
+        t.pivotX = t.measuredWidth.toFloat(); t.pivotY = t.measuredHeight / 2f
+        t.animate().cancel()
+        if (t.alpha < 0.05f) { t.translationX = x + dp(18); t.translationY = y; t.scaleX = 0.7f; t.scaleY = 0.7f }
+        t.animate().alpha(1f).translationX(x).translationY(y).scaleX(1f).scaleY(1f).setInterpolator(Glass.SPRING).setDuration(320).start()
+    }
     private fun closePeek() {
+        peekTip = null
         val layer = peek as? FrameLayout ?: return; peek = null; peekActions = emptyList(); peekHot = null; peekLabel = null
         Glass.blur(root, 0f)
         layer.getChildAt(0).animate().alpha(0f).setDuration(200).start()
@@ -1135,6 +1164,26 @@ class GalleryActivity : ComponentActivity() {
         addView(text(label, 11f, if (tint != 0) tint else if (active) Glass.ACCENT else Glass.TEXT2, true).apply { gravity = Gravity.CENTER; maxLines = 3; ellipsize = null; setPadding(0, dp(5), 0, 0) }, -1, -2)
         glassTouch()
     }
+    /** Gallery settings, laid out like the camera settings. */
+    private fun gallerySettings() {
+        SettingsPage(this, "ตั้งค่าแกลเลอรี") { reload() }.apply {
+            section("การแสดงผล")
+            choose("จำนวนคอลัมน์", Icons.LIBRARY, "gallery_columns", listOf("2 คอลัมน์", "3 คอลัมน์", "4 คอลัมน์", "5 คอลัมน์"), listOf(2, 3, 4, 5), 3)
+            choose("เรียงตามเริ่มต้น", Icons.UPDOWN, "gallery_sort2", SORTS, SORTS.indices.toList(), 0, SORT_ICONS)
+            toggle("รวมภาพ AI กับต้นฉบับ", Icons.AI, "gallery_merge_ai", true, "ภาพที่ AI ปรับแล้วรวมเป็นรายการเดียวกับต้นฉบับ")
+            section("การดูภาพ")
+            toggle("เปิดภาพ AI ก่อน", Icons.AI, "gallery_open_ai", true, "กดค้างปุ่มต้นฉบับเพื่อเทียบ")
+            toggle("พื้นหลังสะท้อนภาพ", Icons.PHOTO, "gallery_reflect", true, "ขอบบนล่างเป็นภาพสะท้อนนุ่ม ๆ แทนพื้นสีเรียบ")
+            toggle("ปัดลงเพื่อปิดภาพ", Icons.CHEVRON_UP, "gallery_swipe_close", true)
+            section("การลบ")
+            toggle("ถามก่อนลบภาพของ Lumora", TRASH, "gallery_ask_delete", true, "ภาพจากแอปอื่น ระบบจะถามเองเสมอ")
+            section("AI")
+            toggle("ประหยัดแรงเครื่องเมื่ออยู่นอกหน้าประมวลผล", Icons.STACK, "ai_saver", true, "AI ทำงานช้าลงเมื่อไม่ได้ดูความคืบหน้า เครื่องจึงลื่นขึ้น")
+            section("อัลบั้ม")
+            action("คืนลำดับ ปักหมุด และการซ่อนอัลบั้ม", Icons.RESET) { prefs.edit().remove("album_order").remove("album_pinned").remove("album_hidden").apply(); notice("คืนค่าอัลบั้มแล้ว") }
+            action("ล้างภาพย่อในหน่วยความจำ", Icons.RESET, "ใช้เมื่อภาพย่อไม่ตรงกับภาพจริง") { cache.evictAll(); near.clear(); notice("ล้างแล้ว") }
+        }.show()
+    }
     private fun formatTime(t: Long) = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(t))
     private fun showDetail(s: Shot) {
         currentShot = s
@@ -1152,7 +1201,7 @@ class GalleryActivity : ComponentActivity() {
         }
         if (showingId != s.id) { showingId = s.id; preloadNear() }
         // A photo with an AI result is one item: it opens on the AI picture, and the compare button shows the original underneath.
-        useAi = s.ai != null
+        useAi = s.ai != null && prefs.getBoolean("gallery_open_ai", true)
         inspect.show(if (useAi) s.ai!! else s.uri)
         status.text = when (s.stage) {
             Stage.CAPTURING -> "กำลังถ่าย ${s.frames}/${s.requestedFrames} เฟรม"

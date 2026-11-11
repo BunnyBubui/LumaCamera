@@ -165,7 +165,13 @@ fun Activity.showStudioSettings(rawAvailable: Boolean, changed: () -> Unit) {
     section("เซลฟี่")
     toggle("กลับภาพเซลฟี่ซ้ายขวา", Icons.MIRROR, "mirror_selfie"); toggle("เติมแสงหน้าจอ", Icons.FLASH, "screen_flash")
     section("ไฟล์และตำแหน่ง")
-    toggle("ลายน้ำ Lumora และวันที่", Icons.MARK, "watermark")
+    toggle("ลายน้ำ", Icons.MARK, "watermark", true, "ใส่ลายน้ำบนภาพถ่ายทุกภาพ")
+    toggle("ลายน้ำ: โลโก้ Lumora", Icons.MARK, "watermark_logo", true)
+    toggle("ลายน้ำ: วันที่และเวลา", Icons.TIMER, "watermark_time", true)
+    toggle("ลายน้ำ: ข้อมูลกล้อง", Icons.SHOT, "watermark_camera", false, "ระยะเลนส์ รูรับแสง ชัตเตอร์ ISO กลางภาพ สำหรับมืออาชีพ")
+    choose("ลายน้ำ: ตำแหน่งโลโก้", Icons.FRAME, "watermark_corner", listOf("ซ้ายล่าง", "ขวาล่าง", "ซ้ายบน", "ขวาบน"), listOf("BL", "BR", "TL", "TR"), "BL",
+        listOf("วันที่อยู่ขวาล่าง", "วันที่อยู่ซ้ายล่าง", "วันที่อยู่ขวาบน", "วันที่อยู่ซ้ายบน"),
+        listOf("FRAME M6.5 16.5h5", "FRAME M12.5 16.5h5", "FRAME M6.5 7.5h5", "FRAME M12.5 7.5h5").map { it.replace("FRAME", "M3.5 4.5h17v15h-17z") })
     field("โฟลเดอร์ใน Pictures", Icons.FOLDER, "folder", "Lumora") { it.replace(Regex("[^\\p{L}\\p{N} _-]"), "").take(40).ifBlank { "Lumora" } }
     toggle("บันทึก GPS", Icons.PIN, "gps", note = "ใช้ตำแหน่งล่าสุดของระบบ เมื่อได้รับสิทธิ์เท่านั้น")
     section("เกี่ยวกับ")

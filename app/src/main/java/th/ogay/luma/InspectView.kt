@@ -247,6 +247,7 @@ class InspectView(context: Context) : View(context) {
     private val bgPaint=Paint().apply{color=0xff05070f.toInt()}
     // ---- Reflection: a tiny copy of the picture, stretched (which blurs it) and mirrored past each edge.
     private var glow:Bitmap?=null
+    var reflections=true
     private val glowPaint=Paint(Paint.FILTER_BITMAP_FLAG).apply{colorFilter=ColorMatrixColorFilter(ColorMatrix().apply{setSaturation(1.15f);postConcat(ColorMatrix().apply{setScale(0.5f,0.5f,0.5f,1f)})})}
     private fun glowFrom(b:Bitmap){
         if(b.isRecycled||b.width<=0)return
@@ -317,7 +318,7 @@ class InspectView(context: Context) : View(context) {
         val cur=box(width,height,aspect,zoom,cx,cy)
         if(dismissY!=0f){val k=1f-0.35f*dismissShown;c.save();c.translate(0f,dismissY*0.85f);c.scale(k,k,width/2f,cur.centerY())}
         // Around the picture, a soft blurred mirror of its own edges, so it never ends in a hard cut.
-        if(pageX==0f&&zoom<=1.05f)reflect(c,cur)
+        if(reflections&&pageX==0f&&zoom<=1.05f)reflect(c,cur)
         if(pageX!=0f){
             // Page turn: this picture and its neighbour move together, like two prints side by side.
             val dir=if(pageX<0)1 else -1

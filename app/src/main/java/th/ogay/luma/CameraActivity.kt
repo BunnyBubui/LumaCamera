@@ -80,6 +80,10 @@ class CameraActivity : ComponentActivity() {
             BarMode("HDR", "HDR", Icons.HDR), BarMode("HIRES", "ความละเอียดสูง", Icons.HIRES),
             BarMode("QUICK", "ถ่ายเร็ว", Icons.FLASH), BarMode("FILM", "ฟิล์ม", Icons.FILM))
         /** Flash-fast, flash-quick and sport share one bar entry; a chip picks which. */
+        /** Modes where the long-exposure button is offered (they share the multi-frame capture path). */
+        val LONG_MODES = listOf(PhotoMode.PHOTO, PhotoMode.PRO, PhotoMode.FILM, PhotoMode.NIGHT)
+        /** Frames merged per second of long exposure. */
+        const val LONG_FRAMES = 6
         val QUICK_MODES = listOf(PhotoMode.FLASH_NIGHT, PhotoMode.FLASH_FAST, PhotoMode.SPORT)
         val QUICK_NAMES = listOf("แฟลชเร็ว", "แฟลชเร็วพิเศษ", "ถ่ายเร็ว")
         fun barKey(m: PhotoMode) = if (m in QUICK_MODES) "QUICK" else m.name
@@ -151,6 +155,9 @@ class CameraActivity : ComponentActivity() {
     private lateinit var zooms: ZoomCapsule
     private lateinit var macroButton: FrameLayout
     private lateinit var nightButton: FrameLayout
+    private lateinit var longButton: LinearLayout
+    private lateinit var longIcon: IconView
+    private lateinit var longLabel: TextView
     private lateinit var lookButton: FrameLayout
     private lateinit var lookSheet: GlassSheet
     private lateinit var nightCard: LinearLayout
@@ -388,6 +395,11 @@ class CameraActivity : ComponentActivity() {
             setOnClickListener { if (mode == PhotoMode.SPORT) chooseSport(this) else if (openChip == "F") closeDial() else openDial("F") }; glassTouch()
         }
         stage.addView(apertureButton, FrameLayout.LayoutParams(-2, dp(48), Gravity.BOTTOM or Gravity.START).apply { setMargins(dp(10), 0, 0, dp(12)) })
+        // Long exposure: a moon pill above the left buttons; it turns yellow and shows the time when on.
+        longIcon = IconView(this, Icons.NIGHT, 2f); longLabel = text("", 14f, 0xff1a1a1a.toInt(), true).apply { setPadding(dp(6), 0, dp(2), 0) }
+        longButton = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(dp(12), 0, dp(12), 0); minimumWidth = dp(44); isClickable = true; isFocusable = true
+            addView(longIcon, dp(20), dp(20)); addView(longLabel); pressMenu(menu) { chooseLong(it) } }
+        stage.addView(longButton, FrameLayout.LayoutParams(-2, dp(44), Gravity.BOTTOM or Gravity.START).apply { setMargins(dp(14), 0, 0, dp(72)) })
         nightButton = glassButton(IconView(this, Icons.NIGHT), 48, "ถ่ายกลางคืน กดค้างเพื่อเลือกเวลา") { toggleNight() }
         nightButton.setOnLongClickListener { chooseNightLength(nightButton); true }
         stage.addView(nightButton, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.BOTTOM or Gravity.END).apply { setMargins(0, 0, dp(14), dp(12)) })
@@ -636,11 +648,29 @@ class CameraActivity : ComponentActivity() {
         if (output != CaptureOutput.JPEG && mode in listOf(PhotoMode.PHOTO, PhotoMode.PRO)) statusIcon(Icons.FILE, after = output.label.replace(" + ", "+"), name = "รูปแบบไฟล์ ${output.label}")
         if (aeLock || pressLock) statusIcon(Icons.LOCK, after = "AE", name = "ล็อกความสว่าง")
         if (macro) statusIcon(Icons.FLOWER, name = "มาโคร เปิด")
-        if (nightActive()) statusIcon(Icons.NIGHT, after = listOf("2s", "3s", "5s")[nightIndex()], name = "กลางคืน · " + if (activeExtension) "ระบบกล้อง" else "AI รวมเฟรม")
+        if (nightActive() && !longActive()) statusIcon(Icons.NIGHT, after = listOf("2s", "3s", "5s")[nightIndex()], name = "กลางคืน · " + if (activeExtension) "ระบบกล้อง" else "AI รวมเฟรม")
         statusRow.contentDescription = "สิ่งที่เปิดอยู่: " + (0 until statusRow.childCount).joinToString(", ") { statusRow.getChildAt(it).contentDescription }
     }
     private fun nightIndex() = NIGHT_FRAMES.indexOf(prefs.getInt("night_frames", 6)).coerceAtLeast(0)
-    private fun nightActive() = mode == PhotoMode.NIGHT || (nightOn && mode == PhotoMode.PHOTO)
+    private fun nightActive() = mode == PhotoMode.NIGHT || (nightOn && mode == PhotoMode.PHOTO) || longActive()
+    /** Longer exposure chosen by hand (OPPO style): 0 off, else 1–3 s of frames gathered and merged into one picture. */
+    private fun longSeconds() = prefs.getInt("long_exposure", 0).coerceIn(0, 3)
+    private fun longAllowed() = mode in LONG_MODES && !activeExtension
+    private fun longActive() = longSeconds() > 0 && longAllowed()
+    private fun chooseLong(v: View) {
+        val opts = listOf(GlassMenu.Option("ปิด", Icons.CLOSE, "ถ่ายปกติ")) + (1..3).map { GlassMenu.Option("$it วินาที", Icons.NIGHT, "รวมแสง ${it * LONG_FRAMES} เฟรมเป็นภาพเดียว · ถือนิ่ง") }
+        menu.show(v, "ถ่ายนานขึ้น", opts, longSeconds()) { i ->
+            prefs.edit().putInt("long_exposure", i).apply(); refresh(); refreshStatus()
+            hint(if (i == 0) "ปิดถ่ายนานขึ้น" else "ถ่ายนานขึ้น $i วินาที · กดชัตเตอร์แล้วถือนิ่ง", 1500)
+        }
+    }
+    private fun styleLong() {
+        val on = longActive(); val sec = longSeconds()
+        longButton.background = glass(22, if (on) 0xfff4b63a.toInt() else Glass.FILL)
+        longIcon.tint = if (on) 0xff1a1a1a.toInt() else Color.WHITE
+        longLabel.text = if (on) "${sec}s" else ""; longLabel.visibility = if (on) View.VISIBLE else View.GONE
+        longButton.contentDescription = if (on) "ถ่ายนานขึ้น $sec วินาที แตะเพื่อเปลี่ยน" else "ถ่ายนานขึ้น ปิดอยู่ แตะเพื่อเลือกเวลา"
+    }
 
     private fun setEv(v: Float, fromGesture: Boolean) {
         ev = v.coerceIn(-2f, 2f); expRail.value = ev / 2; expRail.label = (if (ev > 0) "+" else if (ev < 0) "" else "±") + String.format(Locale.US, "%.1f", ev) + if (aeLock) " · ล็อก" else ""
@@ -1312,6 +1342,9 @@ class CameraActivity : ComponentActivity() {
         val f = prefs.getFloat("portrait_f", 2.8f); apertureButton.text = if (mode == PhotoMode.SPORT) "1/" + (1_000_000_000L / SPORT_KINDS[sportIndex()].second) else "f/${fText(f)}"; apertureButton.contentDescription = "เบลอพื้นหลัง f/${fText(f)} แตะเพื่อเปลี่ยน"
         lookButton.visibility = if (showSide && mode != PhotoMode.PANORAMA && prefs.getBoolean("show_look", true)) View.VISIBLE else View.GONE
         nightButton.visibility = View.GONE
+        longButton.visibility = if (showSide && longAllowed()) View.VISIBLE else View.GONE; styleLong()
+        // Above the settings strip when that is showing, otherwise just above the bottom buttons.
+        (longButton.layoutParams as FrameLayout.LayoutParams).let { lp -> val want = dp(if (chipFrame.visibility == View.VISIBLE) 134 else 72); if (lp.bottomMargin != want) { lp.bottomMargin = want; longButton.layoutParams = lp } }
         // A switched-on mode stays solid orange (not just a tinted icon), so it reads as on at a glance.
         fun lit(v: FrameLayout, on: Boolean) { (v.background as? GlassDrawable)?.let { if ((it.fill == Glass.ACCENT) != on) { it.fill = if (on) Glass.ACCENT else Glass.FILL; v.invalidate() } }; (v.getChildAt(0) as IconView).tint = if (on) Glass.ON_ACCENT else Color.WHITE }
         lit(macroButton, macro); lit(nightButton, nightActive())
@@ -1578,7 +1611,7 @@ class CameraActivity : ComponentActivity() {
         busy = true
         hintVersion++
         refresh()
-        val count = if (kind.enhance) burstCount(if (night) prefs.getInt("night_frames", 6).coerceAtMost(12) else 8) else 1
+        val count = if (kind.enhance) burstCount(if (longActive()) longSeconds() * LONG_FRAMES else if (night) prefs.getInt("night_frames", 6).coerceAtMost(12) else 8) else 1
         if (night) nightProgress(0, count) // the stop button works from the first moment, not after the 3A lock
         burst = BurstCapture(
             applicationContext, useCase, kind,
@@ -1713,7 +1746,7 @@ class CameraActivity : ComponentActivity() {
             val current=camera?.let{runCatching{Camera2CameraInfo.from(it.cameraInfo).cameraId}.getOrNull()}
             if (current != null) { takeRaw(current); return }
         }
-        if (output.needsRaw || output.enhance || (nightOn && mode == PhotoMode.PHOTO) || (mode == PhotoMode.NIGHT && !activeExtension)) {
+        if (output.needsRaw || output.enhance || (nightOn && mode == PhotoMode.PHOTO) || longActive() || (mode == PhotoMode.NIGHT && !activeExtension)) {
             takeBurst()
             return
         }
@@ -1863,7 +1896,7 @@ class CameraActivity : ComponentActivity() {
     private fun openVideo(kind:String){cancelModeSwitch();freezeFrame();provider?.unbindAll();capture=null;startActivity(Intent(this,VideoActivity::class.java).putExtra("mode",kind));overridePendingTransition(0,0)}
     @Suppress("DEPRECATION") private fun openSpecial(kind:String){cancelModeSwitch();freezeFrame();provider?.unbindAll();capture=null;startActivity(Intent(this,SpecialVideoActivity::class.java).putExtra("mode",kind));overridePendingTransition(0,0)}
     /** Settings that only change the screen or the saved file: switching them must not restart the camera. */
-    private val screenOnlyKeys=setOf("volume_action","zoom_speed","tap_shutter","grid","grid_kind","level","sound_all","sound","sound_level","video_sound","countdown_sound","focus_sound","click_sound","haptic","reduce_motion","watermark","watermark_name","folder","gps","timer")
+    private val screenOnlyKeys=setOf("volume_action","zoom_speed","tap_shutter","grid","grid_kind","level","sound_all","sound","sound_level","video_sound","countdown_sound","focus_sound","click_sound","haptic","reduce_motion","watermark","watermark_name","watermark_logo","watermark_time","watermark_camera","watermark_corner","folder","gps","timer")
     private fun cameraSignature()=prefs.all.filterKeys{it !in screenOnlyKeys}.toSortedMap().toString()
     private var settingsSignature=""
     // Applied once the switch animation has finished, not on every tap, so the settings sheet stays smooth.
