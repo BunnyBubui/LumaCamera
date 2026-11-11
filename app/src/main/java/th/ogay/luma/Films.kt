@@ -12,7 +12,7 @@ class Film(val id: String, val name: String, val group: String, val sat: Float, 
  * usually described (warmth, contrast, saturation, grain); they are an imitation, not a measured profile of the device.
  */
 object Films {
-    private const val GROUPS = "กล้องฟิล์ม|ดิจิทัลยุค CCD|DSLR คลาสสิก|ฟิล์มเนกาทีฟ|ฟิล์มสไลด์|ฟิล์มหนัง|ขาวดำ|อินสแตนท์และของเล่น"
+    private const val GROUPS = "กล้องฟิล์ม|ดิจิทัลยุค CCD|DSLR คลาสสิก|ฟิล์มเนกาทีฟ|ฟิล์มสไลด์|ฟิล์มหนัง|ขาวดำ|อินสแตนท์และของเล่น|Lumora ย้อนยุค"
     val groups: List<String> = GROUPS.split('|')
     // name | group index | saturation | contrast | r | g | b | lift | grain | vignette | note
     private const val BASES = """
@@ -84,6 +84,14 @@ Fuji QuickSnap|7|1.08|1.06|0.97|1.05|0.99|0.03|0.44|0.20|กล้องใช�
 Lomo LC-A|7|1.30|1.20|1.03|1.0|0.98|0.0|0.36|0.42|สีจัด ขอบมืดหนัก
 Holga 120|7|0.96|0.92|1.04|1.0|0.94|0.06|0.34|0.50|ฟุ้ง ขอบมืดมาก อุ่น
 Diana F+|7|0.90|0.88|0.98|1.0|1.06|0.08|0.30|0.40|ฝันฟุ้ง อมฟ้า ซีด
+Lumora Sunday|8|1.08|0.94|1.06|1.01|0.92|0.07|0.24|0.20|แดดบ่าย อุ่นซีด ฟุ้งนิด ๆ
+Lumora Mint|8|0.92|0.96|0.96|1.04|1.0|0.06|0.20|0.14|เขียวมิ้นต์จาง ๆ เย็นสบาย
+Lumora 98|8|1.16|1.08|1.03|0.99|0.95|0.04|0.32|0.26|แฟลชคอมแพกต์ยุค 90 สีจัด เกรนชัด
+Lumora Polaroid|8|0.86|0.88|1.03|1.0|0.97|0.10|0.18|0.30|ซีดครีม ดำยก ขอบมืด
+Lumora Tokyo Night|8|1.10|1.12|0.94|1.0|1.10|0.02|0.26|0.24|กลางคืนเมือง อมฟ้าม่วง
+Lumora Peach|8|1.04|0.92|1.07|0.99|0.96|0.08|0.14|0.12|พีชหวาน ผิวสวย นุ่ม
+Lumora Dust|8|0.78|0.90|1.02|1.0|0.96|0.09|0.36|0.28|หม่นฝุ่น เกรนหนา แบบฟิล์มหมดอายุ
+Lumora Mono Soft|8|0.0|0.92|1.0|1.0|1.0|0.07|0.28|0.22|ขาวดำนุ่ม ดำยก
 """
     val all: List<Film> by lazy {
         BASES.trim().lines().map { line ->
