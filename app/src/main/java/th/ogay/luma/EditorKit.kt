@@ -125,6 +125,11 @@ object EditorKit {
     fun actions(c: Context, items: List<View>): LinearLayout = LinearLayout(c).apply {
         gravity = Gravity.CENTER; items.forEach { addView(it, LinearLayout.LayoutParams(c.dp(72), -2)) }
     }
+    /** Like [actions] but in one row that scrolls sideways when the buttons do not fit the width. */
+    fun actionRow(c: Context, items: List<View>): View = android.widget.HorizontalScrollView(c).apply {
+        isHorizontalScrollBarEnabled = false; isFillViewport = true; clipToPadding = false; setPadding(c.dp(6), 0, c.dp(6), 0)
+        addView(LinearLayout(c).apply { gravity = Gravity.CENTER; items.forEach { addView(it, LinearLayout.LayoutParams(c.dp(64), -2)) } }, -1, -2)
+    }
     /** Accent round button with an icon (save, export). */
     fun roundAccent(c: Context, icon: String, desc: String, click: () -> Unit) = FrameLayout(c).apply {
         background = c.glass(24, Glass.ACCENT); contentDescription = desc; isClickable = true; glassTouch()

@@ -48,6 +48,8 @@ class PhotoEditorActivity : ComponentActivity() {
     /** 8 colours × hue, saturation, luminance. */
     private val hsl = FloatArray(24); private var hslColor = 0
     private val curve = Develop.IDENTITY_CURVE
+    private var curveChannel = 0
+    private var curveHistogram: Array<FloatArray>? = null
     private var film: Film? = null; private var filmStrength = 1f
     private val strokes = mutableListOf<Stroke>(); private var penColor = COLORS[2]; private var penSize = 1
 
@@ -153,6 +155,14 @@ class PhotoEditorActivity : ComponentActivity() {
         val dir = if (animate) i.compareTo(tool) else 0
         val modeChange = (tool == 0) != (i == 0)
         tool = i; toolBar.select(i, animate)
+        // The curve and colour mixer need more room than one strip of dials; the picture gives way smoothly.
+        val want = dp(when (i) { 3 -> 268; 2 -> 206; else -> 172 })
+        if (tools.layoutParams.height != want) {
+            val from = tools.layoutParams.height
+            if (!animate || Glass.reduced(this)) { tools.layoutParams.height = want; tools.requestLayout() }
+            else android.animation.ValueAnimator.ofInt(from, want).apply { duration = 260; interpolator = Glass.EASE
+                addUpdateListener { tools.layoutParams.height = it.animatedValue as Int; tools.requestLayout() } }.start()
+        }
         canvasView.mode = i; canvasView.refresh(animate && modeChange)
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_VERTICAL }
         when (i) {
@@ -210,24 +220,19 @@ class PhotoEditorActivity : ComponentActivity() {
     private val PEN = 5
     private fun sign(v: Float) = (v * 100).roundToInt().let { if (it > 0) "+$it" else "$it" }
     private fun adjustTools(col: LinearLayout) {
-        // Group chips (light, colour, effects) above one strip of dials; the chip of the dial in the middle lights up.
-        val chips = LinearLayout(this).apply { gravity = Gravity.CENTER }
-        val chipViews = Develop.GROUPS.map { (n, icon, _) -> EditorKit.chip(this, n, icon) {}.also { chips.addView(it, LinearLayout.LayoutParams(-2, dp(36)).apply { setMargins(dp(4), 0, dp(4), 0) }) } }
+        // One strip of dials (light, colour, effects in that order); swipe through them.
         val name = text("", 12f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER }
         val value = text("", 15f, Color.WHITE, true).apply { gravity = Gravity.CENTER }
         val dials = Develop.NAMES.mapIndexed { k, n -> EditorKit.Dial(this, Develop.ICONS[k], n).apply { amount = values[k] } }
         val slider = GlassSlider(this).apply { values = (-100..100).map { if (it > 0) "+$it" else "$it" }; grad = intArrayOf(0xff8e8e93.toInt(), Color.WHITE, Glass.ACCENT) }
         fun show(k: Int) {
             adjustIndex = k; dials.forEachIndexed { j, d -> d.lit = j == k }
-            Develop.GROUPS.forEachIndexed { g, (_, _, r) -> EditorKit.mark(chipViews[g], k in r) }
             name.text = Develop.NAMES[k]; value.text = sign(values[k]); value.setTextColor(if (values[k] == 0f) Glass.TEXT2 else Glass.ACCENT)
             slider.index = (values[k] * 100).roundToInt() + 100; slider.contentDescription = Develop.NAMES[k]
         }
         lateinit var strip: CenterStrip
         strip = EditorKit.strip(this, dials.map { it to 60 }, adjustIndex, 0, { k -> show(k) },
             tapAgain = { k -> if (values[k] != 0f) { values[k] = 0f; dials[k].amount = 0f; Glass.tick(dials[k]); show(k); edited() } }) { k -> show(k) }
-        chipViews.forEachIndexed { g, c -> c.setOnClickListener { Glass.tick(c); val first = Develop.GROUPS[g].third.first; strip.select(first, true); show(first) } }
-        col.addView(chips, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(2) })
         col.addView(LinearLayout(this).apply { gravity = Gravity.CENTER; addView(name); addView(value.apply { setPadding(dp(8), 0, 0, 0) }) }, -1, -2)
         col.addView(strip, LinearLayout.LayoutParams(-1, dp(60)))
         var zero = values[adjustIndex] == 0f
@@ -252,6 +257,16 @@ class PhotoEditorActivity : ComponentActivity() {
             setOnClickListener { Glass.tick(this); hslColor = k; showTool(2, false) }
         }.also { dots.addView(it, LinearLayout.LayoutParams(dp(30), dp(30)).apply { setMargins(dp(7), dp(6), dp(7), dp(6)) }) } }
         col.addView(dots, -1, -2)
+        val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(18), 0, dp(12), 0) }
+        head.addView(View(this).apply { background = android.graphics.drawable.GradientDrawable().apply { shape = android.graphics.drawable.GradientDrawable.OVAL; setColor(Develop.HSL_COLORS[hslColor]) } }, dp(10), dp(10))
+        head.addView(text("สี" + Develop.HSL_NAMES[hslColor], 13f, Color.WHITE, true).apply { setPadding(dp(8), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
+        // Reset: this colour first; when it is already untouched, every colour.
+        val anyThis = (0 until 3).any { hsl[hslColor * 3 + it] != 0f }
+        head.addView(EditorKit.chip(this, if (anyThis) "คืนค่าสีนี้" else "คืนค่าทุกสี", Icons.RESET) {
+            if ((0 until 3).any { hsl[hslColor * 3 + it] != 0f }) for (j in 0 until 3) hsl[hslColor * 3 + j] = 0f else hsl.fill(0f)
+            canvasView.refresh(); commit(); showTool(2, false)
+        }.apply { alpha = if (hsl.any { it != 0f }) 1f else 0.45f }, LinearLayout.LayoutParams(-2, dp(32)))
+        col.addView(head, LinearLayout.LayoutParams(-1, dp(36)))
         listOf("เฉดสี" to 0, "ความอิ่ม" to 1, "ความสว่าง" to 2).forEach { (label, part) ->
             val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), 0, dp(8), 0) }
             row.addView(text(label, 12f, Glass.TEXT2, true), dp(64), -2)
@@ -265,13 +280,33 @@ class PhotoEditorActivity : ComponentActivity() {
         }
     }
 
-    /** Tone curve: drag the five points up or down. */
+    /** Point curve with RGB, red, green and blue channels, like Lightroom. */
     private fun curveTools(col: LinearLayout) {
-        val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), 0, dp(12), 0) }
-        val view = CurveView(this, curve).apply { onChange = { canvasView.refresh() }; onRelease = { commit() } }
-        row.addView(view, LinearLayout.LayoutParams(0, dp(150), 1f))
-        row.addView(EditorKit.action(this, Icons.RESET, "คืนค่า") { Develop.IDENTITY_CURVE.copyInto(curve); view.invalidate(); canvasView.refresh(); commit() }, LinearLayout.LayoutParams(dp(72), -2).apply { leftMargin = dp(8) })
-        col.addView(row, -1, -2)
+        val view = CurveView(this, curve).apply { channel = curveChannel; histogram = curveHistogram; onChange = { canvasView.refresh() }; onRelease = { commit() } }
+        if (curveHistogram == null) canvasView.bitmap?.let { b -> luma.readIo.execute { val h = CurveView.histogram(b); runOnUiThread { curveHistogram = h; view.histogram = h } } }
+        val top = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), 0, dp(12), 0) }
+        val name = text(Develop.CURVE_NAMES[curveChannel], 13f, Color.WHITE, true)
+        val dots = ArrayList<View>()
+        fun paint() = dots.forEachIndexed { k, v ->
+            (v.background as android.graphics.drawable.GradientDrawable).setStroke(dp(if (k == curveChannel) 3 else 0), Glass.ACCENT)
+            v.animate().scaleX(if (k == curveChannel) 1.15f else 1f).scaleY(if (k == curveChannel) 1.15f else 1f).setDuration(160).start()
+        }
+        for (k in 0 until 4) View(this).apply {
+            contentDescription = "ช่อง " + Develop.CURVE_NAMES[k]; isClickable = true
+            background = android.graphics.drawable.GradientDrawable().apply { shape = android.graphics.drawable.GradientDrawable.OVAL; setColor(Develop.CURVE_COLORS[k]) }
+            setOnClickListener { Glass.tick(this); curveChannel = k; view.channel = k; name.text = Develop.CURVE_NAMES[k]; paint() }
+        }.also { dots += it; top.addView(it, LinearLayout.LayoutParams(dp(24), dp(24)).apply { setMargins(dp(6), 0, dp(6), 0) }) }
+        top.addView(name.apply { setPadding(dp(10), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
+        top.addView(EditorKit.chip(this, "คืนค่า", Icons.RESET) {
+            // Resets the channel on screen; when it is already straight, all four channels.
+            val base = curveChannel * 5
+            val straight = (0 until 5).all { kotlin.math.abs(curve[base + it] - it * 0.25f) < 1e-4f }
+            if (straight) Develop.IDENTITY_CURVE.copyInto(curve) else for (n in 0 until 5) curve[base + n] = n * 0.25f
+            view.invalidate(); canvasView.refresh(); commit()
+        }, LinearLayout.LayoutParams(-2, dp(32)))
+        paint()
+        col.addView(top, LinearLayout.LayoutParams(-1, dp(40)))
+        col.addView(view, LinearLayout.LayoutParams(-1, dp(220)))
     }
 
     private fun filmTools(col: LinearLayout) {
@@ -396,7 +431,7 @@ class PhotoEditorActivity : ComponentActivity() {
     }
     private fun restore(s: Bundle) {
         turns = s.getInt("turns"); flipped = s.getBoolean("flipped"); s.getFloatArray("crop")?.let { crop.set(it[0], it[1], it[2], it[3]) }
-        s.getFloatArray("hsl")?.takeIf { it.size == hsl.size }?.copyInto(hsl); s.getFloatArray("curve")?.takeIf { it.size == 5 }?.copyInto(curve)
+        s.getFloatArray("hsl")?.takeIf { it.size == hsl.size }?.copyInto(hsl); Develop.loadCurve(s.getFloatArray("curve"), curve)
         aspect = s.getInt("aspect"); s.getFloatArray("values")?.takeIf { it.size == values.size }?.copyInto(values); film = Films.byId(s.getString("film")); filmStrength = s.getFloat("strength", 1f); tool = s.getInt("tool")
         val colors = s.getIntArray("sc") ?: return; val widths = s.getFloatArray("sw") ?: return; val pts = s.getFloatArray("sp") ?: return
         var k = 0

@@ -27,6 +27,7 @@ import androidx.media3.effect.RgbMatrix
 import androidx.media3.effect.Presentation
 import androidx.media3.effect.SingleColorLut
 import androidx.media3.effect.SpeedChangeEffect
+import androidx.media3.effect.FrameDropEffect
 import androidx.media3.effect.StaticOverlaySettings
 import androidx.media3.effect.TextOverlay
 import androidx.media3.effect.TextureOverlay
@@ -139,6 +140,8 @@ object VideoEdit {
         val effects = mutableListOf<Effect>()
         if (s.turns % 4 != 0 || s.mirror) effects += ScaleAndRotateTransformation.Builder().setScale(if (s.mirror) -1f else 1f, 1f).setRotationDegrees(360f - (s.turns % 4) * 90f).build()
         if (s.speed != 1f && !s.keepAudio) effects += SpeedChangeEffect(s.speed)
+        // Fast speeds (up to 500×) would hand the encoder hundreds of frames per second; keep about 30 of them.
+        if (s.speed > 1f) effects += FrameDropEffect.createDefaultFrameDropEffect(30f)
         // One clip: look and text belong to the clip. Several clips: they belong to the whole video (below), so they
         // run across the joins and every clip is brought to the first clip's frame.
         if (!multi) s.look?.let { effects += SingleColorLut.createFromCube(EditorKit.cube(it)) }

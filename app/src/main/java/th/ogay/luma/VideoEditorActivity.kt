@@ -64,7 +64,11 @@ import kotlin.math.roundToInt
 class VideoEditorActivity : ComponentActivity() {
     companion object {
         fun intent(c: Context, uri: Uri): Intent = Intent(c, VideoEditorActivity::class.java).setData(uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        private val SPEEDS = listOf(0.25f, 0.5f, 1f, 1.5f, 2f, 4f)
+        /** 0.1× to 500×, closer together near 1× where small changes matter. */
+        private val SPEEDS = listOf(0.1f, 0.15f, 0.2f, 0.25f, 0.3f, 0.4f, 0.5f, 0.6f, 0.75f, 0.9f, 1f, 1.25f, 1.5f, 1.75f, 2f, 2.5f, 3f, 4f, 5f, 6f, 8f,
+            10f, 12f, 15f, 20f, 25f, 30f, 40f, 50f, 60f, 75f, 100f, 125f, 150f, 200f, 250f, 300f, 400f, 500f)
+        /** Sound follows the picture only in this range; outside it the sound is left out. */
+        private const val SOUND_MIN = 0.25f; private const val SOUND_MAX = 4f
         private val CROPS = listOf("ต้นฉบับ" to 0f, "1:1" to 1f, "4:5" to 4f / 5, "16:9" to 16f / 9, "9:16" to 9f / 16, "2.39:1" to 2.39f)
         private val PLACES = listOf("บน", "กลาง", "ล่าง")
         private val TEXT_COLORS = intArrayOf(Color.WHITE, Color.BLACK, Glass.ACCENT, 0xffffd60a.toInt(), 0xff0a84ff.toInt())
@@ -420,25 +424,21 @@ class VideoEditorActivity : ComponentActivity() {
         fun note(s: String) = col.addView(text(s, 12f, Glass.TEXT2, true).apply { maxLines = 1; gravity = Gravity.CENTER; setPadding(dp(16), 0, dp(16), dp(6)) }, -1, -2)
         when (i) {
             0 -> { if (cutValid()) note("ตัดช่วง ${clock(cutFrom - start)}–${clock(cutTo - start)} ออก")
-                col.addView(EditorKit.actions(this, listOf(
+                // One row that scrolls sideways: two rows of buttons did not fit above the tool bar.
+                col.addView(EditorKit.actionRow(this, listOf(
                     EditorKit.action(this, EditorKit.START, "เริ่มที่นี่") { setRange(trim.playhead, end) },
                     EditorKit.action(this, EditorKit.END, "จบที่นี่") { setRange(start, trim.playhead) },
-                    EditorKit.action(this, Icons.RESET, "ทั้งคลิป") { setRange(0, duration); cutFrom = -1; cutTo = -1; showTool(0, false) })), -1, -2)
-                // Take a middle part out: mark where it starts and ends with the playhead.
-                col.addView(EditorKit.actions(this, listOf(
+                    EditorKit.action(this, Icons.RESET, "ทั้งคลิป") { setRange(0, duration); cutFrom = -1; cutTo = -1; showTool(0, false) },
+                    // Take a middle part out: mark where it starts and ends with the playhead.
                     EditorKit.action(this, CUT_IN, "เริ่มตัดออก", cutFrom >= 0) { cutFrom = trim.playhead; if (cutTo <= cutFrom) cutTo = -1; split = -1; trim.split = -1; showTool(0, false) },
                     EditorKit.action(this, CUT_OUT, "จบตัดออก", cutValid()) { if (cutFrom < 0 || trim.playhead - cutFrom < 300) notice("เลื่อนไปหลังจุดเริ่มตัดออกก่อน") else { cutTo = trim.playhead; split = -1; trim.split = -1; showTime(); showTool(0, false) } },
-                    EditorKit.action(this, Icons.CLOSE, "ไม่ตัดออก") { cutFrom = -1; cutTo = -1; showTool(0, false) })), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) }) }
+                    EditorKit.action(this, Icons.CLOSE, "ไม่ตัดออก") { cutFrom = -1; cutTo = -1; showTool(0, false) })), -1, -2) }
             1 -> { if (split >= 0) note("2 คลิป · แยกที่ ${clock(split - start)}")
                 col.addView(EditorKit.actions(this, listOf(
                     EditorKit.action(this, EditorKit.SPLIT, "แยกที่นี่", split >= 0) {
                         val at = trim.playhead; if (at - start < 300 || end - at < 300) notice("เลื่อนให้ห่างจากขอบช่วงอย่างน้อย 0.3 วินาที") else { split = at; trim.split = split; cutFrom = -1; cutTo = -1; showTime(); showTool(1, false) } },
                     EditorKit.action(this, Icons.CLOSE, "ไม่แยก") { split = -1; trim.split = -1; showTime(); showTool(1, false) })), -1, -2) }
-            2 -> { val items = SPEEDS.map { EditorKit.StripItem(this, "", speedName(it), 15f) }
-                // Sliding through the speeds plays the preview at each one.
-                col.addView(EditorKit.strip(this, items.map { it to 62 }, SPEEDS.indexOf(speed).coerceAtLeast(0), 46, { k -> items.forEachIndexed { j, v -> v.lit(j == k) }
-                    player?.let { p -> if (p.isPlaying) runCatching { p.playbackParams = p.playbackParams.setSpeed(SPEEDS[k]) } } }) { k -> speed = SPEEDS[k]; showTime() },
-                    LinearLayout.LayoutParams(-1, dp(64))) }
+            2 -> speedTools(col)
             3 -> { val items = CROPS.map { (name, _) -> EditorKit.StripItem(this, if (name == "ต้นฉบับ") Icons.VIDEO else aspectIconPath(name), name) }
                 col.addView(EditorKit.strip(this, items.map { it to 64 }, cropIndex, 60, { k -> items.forEachIndexed { j, v -> v.lit(j == k) } }) { k -> cropIndex = k; layoutVideo() },
                     LinearLayout.LayoutParams(-1, dp(70))) }
@@ -457,6 +457,41 @@ class VideoEditorActivity : ComponentActivity() {
             else -> stickerTools(col)
         }
         EditorKit.swap(tools, col, dir)
+    }
+    /** Speed as one slider, like the photo adjustments: 0.1× (slow) through 1× to 500× (fast). */
+    private fun speedTools(col: LinearLayout) {
+        val value = text(speedName(speed), 17f, if (speed == 1f) Color.WHITE else Glass.ACCENT, true).apply { gravity = Gravity.CENTER }
+        val note = text("", 11.5f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; maxLines = 1 }
+        fun describe(v: Float) {
+            value.text = speedName(v); value.setTextColor(if (v == 1f) Color.WHITE else Glass.ACCENT)
+            note.text = when {
+                v == 1f -> "ความเร็วปกติ"
+                hasAudio && (v < SOUND_MIN || v > SOUND_MAX) -> "ช้ากว่า 0.25× หรือเร็วกว่า 4× จะไม่มีเสียง"
+                v < 1f -> "ช้าลง · ได้คลิป ${clock(((end - start) / v).toLong())}"
+                else -> "เร็วขึ้น · ได้คลิป ${clock(((end - start) / v).toLong())}"
+            }
+        }
+        val slider = GlassSlider(this).apply {
+            values = SPEEDS.map { speedName(it) }; index = SPEEDS.indexOfFirst { it >= speed }.coerceAtLeast(0)
+            grad = intArrayOf(0xff64d2ff.toInt(), Color.WHITE, Glass.ACCENT); contentDescription = "ความเร็ววิดีโอ"
+            onChange = { k ->
+                var v = SPEEDS[k]
+                // Keep at least one second of video.
+                if ((end - start) / v < 1000f) { v = SPEEDS.last { (end - start) / it >= 1000f || it == 1f }; index = SPEEDS.indexOf(v); notice("คลิปช่วงนี้เร่งได้สูงสุด ${speedName(v)}") }
+                if ((v == 1f) != (speed == 1f) && v == 1f) Glass.tick(this, android.view.HapticFeedbackConstants.CONTEXT_CLICK)
+                speed = v; describe(v); showTime()
+                player?.let { p -> if (p.isPlaying && playIndex == 0) runCatching { p.playbackParams = p.playbackParams.setSpeed(v.coerceIn(0.1f, 8f)) } }
+            }
+        }
+        val presets = LinearLayout(this).apply { gravity = Gravity.CENTER }
+        listOf(0.1f, 0.5f, 1f, 2f, 10f, 100f, 500f).forEach { p ->
+            presets.addView(EditorKit.chip(this, speedName(p), "", speed == p) { slider.index = SPEEDS.indexOf(p); slider.onChange(SPEEDS.indexOf(p)); showTool(2, false) },
+                LinearLayout.LayoutParams(-2, dp(30)).apply { setMargins(dp(3), 0, dp(3), 0) })
+        }
+        col.addView(LinearLayout(this).apply { gravity = Gravity.CENTER; addView(value); addView(note.apply { setPadding(dp(10), 0, 0, 0) }) }, -1, -2)
+        col.addView(slider, LinearLayout.LayoutParams(-1, dp(46)).apply { setMargins(dp(12), 0, dp(12), 0) })
+        col.addView(android.widget.HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(presets) }, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.CENTER_HORIZONTAL })
+        describe(speed)
     }
     private fun speedName(s: Float) = (if (s == s.toInt().toFloat()) "${s.toInt()}" else "$s") + "×"
     private fun setRange(s: Long, e: Long) {
@@ -672,7 +707,7 @@ class VideoEditorActivity : ComponentActivity() {
     } }
 
     private fun composition(from: Long, to: Long): Composition = VideoEdit.composition(VideoEditSpec(source, from, to, if (turns % 2 == 1) videoH else videoW, if (turns % 2 == 1) videoW else videoH,
-        speed, CROPS[cropIndex].second, caption, place, textColor, textBig, if (looked()) colour() else null, music, hasAudio && keepSound,
+        speed, CROPS[cropIndex].second, caption, place, textColor, textBig, if (looked()) colour() else null, music, hasAudio && keepSound && speed in SOUND_MIN..SOUND_MAX,
         turns, mirror, volume, musicVolume, if (cutValid() && cutFrom >= from && cutTo <= to) cutFrom else -1L, cutTo, textBox,
         extras.map { VideoPart(it.uri, 0, it.duration) }, if (extras.isEmpty()) 0 else transition, stickers.toList()))
 

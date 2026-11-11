@@ -15,7 +15,8 @@ import kotlin.math.pow
  * hue / saturation / luminance, clarity and sharpening on luminance, and grain.
  *
  * [values] follow [Develop.NAMES]; the last one (vignette) is drawn separately over the visible frame.
- * [hsl] holds 8 colours × (hue, saturation, luminance), each −1..1. [curve] is the output at inputs 0, ¼, ½, ¾, 1.
+ * [hsl] holds 8 colours × (hue, saturation, luminance), each −1..1. [curve] holds four 5-point curves (RGB, red,
+ * green, blue), each the output at inputs 0, ¼, ½, ¾, 1, like Lightroom's point curve channels.
  */
 class Develop(private val values: FloatArray, private val hsl: FloatArray, private val curve: FloatArray, film: ColorMatrix) {
     companion object {
@@ -39,7 +40,12 @@ class Develop(private val values: FloatArray, private val hsl: FloatArray, priva
         val HSL_NAMES = listOf("แดง", "ส้ม", "เหลือง", "เขียว", "ฟ้าน้ำทะเล", "น้ำเงิน", "ม่วง", "ชมพูบานเย็น")
         val HSL_COLORS = intArrayOf(0xffff453a.toInt(), 0xffff9f0a.toInt(), 0xffffd60a.toInt(), 0xff30d158.toInt(), 0xff64d2ff.toInt(), 0xff0a84ff.toInt(), 0xffbf5af2.toInt(), 0xffff375f.toInt())
         private val HUES = floatArrayOf(0f, 30f, 60f, 120f, 180f, 225f, 270f, 315f)
-        val IDENTITY_CURVE get() = floatArrayOf(0f, 0.25f, 0.5f, 0.75f, 1f)
+        val IDENTITY_CURVE get() = FloatArray(CURVE_SIZE) { (it % 5) * 0.25f }
+        const val CURVE_SIZE = 20
+        val CURVE_NAMES = listOf("RGB", "แดง", "เขียว", "น้ำเงิน")
+        val CURVE_COLORS = intArrayOf(0xffffffff.toInt(), 0xffff453a.toInt(), 0xff30d158.toInt(), 0xff0a84ff.toInt())
+        /** Accepts the old single 5-point curve too (saved edits from before the colour channels). */
+        fun loadCurve(saved: FloatArray?, into: FloatArray) { when (saved?.size) { CURVE_SIZE -> saved.copyInto(into); 5 -> { IDENTITY_CURVE.copyInto(into); saved.copyInto(into) } } }
         private val pool = Executors.newFixedThreadPool(max(1, min(4, Runtime.getRuntime().availableProcessors())))
 
         /** Monotone cubic through the five curve points, sampled at [n] steps (no overshoot, so tones never reverse). */
@@ -60,7 +66,7 @@ class Develop(private val values: FloatArray, private val hsl: FloatArray, priva
     }
 
     private val m = FloatArray(20)
-    private val lut = IntArray(256)
+    private val lutR = IntArray(256); private val lutG = IntArray(256); private val lutB = IntArray(256)
     private val sat = values[9]; private val vib = values[8]; private val haze = values[11]
     private val clarity = values[10]; private val sharp = values[12]; private val grain = values[13].coerceAtLeast(0f)
     private val anyHsl = hsl.any { it != 0f }
@@ -70,7 +76,8 @@ class Develop(private val values: FloatArray, private val hsl: FloatArray, priva
         // White balance after the film look, as one matrix.
         val wb = ColorMatrix(floatArrayOf(1f + values[6] * 0.15f, 0f, 0f, 0f, 0f, 0f, 1f - values[7] * 0.10f, 0f, 0f, 0f, 0f, 0f, 1f - values[6] * 0.15f, 0f, 0f, 0f, 0f, 0f, 1f, 0f))
         val all = ColorMatrix(film); all.postConcat(wb); all.array.copyInto(m)
-        val c = curvePoints(curve, 256)
+        val c = curvePoints(curve.copyOfRange(0, 5), 256)
+        val cr = curvePoints(curve.copyOfRange(5, 10), 256); val cg = curvePoints(curve.copyOfRange(10, 15), 256); val cb = curvePoints(curve.copyOfRange(15, 20), 256)
         val gain = 2f.pow(values[0] * 1.3f)
         for (i in 0 until 256) {
             var x = i / 255f * gain
@@ -82,7 +89,11 @@ class Develop(private val values: FloatArray, private val hsl: FloatArray, priva
             val k = values[1] + haze * 0.25f
             x = x.coerceIn(0f, 1f)
             x = if (k >= 0f) x + (x * x * (3f - 2f * x) - x) * k * 1.4f else 0.5f + (x - 0.5f) * (1f + k * 0.55f)
-            lut[i] = (c[(x.coerceIn(0f, 1f) * 255f).toInt()] * 255f + 0.5f).toInt().coerceIn(0, 255)
+            val master = (c[(x.coerceIn(0f, 1f) * 255f).toInt()] * 255f + 0.5f).toInt().coerceIn(0, 255)
+            // Channel curves come after the RGB curve, folded into one table per channel.
+            lutR[i] = (cr[master] * 255f + 0.5f).toInt().coerceIn(0, 255)
+            lutG[i] = (cg[master] * 255f + 0.5f).toInt().coerceIn(0, 255)
+            lutB[i] = (cb[master] * 255f + 0.5f).toInt().coerceIn(0, 255)
         }
         val identity = ColorMatrix().array
         neutral = (0 until VIGNETTE).all { values[it] == 0f } && !anyHsl && curve.contentEquals(IDENTITY_CURVE) && (0 until 20).all { abs(m[it] - identity[it]) < 1e-4f }
@@ -131,9 +142,9 @@ class Develop(private val values: FloatArray, private val hsl: FloatArray, priva
         for (i in from until to) {
             val c = px[i]; val a = c ushr 24
             val r0 = (c shr 16 and 255).toFloat(); val g0 = (c shr 8 and 255).toFloat(); val b0 = (c and 255).toFloat()
-            var r = lut[(m[0] * r0 + m[1] * g0 + m[2] * b0 + m[4]).toInt().coerceIn(0, 255)].toFloat()
-            var g = lut[(m[5] * r0 + m[6] * g0 + m[7] * b0 + m[9]).toInt().coerceIn(0, 255)].toFloat()
-            var b = lut[(m[10] * r0 + m[11] * g0 + m[12] * b0 + m[14]).toInt().coerceIn(0, 255)].toFloat()
+            var r = lutR[(m[0] * r0 + m[1] * g0 + m[2] * b0 + m[4]).toInt().coerceIn(0, 255)].toFloat()
+            var g = lutG[(m[5] * r0 + m[6] * g0 + m[7] * b0 + m[9]).toInt().coerceIn(0, 255)].toFloat()
+            var b = lutB[(m[10] * r0 + m[11] * g0 + m[12] * b0 + m[14]).toInt().coerceIn(0, 255)].toFloat()
             if (sat != 0f || vib != 0f || haze != 0f) {
                 val l = 0.299f * r + 0.587f * g + 0.114f * b
                 val s0 = (max(r, max(g, b)) - min(r, min(g, b))) / 255f
@@ -210,38 +221,103 @@ class Develop(private val values: FloatArray, private val hsl: FloatArray, priva
     }
 }
 
-/** Tone curve editor: five points on a grid; drag a point up or down (the end points too). */
+/**
+ * Point-curve editor in the style of Lightroom: one graph, four channels (RGB, red, green, blue). The active
+ * channel is drawn in its colour over a soft histogram of the picture; the other channels show faintly when
+ * they have been changed. Drag any of the five points up or down.
+ */
 class CurveView(context: android.content.Context, private val curve: FloatArray) : android.view.View(context) {
     var onChange: () -> Unit = {}
     var onRelease: () -> Unit = {}
+    /** 0 = RGB, 1 = red, 2 = green, 3 = blue. */
+    var channel = 0; set(v) { field = v; invalidate() }
+    /** Luminance (index 0) and R, G, B histograms, 64 bins each, normalised to 0..1; null hides it. */
+    var histogram: Array<FloatArray>? = null; set(v) { field = v; invalidate() }
     private val d = context.resources.displayMetrics.density
-    private val grid = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { style = android.graphics.Paint.Style.STROKE; color = 0x29ffffff; strokeWidth = d }
-    private val line = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { style = android.graphics.Paint.Style.STROKE; color = android.graphics.Color.WHITE; strokeWidth = 2.2f * d; strokeCap = android.graphics.Paint.Cap.ROUND }
+    private val panel = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = 0x14ffffff }
+    private val grid = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { style = android.graphics.Paint.Style.STROKE; color = 0x1fffffff; strokeWidth = d }
+    private val line = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { style = android.graphics.Paint.Style.STROKE; strokeWidth = 2.4f * d; strokeCap = android.graphics.Paint.Cap.ROUND; strokeJoin = android.graphics.Paint.Join.ROUND }
+    private val faint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { style = android.graphics.Paint.Style.STROKE; strokeWidth = 1.4f * d }
+    private val fill = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
     private val dot = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+    private val ring = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { style = android.graphics.Paint.Style.STROKE; strokeWidth = 2f * d }
+    private val label = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = 0xccffffff.toInt(); textSize = 11f * d; isFakeBoldText = true }
     private var held = -1
     init { contentDescription = "เส้นโค้งโทน ลากจุดขึ้นลงเพื่อปรับ"; isClickable = true }
-    private fun box() = android.graphics.RectF(10 * d, 8 * d, width - 10 * d, height - 8 * d)
+    private fun box(): android.graphics.RectF {
+        // Square graph in the middle of the view, like Lightroom's curve panel.
+        val side = minOf(width - 24 * d, height - 16 * d); val l = (width - side) / 2f; val t = (height - side) / 2f
+        return android.graphics.RectF(l, t, l + side, t + side)
+    }
+    private fun at(ch: Int, i: Int) = curve[ch * 5 + i]
+    private fun path(r: android.graphics.RectF, ch: Int): android.graphics.Path {
+        val pts = Develop.curvePoints(curve.copyOfRange(ch * 5, ch * 5 + 5), 96); val p = android.graphics.Path()
+        pts.forEachIndexed { i, v -> val x = r.left + r.width() * i / 95f; val y = r.bottom - r.height() * v; if (i == 0) p.moveTo(x, y) else p.lineTo(x, y) }
+        return p
+    }
+    private fun changed(ch: Int) = (0 until 5).any { kotlin.math.abs(at(ch, it) - it * 0.25f) > 1e-4f }
     override fun onDraw(c: android.graphics.Canvas) {
-        val r = box()
-        c.drawRoundRect(r, 10 * d, 10 * d, grid)
+        val r = box(); val color = Develop.CURVE_COLORS[channel]
+        c.drawRoundRect(r, 12 * d, 12 * d, panel)
+        // Histogram of the active channel (luminance for RGB), as a soft filled area.
+        histogram?.getOrNull(channel)?.let { h ->
+            val p = android.graphics.Path(); p.moveTo(r.left, r.bottom)
+            h.forEachIndexed { i, v -> p.lineTo(r.left + r.width() * i / (h.size - 1f), r.bottom - r.height() * 0.9f * v) }
+            p.lineTo(r.right, r.bottom); p.close()
+            fill.shader = null; fill.color = (color and 0x00ffffff) or 0x2e000000; c.drawPath(p, fill)
+        }
         for (i in 1..3) { val x = r.left + r.width() * i / 4; val y = r.top + r.height() * i / 4; c.drawLine(x, r.top, x, r.bottom, grid); c.drawLine(r.left, y, r.right, y, grid) }
-        grid.alpha = 70; c.drawLine(r.left, r.bottom, r.right, r.top, grid); grid.alpha = 41
-        val pts = Develop.curvePoints(curve, 64); val path = android.graphics.Path()
-        pts.forEachIndexed { i, v -> val x = r.left + r.width() * i / 63f; val y = r.bottom - r.height() * v; if (i == 0) path.moveTo(x, y) else path.lineTo(x, y) }
-        c.drawPath(path, line)
+        grid.alpha = 60; c.drawLine(r.left, r.bottom, r.right, r.top, grid); grid.alpha = 31
+        c.save(); c.clipRect(r)
+        for (ch in 0 until 4) if (ch != channel && changed(ch)) { faint.color = (Develop.CURVE_COLORS[ch] and 0x00ffffff) or 0x80000000.toInt(); c.drawPath(path(r, ch), faint) }
+        line.color = color; line.setShadowLayer(6 * d, 0f, 0f, (color and 0x00ffffff) or 0x99000000.toInt())
+        c.drawPath(path(r, channel), line)
+        c.restore()
         for (i in 0 until 5) {
-            val x = r.left + r.width() * i / 4f; val y = r.bottom - r.height() * curve[i]
-            dot.color = if (i == held) Glass.ACCENT else android.graphics.Color.WHITE
-            c.drawCircle(x, y, (if (i == held) 8f else 6f) * d, dot)
+            val x = r.left + r.width() * i / 4f; val y = r.bottom - r.height() * at(channel, i)
+            val big = i == held
+            dot.color = 0xff0b0f1e.toInt(); c.drawCircle(x, y, (if (big) 9f else 6.5f) * d, dot)
+            ring.color = color; c.drawCircle(x, y, (if (big) 9f else 6.5f) * d, ring)
+            if (big) { dot.color = color; c.drawCircle(x, y, 3.5f * d, dot) }
+        }
+        if (held >= 0) {
+            val t = "${(held * 25)} → ${(at(channel, held) * 100).toInt()}"
+            c.drawText(t, r.left + 8 * d, r.top + 16 * d, label)
         }
     }
     override fun onTouchEvent(e: android.view.MotionEvent): Boolean {
         val r = box()
         when (e.actionMasked) {
-            android.view.MotionEvent.ACTION_DOWN -> { held = ((e.x - r.left) / r.width() * 4f).let { kotlin.math.round(it).toInt() }.coerceIn(0, 4); parent?.requestDisallowInterceptTouchEvent(true); Glass.tick(this); invalidate() }
-            android.view.MotionEvent.ACTION_MOVE -> if (held >= 0) { curve[held] = ((r.bottom - e.y) / r.height()).coerceIn(0f, 1f); invalidate(); onChange() }
+            android.view.MotionEvent.ACTION_DOWN -> {
+                if (!r.contains(e.x, e.y) && (e.x < r.left - 16 * d || e.x > r.right + 16 * d)) return false
+                held = ((e.x - r.left) / r.width() * 4f).let { kotlin.math.round(it).toInt() }.coerceIn(0, 4)
+                parent?.requestDisallowInterceptTouchEvent(true); Glass.tick(this); invalidate()
+            }
+            android.view.MotionEvent.ACTION_MOVE -> if (held >= 0) { curve[channel * 5 + held] = ((r.bottom - e.y) / r.height()).coerceIn(0f, 1f); invalidate(); onChange() }
             android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> { if (held >= 0) onRelease(); held = -1; invalidate() }
         }
         return true
+    }
+
+    companion object {
+        /** 64-bin luminance, red, green and blue histograms of a preview bitmap, normalised to the tallest bin. */
+        fun histogram(b: android.graphics.Bitmap): Array<FloatArray> {
+            val step = maxOf(1, kotlin.math.sqrt(b.width.toDouble() * b.height / 40_000).toInt())
+            val bins = Array(4) { FloatArray(64) }
+            val row = IntArray(b.width)
+            var y = 0
+            while (y < b.height) {
+                b.getPixels(row, 0, b.width, 0, y, b.width, 1)
+                var x = 0
+                while (x < b.width) {
+                    val p = row[x]; val rr = p shr 16 and 255; val gg = p shr 8 and 255; val bb = p and 255
+                    bins[0][(rr * 77 + gg * 150 + bb * 29) shr 10]++; bins[1][rr shr 2]++; bins[2][gg shr 2]++; bins[3][bb shr 2]++
+                    x += step
+                }
+                y += step
+            }
+            for (h in bins) { val top = h.maxOrNull()?.takeIf { it > 0f } ?: 1f; for (i in h.indices) h[i] = kotlin.math.sqrt(h[i] / top) }
+            return bins
+        }
     }
 }
