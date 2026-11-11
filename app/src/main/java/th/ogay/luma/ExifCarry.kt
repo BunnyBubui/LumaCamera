@@ -33,6 +33,12 @@ object ExifCarry {
     }
 
     fun copy(from: File, to: File) = write(to, read(from))
+    /** The same tags read from a picture in the media store (the original of an AI result). */
+    fun read(context: android.content.Context, uri: android.net.Uri): Map<String, String> = runCatching {
+        (if (uri.scheme == "file") uri.path?.let { java.io.FileInputStream(it) } else context.contentResolver.openInputStream(uri))?.use { input ->
+            val e = ExifInterface(input); TAGS.mapNotNull { t -> e.getAttribute(t)?.let { t to it } }.toMap()
+        } ?: emptyMap()
+    }.getOrDefault(emptyMap())
 
     /** What the system gallery shows as the camera; the phone itself stays in Make and in the lens model. */
     const val MODEL = "Lumora Camera"

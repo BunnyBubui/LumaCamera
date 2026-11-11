@@ -81,12 +81,21 @@ class GalleryActivity : ComponentActivity() {
     private var pendingForget: List<String> = emptyList()
     private val mediaChange = registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { r ->
         if (r.resultCode == RESULT_OK && pendingForget.isNotEmpty()) { val ids = pendingForget; luma.fileIo.execute { luma.shots.forget(ids) } }
-        pendingForget = emptyList(); endSelection(); reload()
+        if (r.resultCode == RESULT_OK) afterGrant?.invoke()
+        afterGrant = null; pendingForget = emptyList(); endSelection(); reload()
     }
+    private var afterGrant: (() -> Unit)? = null
+    private lateinit var aiBadge: AiBadge
+    private var aiBusy = false; private var aiRunning: String? = null
+    /** "shot" or "device" while that viewer is on screen, so a page turn can reuse it instead of rebuilding the page. */
+    private var viewerKind = ""
+    private var currentShot: Shot? = null
+    /** Fit-to-screen copies of the pictures beside the open one, ready to slide in. */
+    private val near = HashMap<String, Bitmap>()
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
-        requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+        requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         selected = state?.getString("id"); useAi = state?.getBoolean("ai") ?: false
         device = state?.getBoolean("device") ?: when (intent.getStringExtra("tab")) { "luma" -> false; "device" -> true; else -> prefs.getBoolean("gallery_device", false) }
         album = state?.getString("album")
@@ -94,6 +103,9 @@ class GalleryActivity : ComponentActivity() {
         host = FrameLayout(this)
         root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         host.addView(root, -1, -1)
+        aiBadge = AiBadge(this).apply { setOnClickListener { aiRunning?.let { selected = it; useAi = false; reload() } } }
+        host.addView(aiBadge, FrameLayout.LayoutParams(dp(46), dp(46), Gravity.TOP or Gravity.END).apply { topMargin = dp(76); rightMargin = dp(14) })
+        intent.getStringExtra("open")?.let { if (state == null) selected = it }
         installRoot(host)
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -107,12 +119,17 @@ class GalleryActivity : ComponentActivity() {
                 }
             }
         })
-        luma.shots.changes.observe(this) { if (!device || selected != null) reload() }
+        fun checkAi() = luma.readIo.execute { val busy = runCatching { luma.shots.all().any { it.stage == Stage.RUNNING || it.stage == Stage.QUEUED } }.getOrDefault(false)
+            runOnUiThread { aiBusy = busy; if (!busy) aiBadge.done() } }
+        luma.shots.changes.observe(this) { if (!device || selected != null) reload(); checkAi() }
         luma.shots.progress.observe(this) { p: Pair<String, Int> -> val id = p.first; val percent = p.second
             if (selected == id && showingId == id && ::ring.isInitialized && ring.visibility == View.VISIBLE) ring.update(percent.toFloat(), ring.caption)
+            // Anywhere else in the gallery a small ring in the corner shows the AI is still working; a tap goes to that photo.
+            aiRunning = id; if (aiBusy && selected != id) aiBadge.update(percent.toFloat()) else aiBadge.done()
         }
+        checkAi()
         // Opened from the camera's thumbnail: show the newest photo first; the grid is one tap (or Back) away.
-        if (state == null && !device && intent.getStringExtra("tab") == null) {
+        if (state == null && !device && intent.getStringExtra("tab") == null && selected == null) {
             luma.fileIo.execute {
                 val first = luma.shots.latest()?.id
                 runOnUiThread { if (!isDestroyed) { selected = first; reload() } }
@@ -158,7 +175,7 @@ class GalleryActivity : ComponentActivity() {
         }
         // Files already in the Lumora folders from an earlier install (the app's database went with the uninstall)
         // join the list again as phone items, so they are seen and can still go through the AI.
-        val seen = known + ledger.map { it.uri.toString() }
+        val seen = known + ledger.map { it.uri.toString() } + luma.shots.all().mapNotNull { it.ai?.toString() }
         val earlier = mutableListOf<Item>()
         fun read(base: Uri, video: Boolean) = runCatching {
             contentResolver.query(base, arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DATE_ADDED, MediaStore.MediaColumns.DISPLAY_NAME),
@@ -207,30 +224,102 @@ class GalleryActivity : ComponentActivity() {
         val uris = ArrayList(pickedItems().map { it.shot?.ai ?: it.uri }); if (uris.isEmpty()) return
         startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND_MULTIPLE).setType("*/*").putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), "แชร์"))
     }
-    private fun favouriteSelected() {
-        val uris = pickedItems().map { it.uri }.filter { it.authority == MediaStore.AUTHORITY }
+    private fun favouriteSelected() = favourite(pickedItems())
+    private fun favourite(items: List<Item>) {
+        val uris = items.map { it.uri }.filter { it.authority == MediaStore.AUTHORITY }
         if (uris.isEmpty()) return
         if (android.os.Build.VERSION.SDK_INT < 30) { notice("ต้องใช้ Android 11 ขึ้นไป"); return }
         runCatching { mediaChange.launch(androidx.activity.result.IntentSenderRequest.Builder(MediaStore.createFavoriteRequest(contentResolver, uris, true).intentSender).build()) }.onFailure { notice("ใส่รายการโปรดไม่ได้") }
     }
-    private fun deleteSelected() {
-        val items = pickedItems(); if (items.isEmpty()) return
+    private fun deleteSelected() { val items = pickedItems(); if (items.isNotEmpty()) confirmDelete(items) }
+    /** The app's own question first, in its own look, with the pictures that are about to go. */
+    private fun confirmDelete(items: List<Item>) {
+        GlassDialog.panel(this, if (items.size == 1) "ลบ${if (items[0].video) "วิดีโอ" else "รูป"}นี้ไหม" else "ลบ ${items.size} รายการไหม") { col, d ->
+            val row = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(0, dp(8), 0, dp(10)) }
+            items.take(3).forEachIndexed { n, item ->
+                val pic = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP; setBackgroundColor(0x14ffffff); rounded(this, 16); rotation = (n - (minOf(items.size, 3) - 1) / 2f) * 5f }
+                row.addView(pic, LinearLayout.LayoutParams(dp(92), dp(116)).apply { setMargins(dp(5), 0, dp(5), 0) })
+                thumbs.execute { val b = thumbnail(item, 320); runOnUiThread { if (b != null && !isDestroyed) pic.setImageBitmap(b) } }
+            }
+            col.addView(row, -1, -2)
+            if (items.size > 3) col.addView(text("และอีก ${items.size - 3} รายการ", 12.5f, Glass.TEXT3).apply { gravity = Gravity.CENTER })
+            val note = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; background = glass(16, 0x14ffffff); setPadding(dp(12), dp(10), dp(12), dp(10)) }
+            note.addView(IconView(this, TRASH, 1.8f).apply { tint = RED }, dp(20), dp(20))
+            note.addView(text("ย้ายไปถังขยะของเครื่อง กู้คืนได้จากแอปรูปภาพของเครื่องภายใน 30 วัน" + if (items.any { it.shot?.ai != null }) " · ภาพ AI ของรูปนี้จะถูกลบด้วย" else "", 12.5f, Glass.TEXT2).apply { maxLines = 4; ellipsize = null; setPadding(dp(10), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
+            col.addView(note, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
+            val buttons = LinearLayout(this)
+            buttons.addView(text("ยกเลิก", 14f, Color.WHITE, true).apply { gravity = Gravity.CENTER; background = glass(22, 0x1affffff); isClickable = true; glassTouch(); setOnClickListener { d.dismiss() } }, LinearLayout.LayoutParams(0, dp(48), 1f))
+            buttons.addView(text("ลบ", 14f, Color.WHITE, true).apply { gravity = Gravity.CENTER; background = glass(22, RED); isClickable = true; glassTouch(); setOnClickListener { d.dismiss(); trash(items) } }, LinearLayout.LayoutParams(0, dp(48), 1f).apply { leftMargin = dp(8) })
+            col.addView(buttons, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(14) })
+        }.show()
+    }
+    private fun trash(items: List<Item>) {
         val uris = items.flatMap { listOfNotNull(it.uri, it.shot?.ai, it.shot?.raw) }.filter { it.authority == MediaStore.AUTHORITY }.distinct()
+        val ids = items.mapNotNull { it.shot?.id }
         if (android.os.Build.VERSION.SDK_INT < 30) { notice("ต้องใช้ Android 11 ขึ้นไป"); return }
-        pendingForget = items.mapNotNull { it.shot?.id }
-        // The system asks once for the whole set; files go to the phone's recently-deleted bin.
-        runCatching { mediaChange.launch(androidx.activity.result.IntentSenderRequest.Builder(MediaStore.createTrashRequest(contentResolver, uris, true).intentSender).build()) }.onFailure { pendingForget = emptyList(); notice("ลบไม่ได้") }
+        val open = items.any { (it.shot?.id ?: it.key) == selected || it.key == selected }
+        luma.fileIo.execute {
+            // Files this install created can go to the bin directly. For any other file Android insists on asking
+            // in its own dialog, so only those are handed to the system request.
+            val rest = uris.filter { u -> !runCatching { contentResolver.update(u, android.content.ContentValues().apply { put("is_trashed", 1) }, null, null) > 0 }.getOrDefault(false) }
+            if (rest.isEmpty()) runCatching { luma.shots.forget(ids) }
+            runOnUiThread {
+                if (isDestroyed) return@runOnUiThread
+                if (open) selected = null
+                if (rest.isEmpty()) { endSelection(); notice("ย้ายไปถังขยะแล้ว"); reload() }
+                else if (android.os.Build.VERSION.SDK_INT >= 30) { pendingForget = ids; runCatching { mediaChange.launch(androidx.activity.result.IntentSenderRequest.Builder(MediaStore.createTrashRequest(contentResolver, rest, true).intentSender).build()) }.onFailure { pendingForget = emptyList(); notice("ลบไม่ได้") } }
+            }
+        }
+    }
+    private fun share(item: Item) = startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType(contentResolver.getType(item.uri) ?: if (item.video) "video/*" else "image/*").putExtra(Intent.EXTRA_STREAM, item.shot?.ai ?: item.uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), "แชร์"))
+    private fun rename(item: Item) {
+        if (item.uri.authority != MediaStore.AUTHORITY) { notice("ไฟล์นี้เปลี่ยนชื่อไม่ได้"); return }
+        luma.fileIo.execute {
+            val now = item.name.ifBlank { runCatching { contentResolver.query(item.uri, arrayOf(MediaStore.MediaColumns.DISPLAY_NAME), null, null, null)?.use { c -> if (c.moveToFirst()) c.getString(0) else null } }.getOrNull() ?: "" }
+            runOnUiThread {
+                if (isDestroyed) return@runOnUiThread
+                val ext = now.substringAfterLast('.', ""); val stem = if (ext.isEmpty()) now else now.dropLast(ext.length + 1)
+                GlassDialog.panel(this, "เปลี่ยนชื่อ") { col, d ->
+                    val field = EditText(this).apply { setText(stem); setSelection(stem.length); setTextColor(Color.WHITE); textSize = 15f; setSingleLine(); background = glass(16, 0x1fffffff); setPadding(dp(14), 0, dp(14), 0) }
+                    col.addView(field, LinearLayout.LayoutParams(-1, dp(50)).apply { topMargin = dp(8) })
+                    col.addView(GlassDialog.actions(this, "ยกเลิก" to { d.dismiss() }, "บันทึก" to {
+                        val clean = field.text.toString().trim().replace(Regex("[\\\\/:*?\"<>|]"), "_"); d.dismiss()
+                        if (clean.isNotEmpty() && clean != stem) {
+                            val name = if (ext.isEmpty()) clean else "$clean.$ext"
+                            fun write() = runCatching { contentResolver.update(item.uri, android.content.ContentValues().apply { put(MediaStore.MediaColumns.DISPLAY_NAME, name) }, null, null) > 0 }.getOrDefault(false)
+                            luma.fileIo.execute { val ok = write(); runOnUiThread {
+                                if (ok) { notice("เปลี่ยนชื่อแล้ว"); reload() }
+                                else if (android.os.Build.VERSION.SDK_INT >= 30) { afterGrant = { luma.fileIo.execute { write() } }; runCatching { mediaChange.launch(androidx.activity.result.IntentSenderRequest.Builder(MediaStore.createWriteRequest(contentResolver, listOf(item.uri)).intentSender).build()) }.onFailure { afterGrant = null; notice("เปลี่ยนชื่อไม่ได้") } }
+                                else notice("เปลี่ยนชื่อไม่ได้") } }
+                        }
+                    }), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(14) })
+                }.show()
+            }
+        }
+    }
+    private fun itemInfo(item: Item) {
+        item.shot?.let { details(it); return }
+        luma.fileIo.execute {
+            var size = 0L; var w = 0; var h = 0
+            runCatching { contentResolver.query(item.uri, arrayOf(MediaStore.MediaColumns.SIZE, MediaStore.MediaColumns.WIDTH, MediaStore.MediaColumns.HEIGHT), null, null, null)?.use { c -> if (c.moveToFirst()) { size = c.getLong(0); w = c.getInt(1); h = c.getInt(2) } } }
+            val lines = listOfNotNull(formatTime(item.time), item.album.takeIf { it.isNotBlank() }?.let { "อัลบั้ม $it" }, if (w > 0 && h > 0) "$w × $h" else null, if (size > 0) String.format(Locale.US, "%.1f MB", size / 1048576.0) else null)
+            runOnUiThread { if (!isDestroyed) GlassDialog.show(this, item.name.ifBlank { if (item.video) "วิดีโอ" else "รูปภาพ" }, lines.joinToString("\n")) }
+        }
     }
 
     private fun deviceItems(): List<Item> {
         val out = mutableListOf<Item>()
+        // A photo the AI has worked on is one item: the AI file is hidden here and the original opens with the compare button.
+        val shots = runCatching { luma.shots.all() }.getOrDefault(emptyList())
+        val aiUris = shots.mapNotNull { it.ai?.toString() }.toSet(); val byUri = shots.associateBy { it.uri.toString() }
         fun read(base: Uri, video: Boolean) {
             val cols = arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DATE_ADDED, MediaStore.MediaColumns.DISPLAY_NAME, "bucket_display_name")
             runCatching {
                 contentResolver.query(base, cols, if (favouritesOnly && android.os.Build.VERSION.SDK_INT >= 30) "is_favorite = 1" else null, null, "${MediaStore.MediaColumns.DATE_ADDED} DESC")?.use { c ->
                     while (c.moveToNext() && out.size < 5000) {
                         val uri = ContentUris.withAppendedId(base, c.getLong(0))
-                        out += Item("device:$uri", uri, c.getLong(1) * 1000, video, c.getString(2) ?: "", c.getString(3) ?: "อื่น ๆ", null)
+                        if (uri.toString() in aiUris) continue
+                        out += Item("device:$uri", uri, c.getLong(1) * 1000, video, c.getString(2) ?: "", c.getString(3) ?: "อื่น ๆ", byUri[uri.toString()])
                     }
                 }
             }
@@ -265,6 +354,10 @@ class GalleryActivity : ComponentActivity() {
         get() = prefs.getInt("gallery_sort", 0).coerceIn(0, 3)
         set(v) { prefs.edit().putInt("gallery_sort", v).apply() }
     private val LUMA_CATS = listOf("ทั้งหมด", "AI", "RAW", "วิดีโอ", "พิเศษ", "ไฟล์")
+    private val TRASH = "M5 7h14 M9 7V4h6v3 M7 7l1 13h8l1-13 M10 11v6 M14 11v6"
+    private val HEART = "M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"
+    private val PENCIL = "M4 20l1-4L16 5l3 3L8 19z M14 7l3 3"
+    private val RED = 0xffe5484d.toInt()
     private fun categories(items: List<Item>): List<Pair<String, (Item) -> Boolean>> =
         if (!device) listOf<Pair<String, (Item) -> Boolean>>(
             "ทั้งหมด" to { it -> !it.file }, "AI" to { it -> it.shot?.ai != null }, "RAW" to { it -> it.shot?.output?.needsRaw == true },
@@ -273,7 +366,7 @@ class GalleryActivity : ComponentActivity() {
 
     // ---------- Grid ----------
     private fun showGrid(all: List<Item>) {
-        showingId = null; root.removeAllViews()
+        showingId = null; viewerKind = ""; root.removeAllViews()
         val bar = topBar("แกลเลอรี") { finish() }
         val searchBox = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; background = glass(22, 0x40ffffff); setPadding(dp(14), 0, dp(6), 0) }
         val searchIcon = IconView(this, Icons.SEARCH, 2f)
@@ -294,11 +387,17 @@ class GalleryActivity : ComponentActivity() {
             } }
         }
         bar.addView(more, LinearLayout.LayoutParams(dp(48), dp(48)).apply { leftMargin = dp(8) })
+        (bar.findViewWithTag<View>("title") as? TextView)?.apply { maxLines = 1; minHeight = dp(48); gravity = Gravity.CENTER_VERTICAL }
         fun morph(open: Boolean, animate: Boolean = true) {
-            val from = searchBox.width; val to = if (open) bar.width - bar.paddingLeft - bar.paddingRight - dp(70) else dp(48)
+            val from = searchBox.width; val to = if (open) bar.width - bar.paddingLeft - bar.paddingRight - dp(58) else dp(48)
             field.visibility = if (open) View.VISIBLE else View.GONE; close.visibility = field.visibility
-            // The title leaves the row while searching, so the box never squeezes or overflows it.
-            bar.findViewWithTag<View>("title")?.let { t -> if (open) t.visibility = View.GONE else { t.visibility = View.VISIBLE; t.alpha = 0f; t.animate().alpha(1f).setDuration(180).start() } }
+            val quick = !animate || Glass.reduced(this@GalleryActivity)
+            // The title stays in the row and only fades, so nothing below moves; it returns softly once the box has closed.
+            bar.findViewWithTag<View>("title")?.let { t -> t.animate().cancel(); if (open) t.animate().alpha(0f).setDuration(if (quick) 0 else 140).start() else t.animate().alpha(1f).setStartDelay(if (quick) 0 else 240).setDuration(if (quick) 0 else 260).withEndAction { t.animate().setStartDelay(0) }.start() }
+            // The ⋮ button is not needed while typing: it leaves, and the box takes its place.
+            more.animate().cancel()
+            if (open) { more.animate().alpha(0f).setDuration(if (quick) 0 else 120).withEndAction { more.visibility = View.GONE }.start() }
+            else { more.visibility = View.VISIBLE; more.alpha = 0f; more.animate().alpha(1f).setStartDelay(if (quick) 0 else 300).setDuration(200).withEndAction { more.animate().setStartDelay(0) }.start() }
             android.animation.ValueAnimator.ofInt(from, to).apply {
                 duration = if (!animate || Glass.reduced(this@GalleryActivity)) 0 else 420; interpolator = Glass.EASE
                 addUpdateListener { searchBox.layoutParams = (searchBox.layoutParams as LinearLayout.LayoutParams).apply { width = it.animatedValue as Int } }
@@ -456,7 +555,12 @@ class GalleryActivity : ComponentActivity() {
         apply()
         visibleItems = shown; refreshCells = { visibleItems = shown; adapter.notifyDataSetChanged() }
         grid.setOnItemClickListener { _, _, p, _ -> if (selecting) togglePick(shown[p]) else open(shown[p]) }
-        grid.setOnItemLongClickListener { _, v, p, _ -> showPeek(shown[p], v); true }
+        grid.setOnItemLongClickListener { _, v, p, _ -> if (selecting) { togglePick(shown[p]); true } else { showPeek(shown[p], v); true } }
+        // While the peek is up the finger that opened it is still down: its moves pick a button, lifting it closes the peek.
+        grid.setOnTouchListener { v, e -> if (peek != null) { peekTouch(e)
+            // The grid never sees the end of this touch, so it is told the touch was cancelled (clears its pressed cell).
+            if (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL) { val c = MotionEvent.obtain(e); c.action = MotionEvent.ACTION_CANCEL; v.onTouchEvent(c); c.recycle() }
+            true } else false }
         grid.setOnTouchListener { _, e -> if (peek != null && (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL)) { closePeek(); true } else peek != null }
     }
 
@@ -529,7 +633,7 @@ class GalleryActivity : ComponentActivity() {
 
     /** Every device album as a two-column grid of covers. */
     private fun showAlbums(items: List<Item>) {
-        showingId = null; root.removeAllViews()
+        showingId = null; viewerKind = ""; root.removeAllViews()
         topBar("อัลบั้มทั้งหมด") { allAlbums = false; reload() }
         val list = albums(items)
         val grid = GridView(this).apply { numColumns = 2; horizontalSpacing = dp(12); verticalSpacing = dp(16); setPadding(dp(16), dp(8), dp(16), dp(24)); clipToPadding = false; selector = android.graphics.drawable.ColorDrawable(0) }
@@ -590,23 +694,26 @@ class GalleryActivity : ComponentActivity() {
         if (item.video && item.key.startsWith("device:")) { VideoPlayerActivity.open(this, item.uri); return }
         selected = item.shot?.id ?: item.key; useAi = false; reload()
     }
-    /** Next or previous item of the last grid, for swiping in the viewer. */
+    private fun neighbourItem(dir: Int): Item? { val v = lastItems.filter { !it.file }; val i = v.indexOfFirst { (it.shot?.id ?: it.key) == selected || it.key == selected }; return if (i < 0) null else v.getOrNull(i + dir) }
+    /** Loads the two pictures beside the open one (fit-to-screen copies), so a page turn has something to slide in at once. */
+    private fun preloadNear() {
+        val want = listOfNotNull(neighbourItem(-1), neighbourItem(1))
+        val keys = want.map { it.key }.toSet()
+        near.keys.filter { it !in keys }.forEach { near.remove(it) }
+        want.filter { it.key !in near }.forEach { item -> thumbs.execute { val b = runCatching { thumbnail(item, 1440) }.getOrNull(); runOnUiThread { if (!isDestroyed && b != null) near[item.key] = b } } }
+    }
+    /** Next or previous item of the last grid: the viewer has already slid it in, so only the bars and buttons are refreshed. */
     private fun step(dir: Int) {
-        val visible = lastItems.filter { !it.file }
-        val i = visible.indexOfFirst { (it.shot?.id ?: it.key) == selected }
-        val next = visible.getOrNull(i + dir) ?: return
+        val next = neighbourItem(dir)
+        if (next == null) { if (::inspect.isInitialized) inspect.stay(); return }
         stepping = true
         selected = next.shot?.id ?: next.key; useAi = false
-        // Only the picture moves; the bars stay still. It carries on from where the finger left it and the next one glides in.
-        val moving = if (::inspect.isInitialized && inspect.parent === root) inspect else null
-        if (moving != null && !Glass.reduced(this)) {
-            val w = moving.width.coerceAtLeast(1).toFloat()
-            moving.turning = true
-            moving.animate().translationX(-dir * (w * 0.55f).coerceAtLeast(kotlin.math.abs(moving.translationX) + dp(40))).alpha(0f).setDuration(130).setInterpolator(Glass.EASE).withEndAction {
-                reload()
-                if (::inspect.isInitialized && inspect.parent === root) { inspect.turning = false; inspect.translationX = dir * w * 0.35f; inspect.alpha = 0f; inspect.animate().translationX(0f).alpha(1f).setDuration(260).setInterpolator(Glass.SPRING).start() }
-            }.start()
-        } else reload()
+        val same = !next.video && ::inspect.isInitialized && inspect.isAttachedToWindow && viewerKind == (if (next.shot != null) "shot" else "device")
+        if (!same) { reload(); return }
+        inspect.show(next.uri, near[next.key])
+        val shot = next.shot
+        if (shot != null) luma.readIo.execute { val s = luma.shots.get(shot.id); runOnUiThread { if (!isDestroyed && selected == shot.id) { if (s != null) showDetail(s) else reload() } } }
+        else showDeviceItem(next.uri)
     }
     /** Viewer top bar: back to the grid, plus a grid button so the full library is always one tap away. */
     private fun viewerBar(title: String): LinearLayout {
@@ -616,6 +723,7 @@ class GalleryActivity : ComponentActivity() {
     }
     private fun viewer(): InspectView = InspectView(this).also { v ->
         v.onSwipe = { step(it) }
+        v.neighbour = { d -> neighbourItem(d)?.let { near[it.key] } }; v.hasNeighbour = { d -> neighbourItem(d) != null }
         ring = AiRing(this)
         val frame = FrameLayout(this).apply { addView(v, FrameLayout.LayoutParams(-1, -1)); addView(ring, FrameLayout.LayoutParams(-1, -1)) }
         root.addView(frame, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -628,26 +736,59 @@ class GalleryActivity : ComponentActivity() {
     private var stepping = false
 
     // ---------- Long-press peek ----------
+    private class PeekAction(val view: FrameLayout, val icon: IconView, val label: String, val tint: Int, val run: () -> Unit)
+    private var peekActions: List<PeekAction> = emptyList()
+    private var peekHot: PeekAction? = null
+    private var peekLabel: TextView? = null
+    /**
+     * Hold a picture: a large preview rises with five actions down its right side. Without lifting, slide the finger
+     * onto an action (it grows and names itself) and let go to run it; letting go anywhere else just closes the preview.
+     */
     private fun showPeek(item: Item, from: View) {
         closePeek()
         Glass.tick(from, HapticFeedbackConstants.LONG_PRESS)
-        val dim = View(this).apply { setBackgroundColor(0x66000000); alpha = 0f }
-        val card = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = glass(28, Glass.FILL_POP); setPadding(dp(12), dp(12), dp(12), dp(14)); visibility = View.INVISIBLE }
+        val dim = View(this).apply { setBackgroundColor(0x7a000000); alpha = 0f }
+        val card = LinearLayout(this).apply { background = glass(30, Glass.FILL_POP); setPadding(dp(12), dp(12), dp(8), dp(12)); visibility = View.INVISIBLE; clipChildren = false; clipToPadding = false }
+        val left = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val image = ImageView(this).apply { scaleType = ImageView.ScaleType.FIT_CENTER; adjustViewBounds = true
             // Rounded to sit inside the card's corners instead of running into them.
             outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: android.graphics.Outline) {
                 val d = v as ImageView; val b = d.drawable
-                if (b == null || b.intrinsicWidth <= 0) { o.setRoundRect(0, 0, v.width, v.height, dp(18).toFloat()); return }
+                if (b == null || b.intrinsicWidth <= 0) { o.setRoundRect(0, 0, v.width, v.height, dp(20).toFloat()); return }
                 val sc = minOf(v.width.toFloat() / b.intrinsicWidth, v.height.toFloat() / b.intrinsicHeight)
                 val w = (b.intrinsicWidth * sc).toInt(); val h = (b.intrinsicHeight * sc).toInt(); val l = (v.width - w) / 2; val t = (v.height - h) / 2
-                o.setRoundRect(l, t, l + w, t + h, dp(18).toFloat()) } }
+                o.setRoundRect(l, t, l + w, t + h, dp(20).toFloat()) } }
             clipToOutline = true }
-        card.addView(image, LinearLayout.LayoutParams(-1, (resources.displayMetrics.heightPixels * 0.5f).toInt()))
-        card.addView(text("${if (item.video) "วิดีโอ" else "รูปภาพ"} · ${formatTime(item.time)}", 13f, Glass.TEXT2).apply { setPadding(dp(8), dp(10), dp(8), 0) })
-        val more = listOfNotNull(item.name.takeIf { it.isNotBlank() }, item.album.takeIf { it.isNotBlank() },
-            item.shot?.let { pixelsText(it.size.pixels) }, item.shot?.takeIf { it.ai != null }?.let { "AI ×${it.aiScale.coerceAtLeast(1)} · ${pixelsText(it.aiSize.pixels)}" }).joinToString(" · ")
-        if (more.isNotEmpty()) card.addView(text(more, 12f, Glass.TEXT3).apply { setPadding(dp(8), dp(4), dp(8), 0); maxLines = 2; ellipsize = TextUtils.TruncateAt.END })
-        val layer = FrameLayout(this).apply { addView(dim, -1, -1); addView(card, FrameLayout.LayoutParams(-1, -2, Gravity.CENTER).apply { setMargins(dp(24), 0, dp(24), 0) }) }
+        left.addView(image, LinearLayout.LayoutParams(-1, (resources.displayMetrics.heightPixels * 0.46f).toInt()))
+        // Facts as a row of small tags rather than a line of text.
+        val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(4), dp(12), dp(4), 0) }
+        head.addView(FrameLayout(this).apply { background = glass(12, 0x1fffffff); addView(IconView(this@GalleryActivity, if (item.video) Icons.VIDEO else Icons.PHOTO, 1.8f).apply { tint = Glass.ACCENT }, FrameLayout.LayoutParams(dp(16), dp(16), Gravity.CENTER)) }, dp(30), dp(30))
+        head.addView(text(formatTime(item.time), 14.5f, Color.WHITE, true).apply { setPadding(dp(10), 0, 0, 0); maxLines = 1 }, LinearLayout.LayoutParams(0, -2, 1f))
+        left.addView(head, -1, -2)
+        val tags = FlowLayout(this).apply { gap = dp(6); setPadding(dp(4), dp(8), dp(4), 0) }
+        fun tag(t: String, accent: Boolean = false) = tags.addView(text(t, 11.5f, if (accent) Glass.ACCENT else Glass.TEXT2, accent).apply { gravity = Gravity.CENTER; maxLines = 1; background = glass(11, if (accent) Glass.ACCENT_SOFT else 0x14ffffff); setPadding(dp(9), 0, dp(9), 0) }, ViewGroup.LayoutParams(-2, dp(24)))
+        item.album.takeIf { it.isNotBlank() }?.let { tag(it) }
+        item.shot?.let { tag(pixelsText(it.size.pixels)) }
+        item.shot?.takeIf { it.ai != null }?.let { tag("AI ×${it.aiScale.coerceAtLeast(1)} · ${pixelsText(it.aiSize.pixels)}", true) }
+        if (tags.childCount > 0) left.addView(tags, -1, -2)
+        val label = text("เลื่อนนิ้วไปที่ปุ่มแล้วปล่อย", 12f, Glass.TEXT3).apply { setPadding(dp(4), dp(8), dp(4), 0); maxLines = 1 }
+        left.addView(label, -1, -2); peekLabel = label
+        card.addView(left, LinearLayout.LayoutParams(0, -2, 1f))
+        val rail = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; clipChildren = false }
+        val actions = ArrayList<PeekAction>()
+        fun act(icon: String, name: String, tint: Int, run: () -> Unit) {
+            val ic = IconView(this, icon, 2f).apply { this.tint = tint }
+            val b = FrameLayout(this).apply { background = glass(23, 0x1fffffff); contentDescription = name; isClickable = true; addView(ic, FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER)); setOnClickListener { closePeek(); run() } }
+            rail.addView(b, LinearLayout.LayoutParams(dp(46), dp(46)).apply { setMargins(dp(8), dp(5), dp(4), dp(5)) }); actions += PeekAction(b, ic, name, tint, run)
+        }
+        act(HEART, "รายการโปรด", Color.WHITE) { favourite(listOf(item)) }
+        act(PENCIL, "เปลี่ยนชื่อ", Color.WHITE) { rename(item) }
+        act(Icons.SHARE, "แชร์", Color.WHITE) { share(item) }
+        act(Icons.INFO, "รายละเอียด", Color.WHITE) { itemInfo(item) }
+        act(TRASH, "ลบ", RED) { confirmDelete(listOf(item)) }
+        card.addView(rail, LinearLayout.LayoutParams(-2, -1))
+        peekActions = actions; peekHot = null
+        val layer = FrameLayout(this).apply { addView(dim, -1, -1); addView(card, FrameLayout.LayoutParams(-1, -2, Gravity.CENTER).apply { setMargins(dp(16), 0, dp(16), 0) }) }
         host.addView(layer, -1, -1); peek = layer
         dim.animate().alpha(1f).setDuration(220).start(); Glass.blur(root, 14f)
         thumbs.execute { val b = thumbnail(item, 1080); runOnUiThread { if (peek === layer) { image.setImageBitmap(b); image.invalidateOutline() } } }
@@ -657,8 +798,25 @@ class GalleryActivity : ComponentActivity() {
         }
         layer.setOnClickListener { closePeek() }
     }
+    /** The finger that opened the peek: over an action it lights up; lifting runs it (or just closes the peek). */
+    private fun peekTouch(e: MotionEvent) {
+        when (e.actionMasked) {
+            MotionEvent.ACTION_MOVE -> {
+                val pad = dp(10); val at = IntArray(2)
+                val hit = peekActions.firstOrNull { a -> a.view.getLocationOnScreen(at); e.rawX >= at[0] - pad && e.rawX <= at[0] + a.view.width + pad && e.rawY >= at[1] - pad / 2 && e.rawY <= at[1] + a.view.height + pad / 2 }
+                if (hit !== peekHot) {
+                    peekHot?.let { a -> a.view.animate().scaleX(1f).scaleY(1f).setDuration(160).start(); a.view.background = glass(23, 0x1fffffff); a.icon.tint = a.tint }
+                    peekHot = hit
+                    if (hit != null) { Glass.tick(hit.view); hit.view.animate().scaleX(1.28f).scaleY(1.28f).setInterpolator(Glass.SPRING).setDuration(260).start(); hit.view.background = glass(23, if (hit.tint == RED) RED else Glass.ACCENT); hit.icon.tint = if (hit.tint == RED) Color.WHITE else Glass.ON_ACCENT }
+                    peekLabel?.let { l -> l.text = hit?.label ?: "เลื่อนนิ้วไปที่ปุ่มแล้วปล่อย"; l.setTextColor(if (hit != null) Color.WHITE else Glass.TEXT3) }
+                }
+            }
+            MotionEvent.ACTION_UP -> { val run = peekHot?.run; closePeek(); run?.invoke() }
+            MotionEvent.ACTION_CANCEL -> closePeek()
+        }
+    }
     private fun closePeek() {
-        val layer = peek as? FrameLayout ?: return; peek = null
+        val layer = peek as? FrameLayout ?: return; peek = null; peekActions = emptyList(); peekHot = null; peekLabel = null
         Glass.blur(root, 0f)
         layer.getChildAt(0).animate().alpha(0f).setDuration(200).start()
         val card = layer.getChildAt(1)
@@ -667,17 +825,25 @@ class GalleryActivity : ComponentActivity() {
 
     // ---------- Device item ----------
     private fun showDeviceItem(uri: Uri) {
-        showingId = uri.toString(); root.removeAllViews()
-        viewerBar("ในเครื่อง")
-        inspect = viewer()
         val video = contentResolver.getType(uri)?.startsWith("video") == true
+        val reuse = !video && viewerKind == "device" && ::inspect.isInitialized && inspect.isAttachedToWindow
+        showingId = uri.toString()
+        if (!reuse) {
+            root.removeAllViews()
+            viewerBar("ในเครื่อง")
+            inspect = viewer(); viewerKind = if (video) "" else "device"
+            toggle = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(dp(8), dp(8), dp(8), dp(14)) }
+            root.addView(toggle, -1, -2)
+            if (!Glass.reduced(this)) { inspect.alpha = 0f; inspect.animate().alpha(1f).setDuration(260).start() }
+        }
         if (!video) inspect.show(uri)
-        toggle = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(dp(8), dp(8), dp(8), dp(14)) }
-        root.addView(toggle, -1, -2)
+        toggle.removeAllViews()
+        val item = Item("device:$uri", uri, System.currentTimeMillis(), video, "", "", null)
         if (video) chip("เล่นวิดีโอ", false, Icons.VIDEO) { VideoPlayerActivity.open(this, uri) }
         else chip("ปรับด้วย AI", false, Icons.AI) { enhanceDevice(uri) }
-        chip("แชร์", false, Icons.SHARE) { startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType(contentResolver.getType(uri) ?: "image/*").putExtra(Intent.EXTRA_STREAM, uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), "แชร์")) }
-        if (!Glass.reduced(this)) { inspect.alpha = 0f; inspect.animate().alpha(1f).setDuration(260).start() }
+        chip("แชร์", false, Icons.SHARE) { share(item) }
+        chip("ลบ", false, TRASH) { confirmDelete(listOf(lastItems.firstOrNull { it.uri == uri } ?: item)) }
+        preloadNear()
     }
 
     /** Any photo on the phone can go through the AI: it joins the Lumora list as a reference to the original (never moved or deleted). */
@@ -701,7 +867,7 @@ class GalleryActivity : ComponentActivity() {
     // ---------- Lumora video or file from the ledger ----------
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     private fun showLedgerItem(item: Item) {
-        showingId = item.key; root.removeAllViews()
+        showingId = item.key; viewerKind = ""; root.removeAllViews()
         viewerBar(if (item.video) "วิดีโอ" else "ไฟล์")
         val frame = FrameLayout(this).apply { setBackgroundColor(Glass.NAVY_DEEP) }
         val still = ImageView(this).apply { scaleType = ImageView.ScaleType.FIT_CENTER }
@@ -758,26 +924,30 @@ class GalleryActivity : ComponentActivity() {
     }
     private fun formatTime(t: Long) = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(t))
     private fun showDetail(s: Shot) {
-        if (showingId != s.id) {
-            showingId = s.id; root.removeAllViews()
-            viewerBar("ภาพถ่าย").addView(roundButton(Icons.INFO, "ข้อมูลภาพ") { details(s) }, dp(48), dp(48))
-            inspect = viewer()
+        currentShot = s
+        val reuse = viewerKind == "shot" && ::inspect.isInitialized && inspect.isAttachedToWindow
+        if (!reuse) {
+            root.removeAllViews()
+            viewerBar("ภาพถ่าย").addView(roundButton(Icons.INFO, "ข้อมูลภาพ") { currentShot?.let { details(it) } }, dp(48), dp(48))
+            inspect = viewer(); viewerKind = "shot"
             status = text("", 13f, Glass.TEXT2).apply { gravity = Gravity.CENTER; maxLines = 3; ellipsize = null; setPadding(dp(12), dp(6), dp(12), dp(6)) }
             root.addView(status, -1, -2)
             toggle = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(dp(8), 0, dp(8), dp(14)) }
             root.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; isFillViewport = true; addView(toggle) }, -1, -2)
             if (!Glass.reduced(this)) { inspect.alpha = 0f; inspect.animate().alpha(1f).setDuration(260).start() }
         }
-        if (s.ai == null) useAi = false
+        if (showingId != s.id) { showingId = s.id; preloadNear() }
+        // A photo with an AI result is one item: it opens on the AI picture, and the compare button shows the original underneath.
+        useAi = s.ai != null
         inspect.show(if (useAi) s.ai!! else s.uri)
         status.text = when (s.stage) {
             Stage.CAPTURING -> "กำลังถ่าย ${s.frames}/${s.requestedFrames} เฟรม"
-            Stage.QUEUED -> "รอประมวลผล AI"
-            Stage.RUNNING -> "กำลังเพิ่มรายละเอียด AI ×${s.aiScale.coerceAtLeast(1)}"
+            Stage.QUEUED, Stage.RUNNING -> ""
             Stage.FAILED -> "AI ยังไม่สำเร็จ · ${s.error}"
             Stage.DONE -> if (useAi) "AI ${s.aiModel}   ·   ${pixelsText(s.aiSize.pixels)}" else "ต้นฉบับ   ·   ${pixelsText(s.size.pixels)}"
             Stage.ORIGINAL -> if (s.output.rawOnly) "ภาพตัวอย่าง RAW · DNG เก็บแยก" else pixelsText(s.size.pixels) + if (s.reason == Decision.OFF) "" else "   ·   ${s.reason.description}"
         }
+        status.visibility = if (status.text.isEmpty()) View.GONE else View.VISIBLE
         when (s.stage) {
             Stage.RUNNING -> ring.update(s.aiProgress.toFloat(), "เพิ่มรายละเอียด AI ×${s.aiScale.coerceAtLeast(1)}")
             Stage.QUEUED -> ring.update(null, "รอคิวประมวลผล AI")
@@ -809,14 +979,9 @@ class GalleryActivity : ComponentActivity() {
             chip("ยกเลิก AI",false) { luma.fileIo.execute { EnhanceWorker.cancel(applicationContext,s.id) } }
         }
         chip("แชร์", false, Icons.SHARE) { startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("image/jpeg").putExtra(Intent.EXTRA_STREAM, if (useAi) s.ai else s.uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), "แชร์")) }
-        chip("ลบ", false, "M5 7h14 M9 7V4h6v3 M7 7l1 13h8l1-13 M10 11v6 M14 11v6") {
-            if (android.os.Build.VERSION.SDK_INT < 30) { notice("ต้องใช้ Android 11 ขึ้นไป"); return@chip }
-            val uris = listOfNotNull(s.uri, s.ai, s.raw).filter { it.authority == MediaStore.AUTHORITY }.distinct()
-            pendingForget = listOf(s.id); selected = null
-            runCatching { mediaChange.launch(androidx.activity.result.IntentSenderRequest.Builder(MediaStore.createTrashRequest(contentResolver, uris, true).intentSender).build()) }.onFailure { pendingForget = emptyList(); notice("ลบไม่ได้") }
-        }
+        chip("ลบ", false, TRASH) { confirmDelete(listOf(Item(s.id, s.uri, s.time, false, "", "Lumora", s))) }
     }
-    private fun infoPanel(s: Shot, time: String, rows: List<Triple<String, String, String>>, tech: List<String>) {
+    private fun infoPanel(s: Shot, time: String, rows: List<Triple<String, String, String>>, tech: List<Pair<String, String>>) {
         GlassDialog.panel(this, time) { col, d ->
             // A small preview on top, then one row per fact: icon, value, quiet detail.
             val pic = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP; setBackgroundColor(0x14ffffff); outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: android.graphics.Outline) { o.setRoundRect(0, 0, v.width, v.height, dp(18).toFloat()) } }; clipToOutline = true }
@@ -832,7 +997,12 @@ class GalleryActivity : ComponentActivity() {
                 col.addView(r, -1, -2)
             }
             if (tech.isNotEmpty()) {
-                val more = text(tech.joinToString("\n"), 12f, Glass.TEXT3).apply { maxLines = 20; ellipsize = null; setLineSpacing(0f, 1.15f); visibility = View.GONE; setPadding(dp(4), dp(6), dp(4), 0) }
+                val more = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE; background = glass(16, 0x10ffffff); setPadding(dp(10), dp(6), dp(10), dp(6)) }
+                tech.forEach { (icon, line) ->
+                    more.addView(LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(5), 0, dp(5))
+                        addView(IconView(this@GalleryActivity, icon, 1.8f).apply { tint = Glass.TEXT2 }, dp(17), dp(17))
+                        addView(text(line, 12f, Glass.TEXT2).apply { maxLines = 4; ellipsize = null; setPadding(dp(10), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f)) }, -1, -2)
+                }
                 val toggle = text("รายละเอียดทางเทคนิค ▾", 12.5f, Glass.TEXT2).apply { gravity = Gravity.CENTER_VERTICAL; minHeight = dp(44); isClickable = true
                     setOnClickListener { more.visibility = if (more.visibility == View.VISIBLE) View.GONE else View.VISIBLE; text = if (more.visibility == View.VISIBLE) "รายละเอียดทางเทคนิค ▴" else "รายละเอียดทางเทคนิค ▾" } }
                 col.addView(toggle, -1, -2); col.addView(more, -1, -2)
@@ -859,13 +1029,13 @@ class GalleryActivity : ComponentActivity() {
                 s.captureNote?.let { add(Triple(Icons.INFO, it, "")) }
                 if (s.ai != null) add(Triple(Icons.AI, "AI ×${s.aiScale.coerceAtLeast(1)} · ${ai.w} × ${ai.h}", listOfNotNull(pixelsText(ai.pixels), report?.optString("backend")?.takeIf { it.isNotEmpty() }, "${s.elapsed / 1000.0} วิ".takeIf { s.elapsed > 0 }).joinToString(" · ")))
             }
-            val tech = buildList {
-                lens?.let { add(it) }
-                add("Physical camera ${s.lens ?: "-"} · ครอป ${s.cropped?.let(::pixelsText) ?: "-"}")
-                if (s.reason != Decision.OFF) add(s.reason.description)
-                if (s.output.needsRaw) add("DNG เก็บข้อมูลเซนเซอร์เต็มตามที่กล้องส่ง")
-                report?.takeIf { it.has("totalMs") }?.let { j -> add("เวลา AI ${j.optLong("inferenceMs")} · อ่าน ${j.optLong("decodeMs")} · ผสาน ${j.optLong("renderMs")} · บันทึก ${j.optLong("encodeMs")} · รวม ${j.optLong("totalMs")} ms") }
-                if (s.ai != null) add("รายละเอียดบางส่วนเป็นการคาดเดาของ AI")
+            val tech = buildList<Pair<String, String>> {
+                lens?.let { add(Icons.SEARCH to it) }
+                add(Icons.FRAME to "กล้องตัวที่ ${s.lens ?: "-"} · ครอป ${s.cropped?.let(::pixelsText) ?: "ไม่มี"}")
+                if (s.reason != Decision.OFF) add(Icons.INFO to s.reason.description)
+                if (s.output.needsRaw) add(Icons.RAW to "DNG เก็บข้อมูลเซนเซอร์เต็มตามที่กล้องส่ง")
+                report?.takeIf { it.has("totalMs") }?.let { j -> add(Icons.TIMER to "เวลา AI ${j.optLong("inferenceMs")} · อ่าน ${j.optLong("decodeMs")} · ผสาน ${j.optLong("renderMs")} · บันทึก ${j.optLong("encodeMs")} · รวม ${j.optLong("totalMs")} ms") }
+                if (s.ai != null) add(Icons.AI to "รายละเอียดบางส่วนเป็นการคาดเดาของ AI")
             }
             runOnUiThread { if (!isDestroyed) infoPanel(s, formatTime(s.time), rows, tech) }
         }

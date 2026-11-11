@@ -365,7 +365,7 @@ class VideoActivity:ComponentActivity(){
     private fun stopRecording(){animator?.cancel();finalizing=true;shutter.isEnabled=false;pause.isEnabled=false;status.text="กำลังปิดไฟล์…";recording?.stop()}
     private fun saveSettings(){if(!slow)prefs.edit().putString("video_fps_s","$fps").apply();prefs.edit().putString(if(slow)"slow_camera"else "video_camera",selectedCameraId).apply();if(slow){prefs.edit().putInt("slow_fps",fps).putString("slow_quality",when(quality){Quality.UHD->"UHD";Quality.HD->"HD";Quality.SD->"SD";else->"FHD"}).apply();return};prefs.edit().putString("video_quality",when(quality){Quality.UHD->"UHD";Quality.HD->"HD";Quality.SD->"SD";else->"FHD"}).putInt("video_fps",fps).putInt("video_bitrate",bitrate).putBoolean("video_eis",stabilization).putString("video_dynamic",when(dynamic){DynamicRange.HLG_10_BIT->"HLG";DynamicRange.HDR10_10_BIT->"HDR10";else->"SDR"}).apply()}
     override fun onResume(){super.onResume();orientation.enable();if(recording==null&&!starting&&!finalizing&&useCase!=null){shutter.isEnabled=true;config.isEnabled=true}}
-    override fun onPause(){stopTracking();if(::zooms.isInitialized){zooms.finish();wheel.removeCallbacks(hideWheel);hideWheel.run()};orientation.disable();if(starting&&recording==null){requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT};starting=false;animator?.cancel();handler.removeCallbacksAndMessages(null);recording?.stop();super.onPause()}
+    override fun onPause(){zFollow?.end();stopTracking();if(::zooms.isInitialized){zooms.finish();wheel.removeCallbacks(hideWheel);hideWheel.run()};orientation.disable();if(starting&&recording==null){requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT};starting=false;animator?.cancel();handler.removeCallbacksAndMessages(null);recording?.stop();super.onPause()}
     override fun onDestroy(){Glass.quiet=false;sounds.release();zoomEffect?.release();super.onDestroy()}
     override fun onKeyDown(keyCode:Int,event:KeyEvent):Boolean{if(keyCode==KeyEvent.KEYCODE_VOLUME_DOWN||keyCode==KeyEvent.KEYCODE_VOLUME_UP){if(event.repeatCount==0)shutter.performClick();return true};return super.onKeyDown(keyCode,event)}
     // ---------- Glass screen ----------
@@ -450,7 +450,7 @@ class VideoActivity:ComponentActivity(){
         flip=roundButton(flipIcon,56,"สลับกล้องวิดีโอ"){if(!busy()&&!dual){flipIcon.animate().rotationBy(180f).setInterpolator(Glass.EASE).setDuration(420).start();rear=!rear;selectedCameraId=null;manualFocusOff();bind()}}
         if(dual)flip.alpha=0.35f
         actions.addView(flip,dp(56),dp(56));dock.addView(actions,-1,dp(104))
-        val pinch=android.view.ScaleGestureDetector(this,object:android.view.ScaleGestureDetector.SimpleOnScaleGestureListener(){override fun onScale(d:android.view.ScaleGestureDetector):Boolean{if(zoomLocked())return true;val s=camera?.cameraInfo?.zoomState?.value?:return false;animator?.cancel();setZoom((zNow(s)*d.scaleFactor).coerceIn(s.minZoomRatio,zMax(s)));return true}})
+        val pinch=android.view.ScaleGestureDetector(this,object:android.view.ScaleGestureDetector.SimpleOnScaleGestureListener(){override fun onScale(d:android.view.ScaleGestureDetector):Boolean{if(zoomLocked())return true;val s=camera?.cameraInfo?.zoomState?.value?:return false;zoomTo((if(zFollow?.isRunning==true)zGoal else zNow(s))*d.scaleFactor);return true}})
         var axis=0;var zone=1;var sy=0f;var ev0=0f;var fd0=0f
         val taps=android.view.GestureDetector(this,object:android.view.GestureDetector.SimpleOnGestureListener(){
             override fun onDown(e:MotionEvent):Boolean{axis=0;sy=e.y;zone=if(e.x>preview.width*0.7f)2 else 1;ev0=vEv;fd0=focusRail.value;return true}
@@ -521,11 +521,25 @@ class VideoActivity:ComponentActivity(){
         val changed=extra!=extraZoom;extraZoom=extra;zoomEffect?.zoom=extra
         cam.cameraControl.setZoomRatio(hw);if(changed)refreshZoom()
     }
+    private var zGoal=1f;private var zCur=1f;private var zVel=0.0;private var zSoft=false;private var zFollow:android.animation.TimeAnimator?=null
+    /** The zoom follows a goal as a critically damped spring on a log scale (the same feel as photo mode): it starts and stops softly and never jumps. */
+    private fun zoomTo(goal:Float,soft:Boolean=false){
+        val s=camera?.cameraInfo?.zoomState?.value?:return
+        zGoal=goal.coerceIn(s.minZoomRatio,zMax(s));zSoft=soft;animator?.cancel()
+        if(Glass.reduced(this)){setZoom(zGoal);return}
+        if(zFollow?.isRunning==true)return
+        zCur=zNow(s).coerceAtLeast(0.01f);zVel=0.0
+        zFollow=android.animation.TimeAnimator().apply{setTimeListener{a,_,dt->
+            if(camera==null){a.end();return@setTimeListener}
+            val h=dt.coerceIn(1L,48L)/1000.0;val w=(if(zSoft)7.5 else 12.0)*when(prefs.getString("zoom_speed","normal")){"slow"->0.65;"fast"->1.6;else->1.0}
+            val g=kotlin.math.ln(zGoal.toDouble());val y=kotlin.math.ln(zCur.toDouble())-g;val e=kotlin.math.exp(-w*h);val t=(zVel+w*y)*h
+            val ny=(y+t)*e;zVel=(zVel-w*t)*e
+            if(abs(ny)<0.0015&&abs(zVel)<0.03){zVel=0.0;zCur=zGoal;setZoom(zGoal);a.end()} else{zCur=kotlin.math.exp(g+ny).toFloat();setZoom(zCur)}
+        };start()}
+    }
     private fun animateZoom(target:Float){
         if(zoomLocked())return
-        val cam=camera?:return;val z=cam.cameraInfo.zoomState.value?:return;animator?.cancel()
-        if(Glass.reduced(this)){setZoom(target);return}
-        animator=ValueAnimator.ofFloat(ln(zNow(z)),ln(target)).apply{duration=280;interpolator=Glass.EASE;addUpdateListener{setZoom(exp(it.animatedValue as Float))};start()}
+        zoomTo(target,true)
     }
     private val hideWheel=Runnable{wheel.show(false);zooms.animate().alpha(1f).setDuration(200).start()}
     private var vOverlay:CompositionOverlay?=null
@@ -566,11 +580,11 @@ class VideoActivity:ComponentActivity(){
         focusRail.value=f.coerceIn(0f,1f);m.setFocus(focusRail.value*m.minFocus);focusRail.label="MF"}
     private var dragZoom0=1f
     private fun installZoomDrag(){
-        fun start(){if(zoomLocked())return;dragZoom0=camera?.cameraInfo?.zoomState?.value?.let{zNow(it)}?:1f;wheel.removeCallbacks(hideWheel);animator?.cancel();zooms.animate().alpha(0f).setDuration(200).start();wheel.show(true)}
+        fun start(){if(zoomLocked())return;dragZoom0=if(zFollow?.isRunning==true)zGoal else camera?.cameraInfo?.zoomState?.value?.let{zNow(it)}?:1f;wheel.removeCallbacks(hideWheel);animator?.cancel();zooms.animate().alpha(0f).setDuration(200).start();wheel.show(true)}
         fun move(dx:Float){if(zoomLocked())return;val z=camera?.cameraInfo?.zoomState?.value?:return
             var t=(dragZoom0*2f.pow(-dx/dp(95))).coerceIn(z.minZoomRatio,zMax(z))
             zoomStops.firstOrNull{abs(ln(t/it)/ln(2f))<0.075f}?.let{lens->if(abs(zNow(z)-lens)>0.001f)Glass.tick(wheel);t=lens}
-            setZoom(t);wheel.zoom=t}
+            zoomTo(t);wheel.zoom=t}
         fun end(){wheel.removeCallbacks(hideWheel);wheel.postDelayed(hideWheel,1300)}
         zooms.onStart={start()};zooms.onDrag={move(it)};zooms.onEnd={end()}
         var sx=0f;var on=false

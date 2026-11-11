@@ -462,8 +462,11 @@ object GlassDialog {
         val column = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
         box.addView(android.widget.ScrollView(a).apply { isVerticalScrollBarEnabled = false; addView(column) }, LinearLayout.LayoutParams(-1, -2, 1f))
         build(column, d)
-        d.setContentView(box)
-        d.window?.apply { setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)); setLayout((a.resources.displayMetrics.widthPixels * 0.9f).toInt(), android.view.WindowManager.LayoutParams.WRAP_CONTENT); setDimAmount(0.45f) }
+        // The card springs a little past its place as it opens; the window is slightly larger than the card so that
+        // overshoot is not clipped (the top edge used to vanish for a moment).
+        val pad = android.widget.FrameLayout(a).apply { setPadding(a.dp(12), a.dp(20), a.dp(12), a.dp(20)); clipChildren = false; clipToPadding = false; addView(box, -1, -2) }
+        d.setContentView(pad)
+        d.window?.apply { setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)); setLayout(minOf(a.resources.displayMetrics.widthPixels, (a.resources.displayMetrics.widthPixels * 0.9f).toInt() + a.dp(24)), android.view.WindowManager.LayoutParams.WRAP_CONTENT); setDimAmount(0.45f) }
         d.setOnShowListener { if (!Glass.reduced(a)) { box.alpha = 0f; box.translationY = a.dp(22).toFloat(); box.scaleX = 0.96f; box.scaleY = 0.96f; box.animate().alpha(1f).translationY(0f).scaleX(1f).scaleY(1f).setInterpolator(Glass.SPRING).setDuration(380).start() } }
         return d
     }

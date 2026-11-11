@@ -19,21 +19,27 @@ class InspectView(context: Context) : View(context) {
     private var working=false
     private var dead=false
     private var zoom=1f
+    private val MAX=12f
     private var cx=0.5f
     private var cy=0.5f
     private var aspect=1f
     /** [area] is where the pixels sat on screen when they were decoded for the view box [frame]. */
-    private data class Tile(val image:Bitmap,val area:RectF,val frame:RectF)
+    private data class Tile(val image:Bitmap,val area:RectF,val frame:RectF,val owned:Boolean=true){fun free(){if(owned&&!image.isRecycled)image.recycle()}}
     private var tile:Tile?=null
     /** The whole picture at fit-to-screen: shown under the sharp tile so zooming and panning never show a gap. */
     private var base:Tile?=null
+    private var stale:Tile?=null
     private var dec:BitmapRegionDecoder?=null;private var decUri:Uri?=null;private var decRot=0
     private var dragX0=0f;private var dragY0=0f;private var paging=false;private var tracker:android.view.VelocityTracker?=null
     private val slop=android.view.ViewConfiguration.get(context).scaledTouchSlop
     private val scale=ScaleGestureDetector(context,object:ScaleGestureDetector.SimpleOnScaleGestureListener() {
+        override fun onScaleBegin(d:ScaleGestureDetector):Boolean{motion?.cancel();return true}
+        override fun onScaleEnd(d:ScaleGestureDetector){if(zoom<1f)glide(1f,0.5f,0.5f) else if(zoom>MAX)glide(MAX,cx,cy)}
         override fun onScale(d:ScaleGestureDetector):Boolean {
             val old=zoom;val oldBox=box(width,height,aspect,old,cx,cy)
-            zoom=(zoom*d.scaleFactor).coerceIn(1f,12f)
+            // Past either limit the picture still follows the fingers, but stiffly, and springs back when they lift.
+            val f=d.scaleFactor;val soft=if((zoom<1f&&f<1f)||(zoom>MAX&&f>1f))1f+(f-1f)*0.3f else f
+            zoom=(zoom*soft).coerceIn(0.6f,MAX*1.6f)
             val rx=(d.focusX-oldBox.left)/oldBox.width();val ry=(d.focusY-oldBox.top)/oldBox.height()
             cx=rx-(d.focusX-width/2f)/(oldBox.width()*zoom/old)
             cy=ry-(d.focusY-height/2f)/(oldBox.height()*zoom/old)
@@ -48,18 +54,64 @@ class InspectView(context: Context) : View(context) {
             cx+=dx/rect.width();cy+=dy/rect.height();clamp();change();return true
         }
         override fun onFling(a:MotionEvent?,b:MotionEvent,vx:Float,vy:Float):Boolean {
-            if(zoom>1.05f||scale.isInProgress)return false
-            if(!paging&&translationX==0f&&kotlin.math.abs(vx)>kotlin.math.abs(vy)*1.5f&&kotlin.math.abs(vx)>900*resources.displayMetrics.density/2.75f){onSwipe?.invoke(if(vx<0)1 else -1);return true}
+            if(scale.isInProgress)return false
+            // Zoomed in: the picture keeps sliding after a flick and slows to a stop.
+            if(zoom>1.05f){coast(vx,vy);return true}
             return false
         }
         override fun onDoubleTap(e:MotionEvent):Boolean {
             val rect=box(width,height,aspect,zoom,cx,cy)
-            cx=(e.x-rect.left)/rect.width();cy=(e.y-rect.top)/rect.height()
-            zoom=if(zoom>1.1f) 1f else 3f;clamp();change();return true
+            if(zoom>1.1f)glide(1f,0.5f,0.5f) else glide(3f,(e.x-rect.left)/rect.width(),(e.y-rect.top)/rect.height())
+            return true
         }
     })
-    /** Fling sideways at fit-to-screen: +1 next, −1 previous. */
+    /** Page turn at fit-to-screen: +1 next, −1 previous. Called once the picture has slid away. */
     var onSwipe:((Int)->Unit)?=null
+    /** The neighbouring picture (fit-to-screen copy) for +1 / −1, drawn beside this one while a page is turned; null at either end. */
+    var neighbour:((Int)->Bitmap?)?=null
+    /** Whether there is a picture in that direction at all (it may still be loading). */
+    var hasNeighbour:((Int)->Boolean)?=null
+    private var pageX=0f;private var pageAnim:android.animation.ValueAnimator?=null
+    private val gap get()=24*resources.displayMetrics.density
+    private fun pageTo(x:Float,ms:Long,end:(()->Unit)?=null){
+        pageAnim?.cancel()
+        pageAnim=android.animation.ValueAnimator.ofFloat(pageX,x).apply{duration=ms;interpolator=android.view.animation.DecelerateInterpolator(1.6f)
+            addUpdateListener{pageX=it.animatedValue as Float;invalidate()}
+            addListener(object:android.animation.AnimatorListenerAdapter(){var cancelled=false
+                override fun onAnimationCancel(a:android.animation.Animator){cancelled=true}
+                override fun onAnimationEnd(a:android.animation.Animator){if(!cancelled)end?.invoke()}})
+            start()}
+    }
+    /** Slides this picture out and the neighbour in, then reports the turn. */
+    private fun turn(dir:Int){pageTo(-dir*(width+gap),((1f-kotlin.math.abs(pageX)/(width+gap)).coerceIn(0.25f,1f)*240).toLong()){onSwipe?.invoke(dir)}}
+    /** The neighbour has slid in: it becomes this view's picture without a blank frame; sharp pixels follow. */
+    fun show(uri:Uri,placeholder:Bitmap?){
+        if(source==uri){pageX=0f;invalidate();return}
+        show(uri);stale?.free();stale=null
+        if(placeholder!=null&&!placeholder.isRecycled&&width>0&&height>0){aspect=placeholder.width.toFloat()/placeholder.height;val f=box(width,height,aspect,1f,0.5f,0.5f);base=Tile(placeholder,RectF(f),RectF(f),false);tile=base}
+        pageAnim?.cancel();pageX=0f;invalidate()
+    }
+    /** No picture that way: back to rest. */
+    fun stay(){pageTo(0f,220)}
+    private var motion:android.animation.ValueAnimator?=null
+    /** Zoom and centre move together along a soft curve instead of jumping. */
+    private fun glide(z:Float,x:Float,y:Float){
+        motion?.cancel();val z0=zoom;val x0=cx;val y0=cy
+        motion=android.animation.ValueAnimator.ofFloat(0f,1f).apply{duration=300;interpolator=th.ogay.luma.Glass.EASE
+            addUpdateListener{val t=it.animatedValue as Float
+                // Zoom runs on a log scale so each moment of the move looks like the same step.
+                zoom=kotlin.math.exp(kotlin.math.ln(z0)+(kotlin.math.ln(z)-kotlin.math.ln(z0))*t);cx=x0+(x-x0)*t;cy=y0+(y-y0)*t;clamp();change()}
+            start()}
+    }
+    private fun coast(vx:Float,vy:Float){
+        motion?.cancel();var last=0f
+        // Exponential decay: distance left = v·τ, like a scroll that loses speed evenly.
+        val tau=0.32f
+        motion=android.animation.ValueAnimator.ofFloat(0f,1f).apply{duration=900;interpolator=android.view.animation.LinearInterpolator()
+            addUpdateListener{val t=(it.animatedValue as Float)*0.9f;val done=1f-kotlin.math.exp(-t/tau);val step=done-last;last=done
+                val rect=box(width,height,aspect,zoom,cx,cy);cx-=vx*tau*step/rect.width();cy-=vy*tau*step/rect.height();clamp();change()}
+            start()}
+    }
     init { setBackgroundColor(0xff05070f.toInt()); contentDescription="ภาพถ่าย บีบเพื่อซูม ลากเพื่อเลื่อน หรือแตะสองครั้ง" }
     private fun box(w:Int,h:Int,ratio:Float,z:Float,x:Float,y:Float):RectF {
         val sw=minOf(w.toFloat(),h*ratio)*z
@@ -75,31 +127,35 @@ class InspectView(context: Context) : View(context) {
     override fun onTouchEvent(e:MotionEvent):Boolean {
         scale.onTouchEvent(e)
         // At fit-to-screen a sideways drag moves the picture with the finger; letting go past a fifth of the width (or a flick) turns the page.
+        if(e.actionMasked==MotionEvent.ACTION_DOWN)motion?.cancel()
         if(zoom<=1.05f&&onSwipe!=null) when(e.actionMasked){
-            MotionEvent.ACTION_DOWN->{dragX0=e.rawX;dragY0=e.rawY;paging=false;animate().cancel();tracker?.recycle();tracker=android.view.VelocityTracker.obtain()}
-            MotionEvent.ACTION_POINTER_DOWN->if(paging){paging=false;animate().translationX(0f).alpha(1f).setDuration(160).start()}
+            MotionEvent.ACTION_DOWN->{dragX0=e.rawX-pageX;dragY0=e.rawY;paging=pageAnim?.isRunning==true;pageAnim?.cancel();tracker?.recycle();tracker=android.view.VelocityTracker.obtain()}
+            MotionEvent.ACTION_POINTER_DOWN->if(paging){paging=false;stay()}
             MotionEvent.ACTION_MOVE->if(e.pointerCount==1&&!scale.isInProgress){
                 val dx=e.rawX-dragX0;val dy=e.rawY-dragY0
-                if(!paging&&kotlin.math.abs(dx)>slop&&kotlin.math.abs(dx)>kotlin.math.abs(dy)*1.3f){paging=true;parent?.requestDisallowInterceptTouchEvent(true)}
-                if(paging){val m=MotionEvent.obtain(e);m.setLocation(e.rawX,e.rawY);tracker?.addMovement(m);m.recycle();translationX=dx;alpha=1f-(kotlin.math.abs(dx)/width.coerceAtLeast(1)).coerceAtMost(0.45f);return true}
+                if(!paging&&kotlin.math.abs(dx)>slop&&kotlin.math.abs(dx)>kotlin.math.abs(dy)*1.3f){paging=true;dragX0=e.rawX;parent?.requestDisallowInterceptTouchEvent(true)}
+                if(paging){val m=MotionEvent.obtain(e);m.setLocation(e.rawX,e.rawY);tracker?.addMovement(m);m.recycle()
+                    val d=e.rawX-dragX0;val dir=if(d<0)1 else -1
+                    // At the first or last picture the drag resists, so the end can be felt.
+                    pageX=if(hasNeighbour?.invoke(dir)==false)d*0.3f else d;invalidate();return true}
             }
             MotionEvent.ACTION_UP,MotionEvent.ACTION_CANCEL->if(paging){
                 paging=false;tracker?.computeCurrentVelocity(1000);val vx=tracker?.xVelocity?:0f;tracker?.recycle();tracker=null
-                val dx=translationX;val far=kotlin.math.abs(dx)>width*0.2f||kotlin.math.abs(vx)>700*resources.displayMetrics.density
-                if(e.actionMasked==MotionEvent.ACTION_UP&&far&&(vx==0f||(vx<0)==(dx<0)||kotlin.math.abs(dx)>width*0.35f))onSwipe?.invoke(if(dx<0)1 else -1)
-                settle();return true
+                val dx=pageX;val dir=if(dx<0)1 else -1
+                val far=kotlin.math.abs(dx)>width*0.22f||(kotlin.math.abs(vx)>500*resources.displayMetrics.density&&(vx<0)==(dx<0))
+                if(e.actionMasked==MotionEvent.ACTION_UP&&far&&hasNeighbour?.invoke(dir)!=false)turn(dir) else stay()
+                return true
             }
         }
         gestures.onTouchEvent(e);if(e.action==MotionEvent.ACTION_UP) performClick();return true
     }
-    /** Springs back to rest unless a page turn has already taken the view over. */
-    fun settle(){post{if(!turning)animate().translationX(0f).alpha(1f).setInterpolator(th.ogay.luma.Glass.SPRING).setDuration(300).start()}}
-    var turning=false
     override fun performClick():Boolean {super.performClick();return true}
     fun show(uri:Uri) {
         if(source==uri) return
+        motion?.cancel()
         setCompare(null);otherShown=0f
-        source=uri; tile?.takeIf{it!==base}?.image?.recycle();base?.image?.recycle();tile=null;base=null;zoom=1f;cx=0.5f;cy=0.5f;invalidate();change()
+        // The picture on screen stays as an underlay until the new one has pixels, so changing pictures never shows a blank frame.
+        source=uri; tile?.takeIf{it!==base}?.free();stale?.takeIf{it!==base}?.free();stale=base;tile=null;base=null;zoom=1f;cx=0.5f;cy=0.5f;invalidate();change()
     }
     private fun change(){version++;invalidate();schedule()}
     private fun schedule() {
@@ -151,7 +207,7 @@ class InspectView(context: Context) : View(context) {
                 working=false
                 if(!dead && uri==source) {
                     // A tile decoded for an older position is still used: it is drawn mapped to where the picture is now.
-                    if(next!=null){aspect=ratio;tile?.takeIf{it!==base}?.image?.recycle();tile=next;if(base==null&&z<=1.001f)base=next;invalidate()}
+                    if(next!=null){aspect=ratio;tile?.takeIf{it!==base}?.free();tile=next;if(base==null&&z<=1.001f)base=next;stale?.free();stale=null;invalidate()}
                     else if(job==version&&tile==null) context.notice("เปิดภาพไม่ได้ อาจถูกลบออกจากแกลเลอรี")
                 } else next?.image?.recycle()
                 if(job!=version) schedule()
@@ -194,10 +250,18 @@ class InspectView(context: Context) : View(context) {
     /** Draws what is already decoded at the current zoom and position straight away; sharper pixels replace it when they arrive. */
     override fun onDraw(c:Canvas){super.onDraw(c)
         val cur=box(width,height,aspect,zoom,cx,cy)
-        base?.let{if(it!==tile)c.drawBitmap(it.image,null,place(it,cur),paint)}
-        tile?.let{c.drawBitmap(it.image,null,place(it,cur),paint)}
+        if(pageX!=0f){
+            // Page turn: this picture and its neighbour move together, like two prints side by side.
+            val dir=if(pageX<0)1 else -1
+            neighbour?.invoke(dir)?.takeIf{!it.isRecycled}?.let{b->val f=box(width,height,b.width.toFloat()/b.height,1f,0.5f,0.5f);f.offset(pageX+dir*(width+gap),0f);c.drawBitmap(b,null,f,paint)}
+            c.save();c.translate(pageX,0f)
+        }
+        if(tile==null&&base==null)stale?.let{if(!it.image.isRecycled)c.drawBitmap(it.image,null,box(width,height,it.image.width.toFloat()/it.image.height,1f,0.5f,0.5f),paint)}
+        base?.let{if(it!==tile&&!it.image.isRecycled)c.drawBitmap(it.image,null,place(it,cur),paint)}
+        tile?.let{if(!it.image.isRecycled)c.drawBitmap(it.image,null,place(it,cur),paint)}
         other?.let{o->if(otherShown>0f){otherPaint.alpha=(255*otherShown).toInt();c.drawBitmap(o,null,cur,otherPaint)}}
+        if(pageX!=0f)c.restore()
         val e=30*resources.displayMetrics.density
         c.drawRect(0f,0f,width.toFloat(),e,fade);c.drawRect(0f,height-e,width.toFloat(),height.toFloat(),fadeBottom)}
-    override fun onDetachedFromWindow(){dead=true;otherAnim?.cancel();other?.recycle();other=null;runCatching{io.execute{dec?.recycle();dec=null}};io.shutdown();tile?.takeIf{it!==base}?.image?.recycle();base?.image?.recycle();tile=null;base=null;super.onDetachedFromWindow()}
+    override fun onDetachedFromWindow(){dead=true;motion?.cancel();pageAnim?.cancel();otherAnim?.cancel();other?.recycle();other=null;runCatching{io.execute{dec?.recycle();dec=null}};io.shutdown();tile?.takeIf{it!==base}?.free();base?.free();stale?.free();stale=null;tile=null;base=null;super.onDetachedFromWindow()}
 }

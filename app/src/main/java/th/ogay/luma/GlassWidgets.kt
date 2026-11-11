@@ -855,26 +855,76 @@ class AiRing(context: Context) : View(context) {
     fun hide() { glide?.cancel(); spin?.cancel(); spin = null; spinning = false; shown = 0f; target = 0f; visibility = GONE }
     override fun onDetachedFromWindow() { glide?.cancel(); spin?.cancel(); spin = null; super.onDetachedFromWindow() }
 
+    private val glow = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val halo = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 20 * d; strokeCap = Paint.Cap.ROUND; color = Glass.ACCENT; alpha = 46 }
+    private val head = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+    private val part = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xd9ffffff.toInt(); textSize = 20 * d; typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD) }
+    private val pill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x59000000 }
+    private val spark = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Glass.ACCENT }
+    private val star = android.graphics.Path()
+    private var sized = 0
+
     override fun onDraw(c: Canvas) {
-        c.drawColor(0x8c000000.toInt())
+        c.drawColor(0xa6050912.toInt())
         val cx = width / 2f; val cy = height / 2f
         val r = minOf(width, height) * 0.27f
+        if (sized != width) { sized = width
+            glow.shader = RadialGradient(cx, cy, r * 1.9f, intArrayOf(0x40ff9f45, 0x14ff9f45, 0x00ff9f45), floatArrayOf(0f, 0.6f, 1f), Shader.TileMode.CLAMP)
+            arc.shader = SweepGradient(cx, cy, intArrayOf(0xffffd9a8.toInt(), Glass.ACCENT, 0xffffd9a8.toInt()), null).apply { setLocalMatrix(Matrix().apply { setRotate(-90f, cx, cy) }) }
+        }
+        c.drawCircle(cx, cy, r * 1.9f, glow)
         c.drawCircle(cx, cy, r, track)
-        val lit = if (spinning) 0 else (shown * 0.6f).toInt()
-        for (i in 0 until 60) {
-            val a = Math.toRadians(i * 6.0 - 90.0)
-            val r1 = r + 22 * d; val r2 = r1 + (if (i % 5 == 0) 12 else 7) * d
-            tick.color = if (i < lit || (i == lit && !spinning && shown > 0f)) Glass.ACCENT else 0x30ffffff
+        val lit = if (spinning) -1f else shown * 0.72f
+        for (i in 0 until 72) {
+            val a = Math.toRadians(i * 5.0 - 90.0)
+            val r1 = r + 20 * d; val r2 = r1 + (if (i % 6 == 0) 11 else 6) * d
+            // Ticks light up behind the head of the arc and fade the further back they are.
+            tick.color = if (i <= lit) Glass.ACCENT else 0x2effffff; tick.alpha = if (i <= lit) (110 + 145 * (1f - ((lit - i) / 24f).coerceIn(0f, 1f))).toInt() else 46
             c.drawLine(cx + (r1 * Math.cos(a)).toFloat(), cy + (r1 * Math.sin(a)).toFloat(), cx + (r2 * Math.cos(a)).toFloat(), cy + (r2 * Math.sin(a)).toFloat(), tick)
         }
         box.set(cx - r, cy - r, cx + r, cy + r)
-        if (spinning) c.drawArc(box, angle - 90f, 90f, false, arc)
-        else if (shown > 0f) c.drawArc(box, -90f, 360f * shown / 100f, false, arc)
-        val label = if (spinning) "…" else String.format(Locale.US, "%.2f%%", shown)
-        big.textSize = (if (label.length > 6) 32 else 38) * d
-        c.drawText(label, cx, cy + big.textSize * 0.34f, big)
-        c.drawText(caption, cx, cy + r + 62 * d, small)
+        val sweep = if (spinning) 90f else 360f * shown / 100f; val from = if (spinning) angle - 90f else -90f
+        if (spinning || shown > 0f) {
+            c.drawArc(box, from, sweep, false, halo); c.drawArc(box, from, sweep, false, arc)
+            val e = Math.toRadians((from + sweep).toDouble()); c.drawCircle(cx + (r * Math.cos(e)).toFloat(), cy + (r * Math.sin(e)).toFloat(), 3.2f * d, head)
+        }
+        // A small four-point spark above the number marks this as AI work.
+        val sy = cy - r * 0.48f; val k = 7 * d
+        star.reset(); star.moveTo(cx, sy - k); star.quadTo(cx, sy, cx + k, sy); star.quadTo(cx, sy, cx, sy + k); star.quadTo(cx, sy, cx - k, sy); star.quadTo(cx, sy, cx, sy - k); star.close()
+        c.drawPath(star, spark)
+        if (spinning) { big.textSize = 38 * d; c.drawText("…", cx, cy + big.textSize * 0.34f, big) }
+        else {
+            // Whole number large, the two decimals and the sign smaller beside it.
+            val whole = shown.toInt().toString(); val rest = String.format(Locale.US, ".%02d%%", ((shown - shown.toInt()) * 100).toInt().coerceIn(0, 99))
+            big.textSize = 46 * d; big.textAlign = Paint.Align.LEFT
+            val w1 = big.measureText(whole); val w2 = part.measureText(rest); val x = cx - (w1 + w2) / 2f; val base = cy + big.textSize * 0.36f
+            c.drawText(whole, x, base, big); c.drawText(rest, x + w1 + 1 * d, base, part); big.textAlign = Paint.Align.CENTER
+        }
+        if (caption.isNotEmpty()) {
+            val tw = small.measureText(caption); val py = cy + r + 60 * d
+            c.drawRoundRect(cx - tw / 2 - 14 * d, py - 20 * d, cx + tw / 2 + 14 * d, py + 10 * d, 15 * d, 15 * d, pill)
+            c.drawText(caption, cx, py, small)
+        }
     }
+}
+
+/** Small round mark for AI work running in the background: a ring that fills, with the AI spark inside. */
+class AiBadge(context: Context) : FrameLayout(context) {
+    private val d = resources.displayMetrics.density
+    private val track = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 3 * d; color = 0x33ffffff }
+    private val arc = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 3 * d; strokeCap = Paint.Cap.ROUND; color = Glass.ACCENT }
+    private val box = RectF(); private var shown = 0f; private var anim: ValueAnimator? = null
+    init {
+        setWillNotDraw(false); background = context.glass(23, 0xe6101a33.toInt()); visibility = GONE; isClickable = true; contentDescription = "AI กำลังทำงาน"; elevation = 6 * d
+        addView(IconView(context, Icons.AI, 2f).apply { tint = Glass.ACCENT }, LayoutParams(context.dp(18), context.dp(18), Gravity.CENTER))
+    }
+    fun update(percent: Float) {
+        if (visibility != VISIBLE) { visibility = VISIBLE; alpha = 0f; scaleX = 0.6f; scaleY = 0.6f; animate().alpha(1f).scaleX(1f).scaleY(1f).setInterpolator(Glass.SPRING).setDuration(360).start() }
+        anim?.cancel(); anim = ValueAnimator.ofFloat(shown, percent.coerceIn(0f, 100f)).apply { duration = 600; addUpdateListener { shown = it.animatedValue as Float; invalidate() }; start() }
+        contentDescription = "AI กำลังทำงาน ${percent.toInt()} เปอร์เซ็นต์ แตะเพื่อดู"
+    }
+    fun done() { if (visibility != VISIBLE) return; anim?.cancel(); animate().alpha(0f).scaleX(0.6f).scaleY(0.6f).setDuration(220).withEndAction { visibility = GONE; shown = 0f }.start() }
+    override fun onDraw(c: Canvas) { super.onDraw(c); val p = 4.5f * d; box.set(p, p, width - p, height - p); c.drawArc(box, 0f, 360f, false, track); if (shown > 0f) c.drawArc(box, -90f, 3.6f * shown, false, arc) }
 }
 
 /** Subject-tracking marker: four corner brackets with a soft fill and a centre dot, breathing gently while it follows. */
@@ -899,3 +949,42 @@ class TrackMarker(context: Context) : View(context) {
         c.drawCircle(r.centerX(), r.centerY(), 2.5f * d, dot)
     }
 }
+
+/** Children flow left to right and wrap to the next line, so a set of chips needs no sideways scrolling. */
+class FlowLayout(context: Context) : android.view.ViewGroup(context) {
+    var gap = 0
+    private fun walk(maxW: Int, place: Boolean): Int {
+        var x = 0; var y = 0; var rowH = 0
+        for (i in 0 until childCount) { val c = getChildAt(i); if (c.visibility == View.GONE) continue
+            if (x > 0 && x + c.measuredWidth > maxW) { x = 0; y += rowH + gap; rowH = 0 }
+            if (place) c.layout(paddingLeft + x, paddingTop + y, paddingLeft + x + c.measuredWidth, paddingTop + y + c.measuredHeight)
+            x += c.measuredWidth + gap; rowH = maxOf(rowH, c.measuredHeight) }
+        return y + rowH
+    }
+    override fun onMeasure(wSpec: Int, hSpec: Int) {
+        val maxW = MeasureSpec.getSize(wSpec) - paddingLeft - paddingRight
+        for (i in 0 until childCount) { val c = getChildAt(i); val h = c.layoutParams?.height ?: -2
+            c.measure(MeasureSpec.makeMeasureSpec(maxW, MeasureSpec.AT_MOST), if (h > 0) MeasureSpec.makeMeasureSpec(h, MeasureSpec.EXACTLY) else MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED)) }
+        setMeasuredDimension(MeasureSpec.getSize(wSpec), walk(maxW, false) + paddingTop + paddingBottom)
+    }
+    override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) { walk(r - l - paddingLeft - paddingRight, true) }
+}
+
+/** Horizontal pager without an adapter: the child holds pages as wide as this view, and a drag or flick settles on a whole page. */
+class SnapScroll(context: Context) : android.widget.HorizontalScrollView(context) {
+    var onPage: (Int) -> Unit = {}
+    private var downPage = 0; private var flung = false
+    init { isHorizontalScrollBarEnabled = false; overScrollMode = View.OVER_SCROLL_NEVER }
+    private fun count() = if (width == 0) 1 else ((getChildAt(0)?.width ?: 0) + width - 1) / width
+    fun page() = if (width == 0) 0 else (scrollX + width / 2) / width
+    fun go(p: Int, smooth: Boolean = true) { val t = p.coerceIn(0, maxOf(0, count() - 1)); if (smooth) smoothScrollTo(t * width, 0) else scrollTo(t * width, 0); onPage(t) }
+    override fun onInterceptTouchEvent(e: MotionEvent): Boolean { if (e.actionMasked == MotionEvent.ACTION_DOWN) { downPage = page(); flung = false }; return super.onInterceptTouchEvent(e) }
+    override fun onTouchEvent(e: MotionEvent): Boolean {
+        if (e.actionMasked == MotionEvent.ACTION_DOWN) { downPage = page(); flung = false }
+        val r = super.onTouchEvent(e)
+        if ((e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL) && !flung) go(page())
+        return r
+    }
+    override fun fling(velocityX: Int) { flung = true; go(downPage + if (velocityX > 0) 1 else -1) }
+}
+

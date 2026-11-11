@@ -1066,7 +1066,7 @@ class CameraActivity : ComponentActivity() {
         preview.removeCallbacks(lookTicker); preview.postDelayed(lookTicker, 400)
     }
     private class LookCell(val frame: View, val label: TextView, val key: String)
-    private fun lookThumb(m: ColorMatrix, label: String, key: String, cells: MutableList<LookCell>, onTap: () -> Unit): View {
+    private fun lookThumb(m: ColorMatrix, label: String, key: String, cells: MutableList<LookCell>, size: Int = 80, onTap: () -> Unit): View {
         val cell = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; isClickable = true; contentDescription = label; setOnClickListener { onTap() }; glassTouch() }
         val frame = FrameLayout(this).apply { setPadding(dp(3), dp(3), dp(3), dp(3)) }
         val img = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP; lookSampleCache?.let { setImageBitmap(it) } ?: setBackgroundColor(0xff34506a.toInt()); colorFilter = ColorMatrixColorFilter(m); clipToOutline = true; outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: android.graphics.Outline) { o.setRoundRect(0, 0, v.width, v.height, dp(15).toFloat()) } } }
@@ -1074,7 +1074,7 @@ class CameraActivity : ComponentActivity() {
         frame.addView(img, -1, -1)
         val name = text(label, 11f, Glass.TEXT2).apply { gravity = Gravity.CENTER; maxLines = 2; ellipsize = null; setPadding(0, dp(6), 0, 0) }
         frame.tag = IconTurner.TAG
-        cell.addView(frame, dp(80), dp(80)); cell.addView(name, dp(90), -2); cell.post { turnNow() }
+        cell.addView(frame, dp(size), dp(size)); cell.addView(name, dp(size + 10), -2); cell.post { turnNow() }
         cells += LookCell(frame, name, key)
         return cell
     }
@@ -1088,26 +1088,42 @@ class CameraActivity : ComponentActivity() {
         val scroll = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; clipChildren = false; clipToPadding = false; addView(row, -2, -2) }
         val cells = mutableListOf<LookCell>()
         if (mode == PhotoMode.FILM) {
-            val note = text("", 12.5f, Glass.TEXT2).apply { maxLines = 2; ellipsize = null; setPadding(dp(4), dp(2), dp(4), dp(8)) }
-            fun current() = Films.byId(prefs.getString("film", null)) ?: Films.all.first()
-            fun describe() { note.contentDescription = current().note }
+            // Everything is in reach without sideways hunting: the groups wrap onto two lines (Lumora's own looks first),
+            // and each group shows eight looks at a time in a grid; a swipe turns the page.
+            fun current() = Films.byId(prefs.getString("film", null)) ?: Films.default
             var group = current().group
-            val groups = LinearLayout(this).apply { setPadding(dp(4), dp(4), dp(4), dp(4)); clipChildren = false; clipToPadding = false }
-            val gs = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; clipChildren = false; clipToPadding = false; addView(groups, -2, -2) }
+            val groups = FlowLayout(this).apply { gap = dp(6); setPadding(dp(2), dp(2), dp(2), dp(8)) }
+            val pager = SnapScroll(this); val pages = LinearLayout(this); pager.addView(pages, -2, -2)
+            val dots = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(0, dp(2), 0, dp(4)) }
+            val pw = resources.displayMetrics.widthPixels - dp(48)
+            fun dot(on: Int) { for (i in 0 until dots.childCount) dots.getChildAt(i).alpha = if (i == on) 1f else 0.3f }
+            pager.onPage = { dot(it) }
             fun fillFilms() {
-                row.removeAllViews(); cells.clear(); lookImages.clear(); scroll.scrollTo(0, 0)
-                Films.inGroup(group).forEach { f ->
-                    row.addView(lookThumb(Films.matrix(f), f.name, f.id, cells) { prefs.edit().putString("film", f.id).apply(); applyLook(); markLook(cells, f.id); describe(); Glass.tick(row) }, LinearLayout.LayoutParams(dp(94), -2))
+                pages.removeAllViews(); cells.clear(); lookImages.clear(); dots.removeAllViews()
+                val films = Films.inGroup(group)
+                films.chunked(8).forEach { chunk ->
+                    val grid = GridLayout(this).apply { columnCount = 4 }
+                    chunk.forEach { f -> grid.addView(lookThumb(Films.matrix(f), f.name.removePrefix("Lumora "), f.id, cells, 68) { prefs.edit().putString("film", f.id).apply(); applyLook(); markLook(cells, f.id); Glass.tick(pager) },
+                        GridLayout.LayoutParams().apply { width = pw / 4; height = GridLayout.LayoutParams.WRAP_CONTENT; bottomMargin = dp(6) }) }
+                    pages.addView(grid, pw, -2)
+                    dots.addView(View(this).apply { background = glass(3, 0xffffffff.toInt()) }, LinearLayout.LayoutParams(dp(6), dp(6)).apply { setMargins(dp(3), 0, dp(3), 0) })
                 }
+                dots.visibility = if (dots.childCount > 1) View.VISIBLE else View.INVISIBLE
                 markLook(cells, current().id)
+                val page = films.indexOfFirst { it.id == current().id }.coerceAtLeast(0) / 8
+                dot(page); pager.post { pager.go(page, false) }
             }
+            fun styleGroups() { for (i in 0 until groups.childCount) { val t = groups.getChildAt(i) as TextView; val on = t.text == group; val own = t.text == "Lumora"
+                t.setTextColor(if (on) Color.BLACK else if (own) Glass.ACCENT else Glass.TEXT2); t.typeface = if (on || own) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT
+                t.background = glass(17, if (on) 0xebffffff.toInt() else 0x14ffffff) } }
             Films.groups.forEach { g ->
-                groups.addView(text(g, 12.5f, if (g == group) Color.BLACK else Glass.TEXT2, g == group).apply { gravity = Gravity.CENTER; setPadding(dp(14), 0, dp(14), 0); isClickable = true; background = glass(18, if (g == group) 0xebffffff.toInt() else 0x14ffffff)
-                    setOnClickListener { group = g; for (i in 0 until groups.childCount) { val t = groups.getChildAt(i) as TextView; val on = t.text == g; t.setTextColor(if (on) Color.BLACK else Glass.TEXT2); t.background = glass(18, if (on) 0xebffffff.toInt() else 0x14ffffff) }; fillFilms(); Glass.tick(groups) } }, LinearLayout.LayoutParams(-2, dp(44)).apply { rightMargin = dp(8) })
+                groups.addView(text(g, 12.5f).apply { gravity = Gravity.CENTER; setPadding(dp(13), 0, dp(13), 0); isClickable = true; glassTouch()
+                    setOnClickListener { if (group != g) { group = g; styleGroups(); fillFilms(); Glass.tick(groups) } } }, android.view.ViewGroup.LayoutParams(-2, dp(34)))
             }
-            host.addView(gs, -1, -2)
-            fillFilms(); describe()
-            host.addView(scroll, -1, -2)
+            styleGroups()
+            host.addView(groups, -1, -2)
+            fillFilms()
+            host.addView(pager, pw, -2); host.addView(dots, -1, dp(14))
         } else {
             LOOKS.forEachIndexed { i, name -> row.addView(lookThumb(lookMatrix(i, 0, 0), name, "$i", cells) { prefs.edit().putInt("look", i).apply(); applyLook(); markLook(cells, "$i"); Glass.tick(row) }, LinearLayout.LayoutParams(dp(94), -2)) }
             markLook(cells, "${prefs.getInt("look", 0)}")
