@@ -597,6 +597,20 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
     /** Receives a finger that is still down on the anchor (press, slide, release), like an iPhone context menu. */
     private var forward: ((MotionEvent) -> Unit)? = null
     fun track(e: MotionEvent) { forward?.invoke(e) }
+    val canTrack get() = forward != null
+    var rerouted = false
+    companion object {
+        /** Menu whose opening finger is still down. Activities hand it every touch so the slide never depends on the pressed view keeping the stream. */
+        var held: GlassMenu? = null
+        fun route(e: MotionEvent, deliver: (MotionEvent) -> Boolean): Boolean? {
+            val m = held ?: return null
+            if (!m.showing) { held = null; return null }
+            if (!m.rerouted) { m.rerouted = true; val c = MotionEvent.obtain(e); c.action = MotionEvent.ACTION_CANCEL; deliver(c); c.recycle() }
+            m.track(e)
+            if (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL) held = null
+            return true
+        }
+    }
     private val modal = ModalScope(host)
     fun show(anchor: View, title: String, options: List<Option>, selected: Int, pick: (Int) -> Unit) {
         dismiss(false)
@@ -697,7 +711,10 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
         host.addView(menu, FrameLayout.LayoutParams(w, if (scrolls) h else -2).apply { leftMargin = x - host.paddingLeft; topMargin = y - host.paddingTop })
         overlay = shade; card = menu; dimmed = true; dim(true)
         menu.alpha = 0f
-        menu.post { Liquid.show(menu, (ax + anchor.width / 2f - x).coerceIn(0f, w.toFloat()), if (up) menu.height.toFloat() else 0f, false) }
+        menu.post {
+            val top = host.paddingTop + c.dp(12); val limit = host.height - padB
+            if (menu.bottom > limit) { val lp = menu.layoutParams as FrameLayout.LayoutParams; lp.topMargin = max(top - host.paddingTop, limit - menu.height - host.paddingTop); menu.layoutParams = lp }
+            Liquid.show(menu, (ax + anchor.width / 2f - x).coerceIn(0f, w.toFloat()), if (up) menu.height.toFloat() else 0f, false) }
     }
     private fun choose(i: Int, pick: (Int) -> Unit) {
         val m = card ?: return
@@ -705,7 +722,7 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
         pick(i); host.postDelayed({ if (card === m) dismiss(true) }, 160)
     }
     fun dismiss(animate: Boolean) {
-        val o = overlay; val m = card; overlay = null; card = null; forward = null
+        val o = overlay; val m = card; overlay = null; card = null; forward = null; if (held === this) held = null
         if (o == null && m == null) return
         if (dimmed) dim(false); dimmed = false
         modal.restore()
@@ -722,14 +739,14 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
 fun View.pressMenu(menu: GlassMenu, open: (View) -> Unit) {
     val v = this; var opened = false; var sx = 0f; var sy = 0f
     val slop = android.view.ViewConfiguration.get(context).scaledTouchSlop
-    val hold = Runnable { if (v.isAttachedToWindow) { opened = true; v.isPressed = false; v.parent?.requestDisallowInterceptTouchEvent(true); Glass.tick(v, HapticFeedbackConstants.LONG_PRESS); open(v) } }
+    val hold = Runnable { if (v.isAttachedToWindow) { opened = true; v.isPressed = false; v.parent?.requestDisallowInterceptTouchEvent(true); Glass.tick(v, HapticFeedbackConstants.LONG_PRESS); open(v); if (menu.showing && menu.canTrack) { menu.rerouted = false; GlassMenu.held = menu } } }
     setOnClickListener { open(it) }
     glassTouch { e ->
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> { opened = false; sx = e.rawX; sy = e.rawY; v.postDelayed(hold, 150); false }
             MotionEvent.ACTION_MOVE -> { if (opened) { menu.track(e); true } else { if (abs(e.rawX - sx) > slop || abs(e.rawY - sy) > slop) v.removeCallbacks(hold); false } }
             MotionEvent.ACTION_UP -> { v.removeCallbacks(hold); if (opened) { menu.track(e); opened = false; true } else false }
-            else -> { v.removeCallbacks(hold); val was = opened; if (was) menu.track(e); opened = false; was }
+            else -> { v.removeCallbacks(hold); val was = opened; if (was && !menu.rerouted) menu.track(e); opened = false; was }
         }
     }
 }

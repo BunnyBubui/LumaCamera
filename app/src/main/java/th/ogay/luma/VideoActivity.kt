@@ -39,6 +39,7 @@ import kotlin.math.*
 
 @ExperimentalCamera2Interop
 class VideoActivity:ComponentActivity(){
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean = GlassMenu.route(ev) { super.dispatchTouchEvent(it) } ?: super.dispatchTouchEvent(ev)
     private val main by lazy{ContextCompat.getMainExecutor(this)}
     private val handler=Handler(Looper.getMainLooper())
     private val prefs by lazy{getSharedPreferences("camera",0)}

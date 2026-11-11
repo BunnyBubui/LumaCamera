@@ -165,8 +165,7 @@ fun Activity.showStudioSettings(rawAvailable: Boolean, changed: () -> Unit) {
     section("เซลฟี่")
     toggle("กลับภาพเซลฟี่ซ้ายขวา", Icons.MIRROR, "mirror_selfie"); toggle("เติมแสงหน้าจอ", Icons.FLASH, "screen_flash")
     section("ไฟล์และตำแหน่ง")
-    toggle("ลายน้ำชื่อและวันที่", Icons.MARK, "watermark")
-    field("ชื่อลายน้ำ", Icons.MARK, "watermark_name", "Lumora") { it.take(60) }
+    toggle("ลายน้ำ Lumora และวันที่", Icons.MARK, "watermark")
     field("โฟลเดอร์ใน Pictures", Icons.FOLDER, "folder", "Lumora") { it.replace(Regex("[^\\p{L}\\p{N} _-]"), "").take(40).ifBlank { "Lumora" } }
     toggle("บันทึก GPS", Icons.PIN, "gps", note = "ใช้ตำแหน่งล่าสุดของระบบ เมื่อได้รับสิทธิ์เท่านั้น")
     section("เกี่ยวกับ")

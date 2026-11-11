@@ -53,6 +53,7 @@ import kotlin.math.roundToInt
 
 @ExperimentalCamera2Interop
 class CameraActivity : ComponentActivity() {
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean = GlassMenu.route(ev) { super.dispatchTouchEvent(it) } ?: super.dispatchTouchEvent(ev)
     /** A mode in the customisable bottom bar: a PhotoMode name or a launcher for another screen. */
     class BarMode(val key: String, val title: String, val icon: String)
     companion object {

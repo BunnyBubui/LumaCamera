@@ -36,28 +36,19 @@ object PhotoEffects {
         val fmt=if(format==CaptureOutput.PNG)Bitmap.CompressFormat.PNG else if(android.os.Build.VERSION.SDK_INT>=30)Bitmap.CompressFormat.WEBP_LOSSY else @Suppress("DEPRECATION")Bitmap.CompressFormat.WEBP
         try{out.outputStream().buffered(1 shl 20).use{check(b.compress(fmt,if(format==CaptureOutput.PNG)100 else quality.coerceIn(60,92),it))}}finally{b.recycle()};return out
     }
-    /**
-     * Vector watermark drawn at the photo's own resolution (sharp at any size): the Lumora ring-and-spark mark,
-     * the name in a light wide-spaced face and the date beneath, bottom-left with a soft shadow for any background.
-     */
-    fun drawWatermark(canvas:Canvas,w:Int,h:Int,name:String){
+    /** Lumora mark (no name) with the date beside it, bottom-left, drawn at the photo's own resolution. */
+    fun drawWatermark(c:Context,canvas:Canvas,w:Int,h:Int){
         val unit=minOf(w,h)/100f
-        val shadow=0x66000000
-        val x=unit*4.2f;val base=h-unit*4.2f
-        val mark=unit*4.6f
-        val cx=x+mark/2;val cy=base-mark*0.62f
-        val ring=Paint(Paint.ANTI_ALIAS_FLAG).apply{style=Paint.Style.STROKE;strokeWidth=unit*0.42f;strokeCap=Paint.Cap.ROUND;color=Color.WHITE;setShadowLayer(unit*0.5f,0f,unit*0.12f,shadow)}
-        canvas.drawArc(RectF(cx-mark/2,cy-mark/2,cx+mark/2,cy+mark/2),-60f,300f,false,ring)
-        val dot=Paint(Paint.ANTI_ALIAS_FLAG).apply{color=Color.WHITE;setShadowLayer(unit*0.5f,0f,unit*0.12f,shadow)}
-        canvas.drawCircle(cx-mark*0.42f,cy+mark*0.25f,unit*0.5f,dot)
-        // Four-point spark at the ring's open end.
-        val sx=cx+mark*0.36f;val sy=cy-mark*0.42f;val r=unit*1.15f;val k=r*0.28f
-        canvas.drawPath(Path().apply{moveTo(sx,sy-r);lineTo(sx+k,sy-k);lineTo(sx+r,sy);lineTo(sx+k,sy+k);lineTo(sx,sy+r);lineTo(sx-k,sy+k);lineTo(sx-r,sy);lineTo(sx-k,sy-k);close()},dot)
-        val title=Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply{color=Color.WHITE;typeface=Typeface.create("sans-serif-light",Typeface.NORMAL);textSize=unit*3.3f;letterSpacing=0.12f;setShadowLayer(unit*0.5f,0f,unit*0.12f,shadow)}
-        val tx=x+mark+unit*2f
-        canvas.drawText(name,tx,cy+unit*0.2f,title)
-        val small=Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply{color=0xe6ffffff.toInt();typeface=Typeface.create("sans-serif-condensed",Typeface.NORMAL);textSize=unit*1.7f;letterSpacing=0.18f;setShadowLayer(unit*0.4f,0f,unit*0.1f,shadow)}
-        canvas.drawText(java.text.SimpleDateFormat("dd.MM.yyyy   HH:mm",java.util.Locale.US).format(java.util.Date()),tx,cy+unit*2.9f,small)
+        val mark=android.graphics.BitmapFactory.decodeResource(c.resources,R.drawable.lumora_mark)?:return
+        val mh=unit*7.5f;val mw=mh*mark.width/mark.height
+        val x=unit*4f;val base=h-unit*4f
+        val dst=RectF(x,base-mh,x+mw,base)
+        val shadowPaint=Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply{colorFilter=android.graphics.PorterDuffColorFilter(0x66000000,android.graphics.PorterDuff.Mode.SRC_IN);maskFilter=android.graphics.BlurMaskFilter(unit*0.5f,android.graphics.BlurMaskFilter.Blur.NORMAL)}
+        canvas.drawBitmap(mark,null,RectF(dst).apply{offset(0f,unit*0.18f)},shadowPaint)
+        canvas.drawBitmap(mark,null,dst,Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+        val small=Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply{color=0xe6ffffff.toInt();typeface=Typeface.create("sans-serif-condensed",Typeface.NORMAL);textSize=unit*1.9f;letterSpacing=0.16f;setShadowLayer(unit*0.4f,0f,unit*0.1f,0x66000000)}
+        canvas.drawText(java.text.SimpleDateFormat("dd.MM.yyyy   HH:mm",java.util.Locale.US).format(java.util.Date()),dst.right+unit*2f,base-mh*0.3f,small)
+        mark.recycle()
     }
     fun write(bitmap:Bitmap,file:File,quality:Int=95){file.outputStream().use{check(bitmap.compress(Bitmap.CompressFormat.JPEG,quality,it))}}
     /** Re-encodes [file] in place but keeps the camera's EXIF (exposure, ISO, lens, time, GPS), which a plain compress drops. */
@@ -76,7 +67,7 @@ object PhotoEffects {
             if(mirror){canvas.save();canvas.scale(-1f,1f,w/2f,h/2f)}
             canvas.drawBitmap(cropped,0f,0f,null);if(mirror)canvas.restore()
             if(look!=null){val styled=Films.render(image,look.first,look.second);canvas.drawBitmap(styled,0f,0f,null);styled.recycle()}
-            if(watermark)drawWatermark(canvas,w,h,p.getString("watermark_name","Lumora")?:"Lumora")
+            if(watermark)drawWatermark(c,canvas,w,h)
             rewrite(image,file,p.getString("jpeg_quality","95")!!.toInt());image.recycle();if(cropped!==source)cropped.recycle();source.recycle();PhotoMedia.tag(file,0)
         }
         if(p.getBoolean("gps",false)&&ContextCompat.checkSelfPermission(c,Manifest.permission.ACCESS_COARSE_LOCATION)==PackageManager.PERMISSION_GRANTED){

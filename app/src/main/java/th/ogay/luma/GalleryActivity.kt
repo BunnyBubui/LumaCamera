@@ -522,7 +522,6 @@ class GalleryActivity : ComponentActivity() {
             // The grid never sees the end of this touch, so it is told the touch was cancelled (clears its pressed cell).
             if (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL) { val c = MotionEvent.obtain(e); c.action = MotionEvent.ACTION_CANCEL; v.onTouchEvent(c); c.recycle() }
             true } else false }
-        grid.setOnTouchListener { _, e -> if (peek != null && (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL)) { closePeek(); true } else peek != null }
     }
 
     /** One grid cell. A thumbnail that cannot be decoded keeps a visible placeholder instead of an empty hole. */
@@ -847,7 +846,7 @@ class GalleryActivity : ComponentActivity() {
         closePeek()
         Glass.tick(from, HapticFeedbackConstants.LONG_PRESS)
         val dim = View(this).apply { setBackgroundColor(0x7a000000); alpha = 0f }
-        val card = LinearLayout(this).apply { background = glass(30, Glass.FILL_POP); setPadding(dp(12), dp(12), dp(8), dp(12)); visibility = View.INVISIBLE; clipChildren = false; clipToPadding = false }
+        val card = LinearLayout(this).apply { background = glass(30, Glass.FILL_POP); setPadding(dp(20), dp(18), dp(10), dp(20)); visibility = View.INVISIBLE; clipChildren = false; clipToPadding = false }
         val left = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         val image = ImageView(this).apply { scaleType = ImageView.ScaleType.FIT_CENTER; adjustViewBounds = true
             // Rounded to sit inside the card's corners instead of running into them.
