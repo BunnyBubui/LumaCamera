@@ -75,9 +75,6 @@ class CameraActivity : ComponentActivity() {
         /** Flash-fast, flash-quick and sport share one bar entry; a chip picks which. */
         val QUICK_MODES = listOf(PhotoMode.FLASH_NIGHT, PhotoMode.FLASH_FAST, PhotoMode.SPORT)
         val QUICK_NAMES = listOf("แฟลชเร็ว", "แฟลชเร็วพิเศษ", "ถ่ายเร็ว")
-        /** Self-timer choices in seconds; 0 is off. Shared with the settings screen. */
-        val TIMER_STEPS = listOf(0, 1, 2, 3, 5, 7, 10, 15, 20, 30)
-        fun timerLabel(s: Int) = if (s == 0) "ปิด" else "$s วินาที"
         fun barKey(m: PhotoMode) = if (m in QUICK_MODES) "QUICK" else m.name
         const val DEFAULT_BAR = "PORTRAIT,PHOTO,VIDEO,PRO"
         val LOOKS = listOf("มาตรฐาน", "สดใส", "อบอุ่น", "เย็น", "ฟิล์ม", "ขาวดำ")
@@ -854,7 +851,7 @@ class CameraActivity : ComponentActivity() {
         return when (k) {
             "ALL" -> listOf("AUTO")
             "KIND" -> QUICK_NAMES
-            "TIMER" -> TIMER_STEPS.map { if (it == 0) "ปิด" else "$it วิ" }
+            "TIMER" -> SelfTimer.STEPS.map { if (it == 0) "ปิด" else "$it วิ" }
             "F" -> F_STEPS.map { "f/" + fText(it) }
             "ISO" -> listOf("AUTO") + (m?.isoValues ?: emptyList()).map { it.toString() }
             "S" -> listOf("AUTO") + (m?.shutterValues ?: emptyList()).map { it.first }
@@ -873,7 +870,7 @@ class CameraActivity : ComponentActivity() {
         return when (k) {
             "ALL" -> 0
             "KIND" -> QUICK_MODES.indexOf(mode).coerceAtLeast(0)
-            "TIMER" -> TIMER_STEPS.indexOf(prefs.getString("timer", "0")?.toIntOrNull() ?: 0).coerceAtLeast(0)
+            "TIMER" -> SelfTimer.STEPS.indexOf(prefs.getString("timer", "0")?.toIntOrNull() ?: 0).coerceAtLeast(0)
             "F" -> F_STEPS.indices.minBy { abs(F_STEPS[it] - prefs.getFloat("portrait_f", 2.8f)) }
             "ISO" -> m?.currentIso?.let { (m.isoValues.indexOf(it) + 1).coerceAtLeast(0) } ?: 0
             "S" -> m?.currentShutter?.let { s -> (m.shutterValues.indexOfFirst { it.second == s } + 1).coerceAtLeast(0) } ?: 0
@@ -934,7 +931,7 @@ class CameraActivity : ComponentActivity() {
             dialValue.text = QUICK_NAMES[QUICK_MODES.indexOf(pm)]
             preview.removeCallbacks(quickSwitch); quickTarget = pm; preview.postDelayed(quickSwitch, 320); return
         }
-        if (k == "TIMER") { prefs.edit().putString("timer", TIMER_STEPS[i.coerceIn(0, TIMER_STEPS.size - 1)].toString()).apply(); updateDialValue(k); refreshStatus(); return }
+        if (k == "TIMER") { prefs.edit().putString("timer", SelfTimer.STEPS[i.coerceIn(0, SelfTimer.STEPS.size - 1)].toString()).apply(); updateDialValue(k); refreshStatus(); return }
         if (k == "F") { prefs.edit().putFloat("portrait_f", F_STEPS[i.coerceIn(0, F_STEPS.size - 1)]).apply(); updateDialValue(k); dialTitle.text = "เบลอพื้นหลัง · " + blurWord(F_STEPS[i.coerceIn(0, F_STEPS.size - 1)]); refresh(); return }
         val m = manual ?: return
         when (k) {

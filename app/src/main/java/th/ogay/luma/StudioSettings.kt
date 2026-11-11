@@ -116,7 +116,7 @@ fun Activity.showStudioSettings(rawAvailable: Boolean, changed: () -> Unit) {
 
     section("ภาพถ่าย")
     choose("สัดส่วนภาพ", Icons.FRAME, "aspect", Aspects.available(prefs), Aspects.available(prefs), "4:3", Aspects.available(prefs).map { Aspects.note(it) }, Aspects.available(prefs).map { aspectIconPath(it) })
-    choose("ตั้งเวลาถ่าย", Icons.TIMER, "timer", CameraActivity.TIMER_STEPS.map { CameraActivity.timerLabel(it) }, CameraActivity.TIMER_STEPS.map { it.toString() }, "0")
+    choose("ตั้งเวลาถ่าย", Icons.TIMER, "timer", SelfTimer.STEPS.map { SelfTimer.label(it) }, SelfTimer.STEPS.map { it.toString() }, "0")
     choose("คุณภาพ JPEG", Icons.FILE, "jpeg_quality", listOf("ประหยัด 85%", "มาตรฐาน 95%", "สูงสุด 100%"), listOf("85", "95", "100"), "95")
     choose("ครอปจากเลนส์", Icons.SEARCH, "crop_from", listOf("ปิด", "เลนส์หลัก 1×", "เลนส์ 2×", "เลนส์เทเล 3.5×"), listOf("0", "1", "2", "3.5"), if (prefs.getBoolean("software", false)) "1" else "0", listOf("สลับเลนส์ตามระยะซูม", "ซูมด้วยการครอปจากเลนส์หลัก", "ครอปจากระยะ 2×", "ครอปจากระยะ 3.5×"))
     section("หน้าจอกล้อง")
