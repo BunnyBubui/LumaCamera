@@ -440,7 +440,7 @@ class GalleryActivity : ComponentActivity() {
             (gridHead.getChildAt(1) as TextView).text = "${shown.size} รายการ · ${SORTS[sortOrder]} ▾"
             empty.text = if (all.isEmpty()) (if (device) "ไม่พบรูปหรือวิดีโอในเครื่อง" else "รูปและวิดีโอที่ถ่ายด้วย Lumora จะปรากฏที่นี่") else "ไม่พบรายการที่ตรงกัน"
             empty.visibility = if (shown.isEmpty()) View.VISIBLE else View.GONE
-            if (!Glass.reduced(this)) { grid.alpha = 0.4f; grid.animate().alpha(1f).setDuration(220).start() }
+            if (!Glass.reduced(this)) { grid.alpha = 0.4f; grid.scaleX = 0.97f; grid.scaleY = 0.97f; grid.animate().alpha(1f).scaleX(1f).scaleY(1f).setInterpolator(Glass.SPRING).setDuration(360).start() }
         }
         strip.onSelect = { i -> category = i; apply() }
         // Sort order: a glass dropdown on the count at the right of the grid heading.
@@ -595,6 +595,7 @@ class GalleryActivity : ComponentActivity() {
         val visible = lastItems.filter { !it.file }
         val i = visible.indexOfFirst { (it.shot?.id ?: it.key) == selected }
         val next = visible.getOrNull(i + dir) ?: return
+        stepping = true
         selected = next.shot?.id ?: next.key; useAi = false
         // Only the picture moves; the bars stay still. It carries on from where the finger left it and the next one glides in.
         val moving = if (::inspect.isInitialized && inspect.parent === root) inspect else null
@@ -618,7 +619,13 @@ class GalleryActivity : ComponentActivity() {
         ring = AiRing(this)
         val frame = FrameLayout(this).apply { addView(v, FrameLayout.LayoutParams(-1, -1)); addView(ring, FrameLayout.LayoutParams(-1, -1)) }
         root.addView(frame, LinearLayout.LayoutParams(-1, 0, 1f))
+        // Opening springs the photo up from a little smaller, like the phone's own gallery.
+        if (!Glass.reduced(this) && !stepping) { frame.scaleX = 0.86f; frame.scaleY = 0.86f; frame.alpha = 0f
+            frame.animate().scaleX(1f).scaleY(1f).alpha(1f).setInterpolator(Glass.SPRING).setDuration(420).start() }
+        stepping = false
     }
+    /** True while swiping to the next/previous photo, which has its own slide and must not bounce. */
+    private var stepping = false
 
     // ---------- Long-press peek ----------
     private fun showPeek(item: Item, from: View) {

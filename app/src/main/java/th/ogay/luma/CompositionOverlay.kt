@@ -29,7 +29,7 @@ class CompositionOverlay(context: Context) : View(context), SensorEventListener 
     var movie=false
     private var roll=0f
     private var focusX=-1f;private var focusY=-1f;private var locked=false
-    private var histogram=IntArray(64);private var samples:IntArray?=null
+    private var histogram=IntArray(64);private var samples:IntArray?=null;private var edges=IntArray(0);private var highs=IntArray(0)
     private var source:PreviewView?=null
     private val prefs=context.getSharedPreferences("camera",0)
     private val sensorManager=context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
@@ -37,8 +37,15 @@ class CompositionOverlay(context: Context) : View(context), SensorEventListener 
     fun monitor(preview:PreviewView){source=preview}
     private val poll=object:Runnable{override fun run(){
         if(isShown&&source!=null&&(prefs.getBoolean("histogram",false)||prefs.getBoolean("peaking",false)||prefs.getBoolean("zebra",false))){
-            val b=source?.bitmap
-            if(b!=null){val s=android.graphics.Bitmap.createScaledBitmap(b,160,120,true);val a=IntArray(160*120);s.getPixels(a,0,160,0,0,160,120);if(s!==b)s.recycle();b.recycle();histogram=IntArray(64);a.forEach{histogram[FrameFusionEngine.luma(it)/4]++};samples=a;invalidate()}
+            // Small GPU-scaled frame (not a full readback) and the marks worked out here once, so drawing stays cheap.
+            val b=source?.smallFrame(160)
+            if(b!=null){val sc=android.graphics.Bitmap.createScaledBitmap(b,160,120,true);val a=IntArray(160*120);sc.getPixels(a,0,160,0,0,160,120);if(sc!==b)sc.recycle();b.recycle();histogram=IntArray(64);a.forEach{histogram[FrameFusionEngine.luma(it)/4]++};samples=a
+                val zebra=prefs.getBoolean("zebra",false);val peaking=prefs.getBoolean("peaking",false)
+                val hi=ArrayList<Int>();val ed=ArrayList<Int>()
+                if(zebra||peaking)for(y in 1..118 step 2)for(x in 1..158 step 2){val i=y*160+x;val l=FrameFusionEngine.luma(a[i])
+                    if(peaking&&kotlin.math.abs(FrameFusionEngine.luma(a[i+1])-FrameFusionEngine.luma(a[i-1]))+kotlin.math.abs(FrameFusionEngine.luma(a[i+160])-FrameFusionEngine.luma(a[i-160]))>100)ed+=i
+                    else if(zebra&&l>240&&(x+y)%8<4)hi+=i}
+                edges=ed.toIntArray();highs=hi.toIntArray();invalidate()}
         };postDelayed(this,500)
     }}
     override fun onAttachedToWindow(){super.onAttachedToWindow();sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)?.let{sensorManager.registerListener(this,it,SensorManager.SENSOR_DELAY_UI)};post(poll)}
@@ -88,12 +95,11 @@ class CompositionOverlay(context: Context) : View(context), SensorEventListener 
             paint.color=0xccffffff.toInt();val max=histogram.maxOrNull()?.coerceAtLeast(1)?:1
             histogram.forEachIndexed{i,v->canvas.drawRect(x+i*w/64,y+h-v.toFloat()/max*h,x+(i+1)*w/64,y+h,paint)}
         }
-        val a=samples
-        if(a!=null&&(prefs.getBoolean("peaking",false)||prefs.getBoolean("zebra",false))){
+        if(samples!=null&&(edges.isNotEmpty()||highs.isNotEmpty())){
             paint.style=Paint.Style.FILL
-            for(y in 1..118 step 2)for(x in 1..158 step 2){val i=y*160+x;val l=FrameFusionEngine.luma(a[i]);val high=prefs.getBoolean("zebra",false)&&l>240&&(x+y)%8<4;val edge=prefs.getBoolean("peaking",false)&&kotlin.math.abs(FrameFusionEngine.luma(a[i+1])-FrameFusionEngine.luma(a[i-1]))+kotlin.math.abs(FrameFusionEngine.luma(a[i+160])-FrameFusionEngine.luma(a[i-160]))>100
-                if(high||edge){paint.color=if(edge)0x99ff5757.toInt() else 0x88ffffff.toInt();canvas.drawRect(x*width/160f,y*height/120f,(x+2)*width/160f,(y+2)*height/120f,paint)}
-            }
+            val cw=width/160f;val ch=height/120f
+            paint.color=0x88ffffff.toInt();for(i in highs){val x=i%160;val y=i/160;canvas.drawRect(x*cw,y*ch,(x+2)*cw,(y+2)*ch,paint)}
+            paint.color=0x99ff5757.toInt();for(i in edges){val x=i%160;val y=i/160;canvas.drawRect(x*cw,y*ch,(x+2)*cw,(y+2)*ch,paint)}
         }
         paint.style=Paint.Style.STROKE;paint.color=0x66ffffff;paint.strokeWidth=density
     }
