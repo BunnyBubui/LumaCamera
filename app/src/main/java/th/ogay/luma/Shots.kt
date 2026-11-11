@@ -46,6 +46,8 @@ data class Shot(
 
 class Shots(context: Context) : SQLiteOpenHelper(context, "frames.db", null, 3) {
     val changes = MutableLiveData<Long>()
+    /** Drops rows whose photo was deleted from the phone (the file itself is removed through MediaStore by the gallery). */
+    fun forget(ids: Collection<String>) { if (ids.isEmpty()) return; val db = writableDatabase; ids.forEach { db.delete("shots", "id=?", arrayOf(it)) }; changes.postValue(System.nanoTime()) }
     /** AI percent for one shot. Kept apart from [changes] so a running job does not make every screen re-read the whole list. */
     val progress = MutableLiveData<Pair<String, Int>>()
     override fun onCreate(db: SQLiteDatabase) {

@@ -71,6 +71,18 @@ class GalleryActivity : ComponentActivity() {
         else -> arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
     }
     private val mediaRequest = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { reload() }
+    // ---- Selection: pick several items (or all) to share, mark as favourite or delete. ----
+    private val picked = LinkedHashSet<String>()
+    private var selecting = false
+    private var favouritesOnly = false
+    private var selectBar: View? = null
+    private var visibleItems: List<Item> = emptyList()
+    private var refreshCells: () -> Unit = {}
+    private var pendingForget: List<String> = emptyList()
+    private val mediaChange = registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { r ->
+        if (r.resultCode == RESULT_OK && pendingForget.isNotEmpty()) { val ids = pendingForget; luma.fileIo.execute { luma.shots.forget(ids) } }
+        pendingForget = emptyList(); endSelection(); reload()
+    }
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
@@ -87,6 +99,7 @@ class GalleryActivity : ComponentActivity() {
             override fun handleOnBackPressed() {
                 when {
                     sortMenu.showing -> sortMenu.dismiss(true)
+                    selecting -> endSelection()
                     peek != null -> closePeek()
                     selected != null -> { selected = null; useAi = false; reload() }
                     allAlbums -> { allAlbums = false; reload() }
@@ -159,12 +172,62 @@ class GalleryActivity : ComponentActivity() {
         read(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, false); read(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, true)
         return (shots + ledger + earlier).sortedByDescending { it.time }
     }
+    private fun startSelection(first: Item?) {
+        selecting = true; first?.let { picked += it.key }; refreshCells(); updateSelectBar()
+    }
+    private fun endSelection() {
+        selecting = false; picked.clear(); refreshCells()
+        selectBar?.let { b -> b.animate().translationY(b.height.toFloat() + dp(40)).alpha(0f).setDuration(200).withEndAction { (b.parent as? ViewGroup)?.removeView(b) }.start() }; selectBar = null
+    }
+    private fun togglePick(item: Item) {
+        if (item.file) return
+        if (!picked.remove(item.key)) picked += item.key
+        Glass.tick(window.decorView); refreshCells(); updateSelectBar()
+    }
+    private fun pickedItems() = visibleItems.filter { it.key in picked }
+    /** Bottom glass bar while selecting: count, share, favourite, delete, done — icons only, names spoken. */
+    private fun updateSelectBar() {
+        val content = findViewById<View>(android.R.id.content) as FrameLayout
+        val bar = selectBar as? LinearLayout ?: LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL; background = glass(28, Glass.FILL_POP); setPadding(dp(18), 0, dp(8), 0); elevation = dp(8).toFloat()
+            addView(text("", 15f, Color.WHITE, true), LinearLayout.LayoutParams(0, -2, 1f))
+            fun act(icon: String, desc: String, f: () -> Unit) = addView(FrameLayout(this@GalleryActivity).apply { isClickable = true; glassTouch(); contentDescription = desc
+                addView(IconView(this@GalleryActivity, icon), FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER)); setOnClickListener { Glass.tick(this); f() } }, dp(52), dp(52))
+            act(Icons.SHARE, "แชร์") { shareSelected() }
+            act("M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z", "ใส่รายการโปรด") { favouriteSelected() }
+            act("M5 7h14 M9 7V4h6v3 M7 7l1 13h8l1-13 M10 11v6 M14 11v6", "ลบ") { deleteSelected() }
+            act(Icons.CLOSE, "เสร็จ") { endSelection() }
+            content.addView(this, FrameLayout.LayoutParams(-1, dp(64), Gravity.BOTTOM).apply { setMargins(dp(14), 0, dp(14), dp(28)) })
+            translationY = dp(100).toFloat(); animate().translationY(0f).setInterpolator(Glass.SPRING).setDuration(380).start()
+            selectBar = this
+        }
+        (bar.getChildAt(0) as TextView).text = if (picked.isEmpty()) "เลือกรายการ" else "เลือก ${picked.size}"
+    }
+    private fun shareSelected() {
+        val uris = ArrayList(pickedItems().map { it.shot?.ai ?: it.uri }); if (uris.isEmpty()) return
+        startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND_MULTIPLE).setType("*/*").putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), "แชร์"))
+    }
+    private fun favouriteSelected() {
+        val uris = pickedItems().map { it.uri }.filter { it.authority == MediaStore.AUTHORITY }
+        if (uris.isEmpty()) return
+        if (android.os.Build.VERSION.SDK_INT < 30) { notice("ต้องใช้ Android 11 ขึ้นไป"); return }
+        runCatching { mediaChange.launch(androidx.activity.result.IntentSenderRequest.Builder(MediaStore.createFavoriteRequest(contentResolver, uris, true).intentSender).build()) }.onFailure { notice("ใส่รายการโปรดไม่ได้") }
+    }
+    private fun deleteSelected() {
+        val items = pickedItems(); if (items.isEmpty()) return
+        val uris = items.flatMap { listOfNotNull(it.uri, it.shot?.ai, it.shot?.raw) }.filter { it.authority == MediaStore.AUTHORITY }.distinct()
+        if (android.os.Build.VERSION.SDK_INT < 30) { notice("ต้องใช้ Android 11 ขึ้นไป"); return }
+        pendingForget = items.mapNotNull { it.shot?.id }
+        // The system asks once for the whole set; files go to the phone's recently-deleted bin.
+        runCatching { mediaChange.launch(androidx.activity.result.IntentSenderRequest.Builder(MediaStore.createTrashRequest(contentResolver, uris, true).intentSender).build()) }.onFailure { pendingForget = emptyList(); notice("ลบไม่ได้") }
+    }
+
     private fun deviceItems(): List<Item> {
         val out = mutableListOf<Item>()
         fun read(base: Uri, video: Boolean) {
             val cols = arrayOf(MediaStore.MediaColumns._ID, MediaStore.MediaColumns.DATE_ADDED, MediaStore.MediaColumns.DISPLAY_NAME, "bucket_display_name")
             runCatching {
-                contentResolver.query(base, cols, null, null, "${MediaStore.MediaColumns.DATE_ADDED} DESC")?.use { c ->
+                contentResolver.query(base, cols, if (favouritesOnly && android.os.Build.VERSION.SDK_INT >= 30) "is_favorite = 1" else null, null, "${MediaStore.MediaColumns.DATE_ADDED} DESC")?.use { c ->
                     while (c.moveToNext() && out.size < 5000) {
                         val uri = ContentUris.withAppendedId(base, c.getLong(0))
                         out += Item("device:$uri", uri, c.getLong(1) * 1000, video, c.getString(2) ?: "", c.getString(3) ?: "อื่น ๆ", null)
@@ -221,6 +284,16 @@ class GalleryActivity : ComponentActivity() {
         searchBox.addView(searchIcon, dp(20), dp(20)); searchBox.addView(field, LinearLayout.LayoutParams(0, -1, 1f)); searchBox.addView(close, dp(40), dp(40))
         searchBox.contentDescription = "ค้นหา"
         bar.addView(searchBox, LinearLayout.LayoutParams(dp(48), dp(48)).apply { leftMargin = dp(10) })
+        lateinit var more: View
+        more = roundButton("M12 5.2v.1 M12 12v.1 M12 18.8v.1", "ตัวเลือกเพิ่มเติม") {
+            val options = listOf(GlassMenu.Option("เลือก", Icons.CHECK), GlassMenu.Option("เลือกทั้งหมด", Icons.STACK), GlassMenu.Option(if (favouritesOnly) "แสดงทั้งหมด" else "รายการโปรด", "M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"))
+            sortMenu.show(more, "แกลเลอรี", options, -1) { i -> when (i) {
+                0 -> startSelection(null)
+                1 -> { startSelection(null); picked.addAll(visibleItems.filter { !it.file }.map { it.key }); refreshCells(); updateSelectBar() }
+                else -> { favouritesOnly = !favouritesOnly; reload() }
+            } }
+        }
+        bar.addView(more, LinearLayout.LayoutParams(dp(48), dp(48)).apply { leftMargin = dp(8) })
         fun morph(open: Boolean, animate: Boolean = true) {
             val from = searchBox.width; val to = if (open) bar.width - bar.paddingLeft - bar.paddingRight - dp(70) else dp(48)
             field.visibility = if (open) View.VISIBLE else View.GONE; close.visibility = field.visibility
@@ -381,7 +454,8 @@ class GalleryActivity : ComponentActivity() {
             override fun afterTextChanged(s: Editable?) { queryText = s.toString(); apply() }
         })
         apply()
-        grid.setOnItemClickListener { _, _, p, _ -> open(shown[p]) }
+        visibleItems = shown; refreshCells = { visibleItems = shown; adapter.notifyDataSetChanged() }
+        grid.setOnItemClickListener { _, _, p, _ -> if (selecting) togglePick(shown[p]) else open(shown[p]) }
         grid.setOnItemLongClickListener { _, v, p, _ -> showPeek(shown[p], v); true }
         grid.setOnTouchListener { _, e -> if (peek != null && (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL)) { closePeek(); true } else peek != null }
     }
@@ -396,8 +470,15 @@ class GalleryActivity : ComponentActivity() {
             addView(IconView(this@GalleryActivity, Icons.VIDEO, 2f).apply { shadow = true }, FrameLayout.LayoutParams(dp(18), dp(18), Gravity.BOTTOM or Gravity.END).apply { setMargins(0, 0, dp(6), dp(6)) })
             addView(text("AI", 10f, Glass.ACCENT, true).apply { setShadowLayer(4f, 0f, 1f, 0x99000000.toInt()) }, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END).apply { setMargins(0, dp(4), dp(6), 0) })
             addView(text("", 10.5f, Color.WHITE).apply { maxLines = 2; gravity = Gravity.CENTER; setPadding(dp(6), 0, dp(6), dp(8)) }, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+            addView(FrameLayout(this@GalleryActivity).apply { addView(IconView(this@GalleryActivity, Icons.CHECK, 2.6f), FrameLayout.LayoutParams(dp(13), dp(13), Gravity.CENTER)) },
+                FrameLayout.LayoutParams(dp(24), dp(24), Gravity.TOP or Gravity.START).apply { setMargins(dp(6), dp(6), 0, 0) })
         }
         val placeholder = cell.getChildAt(1) as IconView; val image = cell.getChildAt(2) as ImageView
+        val badge = cell.getChildAt(6) as FrameLayout; val on = item.key in picked
+        badge.visibility = if (selecting && !item.file) View.VISIBLE else View.GONE
+        badge.background = android.graphics.drawable.GradientDrawable().apply { shape = android.graphics.drawable.GradientDrawable.OVAL; setColor(if (on) Glass.ACCENT else 0x55000000); setStroke(dp(2), Color.WHITE) }
+        badge.getChildAt(0).visibility = if (on) View.VISIBLE else View.INVISIBLE
+        cell.foreground = if (on) android.graphics.drawable.ColorDrawable(0x33000000) else null
         cell.getChildAt(3).visibility = if (item.video) View.VISIBLE else View.GONE
         cell.getChildAt(4).visibility = if (item.shot?.ai != null) View.VISIBLE else View.GONE
         val caption = cell.getChildAt(5) as TextView; caption.text = if (item.file) item.name else ""; caption.visibility = if (item.file) View.VISIBLE else View.GONE
@@ -721,6 +802,12 @@ class GalleryActivity : ComponentActivity() {
             chip("ยกเลิก AI",false) { luma.fileIo.execute { EnhanceWorker.cancel(applicationContext,s.id) } }
         }
         chip("แชร์", false, Icons.SHARE) { startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("image/jpeg").putExtra(Intent.EXTRA_STREAM, if (useAi) s.ai else s.uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), "แชร์")) }
+        chip("ลบ", false, "M5 7h14 M9 7V4h6v3 M7 7l1 13h8l1-13 M10 11v6 M14 11v6") {
+            if (android.os.Build.VERSION.SDK_INT < 30) { notice("ต้องใช้ Android 11 ขึ้นไป"); return@chip }
+            val uris = listOfNotNull(s.uri, s.ai, s.raw).filter { it.authority == MediaStore.AUTHORITY }.distinct()
+            pendingForget = listOf(s.id); selected = null
+            runCatching { mediaChange.launch(androidx.activity.result.IntentSenderRequest.Builder(MediaStore.createTrashRequest(contentResolver, uris, true).intentSender).build()) }.onFailure { pendingForget = emptyList(); notice("ลบไม่ได้") }
+        }
     }
     private fun infoPanel(s: Shot, time: String, rows: List<Triple<String, String, String>>, tech: List<String>) {
         GlassDialog.panel(this, time) { col, d ->
