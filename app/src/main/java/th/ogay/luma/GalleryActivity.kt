@@ -1072,7 +1072,7 @@ class GalleryActivity : ComponentActivity() {
         orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; isClickable = true; isFocusable = true; contentDescription = label; minimumHeight = dp(58); setPadding(dp(2), dp(6), dp(2), dp(4))
         val c = if (tint != 0) tint else if (active) Glass.ACCENT else Color.WHITE
         addView(IconView(this@GalleryActivity, icon, 2f).apply { this.tint = c }, LinearLayout.LayoutParams(dp(23), dp(23)))
-        addView(text(label, 11f, if (tint != 0) tint else if (active) Glass.ACCENT else Glass.TEXT2, true).apply { gravity = Gravity.CENTER; maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END; setPadding(0, dp(5), 0, 0) }, -1, -2)
+        addView(text(label, 11f, if (tint != 0) tint else if (active) Glass.ACCENT else Glass.TEXT2, true).apply { gravity = Gravity.CENTER; maxLines = 3; ellipsize = null; setPadding(0, dp(5), 0, 0) }, -1, -2)
         glassTouch()
     }
     private fun formatTime(t: Long) = DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(t))

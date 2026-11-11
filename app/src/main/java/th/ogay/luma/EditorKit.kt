@@ -117,7 +117,7 @@ object EditorKit {
         orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; isClickable = true; isFocusable = true; contentDescription = label
         val disc = FrameLayout(c).apply { background = c.glass(24, if (on) Glass.ACCENT_SOFT else 0x26ffffff); addView(IconView(c, icon, 2f).apply { tint = if (on) Glass.ACCENT else Color.WHITE }, FrameLayout.LayoutParams(c.dp(21), c.dp(21), Gravity.CENTER)) }
         addView(disc, LinearLayout.LayoutParams(c.dp(48), c.dp(48)))
-        addView(c.text(label, 10.5f, if (on) Glass.ACCENT else Glass.TEXT2, true).apply { gravity = Gravity.CENTER; maxLines = 1; setPadding(0, c.dp(4), 0, 0) })
+        addView(c.text(label, 10.5f, if (on) Glass.ACCENT else Glass.TEXT2, true).apply { gravity = Gravity.CENTER; maxLines = 2; ellipsize = null; setPadding(0, c.dp(4), 0, 0) })
         isSelected = on; ViewCompat.setStateDescription(this, if (on) "เลือกอยู่" else null)
         glassTouch(); setOnClickListener { click() }
     }
@@ -230,7 +230,7 @@ object EditorKit {
         val tabs: List<LinearLayout> = list.mapIndexed { i, (icon, name) -> LinearLayout(c).apply {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; isClickable = true; isFocusable = true; contentDescription = name; minimumHeight = c.dp(60)
             addView(IconView(c, icon, 2f), LinearLayout.LayoutParams(c.dp(22), c.dp(22)))
-            addView(c.text(name, 10.5f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; maxLines = 1; setPadding(0, c.dp(5), 0, 0) })
+            addView(c.text(name, 10.5f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; maxLines = 2; ellipsize = null; setPadding(0, c.dp(5), 0, 0) })
             glassTouch(); setOnClickListener { if (i != selected) pick(i) }
         } }
         init {
