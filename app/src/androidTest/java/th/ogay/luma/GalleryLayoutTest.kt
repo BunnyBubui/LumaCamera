@@ -20,7 +20,7 @@ class GalleryLayoutTest {
     private val device = UiDevice.getInstance(inst)
     private val context: Context get() = inst.targetContext
 
-    @Test fun bottomTabsLeaveRoomForTheGridAndOpenAlbums() {
+    @Test(timeout = 120_000) fun bottomTabsLeaveRoomForTheGridAndOpenAlbums() {
         ActivityScenario.launch<GalleryActivity>(Intent(context, GalleryActivity::class.java).putExtra("tab", "device")).use {
             val photos = device.wait(Until.findObject(By.desc("รูปภาพ")), 10000)
             assertNotNull("Photos tab is missing", photos)

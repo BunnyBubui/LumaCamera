@@ -47,7 +47,7 @@ class EditorFlowTest {
         return File(context.cacheDir, "editor-test-${System.nanoTime()}.jpg").also { f -> f.outputStream().use { b.compress(Bitmap.CompressFormat.JPEG, 92, it) } }
     }
 
-    @Test fun photoEditorSavesATurnedCopy() {
+    @Test(timeout = 120_000) fun photoEditorSavesATurnedCopy() {
         val before = context.luma.shots.all().map { it.id }.toSet()
         val src = picture(400, 300)
         ActivityScenario.launch<PhotoEditorActivity>(PhotoEditorActivity.intent(context, Uri.fromFile(src))).use {
@@ -65,7 +65,7 @@ class EditorFlowTest {
     }
 
     @androidx.annotation.OptIn(markerClass = [UnstableApi::class])
-    @Test fun videoEditorExportsAClip() {
+    @Test(timeout = 300_000) fun videoEditorExportsAClip() {
         // A two-second clip made from a still, so the test does not depend on the emulator camera.
         val still = picture(640, 360)
         val clip = File(context.cacheDir, "editor-test-${System.nanoTime()}.mp4")

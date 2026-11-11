@@ -409,7 +409,14 @@ class VideoEditorActivity : ComponentActivity() {
         val (from, to) = parts[index]
         try {
             val composition = composition(from, to)
-            val t = Transformer.Builder(this).setVideoMimeType(androidx.media3.common.MimeTypes.VIDEO_H264).setPortraitEncodingEnabled(true).addListener(object : Transformer.Listener {
+            // Same decoder choice as the clip editor: on emulators the Goldfish decoder can drop the last surface frame,
+            // which leaves the export waiting forever, so Android's software decoder goes first there. Phones are unchanged.
+            val selector = androidx.media3.exoplayer.mediacodec.MediaCodecSelector { mime, secure, tunnel ->
+                val codecs = androidx.media3.exoplayer.mediacodec.MediaCodecSelector.DEFAULT.getDecoderInfos(mime, secure, tunnel)
+                if (androidx.media3.common.util.Util.isRunningOnEmulator()) codecs.sortedBy { when { it.name.contains("goldfish", true) -> 2; it.softwareOnly -> 0; else -> 1 } } else codecs
+            }
+            val loaders = androidx.media3.transformer.DefaultAssetLoaderFactory(this, androidx.media3.transformer.DefaultDecoderFactory.Builder(this).setMediaCodecSelector(selector).build(), androidx.media3.common.util.Clock.DEFAULT, null)
+            val t = Transformer.Builder(this).setAssetLoaderFactory(loaders).setVideoMimeType(androidx.media3.common.MimeTypes.VIDEO_H264).setPortraitEncodingEnabled(true).addListener(object : Transformer.Listener {
                 override fun onCompleted(composition: Composition, result: ExportResult) {
                     done += file
                     if (index + 1 < parts.size) { exportPart(parts, index + 1, id, done); return }
