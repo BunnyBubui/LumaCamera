@@ -56,9 +56,9 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 /**
- * Video editor: trim, split, speed, crop, text, film look and music. The preview plays the source with the look,
- * crop frame and text drawn over it; "ส่งออก" writes new clips (two when split) with media3 Transformer and the
- * original stays untouched.
+ * Video editor: trim, split, speed, crop, text, stickers, film look, music, and further clips joined with a transition.
+ * The preview plays the clips in turn with the look, crop frame, text and stickers drawn over them; "ส่งออก" writes
+ * new clips (two when split, one when several clips are joined) with media3 Transformer and the originals stay untouched.
  */
 @androidx.annotation.OptIn(markerClass = [UnstableApi::class])
 class VideoEditorActivity : ComponentActivity() {
@@ -68,7 +68,18 @@ class VideoEditorActivity : ComponentActivity() {
         private val CROPS = listOf("ต้นฉบับ" to 0f, "1:1" to 1f, "4:5" to 4f / 5, "16:9" to 16f / 9, "9:16" to 9f / 16, "2.39:1" to 2.39f)
         private val PLACES = listOf("บน", "กลาง", "ล่าง")
         private val TEXT_COLORS = intArrayOf(Color.WHITE, Color.BLACK, Glass.ACCENT, 0xffffd60a.toInt(), 0xff0a84ff.toInt())
+        private val TRANSITIONS = listOf("ตัดตรง", "จางดำ", "แฟลชขาว", "ซูมเข้า")
+        private val STICKERS = listOf("😀", "😂", "😍", "🥳", "😎", "🔥", "❤️", "✨", "👍", "🎉", "⭐", "🌸", "☀️", "🌙", "📍", "💯")
+        private const val CLIPS = "M3 6h7v12H3z M14 6h7v12h-7z"
+        private const val JOIN = "M3 5h6v14H3z M15 5h6v14h-6z M10 12h4 M12.5 10l1.5 2-1.5 2"
+        private const val STICKER = "M12 3a9 9 0 1 0 0.01 0 M8.5 14q3.5 3 7 0 M9 9.5v1 M15 9.5v1"
+        private const val ADD = "M12 5v14 M5 12h14"
+        private const val LEFT = "M15 6l-6 6 6 6"
+        private const val RIGHT = "M9 6l6 6-6 6"
     }
+
+    /** A clip added after the main one; it plays whole and takes the main clip's frame shape. */
+    private class Extra(val uri: Uri, val duration: Long, val w: Int, val h: Int, val name: String, var thumb: Bitmap?)
 
     // ---- Source ----
     private lateinit var source: Uri
@@ -85,6 +96,9 @@ class VideoEditorActivity : ComponentActivity() {
     private var volume = 1f; private var musicVolume = 1f
     private var cutFrom = -1L; private var cutTo = -1L
     private var textBox = false
+    private val extras = mutableListOf<Extra>()
+    private var transition = 0
+    private val stickers = mutableListOf<VideoSticker>()
     private fun cutValid() = cutFrom >= 0 && cutTo > cutFrom
 
     // ---- Views ----
@@ -100,6 +114,12 @@ class VideoEditorActivity : ComponentActivity() {
     private lateinit var toolBar: EditorKit.ToolBar
     private var tool = 0
     private var firstFrame: Bitmap? = null
+    private lateinit var dip: View
+    private val stickerViews = mutableListOf<TextView>()
+    /** The part of the stage that is kept (after crop), where stickers and the caption are placed. */
+    private val visible = RectF()
+    /** Which clip the preview plays: 0 the main clip, k the k-th added clip. */
+    private var playIndex = 0; private var autoPlay = false; private var switching = false
 
     // ---- Playback ----
     private var player: MediaPlayer? = null; private var musicPlayer: MediaPlayer? = null
@@ -109,9 +129,12 @@ class VideoEditorActivity : ComponentActivity() {
         val p = player ?: return
         if (prepared && p.isPlaying) {
             val pos = p.currentPosition.toLong()
-            if (pos >= end - 30) { p.seekTo(start.toInt()); musicPlayer?.seekTo(0) }
-            else if (cutValid() && pos in cutFrom until cutTo) p.seekTo(cutTo.toInt())
-            trim.playhead = pos.coerceIn(start, end); showTime()
+            if (playIndex == 0 && !switching) {
+                if (pos >= end - 30) { if (extras.isNotEmpty()) playClip(1) else { p.seekTo(start.toInt()); musicPlayer?.seekTo(0) } }
+                else if (cutValid() && pos in cutFrom until cutTo) p.seekTo(cutTo.toInt())
+                trim.playhead = pos.coerceIn(start, end)
+            }
+            showTime()
         }
         handler.postDelayed(this, 33)
     } }
@@ -121,6 +144,17 @@ class VideoEditorActivity : ComponentActivity() {
     private val progress = ProgressHolder()
     private var overlay: View? = null; private var overlayText: TextView? = null
 
+    private val pickClip = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@registerForActivityResult
+        runCatching { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+        luma.readIo.execute {
+            val extra = readExtra(uri)
+            runOnUiThread {
+                if (isDestroyed) return@runOnUiThread
+                if (extra == null) notice("เปิดวิดีโอนี้ไม่ได้") else { extras += extra; showTime(); showTool(10, false); notice("เพิ่มคลิปแล้ว · ส่งออกรวมเป็นไฟล์เดียว") }
+            }
+        }
+    }
     private val pickMusic = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             runCatching { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
@@ -158,6 +192,9 @@ class VideoEditorActivity : ComponentActivity() {
         mask = CropMask(this); stage.addView(mask, -1, -1)
         captionView = text("", 20f, Color.WHITE, true).apply { gravity = Gravity.CENTER; maxLines = 3; setShadowLayer(6f, 0f, 2f, 0x99000000.toInt()); importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
         stage.addView(captionView, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
+        // Covers the picture for a moment when the preview moves to the next clip (fade or flash transitions).
+        dip = View(this).apply { alpha = 0f; isClickable = false; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
+        stage.addView(dip, -1, -1)
         stage.setOnClickListener { togglePlay() }; stage.contentDescription = "พรีวิววิดีโอ แตะเพื่อเล่นหรือหยุด"
         // Only a real size change re-fits the video: a layout pass alone must not, or setting the caption's width
         // asks for another layout and the page re-lays itself every frame.
@@ -170,6 +207,7 @@ class VideoEditorActivity : ComponentActivity() {
             addView(playIcon, FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER)) }, dp(48), dp(48))
         timeLabel = text("", 13f, Glass.TEXT2).apply { setPadding(dp(12), 0, 0, 0) }
         transport.addView(timeLabel, LinearLayout.LayoutParams(0, -2, 1f))
+        transport.addView(EditorKit.chip(this, "เพิ่มคลิป", ADD) { pickClip.launch(arrayOf("video/*")) }, LinearLayout.LayoutParams(-2, dp(44)))
         root.addView(transport, -1, -2)
         trim = TrimBar(this).apply {
             contentDescription = "ช่วงคลิป ลากขอบซ้ายขวาเพื่อตัด"
@@ -180,7 +218,7 @@ class VideoEditorActivity : ComponentActivity() {
         root.addView(trim, LinearLayout.LayoutParams(-1, dp(64)).apply { setMargins(dp(12), dp(4), dp(12), dp(4)) })
         tools = FrameLayout(this).apply { clipChildren = false }
         root.addView(tools, LinearLayout.LayoutParams(-1, dp(124)))
-        toolBar = EditorKit.ToolBar(this, listOf(EditorKit.SCISSORS to "ตัด", EditorKit.SPLIT to "แยก", EditorKit.SPEED to "ความเร็ว", EditorKit.CROP to "ครอบ", EditorKit.TEXT to "ข้อความ", Icons.FILM to "ฟิลเตอร์", EditorKit.MUSIC to "เพลง", EditorKit.ADJUST to "ปรับ", EditorKit.ROTATE to "หมุน", Icons.SOUND to "เสียง")) { showTool(it) }
+        toolBar = EditorKit.ToolBar(this, listOf(EditorKit.SCISSORS to "ตัด", EditorKit.SPLIT to "แยก", EditorKit.SPEED to "ความเร็ว", EditorKit.CROP to "ครอบ", EditorKit.TEXT to "ข้อความ", Icons.FILM to "ฟิลเตอร์", EditorKit.MUSIC to "เพลง", EditorKit.ADJUST to "ปรับ", EditorKit.ROTATE to "หมุน", Icons.SOUND to "เสียง", CLIPS to "คลิป", JOIN to "ทรานซิชัน", STICKER to "สติกเกอร์")) { showTool(it) }
         root.addView(toolBar, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(4), 0, dp(4), dp(8)) })
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) { override fun handleOnBackPressed() = leave() })
 
@@ -197,6 +235,29 @@ class VideoEditorActivity : ComponentActivity() {
         }
         applyLook(); showTool(tool, false); showTime()
         if (music != null) prepareMusic()
+        state?.let { restoreExtras(it) }
+        rebuildStickers()
+    }
+    private fun readExtra(uri: Uri): Extra? = runCatching {
+        val r = MediaMetadataRetriever()
+        try {
+            r.setDataSource(this, uri)
+            val d = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+            val w = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
+            val h = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
+            val rot = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
+            if (d <= 0 || w <= 0 || h <= 0) return@runCatching null
+            val thumb = if (android.os.Build.VERSION.SDK_INT >= 27) r.getScaledFrameAtTime(d * 500, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 160, 160) else r.getFrameAtTime(d * 500)
+            val name = runCatching { contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c -> if (c.moveToFirst()) c.getString(0) else null } }.getOrNull() ?: "คลิป"
+            Extra(uri, d, if (rot % 180 != 0) h else w, if (rot % 180 != 0) w else h, name, thumb)
+        } finally { runCatching { r.release() } }
+    }.getOrNull()
+    private fun restoreExtras(s: Bundle) {
+        val uris = s.getStringArrayList("extras") ?: return
+        luma.readIo.execute {
+            val list = uris.mapNotNull { readExtra(Uri.parse(it)) }
+            runOnUiThread { if (!isDestroyed) { extras.clear(); extras += list; showTime(); if (tool == 10) showTool(10, false) } }
+        }
     }
 
     /** MediaMetadataRetriever is AutoCloseable only from Android 10, so it is released by hand. */
@@ -227,15 +288,42 @@ class VideoEditorActivity : ComponentActivity() {
     private fun openPlayer() {
         val s = surface ?: return
         releasePlayer()
+        if (playIndex > extras.size) playIndex = 0
+        val clip = if (playIndex == 0) source else extras[playIndex - 1].uri
         player = MediaPlayer().apply {
             runCatching {
-                setDataSource(this@VideoEditorActivity, source); setSurface(s); isLooping = false
-                setOnPreparedListener { prepared = true; seekTo(this@VideoEditorActivity.start.toInt()); applySound(); layoutVideo() }
-                setOnCompletionListener { seekTo(this@VideoEditorActivity.start.toInt()) }
+                setDataSource(this@VideoEditorActivity, clip); setSurface(s); isLooping = false
+                setOnPreparedListener { mp ->
+                    prepared = true; if (playIndex == 0) seekTo(this@VideoEditorActivity.start.toInt()); applySound(); layoutVideo(); arrived()
+                    if (autoPlay) { autoPlay = false; if (playIndex == 0) runCatching { mp.playbackParams = mp.playbackParams.setSpeed(speed) }; mp.start(); musicPlayer?.runCatching { start() }; playIcon.path = "M8 6v12 M16 6v12" }
+                }
+                setOnCompletionListener { if (playIndex == 0) seekTo(this@VideoEditorActivity.start.toInt()) else playClip(if (playIndex < extras.size) playIndex + 1 else 0) }
                 prepareAsync()
             }.onFailure { notice("เล่นพรีวิวไม่ได้ · ${it.localizedMessage}") }
         }
         handler.removeCallbacks(tick); handler.post(tick)
+    }
+    /** Moves the preview to clip [k] and keeps playing, with the chosen transition drawn over the change. */
+    private fun playClip(k: Int, play: Boolean = true) {
+        val wasPlaying = play && (player?.isPlaying == true || autoPlay)
+        autoPlay = wasPlaying
+        // Back at the start after the last clip: the music starts again too.
+        if (k == 0) musicPlayer?.runCatching { seekTo(0) }
+        switching = true
+        val go = Runnable { playIndex = k; switching = false; openPlayer(); showTime() }
+        if ((transition == 1 || transition == 2) && !Glass.reduced(this)) {
+            dip.setBackgroundColor(if (transition == 2) Color.WHITE else Color.BLACK)
+            dip.animate().cancel(); dip.animate().alpha(1f).setDuration(VideoEdit.TRANSITION_MS / 2).withEndAction(go).start()
+        } else go.run()
+    }
+    /** The new clip is ready: uncover it (fade, flash) or let it settle from a little closer (zoom). */
+    private fun arrived() {
+        if (Glass.reduced(this)) { dip.alpha = 0f; return }
+        if (dip.alpha > 0f) dip.animate().alpha(0f).setDuration(VideoEdit.TRANSITION_MS).start()
+        if (transition == 3 && playIndex > 0) {
+            texture.scaleY = 1.12f; texture.scaleX = 1.12f
+            texture.animate().scaleX(1f).scaleY(1f).setInterpolator(Glass.EASE).setDuration(VideoEdit.TRANSITION_MS).start()
+        }
     }
     private fun releasePlayer() {
         handler.removeCallbacks(tick); prepared = false
@@ -248,26 +336,31 @@ class VideoEditorActivity : ComponentActivity() {
         val m = music ?: return
         musicPlayer = runCatching { MediaPlayer().apply { setDataSource(this@VideoEditorActivity, m); isLooping = true; prepare() } }.getOrElse { notice("เปิดเพลงนี้ไม่ได้"); music = null; null }
     }
-    private fun applySound() { val v = if (keepSound) volume.coerceAtMost(1f) else 0f; player?.runCatching { setVolume(v, v) }; musicPlayer?.runCatching { setVolume(musicVolume.coerceAtMost(1f), musicVolume.coerceAtMost(1f)) } }
+    private fun applySound() { val v = if (keepSound) volume.coerceAtMost(1f) else 0f; if (playIndex > 0) player?.runCatching { playbackParams = playbackParams.setSpeed(1f) }; player?.runCatching { setVolume(v, v) }; musicPlayer?.runCatching { setVolume(musicVolume.coerceAtMost(1f), musicVolume.coerceAtMost(1f)) } }
     private fun togglePlay() {
         val p = player ?: return; if (!prepared) return
         if (p.isPlaying) { p.pause(); musicPlayer?.pause(); playIcon.path = "M9 6.5v11l9-5.5z" }
         else {
-            if (p.currentPosition >= end - 60) p.seekTo(start.toInt())
-            runCatching { p.playbackParams = p.playbackParams.setSpeed(speed) }
+            if (playIndex == 0 && p.currentPosition >= end - 60) p.seekTo(start.toInt())
+            runCatching { p.playbackParams = p.playbackParams.setSpeed(if (playIndex == 0) speed else 1f) }
             p.start(); musicPlayer?.let { mp -> runCatching { mp.seekTo(((p.currentPosition - start).coerceAtLeast(0) % max(1, mp.duration)).toInt()); mp.start() } }
             playIcon.path = "M8 6v12 M16 6v12"
         }
     }
     private fun seek(ms: Long) {
-        trim.playhead = ms; val p = player ?: return
+        trim.playhead = ms
+        // Touching the main clip's timeline brings the preview back to it.
+        if (playIndex != 0) { playClip(0, false); return }
+        val p = player ?: return
         if (prepared) { if (android.os.Build.VERSION.SDK_INT >= 26) p.seekTo(ms, MediaPlayer.SEEK_CLOSEST) else p.seekTo(ms.toInt()) }
         showTime()
     }
     private fun clock(ms: Long) = String.format(Locale.US, "%d:%02d.%d", ms / 60000, ms / 1000 % 60, ms / 100 % 10)
     private fun showTime() {
         val length = ((end - start) / speed).toLong()
-        timeLabel.text = "${clock(trim.playhead - start)} / ${clock(end - start)}" + (if (speed != 1f) "  ·  ได้คลิป ${clock(length)}" else "") + (if (split >= 0) "  ·  แยกเป็น 2 คลิป" else "")
+        val more = extras.sumOf { it.duration }
+        timeLabel.text = (if (playIndex > 0) "คลิป ${playIndex + 1}/${extras.size + 1}  ·  " else "${clock(trim.playhead - start)} / ${clock(end - start)}") +
+            (if (extras.isNotEmpty()) "  ·  รวม ${clock(length + more)}" else if (speed != 1f) "  ·  ได้คลิป ${clock(length)}" else "") + (if (split >= 0 && extras.isEmpty()) "  ·  แยกเป็น 2 คลิป" else "")
     }
 
     /** Fits the video in the stage and places the crop frame and caption over it. */
@@ -278,12 +371,24 @@ class VideoEditorActivity : ComponentActivity() {
         // A quarter turn swaps the picture's sides: fit the turned shape, then turn the view itself.
         val side = turns % 2 == 1; val ew = if (side) videoH else videoW; val eh = if (side) videoW else videoH
         val k = min(aw.toFloat() / ew, ah.toFloat() / eh)
-        val tw = (videoW * k).toInt(); val th = (videoH * k).toInt()
-        (texture.layoutParams as FrameLayout.LayoutParams).let { if (it.width != tw || it.height != th) { it.width = tw; it.height = th; texture.layoutParams = it } }
-        texture.rotation = turns * 90f; texture.scaleX = if (mirror) -1f else 1f
         val w = (ew * k).toInt(); val h = (eh * k).toInt()
         val video = RectF((stage.width - w) / 2f, (stage.height - h) / 2f, (stage.width + w) / 2f, (stage.height + h) / 2f)
-        val visible = cropRect(video); mask.set(video, visible)
+        val visible = cropRect(video); mask.set(video, visible); this.visible.set(visible)
+        val extra = extras.getOrNull(playIndex - 1)
+        if (extra == null) {
+            val tw = (videoW * k).toInt(); val th = (videoH * k).toInt()
+            (texture.layoutParams as FrameLayout.LayoutParams).let { if (it.width != tw || it.height != th) { it.width = tw; it.height = th; texture.layoutParams = it } }
+            texture.rotation = turns * 90f; texture.scaleX = if (mirror) -1f else 1f; texture.clipBounds = null
+        } else {
+            // An added clip fills the kept frame and is cut at the sides, as the export does.
+            val f = max(visible.width() / extra.w, visible.height() / extra.h)
+            val tw = (extra.w * f).toInt(); val th = (extra.h * f).toInt()
+            (texture.layoutParams as FrameLayout.LayoutParams).let { if (it.width != tw || it.height != th) { it.width = tw; it.height = th; texture.layoutParams = it } }
+            texture.rotation = 0f; texture.scaleX = 1f
+            val cx = (tw - visible.width()) / 2f; val cy = (th - visible.height()) / 2f
+            texture.clipBounds = Rect(cx.toInt(), cy.toInt(), (cx + visible.width()).toInt(), (cy + visible.height()).toInt())
+        }
+        placeStickers()
         captionView.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, (if (textBig) 0.11f else 0.07f) * visible.height())
         val widest = visible.width().toInt() - dp(16); if (captionView.maxWidth != widest) captionView.maxWidth = widest
         captionView.post {
@@ -346,7 +451,10 @@ class VideoEditorActivity : ComponentActivity() {
                         if (!Glass.reduced(this)) { texture.rotation = texture.rotation - 90f; texture.animate().rotation(turns * 90f).setInterpolator(Glass.EASE).setDuration(320).start() } },
                     EditorKit.action(this, Icons.MIRROR, "กลับด้าน", mirror) { mirror = !mirror; layoutVideo(); showTool(8, false) },
                     EditorKit.action(this, Icons.RESET, "คืนค่า") { turns = 0; mirror = false; layoutVideo(); showTool(8, false) })), -1, -2)
-            else -> soundTools(col)
+            9 -> soundTools(col)
+            10 -> clipTools(col)
+            11 -> transitionTools(col)
+            else -> stickerTools(col)
         }
         EditorKit.swap(tools, col, dir)
     }
@@ -436,7 +544,80 @@ class VideoEditorActivity : ComponentActivity() {
         col.addView(EditorKit.actions(this, items), -1, -2)
     }
 
-    private fun changed() = start != 0L || end != duration || split >= 0 || speed != 1f || cropIndex != 0 || caption.isNotBlank() || film != null || music != null || !keepSound || looked() || turns != 0 || mirror || volume != 1f || cutValid()
+    private fun changed() = start != 0L || end != duration || split >= 0 || speed != 1f || cropIndex != 0 || caption.isNotBlank() || film != null || music != null || !keepSound || looked() || turns != 0 || mirror || volume != 1f || cutValid() || extras.isNotEmpty() || stickers.isNotEmpty()
+
+    // ---------- Clips, transitions, stickers ----------
+    /** The clips in playing order: the main one, then the added ones, which can be moved or removed. */
+    private fun clipTools(col: LinearLayout) {
+        val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(12), 0, dp(12), 0) }
+        fun card(thumb: Bitmap?, label: String, on: Boolean, click: () -> Unit) = FrameLayout(this).apply {
+            background = glass(14, if (on) Glass.ACCENT_SOFT else 0x26ffffff); setPadding(dp(3), dp(3), dp(3), dp(3)); isClickable = true; contentDescription = label; glassTouch(); setOnClickListener { click() }
+            addView(ImageView(this@VideoEditorActivity).apply { scaleType = ImageView.ScaleType.CENTER_CROP; setImageBitmap(thumb); clipToOutline = true; background = glass(11, 0xff151d33.toInt()) }, -1, -1)
+            addView(text(label, 10.5f, Color.WHITE, true).apply { setShadowLayer(4f, 0f, 1f, 0xcc000000.toInt()); setPadding(dp(5), 0, dp(5), dp(3)) }, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.START))
+        }
+        row.addView(card(firstFrame, "1 · " + clock(end - start), playIndex == 0) { playClip(0, false) }, LinearLayout.LayoutParams(dp(76), dp(56)).apply { rightMargin = dp(6) })
+        extras.forEachIndexed { i, e -> row.addView(card(e.thumb, "${i + 2} · " + clock(e.duration), playIndex == i + 1) { playClip(i + 1, false); showTool(10, false) }, LinearLayout.LayoutParams(dp(76), dp(56)).apply { rightMargin = dp(6) }) }
+        row.addView(FrameLayout(this).apply { background = glass(14, 0x26ffffff); isClickable = true; contentDescription = "เพิ่มคลิป"; glassTouch(); setOnClickListener { pickClip.launch(arrayOf("video/*")) }
+            addView(IconView(this@VideoEditorActivity, ADD, 2f), FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER)) }, LinearLayout.LayoutParams(dp(56), dp(56)))
+        col.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(row) }, -1, -2)
+        val chosen = playIndex - 1
+        if (chosen in extras.indices) col.addView(EditorKit.actions(this, listOf(
+            EditorKit.action(this, LEFT, "เลื่อนก่อน") { if (chosen > 0) { extras.add(chosen - 1, extras.removeAt(chosen)); playIndex = chosen } ; showTool(10, false) },
+            EditorKit.action(this, RIGHT, "เลื่อนหลัง") { if (chosen < extras.size - 1) { extras.add(chosen + 1, extras.removeAt(chosen)); playIndex = chosen + 2 }; showTool(10, false) },
+            EditorKit.action(this, Icons.CLOSE, "เอาออก") { extras.removeAt(chosen); playClip(0, false); showTime(); showTool(10, false) })), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(2) })
+        else col.addView(text(if (extras.isEmpty()) "เพิ่มคลิปเพื่อต่อกันเป็นวิดีโอเดียว" else "แตะคลิปที่เพิ่มเพื่อเลื่อนลำดับหรือเอาออก · ตัดและความเร็วใช้กับคลิปแรก", 11.5f, Glass.TEXT3).apply { gravity = Gravity.CENTER; setPadding(dp(16), dp(8), dp(16), 0) }, -1, -2)
+    }
+    private fun transitionTools(col: LinearLayout) {
+        val icons = listOf(EditorKit.SCISSORS, "M4 12h16 M4 6h16 M4 18h16", "M12 3v4 M12 17v4 M3 12h4 M17 12h4 M6 6l2.5 2.5 M15.5 15.5L18 18 M18 6l-2.5 2.5 M8.5 15.5L6 18", "M10 4H4v6 M14 4h6v6 M10 20H4v-6 M14 20h6v-6")
+        val items = TRANSITIONS.mapIndexed { i, n -> EditorKit.StripItem(this, icons[i], n) }
+        if (extras.isEmpty()) col.addView(text("ทรานซิชันอยู่ระหว่างคลิป · เพิ่มคลิปที่แท็บคลิปก่อน", 11.5f, Glass.TEXT3).apply { gravity = Gravity.CENTER; setPadding(dp(16), 0, dp(16), dp(6)) }, -1, -2)
+        col.addView(EditorKit.strip(this, items.map { it to 70 }, transition, 60, { k -> items.forEachIndexed { j, v -> v.lit(j == k) } }) { k -> transition = k },
+            LinearLayout.LayoutParams(-1, dp(70)))
+    }
+    /** Emoji stickers: tap one to put it on the picture, drag it there to move it, tap it to make it bigger or smaller. */
+    private fun stickerTools(col: LinearLayout) {
+        val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(10), 0, dp(10), 0) }
+        STICKERS.forEach { e -> row.addView(text(e, 24f).apply { gravity = Gravity.CENTER; isClickable = true; contentDescription = "สติกเกอร์ $e"; background = glass(20, 0x1affffff); glassTouch()
+            setOnClickListener { stickers += VideoSticker(e, 0.5f + (stickers.size % 3 - 1) * 0.12f, 0.45f, false); rebuildStickers(); showTool(12, false) } }, LinearLayout.LayoutParams(dp(48), dp(48)).apply { rightMargin = dp(6) }) }
+        col.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(row) }, -1, -2)
+        if (stickers.isEmpty()) col.addView(text("ลากสติกเกอร์บนภาพเพื่อย้าย · แตะเพื่อปรับขนาด", 11.5f, Glass.TEXT3).apply { gravity = Gravity.CENTER; setPadding(0, dp(8), 0, 0) }, -1, -2)
+        else col.addView(EditorKit.actions(this, listOf(
+            EditorKit.action(this, "M9 14L4 9l5-5 M4 9h10a6 6 0 0 1 0 12h-3", "ลบอันล่าสุด") { stickers.removeAt(stickers.size - 1); rebuildStickers(); showTool(12, false) },
+            EditorKit.action(this, Icons.CLOSE, "ลบทั้งหมด") { stickers.clear(); rebuildStickers(); showTool(12, false) })), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(2) })
+    }
+    private fun rebuildStickers() {
+        stickerViews.forEach { stage.removeView(it) }; stickerViews.clear()
+        stickers.forEachIndexed { i, k ->
+            val v = text(k.text, 20f).apply { gravity = Gravity.CENTER; includeFontPadding = false; contentDescription = "สติกเกอร์ ${k.text} ลากเพื่อย้าย แตะเพื่อปรับขนาด" }
+            var dx = 0f; var dy = 0f; var moved = false
+            v.setOnTouchListener { view, e ->
+                when (e.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> { dx = e.rawX; dy = e.rawY; moved = false; view.parent?.requestDisallowInterceptTouchEvent(true) }
+                    MotionEvent.ACTION_MOVE -> {
+                        if (abs(e.rawX - dx) + abs(e.rawY - dy) > dp(6)) moved = true
+                        if (moved && visible.width() > 0) {
+                            val s = stickers[i]
+                            stickers[i] = s.copy(x = (s.x + (e.rawX - dx) / visible.width()).coerceIn(0f, 1f), y = (s.y + (e.rawY - dy) / visible.height()).coerceIn(0f, 1f))
+                            dx = e.rawX; dy = e.rawY; placeStickers()
+                        }
+                    }
+                    MotionEvent.ACTION_UP -> if (!moved) { stickers[i] = stickers[i].copy(big = !stickers[i].big); Glass.tick(view); placeStickers() }
+                }
+                true
+            }
+            stage.addView(v, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START)); stickerViews += v
+        }
+        stage.post { placeStickers() }
+    }
+    /** Same size and place as in the export: a share of the kept frame's height, centred on the sticker's point. */
+    private fun placeStickers() {
+        if (visible.isEmpty) return
+        stickerViews.forEachIndexed { i, v ->
+            val k = stickers.getOrNull(i) ?: return@forEachIndexed
+            v.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, (if (k.big) VideoEdit.STICKER_BIG else VideoEdit.STICKER) * visible.height() * 0.8f)
+            v.post { v.translationX = visible.left + k.x * visible.width() - v.width / 2f; v.translationY = visible.top + k.y * visible.height() - v.height / 2f }
+        }
+    }
     private fun leave() {
         if (transformer != null) { cancelExport(); return }
         if (!changed()) { finish(); return }
@@ -449,7 +630,9 @@ class VideoEditorActivity : ComponentActivity() {
         if (!changed()) { notice("ยังไม่มีการแก้ไข"); return }
         if (filesDir.usableSpace < 200L * 1024 * 1024) { notice("พื้นที่ว่างไม่พอส่งออก"); return }
         player?.let { if (it.isPlaying) togglePlay() }
-        val parts = if (split >= 0) listOf(start to split, split to end) else listOf(start to end)
+        // Several clips become one file, so the split (which makes two files of the main clip) is left out then.
+        if (split >= 0 && extras.isNotEmpty()) notice("มีหลายคลิป · ส่งออกรวมเป็นไฟล์เดียว ไม่แยก")
+        val parts = if (split >= 0 && extras.isEmpty()) listOf(start to split, split to end) else listOf(start to end)
         showProgress()
         exportPart(parts, 0, System.currentTimeMillis(), mutableListOf())
     }
@@ -490,7 +673,8 @@ class VideoEditorActivity : ComponentActivity() {
 
     private fun composition(from: Long, to: Long): Composition = VideoEdit.composition(VideoEditSpec(source, from, to, if (turns % 2 == 1) videoH else videoW, if (turns % 2 == 1) videoW else videoH,
         speed, CROPS[cropIndex].second, caption, place, textColor, textBig, if (looked()) colour() else null, music, hasAudio && keepSound,
-        turns, mirror, volume, musicVolume, if (cutValid() && cutFrom >= from && cutTo <= to) cutFrom else -1L, cutTo, textBox))
+        turns, mirror, volume, musicVolume, if (cutValid() && cutFrom >= from && cutTo <= to) cutFrom else -1L, cutTo, textBox,
+        extras.map { VideoPart(it.uri, 0, it.duration) }, if (extras.isEmpty()) 0 else transition, stickers.toList()))
 
     /** Export problems stay on screen until dismissed, so the reason can be read (and reported). */
     private fun failed(reason: String) { if (!isFinishing) GlassDialog.show(this, "ส่งออกไม่ได้", "$reason\nวิดีโอต้นฉบับยังอยู่ครบ ลองปิดฟิลเตอร์หรือข้อความแล้วส่งออกอีกครั้ง") }
@@ -521,6 +705,8 @@ class VideoEditorActivity : ComponentActivity() {
         out.putBoolean("sound", keepSound); out.putInt("tool", tool)
         out.putFloatArray("adjust", adjust); out.putInt("turns", turns); out.putBoolean("mirror", mirror); out.putFloat("volume", volume); out.putFloat("musicVolume", musicVolume)
         out.putLong("cutFrom", cutFrom); out.putLong("cutTo", cutTo); out.putBoolean("textBox", textBox)
+        out.putStringArrayList("extras", ArrayList(extras.map { it.uri.toString() })); out.putInt("transition", transition)
+        out.putStringArrayList("stickers", ArrayList(stickers.map { "${it.x}|${it.y}|${it.big}|${it.text}" }))
     }
     private fun restore(s: Bundle) {
         start = s.getLong("start"); end = s.getLong("end", duration).coerceIn(start, duration); split = s.getLong("split", -1); speed = s.getFloat("speed", 1f); cropIndex = s.getInt("crop")
@@ -529,6 +715,8 @@ class VideoEditorActivity : ComponentActivity() {
         keepSound = s.getBoolean("sound", true); tool = s.getInt("tool")
         s.getFloatArray("adjust")?.takeIf { it.size == adjust.size }?.copyInto(adjust); turns = s.getInt("turns"); mirror = s.getBoolean("mirror"); volume = s.getFloat("volume", 1f); musicVolume = s.getFloat("musicVolume", 1f)
         cutFrom = s.getLong("cutFrom", -1L); cutTo = s.getLong("cutTo", -1L); textBox = s.getBoolean("textBox")
+        transition = s.getInt("transition"); stickers.clear()
+        s.getStringArrayList("stickers")?.forEach { line -> val p = line.split("|", limit = 4); if (p.size == 4) stickers += VideoSticker(p[3], p[0].toFloatOrNull() ?: 0.5f, p[1].toFloatOrNull() ?: 0.5f, p[2] == "true") }
     }
 
     /** Darkens what the crop removes and outlines what stays. */

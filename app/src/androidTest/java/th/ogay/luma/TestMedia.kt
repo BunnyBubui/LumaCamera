@@ -31,9 +31,9 @@ object TestMedia {
         return File(c.cacheDir, "test-${System.nanoTime()}.jpg").also { f -> f.outputStream().use { b.compress(Bitmap.CompressFormat.JPEG, 92, it) } }
     }
     /** A clip of [ms] milliseconds made from a still. */
-    fun clip(inst: Instrumentation, ms: Long = 2000): File {
+    fun clip(inst: Instrumentation, ms: Long = 2000, w: Int = 640, h: Int = 360): File {
         val c = inst.targetContext
-        val still = picture(c, 640, 360)
+        val still = picture(c, w, h)
         val out = File(c.cacheDir, "test-${System.nanoTime()}.mp4")
         val done = CountDownLatch(1); var failure: Exception? = null
         inst.runOnMainSync {

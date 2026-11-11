@@ -35,6 +35,25 @@ class VideoEditDeviceTest {
         assertTrue("Video edit exports · " + results.joinToString(" | ") { "${it.first}: ${it.second}" }, results.all { it.second.startsWith("ok") })
     }
 
+    /** Joined clips (a second clip of another shape), each transition, and stickers, one export each. */
+    @Test(timeout = 600_000) fun clipsTransitionsAndStickersExport() {
+        val c = inst.targetContext
+        val clip = Uri.fromFile(TestMedia.clip(inst)); val tall = Uri.fromFile(TestMedia.clip(inst, 1500, 360, 640)); val song = Uri.fromFile(TestMedia.tone(c))
+        val base = VideoEditSpec(clip, 0, 2000, 640, 360, keepAudio = false)
+        val two = base.copy(extras = listOf(VideoPart(tall, 0, 1500)))
+        val stickers = listOf(VideoSticker("😀", 0.3f, 0.3f), VideoSticker("🔥", 0.7f, 0.7f, true))
+        val cases = listOf(
+            "stickers" to base.copy(stickers = stickers), "two clips" to two,
+            "fade" to two.copy(transition = 1), "flash" to two.copy(transition = 2), "zoom" to two.copy(transition = 3),
+            "three+all" to two.copy(extras = two.extras + VideoPart(clip, 500, 1500), transition = 1, speed = 2f, crop = 1f, look = EditorKit.film(Films.default, 1f), caption = "Lumora", stickers = stickers, music = song))
+        val results = cases.map { (name, spec) -> name to export(spec) }
+        assertTrue("Clip exports · " + results.joinToString(" | ") { "${it.first}: ${it.second}" }, results.all { it.second.startsWith("ok") })
+        // Joined clips last as long as their parts together (2.0 s + 1.5 s), not as long as the first.
+        val joined = results.first { it.first == "fade" }.second
+        val ms = Regex("(\\d+)ms").find(joined)?.groupValues?.get(1)?.toLong() ?: 0
+        assertTrue("Joined length · $joined", ms in 3000..4000)
+    }
+
     private fun export(spec: VideoEditSpec): String {
         val out = File(inst.targetContext.cacheDir, "edit-test-${System.nanoTime()}.mp4")
         val done = CountDownLatch(1); var result = "timeout"; var t: Transformer? = null
