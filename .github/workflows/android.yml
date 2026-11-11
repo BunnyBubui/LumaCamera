@@ -70,6 +70,42 @@ jobs:
             app/build/reports/
             app/build/test-results/
 
+  # Same app with OPPO's CameraUnit SDK compiled in (-Plumora.cameraunit=true). This proves every
+  # SDK call in src/cameraunitSdk exists in the published binaries, and gives a probe APK whose
+  # DeepScan report says whether the phone has the CameraUnit service. Separate job so an
+  # unreachable OPPO Maven server never blocks the normal APK.
+  cameraunit-sdk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      LUMA_BUILD_NUMBER: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Install Android SDK components
+        run: sdkmanager 'platforms;android-36' 'build-tools;34.0.0' 'build-tools;35.0.0' 'ndk;27.0.12077973' 'cmake;3.22.1'
+      - uses: ./.github/actions/detail-model
+      - name: Build with the CameraUnit SDK
+        run: bash gradlew --no-daemon -Plumora.cameraunit=true :app:testDebugUnitTest :app:assembleDebug
+      - name: Package probe APK
+        run: |
+          mkdir -p dist
+          cp app/build/outputs/apk/debug/app-debug.apk dist/Lumora-0.3.0-cameraunit-probe.apk
+          (cd dist && sha256sum *.apk > SHA256SUMS.txt)
+          git rev-parse HEAD > dist/commit.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Lumora-CameraUnit-probe-APK
+          path: dist/
+          if-no-files-found: error
+
   native-hdr:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
