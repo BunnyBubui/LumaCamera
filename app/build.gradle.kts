@@ -38,7 +38,7 @@ android {
         }
     }
     buildTypes {
-        debug { applicationIdSuffix = ".dev" }
+        debug { applicationIdSuffix = ".preview" }
         create("beta") {
             initWith(getByName("release"))
             applicationIdSuffix = ".beta"
@@ -77,7 +77,7 @@ dependencies {
     implementation("org.opencv:opencv:4.12.0")
     implementation("androidx.exifinterface:exifinterface:1.3.7")
     implementation("androidx.work:work-runtime:2.9.1")
-    testImplementation("junit:junit:4.13.2")
+testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:rules:1.6.1")
     androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")
