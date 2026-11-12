@@ -14,6 +14,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  sr3-baseline:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install baseline evaluation dependencies
+        run: python -m pip install --disable-pip-version-check 'numpy==2.1.3' 'Pillow==11.3.0'
+      - name: Test paired SR3 / SR2 evaluation and manifest validity
+        run: |
+          python -m py_compile model/benchmark_sr3.py model/evaluate_natural.py model/test_benchmark_sr3.py
+          python -m unittest discover -s model -p 'test_benchmark_sr3.py' -v
+
   verify:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -34,7 +49,7 @@ jobs:
       - name: Verify bundled SR weights
         run: sha256sum -c model/SHA256SUMS
       - name: Syntax-check Natural SR research tools
-        run: python3 -m py_compile model/train_natural_x2.py model/test_natural_x2.py model/evaluate_natural.py
+        run: python3 -m py_compile model/train_natural_x2.py model/test_natural_x2.py model/evaluate_natural.py model/benchmark_sr3.py model/test_benchmark_sr3.py
       - uses: ./.github/actions/detail-model
       - name: Test, lint and build
         run: bash gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
