@@ -141,7 +141,7 @@ class Shots(context: Context) : SQLiteOpenHelper(context, "frames.db", null, 3) 
     /** A new token separates exports and prevents an old/cancelled worker completing a newer request. */
     fun queueEnhancement(id: String, spec: EnhanceSpec): Boolean {
         val changed = writableDatabase.update("shots",ContentValues().apply {
-            put("stage",Stage.QUEUED.name); put("ai_model",EnhanceSpec.MODEL)
+            put("stage",Stage.QUEUED.name); put("ai_model",spec.modelId)
             put("ai_scale",spec.scale); put("ai_strength",spec.strength)
             put("ai_token",UUID.randomUUID().toString().replace("-", "").take(12))
             putNull("ai"); putNull("error"); putNull("ai_report")
