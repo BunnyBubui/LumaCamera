@@ -186,7 +186,7 @@ object VideoEdit {
             val track = EditedMediaItem.Builder(MediaItem.fromUri(song)).setRemoveVideo(true).setEffects(Effects(if (s.musicVolume != 1f) listOf(gain(s.musicVolume)) else emptyList(), emptyList())).build()
             sequences += EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_AUDIO)).addItem(track).setIsLooping(true).build()
         }
-        sequences += VideoLayers.sounds(s.layers) { gain(it) }
+        if (s.layers.any { it.audible }) sequences += VideoLayers.sounds(requireNotNull(context) { "layers need a context" }, s.layers) { gain(it) }
         val builder = Composition.Builder(sequences)
         if (whole.isNotEmpty()) builder.setEffects(Effects(emptyList(), whole))
         return builder.build()

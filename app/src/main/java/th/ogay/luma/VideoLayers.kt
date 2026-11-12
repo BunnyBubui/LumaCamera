@@ -55,7 +55,7 @@ object VideoLayers {
     }
 
     /** One audio sequence per layer with sound: silence until the layer starts, then its sound. */
-    fun sounds(layers: List<VideoLayer>, gain: (Float) -> AudioProcessor): List<EditedMediaItemSequence> = layers.filter { it.audible }.map { l ->
+    fun sounds(c: Context, layers: List<VideoLayer>, gain: (Float) -> AudioProcessor): List<EditedMediaItemSequence> = layers.filter { it.audible && it.volume > 0f && hasAudio(c, it.source) }.map { l ->
         val clip = MediaItem.Builder().setUri(l.source).setClippingConfiguration(
             MediaItem.ClippingConfiguration.Builder().setStartPositionMs(l.from).setEndPositionMs(l.from + l.length).build()).build()
         val item = EditedMediaItem.Builder(clip).setRemoveVideo(true)
@@ -64,6 +64,11 @@ object VideoLayers {
         if (l.at > 0) seq.addGap(l.at * 1000)
         seq.addItem(item).build()
     }
+
+    /** True when the file has a sound track (a silent video layer adds no sound sequence, which would fail). */
+    fun hasAudio(c: Context, uri: Uri): Boolean = runCatching {
+        MediaMetadataRetriever().run { try { setDataSource(c, uri); extractMetadata(MediaMetadataRetriever.METADATA_KEY_HAS_AUDIO) == "yes" } finally { release() } }
+    }.getOrDefault(false)
 
     /** A picture decoded no larger than [max] pixels on its long side, upright. */
     fun picture(c: Context, uri: Uri, max: Int): Bitmap {
