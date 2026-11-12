@@ -18,10 +18,11 @@ internal object NaturalDetailBlend {
     fun blend(
         baseR: Float, baseG: Float, baseB: Float,
         neuralR: Float, neuralG: Float, neuralB: Float,
-        localContrast: Float, strength: Int
+        localContrast: Float, strength: Int, protectionFactor: Float = 1f
     ): Int {
         require(strength in 0..100)
         require(localContrast.isFinite() && localContrast >= 0f)
+        require(protectionFactor.isFinite() && protectionFactor in 0f..1f)
         require(baseR.isFinite() && baseG.isFinite() && baseB.isFinite())
         require(neuralR.isFinite() && neuralG.isFinite() && neuralB.isFinite())
         if (strength == 0) return 0xff000000.toInt() or (toByte(baseR) shl 16) or
@@ -35,7 +36,7 @@ internal object NaturalDetailBlend {
         val textureGate = (localContrast / 20f).coerceIn(0.08f, 1f)
         val edgeGate = (55f / (localContrast + 5f)).coerceIn(0.30f, 1f)
         val toneGate = if (baseY < 24f || baseY > 235f) 0.55f else 1f
-        val gain = (strength / 100f) * 0.85f * textureGate * edgeGate * toneGate
+        val gain = (strength / 100f) * 0.85f * textureGate * edgeGate * toneGate * protectionFactor
         val maximumShift = (3f + 16f * (localContrast / 25f).coerceIn(0f, 1f) * edgeGate)
             .coerceAtMost(18f)
         val correction = ((neuralY - baseY) * gain).coerceIn(-maximumShift, maximumShift)
