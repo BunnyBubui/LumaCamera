@@ -128,7 +128,7 @@ object ExportJob {
             var last = 0L
             val r = runCatching { VideoEnhancer.run(app, edited, out, plan, cancel) { p ->
                 s.fraction = p.fraction; s.etaMs = p.etaMs; s.frames = p.frames; s.totalFrames = p.total; p.frame?.let { s.frame = it }
-                s.detail = if (p.backend.isNotEmpty()) "AI บน ${p.backend}" else ""
+                s.detail = if (p.backend.isNotEmpty()) "AI · ${if (plan.profile == th.ogay.luma.ai.EnhanceProfile.NATURAL) "Natural SR3" else "Classic SR2"}" else ""
                 val now = SystemClock.elapsedRealtime(); if (now - last > 300) { last = now; changed() }
             } }
             edited.delete()

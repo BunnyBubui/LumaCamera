@@ -113,6 +113,48 @@ Lumora Noir|8|0.0|1.24|1.0|1.0|1.0|0.0|0.34|0.36|ขาวดำคอนทร�
             Film(p[0], p[0], raw[p[1].toInt()], p[2].toFloat(), p[3].toFloat(), p[4].toFloat(), p[5].toFloat(), p[6].toFloat(), p[7].toFloat(), p[8].toFloat(), p[9].toFloat(), p[10])
         }
     }
+    /** One drawn mark per family, shown on its tab. */
+    fun groupIcon(g: String): String = when (g) {
+        "กล้องฟิล์ม" -> "M3.5 8h4l1.5-2h6l1.5 2h4v11h-17z M12 16.5a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4z M6 11h1.5"
+        "กล้อง CCD" -> "M4 8h16v10H4z M8 8V6h4v2 M15 13a2.8 2.8 0 1 0 0-.01z M6.5 11h2"
+        "DSLR" -> "M3 9h18v10H3z M8 9l1.5-3h5L16 9 M12 17.5a3.3 3.3 0 1 0 0-6.6 3.3 3.3 0 0 0 0 6.6z"
+        "เนกาทีฟ" -> "M5 4h14v16H5z M8.5 8h7v8h-7z M5 7h1.5 M5 12h1.5 M5 17h1.5 M17.5 7H19 M17.5 12H19 M17.5 17H19"
+        "สไลด์" -> "M5 5h14v14H5z M8 8h8v8H8z M5 5l3 3"
+        "ฟิล์มหนัง" -> "M4 9h16v10H4z M4 9l2.5-4 3 4 M9.5 5l3 4 M12.5 5l3 4 M15.5 5l3 4"
+        "ขาวดำ" -> "M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16z M12 4v16 M12 4a8 8 0 0 1 0 16z"
+        "อินสแตนท์" -> "M5 4h14v16H5z M7.5 6.5h9v8h-9z M9 17.5h6"
+        else -> th.ogay.luma.Icons.AI
+    }
+    /** What this family is generally good for, one line shown under the tabs. */
+    fun groupBlurb(g: String): String = when (g) {
+        "กล้องฟิล์ม" -> "กล้องฟิล์มคอมแพกต์และ SLR สีและเกรนแบบถ่ายจริง · เหมาะกับสตรีท ท่องเที่ยว"
+        "กล้อง CCD" -> "สีสดแบบกล้องดิจิทัลยุค 2000 · เหมาะกับเซลฟี่ ปาร์ตี้ แฟลชกลางคืน"
+        "DSLR" -> "โทนสะอาดจากกล้องมืออาชีพ · เหมาะกับงานคน งานอีเวนต์"
+        "เนกาทีฟ" -> "ฟิล์มสีมาตรฐานที่คนใช้มากที่สุด · เหมาะกับถ่ายประจำวัน"
+        "สไลด์" -> "สีเข้ม คอนทราสต์จัด · เหมาะกับธรรมชาติ ท้องฟ้า ท่องเที่ยว"
+        "ฟิล์มหนัง" -> "โทนภาพยนตร์ สีจมนิด ๆ · เหมาะกับฉากเมือง ไฟกลางคืน"
+        "ขาวดำ" -> "ไม่มีสี เน้นแสงและเงา · เหมาะกับสตรีท พอร์เทรต สถาปัตยกรรม"
+        "อินสแตนท์" -> "สีอุ่นนุ่มแบบโพลารอยด์ · เหมาะกับเพื่อน อาหาร มุมโปรด"
+        else -> "โทนของ Lumora เอง ใช้ได้กับทุกฉาก"
+    }
+    /** Short strengths of one film, worked out from its numbers: tone, colour, contrast, grain. */
+    fun traits(f: Film): List<String> = buildList {
+        add(if (f.r - f.b > 0.05f) "โทนอุ่น" else if (f.b - f.r > 0.05f) "โทนเย็น" else "โทนกลาง")
+        add(if (f.sat < 0.4f) "ขาวดำ/ซีด" else if (f.sat >= 1.15f) "สีจัด" else if (f.sat <= 0.98f) "สีนุ่ม" else "สีพอดี")
+        add(if (f.con >= 1.12f) "คอนทราสต์สูง" else if (f.con <= 0.97f) "คอนทราสต์นุ่ม" else "คอนทราสต์กลาง")
+        if (f.grain >= 0.25f) add("เกรนชัด")
+        if (f.vignette >= 0.15f) add("ขอบมืด")
+    }
+    /** What to shoot with this film, from the same numbers. */
+    fun bestFor(f: Film): String = when {
+        f.sat < 0.4f -> "ถนน พอร์เทรต งานเน้นแสงเงา"
+        f.r - f.b > 0.06f && f.sat >= 1.1f -> "อาหาร แสงเย็น ท่องเที่ยว"
+        f.r - f.b > 0.05f -> "พอร์เทรต ผิวคน ตอนเย็น"
+        f.b - f.r > 0.05f -> "ท้องฟ้า ทะเล ตึกและเมือง"
+        f.con <= 0.97f -> "พอร์เทรต ถ่ายในร่ม ภาพนุ่ม ๆ"
+        f.sat >= 1.15f -> "ธรรมชาติ ดอกไม้ ท่องเที่ยว"
+        else -> "ใช้ได้ทั่วไป ถ่ายประจำวัน"
+    }
     fun byId(id: String?): Film? = if (id.isNullOrEmpty()) null else all.firstOrNull { it.id == id }
     fun inGroup(group: String) = all.filter { it.group == group }
 

@@ -36,7 +36,7 @@ class DetailSuperResolution(private val context: Context) {
                 val output = spec.output(source)
                 // Scan once per image; restore text conservatively without redrawing glyphs.
                 // Detection is optional: OCR failures fall back to the original Natural guard.
-                AiProgress.begin(shot.id, if (spec.profile == EnhanceProfile.NATURAL) "กำลังหาคนและตัวหนังสือในภาพ" else "กำลังเตรียมภาพ")
+                AiProgress.begin(shot.id, if (spec.profile == EnhanceProfile.NATURAL) "กำลังหาคนและตัวหนังสือในภาพ" else "กำลังเตรียมภาพ"); AiProgress.model = if (spec.profile == EnhanceProfile.NATURAL) "Natural SR3" else "Classic SR2"
                 val textScan = if (spec.profile == EnhanceProfile.NATURAL)
                     DetailTextGuard.scan(context, shot.uri, source, stopped) else null
                 val personScan = if (spec.profile == EnhanceProfile.NATURAL)

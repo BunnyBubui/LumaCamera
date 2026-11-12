@@ -171,7 +171,10 @@ object EnhanceUi {
     }
 
     @Suppress("DEPRECATION")
-    private fun preview(activity: ComponentActivity, shot: Shot, spec: EnhanceSpec, parent: GlassSheet? = null) {
+    private fun preview(activity: ComponentActivity, shot: Shot, spec: EnhanceSpec, parent: GlassSheet? = null) = previewUri(activity, shot.uri, spec, parent)
+
+    /** Before / after of the middle of any picture file with the chosen model; also used by the video export sheet. */
+    fun previewUri(activity: ComponentActivity, imageUri: android.net.Uri, spec: EnhanceSpec, parent: GlassSheet? = null) {
         val stopped = AtomicBoolean(false)
         val name = if (spec.profile == EnhanceProfile.NATURAL) "Natural SR3" else "Classic SR2"
         val compare = CompareView(activity)
@@ -201,16 +204,16 @@ object EnhanceUi {
             var a: Bitmap? = null; var b: Bitmap? = null
             try {
                 DetailComputeGate.run({ stopped.get() }) {
-                    val rotation = activity.contentResolver.openInputStream(shot.uri)?.use { ExifInterface(it).rotationDegrees } ?: 0
-                    activity.contentResolver.openInputStream(shot.uri)?.use { stream ->
+                    val rotation = activity.contentResolver.openInputStream(imageUri)?.use { ExifInterface(it).rotationDegrees } ?: 0
+                    activity.contentResolver.openInputStream(imageUri)?.use { stream ->
                         val decoder = BitmapRegionDecoder.newInstance(stream,false) ?: error("อ่านภาพไม่ได้")
                         try {
                             val w=minOf(EnhanceSpec.CORE,decoder.width); val h=minOf(EnhanceSpec.CORE,decoder.height)
                             val left = (decoder.width-w)/2; val top = (decoder.height-h)/2
                             // Natural looks for text and people first so the preview matches the full export.
                             val whole = Dimensions(decoder.width,decoder.height)
-                            val textScan = if (spec.profile == EnhanceProfile.NATURAL) DetailTextGuard.scan(activity.applicationContext,shot.uri,whole) { stopped.get() } else null
-                            val personScan = if (spec.profile == EnhanceProfile.NATURAL) DetailPersonGuard.scan(activity.applicationContext,shot.uri,whole) { stopped.get() } else null
+                            val textScan = if (spec.profile == EnhanceProfile.NATURAL) DetailTextGuard.scan(activity.applicationContext,imageUri,whole) { stopped.get() } else null
+                            val personScan = if (spec.profile == EnhanceProfile.NATURAL) DetailPersonGuard.scan(activity.applicationContext,imageUri,whole) { stopped.get() } else null
                             val input = DetailSuperResolution.readInput(decoder,left,top)
                             val before = IntArray(w*h) { i -> input[(i/w+EnhanceSpec.HALO)*EnhanceSpec.INPUT+i%w+EnhanceSpec.HALO] }
                             val raw = Bitmap.createBitmap(before,w,h,Bitmap.Config.ARGB_8888)

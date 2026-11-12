@@ -897,8 +897,9 @@ class AiRing(context: Context) : View(context) {
     /** [percent] 0..100, or null while the work has not started and nothing can be measured yet. */
     /** Second line under the caption: tiles done and the time left. */
     private var detail = ""
-    fun update(percent: Float?, text: String, detailText: String? = null) {
-        caption = text; if (detailText != null) detail = detailText
+    private var eta = ""
+    fun update(percent: Float?, text: String, detailText: String? = null, etaText: String? = null) {
+        caption = text; if (detailText != null) detail = detailText; if (etaText != null) eta = etaText
         visibility = VISIBLE
         if (percent == null) {
             spinning = true; glide?.cancel()
@@ -913,7 +914,7 @@ class AiRing(context: Context) : View(context) {
         else glide = ValueAnimator.ofFloat(shown, target).apply { duration = 650; interpolator = LinearInterpolator(); addUpdateListener { shown = it.animatedValue as Float; invalidate() }; start() }
         contentDescription = "$text ${String.format(Locale.US, "%.0f", target)} เปอร์เซ็นต์"
     }
-    fun hide() { glide?.cancel(); spin?.cancel(); spin = null; spinning = false; shown = 0f; target = 0f; detail = ""; visibility = GONE }
+    fun hide() { glide?.cancel(); spin?.cancel(); spin = null; spinning = false; shown = 0f; target = 0f; detail = ""; eta = ""; visibility = GONE }
     override fun onDetachedFromWindow() { glide?.cancel(); spin?.cancel(); spin = null; super.onDetachedFromWindow() }
 
     private val glow = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -922,6 +923,8 @@ class AiRing(context: Context) : View(context) {
     private val part = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xd9ffffff.toInt(); textSize = 20 * d; typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD) }
     private val pill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x59000000 }
     private val spark = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Glass.ACCENT }
+    private val etaPill = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val clock = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 2f * d; strokeCap = Paint.Cap.ROUND }
     private val star = android.graphics.Path()
     private var sized = 0
 
@@ -961,12 +964,19 @@ class AiRing(context: Context) : View(context) {
             val w1 = big.measureText(whole); val w2 = part.measureText(rest); val x = cx - (w1 + w2) / 2f; val base = cy + big.textSize * 0.36f
             c.drawText(whole, x, base, big); c.drawText(rest, x + w1 + 1 * d, base, part); big.textAlign = Paint.Align.CENTER
         }
-        if (caption.isNotEmpty()) {
-            val tw = small.measureText(caption); val py = cy + r + 60 * d
-            c.drawRoundRect(cx - tw / 2 - 14 * d, py - 20 * d, cx + tw / 2 + 14 * d, py + 10 * d, 15 * d, 15 * d, pill)
-            c.drawText(caption, cx, py, small)
-            if (detail.isNotEmpty()) { val ds = small.textSize; small.textSize = 12.5f * d; small.color = 0xb3ffffff.toInt()
-                c.drawText(detail, cx, py + 30 * d, small); small.textSize = ds; small.color = Glass.TEXT2 }
+        // Same reading order as the video export page: title, what is done and by which model, then the time left in a pill.
+        var y = cy + r + 62 * d
+        if (caption.isNotEmpty()) { big.textSize = 19 * d; c.drawText(caption, cx, y, big); y += 30 * d }
+        if (detail.isNotEmpty()) { small.textSize = 15 * d; small.color = Glass.TEXT2; c.drawText(detail, cx, y, small); y += 26 * d }
+        if (eta.isNotEmpty()) {
+            small.textSize = 15 * d; small.color = Color.WHITE; small.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            val tw = small.measureText(eta); val icon = 22 * d; val w = tw + icon + 40 * d; val l = cx - w / 2
+            etaPill.color = 0x40ff9f45; c.drawRoundRect(l, y, l + w, y + 38 * d, 19 * d, 19 * d, etaPill)
+            val ix = l + 18 * d + icon / 2; val iy = y + 19 * d
+            clock.color = Glass.ACCENT; c.drawCircle(ix, iy, icon * 0.4f, clock)
+            c.drawLine(ix, iy, ix, iy - icon * 0.25f, clock); c.drawLine(ix, iy, ix + icon * 0.18f, iy, clock)
+            small.textAlign = Paint.Align.LEFT; c.drawText(eta, l + 18 * d + icon + 6 * d, iy + 5.5f * d, small); small.textAlign = Paint.Align.CENTER
+            small.typeface = Typeface.DEFAULT
         }
     }
 }

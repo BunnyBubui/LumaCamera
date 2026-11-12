@@ -1173,6 +1173,9 @@ class CameraActivity : ComponentActivity() {
             val stripScroll = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; clipChildren = false; clipToPadding = false; overScrollMode = View.OVER_SCROLL_NEVER; addView(strip, -2, -2) }
             val nowName = text("", 16f, Color.WHITE, true)
             val nowNote = text("", 12.5f, Glass.TEXT2).apply { maxLines = 2; ellipsize = null; minLines = 2 }
+            val nowTraits = FlowLayout(this).apply { gap = dp(6); setPadding(0, dp(8), 0, 0) }
+            val nowBest = text("", 12.5f, Glass.ACCENT, true).apply { setPadding(0, dp(8), 0, 0) }
+            val familyNote = text("", 12f, Glass.TEXT3).apply { setPadding(dp(4), dp(8), dp(4), 0); maxLines = 2; minLines = 2 }
             val cards = mutableListOf<Pair<Film, FrameLayout>>()
             fun mark(animate: Boolean) {
                 val cur = current()
@@ -1183,6 +1186,9 @@ class CameraActivity : ComponentActivity() {
                     if (animate) card.animate().scaleX(sc).scaleY(sc).setInterpolator(Glass.SPRING).setDuration(360).start() else { card.scaleX = sc; card.scaleY = sc } }
                 nowName.text = cur.name
                 nowNote.text = cur.note.ifEmpty { "ฟิล์มในกลุ่ม ${cur.group}" }
+                nowTraits.removeAllViews()
+                Films.traits(cur).forEach { tr -> nowTraits.addView(text(tr, 11.5f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; background = glass(12, 0x14ffffff); setPadding(dp(9), 0, dp(9), 0) }, android.view.ViewGroup.LayoutParams(-2, dp(24))) }
+                nowBest.text = "เหมาะกับ: " + Films.bestFor(cur)
             }
             fun card(f: Film): FrameLayout = FrameLayout(this).apply {
                 isClickable = true; contentDescription = f.name; glassTouch()
@@ -1203,18 +1209,26 @@ class CameraActivity : ComponentActivity() {
                 val at = cards.indexOfFirst { it.first.id == current().id }
                 stripScroll.post { stripScroll.smoothScrollTo(if (at < 0) 0 else (at * dp(108) - stripScroll.width / 2 + dp(54)).coerceAtLeast(0), 0) }
             }
-            fun styleTabs() { for (i in 0 until tabRow.childCount) { val t = tabRow.getChildAt(i) as TextView; val on = t.text == group
-                t.setTextColor(if (on) Color.BLACK else if (t.text == "Lumora") Glass.ACCENT else Color.WHITE); t.typeface = if (on) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT
-                t.background = glass(18, if (on) 0xebffffff.toInt() else 0x14ffffff) } }
+            // Each family is a rounded square with its own mark; the chosen one is lit.
+            fun styleTabs() { for (i in 0 until tabRow.childCount) { val tile = tabRow.getChildAt(i) as LinearLayout; val g = tile.tag as String; val on = g == group
+                val ink = if (on) Color.BLACK else if (g == "Lumora") Glass.ACCENT else Color.WHITE
+                (tile.getChildAt(0) as IconView).tint = ink
+                (tile.getChildAt(1) as TextView).apply { setTextColor(ink); typeface = if (on) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT }
+                tile.background = glass(22, if (on) 0xebffffff.toInt() else 0x14ffffff) }
+                familyNote.text = Films.groupBlurb(group) }
             Films.groups.forEach { g ->
-                tabRow.addView(text(g, 13f).apply { gravity = Gravity.CENTER; setPadding(dp(15), 0, dp(15), 0); isClickable = true; glassTouch()
-                    setOnClickListener { if (group != g) { group = g; styleTabs(); fillFilms(); Glass.tick(tabRow) } } }, LinearLayout.LayoutParams(-2, dp(38)).apply { rightMargin = dp(6) })
+                val tile = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; tag = g; isClickable = true; glassTouch(); contentDescription = "กลุ่ม $g"
+                    setOnClickListener { if (group != g) { group = g; styleTabs(); fillFilms(); Glass.tick(tabRow) } } }
+                tile.addView(IconView(this, Films.groupIcon(g), 1.9f), LinearLayout.LayoutParams(dp(26), dp(26)))
+                tile.addView(text(g, 11f).apply { gravity = Gravity.CENTER; maxLines = 1; setPadding(dp(4), dp(5), dp(4), 0) }, -2, -2)
+                tabRow.addView(tile, LinearLayout.LayoutParams(dp(76), dp(70)).apply { rightMargin = dp(8) })
             }
             styleTabs()
             host.addView(tabScroll, -1, -2)
+            host.addView(familyNote, -1, -2)
             fillFilms()
             host.addView(stripScroll, -1, -2)
-            host.addView(LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(6), dp(4), dp(6), dp(6)); addView(nowName); addView(nowNote) }, -1, -2)
+            host.addView(LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(6), dp(4), dp(6), dp(6)); addView(nowName); addView(nowNote); addView(nowTraits); addView(nowBest) }, -1, -2)
         } else {
             LOOKS.forEachIndexed { i, name -> row.addView(lookThumb(lookMatrix(i, 0, 0), name, "$i", cells) { prefs.edit().putInt("look", i).apply(); applyLook(); markLook(cells, "$i"); Glass.tick(row) }, LinearLayout.LayoutParams(dp(94), -2)) }
             markLook(cells, "${prefs.getInt("look", 0)}")

@@ -201,6 +201,11 @@ class VideoEditorActivity : ComponentActivity() {
         if (luma.shots.upscaling()) { notice("กำลังเพิ่มรายละเอียดภาพด้วย AI อยู่ · ตัดต่อวิดีโอได้เมื่อเสร็จแล้ว"); finish(); return }
         if (!readSource()) { notice("เปิดวิดีโอนี้ไม่ได้"); finish(); return }
         end = duration
+        // From Home "แต่งวิดีโอชัด AI": open the export sheet at once with an AI model chosen.
+        if (state == null && intent.getBooleanExtra("ai_export", false)) {
+            getSharedPreferences("camera", MODE_PRIVATE).let { if (it.getInt("video_ai_model", 1) == 0) it.edit().putInt("video_ai_model", 1).apply() }
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ if (!isDestroyed && !isFinishing) export() }, 700)
+        }
         state?.let { restore(it) }
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         installRoot(root)
@@ -896,7 +901,13 @@ class VideoEditorActivity : ComponentActivity() {
         if (filesDir.usableSpace < 200L * 1024 * 1024) { notice("พื้นที่ว่างไม่พอส่งออก"); return }
         player?.let { if (it.isPlaying) togglePlay() }
         val (short, long) = frameSides()
-        val src = ExportSheet.Source(short, long, sourceFps(), totalOut(), firstFrame)
+        // A full-size still from the middle of the clip, so the sheet can preview what each AI model does to this video.
+        val still = runCatching { retrieve { r ->
+            val d = r.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+            val f = r.getFrameAtTime(d * 500, MediaMetadataRetriever.OPTION_CLOSEST_SYNC) ?: return@retrieve null
+            val file = java.io.File(cacheDir, "model-preview.jpg")
+            file.outputStream().use { f.compress(Bitmap.CompressFormat.JPEG, 95, it) }; f.recycle(); Uri.fromFile(file) } }.getOrNull()
+        val src = ExportSheet.Source(short, long, sourceFps(), totalOut(), firstFrame, still)
         ExportSheet.show(this, src) { c -> startExport(c, src) }
     }
     private fun startExport(c: ExportChoice, src: ExportSheet.Source) {

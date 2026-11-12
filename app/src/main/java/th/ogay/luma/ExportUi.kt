@@ -30,7 +30,7 @@ object ExportSheet {
     val SIDE_NAMES = listOf("480p", "720p", "1080p", "2K", "4K")
     val RATES = listOf(24f, 25f, 30f, 50f, 60f)
 
-    class Source(val shortSide: Int, val longSide: Int, val fps: Float, val durationMs: Long, val thumb: Bitmap?)
+    class Source(val shortSide: Int, val longSide: Int, val fps: Float, val durationMs: Long, val thumb: Bitmap?, val still: android.net.Uri? = null)
 
     fun show(a: androidx.activity.ComponentActivity, src: Source, onExport: (ExportChoice) -> Unit) {
         // The camera's glass sheet: rises with the same animation and sound, follows the finger down to close.
@@ -100,12 +100,13 @@ object ExportSheet {
         }
         row("ความละเอียด", sideValue, sideNote, sides.map { sideName(it) }, side) { side = it }
         row("อัตราเฟรม", rateValue, rateNote, rates.map { fpsName(it) }, rate) { rate = it }
-        val names = listOf("ไม่ใช้ AI", "Natural SR3", "Classic SR2")
+        val names = listOf("ไม่ใช้ AI · เร็วที่สุด", "Natural SR3 · แนะนำ", "Classic SR2 · คมชัด")
         val notes = listOf("ขยายภาพแบบปกติ เร็วที่สุด", "คน ใบหน้า ตัวหนังสือ · เนียนตา", "วิว ตึก ใบไม้ · คมเต็มที่")
         val icons = listOf(Icons.PHOTO, th.ogay.luma.ai.EnhanceUi.LEAF, th.ogay.luma.ai.EnhanceUi.GEM)
+        var syncPrev: () -> Unit = {}
         val menu = GlassMenu(a.window.decorView as FrameLayout) { on -> sheet.recede(on) }
         val modelIcon = IconView(a, icons[model], 1.8f).apply { tint = Glass.ACCENT }
-        val modelName = a.text(names[model], 15f, Color.WHITE, true)
+        val modelName = a.text(names[model].substringBefore(" ·"), 15f, Color.WHITE, true)
         val modelNote = a.text(notes[model], 12f, Glass.TEXT2).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }
         aiChip.apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; background = a.glass(20, 0x1affffff); setPadding(a.dp(10), a.dp(8), a.dp(12), a.dp(8)); isClickable = true; glassTouch(); contentDescription = "โมเดล AI ${names[model]}" }
         aiChip.addView(FrameLayout(a).apply { background = a.glass(12, 0x24ffffff); addView(modelIcon, FrameLayout.LayoutParams(a.dp(20), a.dp(20), Gravity.CENTER)) }, a.dp(38), a.dp(38))
@@ -116,10 +117,16 @@ object ExportSheet {
             if (!aiChip.isEnabled) return@pressMenu
             menu.show(anchor, "โมเดล AI สร้างพิกเซล", names.indices.map { GlassMenu.Option(names[it], icons[it], notes[it]) }, model) { i ->
                 model = i; prefs.edit().putInt("video_ai_model", i).apply()
-                modelIcon.path = icons[i]; modelName.text = names[i]; modelNote.text = notes[i]; aiChip.contentDescription = "โมเดล AI ${names[i]}"; refresh() }
+                modelIcon.path = icons[i]; modelName.text = names[i].substringBefore(" ·"); modelNote.text = notes[i]; aiChip.contentDescription = "โมเดล AI ${names[i]}"; refresh(); syncPrev() }
         }
         card.addView(aiChip, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(14) })
         card.addView(estimate, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(16) })
+        // Same preview as for photos: a before / after of the middle of the clip with the chosen model.
+        val previewBtn = a.text("ดูตัวอย่างโมเดล", 14f, Glass.ACCENT, true).apply { gravity = Gravity.CENTER; isClickable = true; background = a.glass(24, 0x1affffff); glassTouch(); contentDescription = "ดูตัวอย่างผลของโมเดล AI"
+            setOnClickListener { val u = src.still ?: return@setOnClickListener
+                th.ogay.luma.ai.EnhanceUi.previewUri(a, u, th.ogay.luma.ai.EnhanceSpec(2, if (model == 2) 100 else 70, if (model == 2) th.ogay.luma.ai.EnhanceProfile.CLASSIC else th.ogay.luma.ai.EnhanceProfile.NATURAL), sheet) } }
+        syncPrev = { previewBtn.visibility = if (model != 0 && src.still != null) View.VISIBLE else View.GONE }
+        card.addView(previewBtn, LinearLayout.LayoutParams(-1, a.dp(46)).apply { topMargin = a.dp(12) }); syncPrev()
         go.setOnClickListener { Glass.tick(go); close(); onExport(ExportChoice(sides[side], rates[rate], ai(), if (model == 2) th.ogay.luma.ai.EnhanceProfile.CLASSIC else th.ogay.luma.ai.EnhanceProfile.NATURAL)) }
         card.addView(go, LinearLayout.LayoutParams(-1, a.dp(52)).apply { topMargin = a.dp(12) })
         card.addView(a.text("ยกเลิก", 14f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; isClickable = true; setPadding(0, a.dp(12), 0, 0); setOnClickListener { close() } }, -1, a.dp(44))

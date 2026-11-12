@@ -618,6 +618,7 @@ class GalleryActivity : ComponentActivity() {
                 6 -> picked.sortedWith(compareBy<Item> { it.shot?.ai == null }.thenByDescending { it.shotAt })
                 else -> picked.sortedByDescending { it.time }
             }
+            navKeys = shown.filter { !it.file }.map { itemKey(it) }
             adapter.notifyDataSetChanged()
             gridTitle.text = if (albumKind != null) "" else if (device) "รูปและวิดีโอทั้งหมด" else "ถ่ายด้วย Lumora"
             (gridHead.getChildAt(1) as TextView).text = "${shown.size} รายการ · ${SORT_SHORT[sortOrder]} ▾"
@@ -991,7 +992,20 @@ class GalleryActivity : ComponentActivity() {
         if (item.file) { MediaLedger.view(this, item.uri, item.mime); return }
         selected = item.shot?.id ?: item.key; useAi = false; reload()
     }
-    private fun neighbourItem(dir: Int): Item? { val v = lastItems.filter { !it.file }; val i = v.indexOfFirst { (it.shot?.id ?: it.key) == selected || it.key == selected }; return if (i < 0) null else v.getOrNull(i + dir) }
+    /** Keys in the order the open grid shows them (album, category, search and sort applied); the viewer pages through exactly these. */
+    private var navKeys: List<String> = emptyList()
+    private fun itemKey(i: Item) = i.shot?.id ?: i.key
+    private fun neighbourItem(dir: Int): Item? {
+        val byKey = lastItems.associateBy { itemKey(it) }
+        var i = navKeys.indexOf(selected)
+        if (i < 0) {
+            // Opened without a grid (camera, editor result): same album, newest first.
+            navKeys = lastItems.filter { !it.file && inAlbum(it) }.sortedByDescending { it.shotAt }.map { itemKey(it) }
+            i = navKeys.indexOf(selected)
+        }
+        if (i < 0) return null
+        return navKeys.getOrNull(i + dir)?.let { byKey[it] }
+    }
     /** Loads the two pictures beside the open one (fit-to-screen copies), so a page turn has something to slide in at once. */
     private fun preloadNear() {
         val want = listOfNotNull(neighbourItem(-1), neighbourItem(1))
@@ -1007,7 +1021,7 @@ class GalleryActivity : ComponentActivity() {
         selected = next.shot?.id ?: next.key; useAi = false
         val same = !next.video && ::inspect.isInitialized && inspect.isAttachedToWindow && viewerKind == (if (next.shot != null) "shot" else "device")
         if (!same) { reload(); return }
-        inspect.show(next.uri, near[next.key])
+        inspect.show(next.uri, near[next.key] ?: cache.get(next.key))
         val shot = next.shot
         if (shot != null) luma.readIo.execute { val s = luma.shots.get(shot.id); runOnUiThread { if (!isDestroyed && selected == shot.id) { if (s != null) showDetail(s) else reload() } } }
         else showDeviceItem(next.uri)
@@ -1020,7 +1034,7 @@ class GalleryActivity : ComponentActivity() {
     }
     private fun viewer(): InspectView = InspectView(this).also { v ->
         v.onSwipe = { step(it) }
-        v.neighbour = { d -> neighbourItem(d)?.let { near[it.key] } }; v.hasNeighbour = { d -> neighbourItem(d) != null }
+        v.neighbour = { d -> neighbourItem(d)?.let { near[it.key] ?: cache.get(it.key) } }; v.hasNeighbour = { d -> neighbourItem(d) != null }
         ring = AiRing(this)
         val frame = FrameLayout(this).apply { addView(v, FrameLayout.LayoutParams(-1, -1)); addView(ring, FrameLayout.LayoutParams(-1, -1)) }
         root.addView(frame, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -1271,7 +1285,7 @@ class GalleryActivity : ComponentActivity() {
         if (!::ring.isInitialized || ring.visibility != View.VISIBLE || showingId != id || isDestroyed) return
         val p = th.ogay.luma.ai.AiProgress
         if (p.shotId == id) {
-            if (p.total > 0) ring.update(p.fraction() * 99f, ring.caption, listOf("${String.format(Locale.US, "%,d", p.done)} / ${String.format(Locale.US, "%,d", p.total)} ไทล์", p.etaText()).filter { it.isNotEmpty() }.joinToString(" · "))
+            if (p.total > 0) ring.update(p.fraction() * 99f, ring.caption, listOf("${String.format(Locale.US, "%,d", p.done)} / ${String.format(Locale.US, "%,d", p.total)} ไทล์", p.model).filter { it.isNotEmpty() }.joinToString(" · "), p.etaText())
             else ring.update(null, ring.caption, p.step)
         }
         host.postDelayed(this, 330)

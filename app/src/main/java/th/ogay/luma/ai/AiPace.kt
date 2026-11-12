@@ -32,12 +32,14 @@ object AiProgress {
     @Volatile var done = 0; private set
     @Volatile var total = 0; private set
     @Volatile var step = ""; private set
+    /** Name of the AI model doing this work, as the person sees it in the picker. */
+    @Volatile var model = ""
     @Volatile private var startedAt = 0L
     @Volatile private var firstTileAt = 0L
     fun begin(id: String, step: String) { shotId = id; done = 0; total = 0; this.step = step; startedAt = SystemClock.elapsedRealtime(); firstTileAt = 0L }
     fun tiles(total: Int) { this.total = total; step = "กำลังเพิ่มรายละเอียด"; firstTileAt = SystemClock.elapsedRealtime() }
     fun tile(done: Int) { this.done = done }
-    fun end(id: String) { if (shotId == id) { shotId = null; total = 0; done = 0 } }
+    fun end(id: String) { if (shotId == id) { shotId = null; total = 0; done = 0; model = "" } }
     fun fraction() = if (total > 0) done.toFloat() / total else 0f
     /** Milliseconds left, from the average time per tile so far; 0 until a few tiles have been timed. */
     fun etaMs(): Long {

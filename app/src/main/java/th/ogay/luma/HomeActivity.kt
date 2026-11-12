@@ -42,8 +42,14 @@ class HomeActivity : ComponentActivity() {
     private var editKind = "image"
     private val pick = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
         @Suppress("DEPRECATION") val uri = r.data?.getParcelableArrayListExtra<Uri>(GalleryActivity.RESULT_URIS)?.firstOrNull() ?: return@registerForActivityResult
-        val target = if (editKind == "video") VideoEditorActivity::class.java else PhotoEditorActivity::class.java
-        startActivity(Intent(this, target).setData(uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+        when (editKind) {
+            // Pick a photo, then the AI sheet (model, size, strength, preview) opens right here; the result lands in Lumora's gallery.
+            "ai_image" -> th.ogay.luma.ai.EnhanceUi.showForUri(this, uri) { notice("เริ่มเพิ่มรายละเอียดแล้ว · ดูความคืบหน้าในแกลเลอรี")
+                startActivity(Intent(this, GalleryActivity::class.java).putExtra("tab", "luma").putExtra("from", "home")) }
+            "ai_video" -> startActivity(VideoEditorActivity.intent(this, uri).putExtra("ai_export", true))
+            "video" -> startActivity(Intent(this, VideoEditorActivity::class.java).setData(uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+            else -> startActivity(Intent(this, PhotoEditorActivity::class.java).setData(uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+        }
     }
 
     override fun onCreate(state: Bundle?) {
@@ -86,33 +92,42 @@ class HomeActivity : ComponentActivity() {
 
         val cards = ArrayList<View>()
         // Level 1: the camera.
-        col.addView(big(Icons.PHOTO, "ถ่ายภาพ", "กลับไปที่กล้อง", intArrayOf(0xffff9f0a.toInt(), 0xffff5e8a.toInt(), 0xff8e7dff.toInt()), 122, 24f) {
+        col.addView(big(Icons.PHOTO, "ถ่ายภาพ", "กลับไปที่กล้อง", intArrayOf(0xffffb020.toInt(), 0xffff7a00.toInt()), 122, 24f) {
             setResult(RESULT_OK, Intent().putExtra(RESULT_MODE, PhotoMode.PHOTO.name)); close() }.also { cards += it }, LinearLayout.LayoutParams(-1, dp(122)).apply { topMargin = dp(14) })
         // Level 2: the two editors side by side.
         val editors = LinearLayout(this)
-        editors.addView(big(EditorKit.ADJUST, "ตัดต่อภาพ", "สี เส้นโค้ง ครอป วาด", intArrayOf(0xffff5e8a.toInt(), 0xffff9f0a.toInt()), 132, 18f, stacked = true) {
+        editors.addView(big(EditorKit.ADJUST, "ตัดต่อภาพ", "สี เส้นโค้ง ครอป วาด", intArrayOf(0xffff4d9d.toInt(), 0xffc026d3.toInt()), 132, 18f, stacked = true) {
             editKind = "image"; pick.launch(Intent(this, GalleryActivity::class.java).putExtra(GalleryActivity.EXTRA_PICK, "image")) }.also { cards += it },
             LinearLayout.LayoutParams(0, dp(132), 1f).apply { rightMargin = dp(6) })
-        editors.addView(big(EditorKit.SCISSORS, "ตัดต่อวิดีโอ", "เลเยอร์ สโลว์ลื่น 4K", intArrayOf(0xff8e7dff.toInt(), 0xff64d2ff.toInt()), 132, 18f, stacked = true) {
+        editors.addView(big(EditorKit.SCISSORS, "ตัดต่อวิดีโอ", "เลเยอร์ สโลว์ลื่น 4K", intArrayOf(0xff3b82f6.toInt(), 0xff22d3ee.toInt()), 132, 18f, stacked = true) {
             editKind = "video"; pick.launch(Intent(this, GalleryActivity::class.java).putExtra(GalleryActivity.EXTRA_PICK, "video")) }.also { cards += it },
             LinearLayout.LayoutParams(0, dp(132), 1f).apply { leftMargin = dp(6) })
         col.addView(editors, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
         // Level 3: film, as wide as the camera.
         col.addView(big(Icons.FILM, "ฟิล์ม", "โทนสีและเกรนแบบฟิล์ม", intArrayOf(0xffffd60a.toInt(), 0xffff7a45.toInt(), 0xffd6336c.toInt()), 96, 20f) {
             setResult(RESULT_OK, Intent().putExtra(RESULT_MODE, PhotoMode.FILM.name)); close() }.also { cards += it }, LinearLayout.LayoutParams(-1, dp(96)).apply { topMargin = dp(12) })
+        // Level 4: the two AI sharpeners. Each is a short flow: pick the file, choose the model (with a preview), done.
+        val sharpen = LinearLayout(this)
+        sharpen.addView(big(Icons.AI, "แต่งภาพชัด AI", "เลือกรูป · ดูตัวอย่าง · ×2 ถึง ×4", intArrayOf(0xff0fd1c0.toInt(), 0xff2ecc71.toInt()), 132, 18f, stacked = true) {
+            editKind = "ai_image"; pick.launch(Intent(this, GalleryActivity::class.java).putExtra(GalleryActivity.EXTRA_PICK, "image")) }.also { cards += it },
+            LinearLayout.LayoutParams(0, dp(132), 1f).apply { rightMargin = dp(6) })
+        sharpen.addView(big(Icons.AI, "แต่งวิดีโอชัด AI", "เลือกคลิป · เลือกโมเดล · ส่งออก", intArrayOf(0xff6366f1.toInt(), 0xffa855f7.toInt()), 132, 18f, stacked = true) {
+            editKind = "ai_video"; pick.launch(Intent(this, GalleryActivity::class.java).putExtra(GalleryActivity.EXTRA_PICK, "video")) }.also { cards += it },
+            LinearLayout.LayoutParams(0, dp(132), 1f).apply { leftMargin = dp(6) })
+        col.addView(sharpen, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
 
         section(col, "โหมดถ่าย")
         grid(col, cards, listOf(
-            mode(Icons.PORTRAIT, "บุคคล", "หน้าชัด หลังเบลอ", 0xffff9f0a.toInt(), PhotoMode.PORTRAIT),
-            mode(Icons.FLASH, "ถ่ายเร็ว", "จับจังหวะที่ขยับเร็ว", 0xff8e7dff.toInt(), PhotoMode.SPORT),
-            mode(Icons.PRO, "โปร", "ปรับ ISO ชัตเตอร์ โฟกัส", 0xff64d2ff.toInt(), PhotoMode.PRO),
-            mode(Icons.HIRES, "ความละเอียดสูง", "ใช้เซนเซอร์เต็มที่", 0xff30d158.toInt(), PhotoMode.HIRES),
+            mode(Icons.PORTRAIT, "บุคคล", "หน้าชัด หลังเบลอ", 0xffffb020.toInt(), PhotoMode.PORTRAIT),
+            mode(Icons.FLASH, "ถ่ายเร็ว", "จับจังหวะที่ขยับเร็ว", 0xff9b7bff.toInt(), PhotoMode.SPORT),
+            mode(Icons.PRO, "โปร", "ปรับ ISO ชัตเตอร์ โฟกัส", 0xff4dc3ff.toInt(), PhotoMode.PRO),
+            mode(Icons.HIRES, "ความละเอียดสูง", "ใช้เซนเซอร์เต็มที่", 0xff34d399.toInt(), PhotoMode.HIRES),
             Tile(Icons.VIDEO, "วิดีโอ", "ถ่ายวิดีโอ", 0xffff453a.toInt()) { startActivity(Intent(this, VideoActivity::class.java).putExtra("mode", "VIDEO")) },
-            mode(Icons.PHOTO, "ภาพถ่าย", "ถ่ายยาวหลายวินาทีได้", 0xff5ac8fa.toInt(), PhotoMode.PHOTO)))
+            mode(Icons.PHOTO, "ภาพถ่าย", "ถ่ายยาวหลายวินาทีได้", 0xffff6fb5.toInt(), PhotoMode.PHOTO)))
         section(col, "คลังภาพ")
         grid(col, cards, listOf(
             Tile(Icons.LIBRARY, "แกลเลอรี", "รูปและวิดีโอทั้งหมด", 0xffff9f0a.toInt()) { startActivity(Intent(this, GalleryActivity::class.java).putExtra("from", "home")) },
-            Tile(Icons.AI, "ภาพจาก AI", "รูปที่ Lumora ปรับแล้ว", 0xff64d2ff.toInt()) { startActivity(Intent(this, GalleryActivity::class.java).putExtra("tab", "luma").putExtra("from", "home")) }))
+            Tile(Icons.AI, "ภาพจาก AI", "รูปที่ Lumora ปรับแล้ว", 0xff2dd4bf.toInt()) { startActivity(Intent(this, GalleryActivity::class.java).putExtra("tab", "luma").putExtra("from", "home")) }))
 
         // Entrance: the mark draws, the name settles, the cards rise one after another.
         if (!Glass.reduced(this)) {
@@ -172,8 +187,8 @@ class HomeActivity : ComponentActivity() {
 
     /** Glass card: tinted top edge, a glowing rounded icon tile, title, one line of note and a small arrow. */
     private fun card(t: Tile): View = FrameLayout(this).apply {
-        background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf((t.color and 0x00ffffff) or 0x26000000, 0x14ffffff)).apply {
-            cornerRadius = dp(22).toFloat(); setStroke(dp(1), (t.color and 0x00ffffff) or 0x40000000) }
+        background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf((t.color and 0x00ffffff) or 0x66000000, (t.color and 0x00ffffff) or 0x1f000000)).apply {
+            cornerRadius = dp(22).toFloat(); setStroke(dp(1), (t.color and 0x00ffffff) or 0x8c000000.toInt()) }
         isClickable = true; contentDescription = "${t.title} ${t.note}"; glassTouch()
         val c = LinearLayout(this@HomeActivity).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), dp(13), dp(12), dp(12)) }
         val top = LinearLayout(this@HomeActivity).apply { gravity = Gravity.CENTER_VERTICAL }

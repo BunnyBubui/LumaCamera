@@ -26,10 +26,14 @@ class ZoomMap(c: Context) : FrameLayout(c), android.hardware.SensorEventListener
     private class Frame(val bitmap: Bitmap, val ratio: Float, val at: Long)
     private val frames = HashMap<Float, Frame>()
     private val image = ImageView(c).apply { scaleType = ImageView.ScaleType.CENTER_CROP; setBackgroundColor(0xff0d1220.toInt()) }
-    private val box = View(c).apply { background = android.graphics.drawable.GradientDrawable().apply { setStroke(c.dp(2), Glass.ACCENT); cornerRadius = c.dp(3).toFloat() } }
+    /** What the camera sees right now, drawn inside the frame on the 1× picture, so the map moves in real time in every mode. */
+    private val box = ImageView(c).apply { scaleType = ImageView.ScaleType.CENTER_CROP; clipToOutline = true
+        outlineProvider = object : ViewOutlineProvider() { override fun getOutline(v: View, o: Outline) { o.setRoundRect(0, 0, v.width, v.height, c.dp(3).toFloat()) } }
+        foreground = android.graphics.drawable.GradientDrawable().apply { setStroke(c.dp(2), Glass.ACCENT); cornerRadius = c.dp(3).toFloat() } }
     private val label: TextView = c.text("1×", 10.5f, Color.WHITE, true).apply { background = c.glass(9); setPadding(c.dp(7), c.dp(1), c.dp(7), c.dp(1)) }
     private var preview: PreviewView? = null
     private var live = false
+    private val lens1 = 1f
     var busy: () -> Boolean = { false }
     /** The zoom above which the map appears. */
     var threshold = 10f
@@ -44,8 +48,8 @@ class ZoomMap(c: Context) : FrameLayout(c), android.hardware.SensorEventListener
     }
 
     /** Saves a wide frame of [lens] when the zoom ([ratio]) is still close to it; at most every 1.2 s, wider frames win. */
-    fun capture(preview: PreviewView, ratio: Float, lens: Float) {
-        this.preview = preview
+    fun capture(preview: PreviewView, ratio: Float, lensIgnored: Float) {
+        this.preview = preview; val lens = lens1
         if (ratio < lens - 0.02f || ratio > lens * 2.4f) return
         val now = android.os.SystemClock.uptimeMillis(); val old = frames[lens]
         if (old != null && (now - old.at < 1200 || (ratio > old.ratio * 1.03f && now - old.at < 10_000))) return
@@ -66,20 +70,15 @@ class ZoomMap(c: Context) : FrameLayout(c), android.hardware.SensorEventListener
      */
     fun update(ratio: Float, lens: Float, liveCover: Float?) {
         lastRatio = ratio
-        val liveOk = liveCover != null
         val show = ratio > threshold
         if (show && visibility != View.VISIBLE) { visibility = View.VISIBLE; Liquid.show(this, width.toFloat(), 0f, false) }
         if (!show) { live = false; if (visibility == View.VISIBLE) Liquid.hide(this, width.toFloat(), 0f, false); return }
-        label.text = zoomText(lens)
-        val saved = frames[lens] ?: frames.values.minByOrNull { it.ratio }
-        val cover: Float
-        if (liveOk) {
-            cover = liveCover!!
-            if (!live) { live = true; post(ticker) }
-        } else {
-            live = false; cover = saved?.ratio ?: ratio
-            if (saved != null && (image.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap !== saved.bitmap) image.setImageBitmap(saved.bitmap)
-        }
+        label.text = zoomText(lens1)
+        // The picture behind is always the 1× lens; only the frame on it shows the live view.
+        val saved = frames[lens1] ?: frames.values.minByOrNull { it.ratio }
+        if (saved != null && (image.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap !== saved.bitmap) image.setImageBitmap(saved.bitmap)
+        if (!live) { live = true; post(ticker) }
+        val cover = saved?.ratio ?: 1f
         coverNow = cover
         val f = (cover / ratio).coerceIn(0.05f, 1f).pow(0.5f); val lp = box.layoutParams
         val w = (context.dp(90) * f).roundToInt(); val h = (context.dp(120) * f).roundToInt()
@@ -93,7 +92,7 @@ class ZoomMap(c: Context) : FrameLayout(c), android.hardware.SensorEventListener
     /** About the field of view across the portrait picture at 1× (a 24 mm-equivalent lens): 53° wide, 74° tall. */
     private val fovW = Math.toRadians(53.0).toFloat(); private val fovH = Math.toRadians(74.0).toFloat()
     private fun placeBox() {
-        if (live || visibility != View.VISIBLE) { box.translationX = 0f; box.translationY = 0f; return }
+        if (visibility != View.VISIBLE) return
         val inner = image.width.toFloat(); val innerH = image.height.toFloat(); if (inner <= 0f) return
         val dx = -turnY / (fovW / coverNow) * inner; val dy = -turnX / (fovH / coverNow) * innerH
         val mx = (inner - box.width) / 2f; val my = (innerH - box.height) / 2f
@@ -103,22 +102,22 @@ class ZoomMap(c: Context) : FrameLayout(c), android.hardware.SensorEventListener
         if (lastT != 0L) { val dt = (e.timestamp - lastT) / 1e9f
             if (dt in 0f..0.2f) { turnX += e.values[0] * dt; turnY += e.values[1] * dt } }
         lastT = e.timestamp
-        if (visibility == View.VISIBLE && !live) placeBox()
+        if (visibility == View.VISIBLE) placeBox()
     }
     override fun onAccuracyChanged(s: android.hardware.Sensor?, a: Int) {}
     override fun onAttachedToWindow() { super.onAttachedToWindow()
         val sm = context.getSystemService(android.hardware.SensorManager::class.java) ?: return
         sm.getDefaultSensor(android.hardware.Sensor.TYPE_GYROSCOPE)?.let { sm.registerListener(this, it, android.hardware.SensorManager.SENSOR_DELAY_GAME) } }
 
+    private var liveOld: Bitmap? = null
     private val ticker = object : Runnable { override fun run() {
         if (!live || visibility != View.VISIBLE || !isAttachedToWindow) { live = false; return }
-        if (!busy()) preview?.smallFrame(180)?.let { small ->
-            val old = (image.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
-            image.setImageBitmap(small); if (old != null && old !== small && frames.values.none { it.bitmap === old }) old.recycle()
+        if (!busy()) preview?.smallFrame(160)?.let { small ->
+            box.setImageBitmap(small); liveOld?.takeIf { it !== small }?.recycle(); liveOld = small
         }
-        postDelayed(this, 160)
+        postDelayed(this, 100)
     } }
 
-    fun clear() { live = false; image.setImageDrawable(null); frames.values.forEach { it.bitmap.recycle() }; frames.clear() }
+    fun clear() { live = false; box.setImageDrawable(null); liveOld?.recycle(); liveOld = null; image.setImageDrawable(null); frames.values.forEach { it.bitmap.recycle() }; frames.clear() }
     override fun onDetachedFromWindow() { live = false; removeCallbacks(ticker); runCatching { context.getSystemService(android.hardware.SensorManager::class.java)?.unregisterListener(this) }; super.onDetachedFromWindow() }
 }
