@@ -55,7 +55,21 @@ class HomeActivity : ComponentActivity() {
         val aurora = Aurora(this)
         host.addView(aurora, -1, -1)
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(18), dp(12), dp(18), dp(32)) }
-        host.addView(ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(col) }, -1, -1)
+        // The page scrolls under the status and navigation bars instead of being cut off at a hard line below them:
+        // the lights fill the whole screen, the list keeps its insets as padding, and a soft shade sits under the
+        // status bar so the clock stays readable over the cards.
+        val scroll = ScrollView(this).apply { isVerticalScrollBarEnabled = false; clipToPadding = false; overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS; addView(col) }
+        host.addView(scroll, -1, -1)
+        val shade = View(this).apply { importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0xf2131a38.toInt(), 0xa0131a38.toInt(), 0x00131a38)) }
+        host.addView(shade, FrameLayout.LayoutParams(-1, dp(40)))
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(host) { _, insets ->
+            val bars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars() or androidx.core.view.WindowInsetsCompat.Type.displayCutout())
+            host.setPadding(0, 0, 0, 0)
+            scroll.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+            shade.layoutParams = (shade.layoutParams as FrameLayout.LayoutParams).apply { height = bars.top + dp(28) }
+            insets
+        }
 
         // Header: back to the camera, the mark drawing itself, and the name.
         col.addView(FrameLayout(this).apply { background = glass(24, 0x33ffffff); isClickable = true; contentDescription = "กลับไปที่กล้อง"; glassTouch()
@@ -180,24 +194,32 @@ class HomeActivity : ComponentActivity() {
 
     private fun View.outlineAmbientShadowColor(c: Int) { if (android.os.Build.VERSION.SDK_INT >= 28) { outlineAmbientShadowColor = c; outlineSpotShadowColor = c } }
 
-    /** Slow coloured lights drifting behind everything. */
+    /**
+     * Slow coloured lights drifting behind everything. The four gradients are made once and only moved and scaled
+     * with a matrix each frame (no new shader per frame), and redraws are capped at about 30 per second: the lights
+     * move far too slowly to need more, and it leaves the frame budget for scrolling.
+     */
     private class Aurora(c: Context) : View(c) {
         private val p = Paint(Paint.ANTI_ALIAS_FLAG)
         private var t = 0f
         private val colors = intArrayOf(0x55ff9f0a, 0x558e7dff, 0x4064d2ff, 0x40ff5e8a)
+        private val shaders = colors.map { RadialGradient(0f, 0f, 100f, it, 0x00000000, Shader.TileMode.CLAMP) }
+        private val m = android.graphics.Matrix()
+        private var lastFrame = 0L
         private val anim = ValueAnimator.ofFloat(0f, (Math.PI * 2).toFloat()).apply { duration = 24_000; repeatCount = ValueAnimator.INFINITE; interpolator = LinearInterpolator()
-            addUpdateListener { t = it.animatedValue as Float; invalidate() } }
+            addUpdateListener { val now = android.os.SystemClock.uptimeMillis(); if (now - lastFrame >= 32) { lastFrame = now; t = it.animatedValue as Float; invalidate() } } }
         init { importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }
         override fun onAttachedToWindow() { super.onAttachedToWindow(); if (!Glass.reduced(context)) anim.start() }
         override fun onDetachedFromWindow() { anim.cancel(); super.onDetachedFromWindow() }
         override fun onDraw(cv: Canvas) {
             val w = width.toFloat(); val h = height.toFloat(); if (w <= 0f) return
-            colors.forEachIndexed { i, col ->
+            shaders.forEachIndexed { i, sh ->
                 val a = t + i * 1.6f
                 val x = w * (0.5f + 0.42f * cos(a * (0.7f + i * 0.13f)))
                 val y = h * (0.25f + 0.2f * i + 0.08f * sin(a * 1.1f))
                 val r = w * (0.55f + 0.1f * sin(a + i))
-                p.shader = RadialGradient(x, y, r, col, 0x00000000, Shader.TileMode.CLAMP)
+                m.setScale(r / 100f, r / 100f); m.postTranslate(x, y); sh.setLocalMatrix(m)
+                p.shader = sh
                 cv.drawCircle(x, y, r, p)
             }
         }
@@ -212,10 +234,15 @@ class HomeActivity : ComponentActivity() {
         init { importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }
         override fun onAttachedToWindow() { super.onAttachedToWindow(); if (!Glass.reduced(context)) anim.start() }
         override fun onDetachedFromWindow() { anim.cancel(); super.onDetachedFromWindow() }
+        private var shader: LinearGradient? = null; private var forW = 0; private var forH = 0
+        private val m = android.graphics.Matrix()
         override fun onDraw(cv: Canvas) {
             if (x !in -0.5f..1.5f) return
             val w = width.toFloat(); val cx = x * w
-            p.shader = LinearGradient(cx - w * 0.25f, 0f, cx + w * 0.25f, height.toFloat(), intArrayOf(0x00ffffff, 0x33ffffff, 0x00ffffff), null, Shader.TileMode.CLAMP)
+            // The gradient is built once per size; each frame only slides it across.
+            if (shader == null || forW != width || forH != height) { forW = width; forH = height
+                shader = LinearGradient(-w * 0.25f, 0f, w * 0.25f, height.toFloat(), intArrayOf(0x00ffffff, 0x33ffffff, 0x00ffffff), null, Shader.TileMode.CLAMP) }
+            m.setTranslate(cx, 0f); shader!!.setLocalMatrix(m); p.shader = shader
             cv.drawRect(0f, 0f, w, height.toFloat(), p)
         }
     }

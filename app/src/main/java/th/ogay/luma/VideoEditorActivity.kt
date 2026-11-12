@@ -195,6 +195,10 @@ class VideoEditorActivity : ComponentActivity() {
         super.onCreate(state)
         requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         source = intent.data ?: run { finish(); return }
+        // One heavy job at a time: while a video exports the editor shows that export instead; while an AI upscale
+        // runs it waits. The photo editor is not affected.
+        if (ExportJob.running()) { notice("กำลังส่งออกวิดีโออยู่ · ตัดต่อคลิปอื่นได้เมื่อเสร็จแล้ว"); startActivity(Intent(this, ExportActivity::class.java)); finish(); return }
+        if (luma.shots.upscaling()) { notice("กำลังเพิ่มรายละเอียดภาพด้วย AI อยู่ · ตัดต่อวิดีโอได้เมื่อเสร็จแล้ว"); finish(); return }
         if (!readSource()) { notice("เปิดวิดีโอนี้ไม่ได้"); finish(); return }
         end = duration
         state?.let { restore(it) }
@@ -897,6 +901,7 @@ class VideoEditorActivity : ComponentActivity() {
     }
     private fun startExport(c: ExportChoice, src: ExportSheet.Source) {
         if (ExportJob.running()) { notice("มีงานส่งออกอยู่แล้ว · รอให้เสร็จก่อน"); return }
+        if (luma.shots.upscaling()) { notice("กำลังเพิ่มรายละเอียดภาพด้วย AI อยู่ · ส่งออกได้เมื่อเสร็จแล้ว"); return }
         val bigger = c.shortSide > src.shortSide * 1.05f; val smoother = c.fps > src.fps * 1.05f
         if (!changed() && !bigger && !smoother && c.shortSide >= src.shortSide - 8 && c.fps >= src.fps - 0.6f) { notice("ยังไม่มีการแก้ไข"); return }
         enhance = if (bigger || smoother) VideoEnhancer.Plan(c.shortSide, c.fps, c.ai) else null
@@ -927,7 +932,7 @@ class VideoEditorActivity : ComponentActivity() {
             slow = if (slow) { cancel, progress -> SlowFlow.render(app, src0, a, b, n, slowFile, cancel, progress = progress) } else null,
             parts = { f -> flow = f; ranges.mapIndexed { k, (from, to) -> composition(from, to) to File(dir, "Lumora_EDIT_${id}${if (ranges.size > 1) "_${k + 1}" else ""}${if (enhance != null) "_edit" else ""}.mp4") } },
             enhance = enhance, finalFile = enhance?.let { File(dir, "Lumora_EDIT_${id}.mp4") }, note = "ตัดต่อใน Lumora",
-            cleanup = { slowFile.delete() })
+            cleanup = { slowFile.delete() }, kinds = kinds.toList())
         LiveNotice.askPermissions(this)
         ExportJob.start(this, plan)
         exportButton.alpha = 0.5f

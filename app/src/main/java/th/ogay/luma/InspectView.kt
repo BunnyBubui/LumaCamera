@@ -267,15 +267,35 @@ class InspectView(context: Context) : View(context) {
         if(soft!==small)small.recycle();if(tiny!=null&&tiny!==soft)tiny.recycle()
         return soft
     }
+    private val bandMask=Paint().apply{xfermode=android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_IN)}
+    /**
+     * Draws one band of reflected light in (l,t,r,b). While it is still spreading ([lit] < 1) the band is masked by a
+     * gradient running from the photo edge (x0,y0) toward the screen edge (x1,y1): solid near the photo, fading out
+     * over a wide feather at the front, so the light seems to seep outward rather than wipe in behind a line.
+     */
+    private inline fun band(c:Canvas,l:Float,t:Float,r:Float,b:Float,x0:Float,y0:Float,x1:Float,y1:Float,lit:Float,draw:()->Unit){
+        if(r-l<=0f||b-t<=0f)return
+        if(lit>=1f){c.save();c.clipRect(l,t,r,b);draw();c.restore();return}
+        val feather=0.55f;val front=lit*(1f+feather);if(front<=0f)return
+        val solid=((front-feather)/front).coerceIn(0f,0.999f)
+        val layer=c.saveLayer(l,t,r,b,null)
+        c.save();c.clipRect(l,t,r,b);draw();c.restore()
+        bandMask.shader=android.graphics.LinearGradient(x0,y0,x0+(x1-x0)*front,y0+(y1-y0)*front,
+            intArrayOf(android.graphics.Color.BLACK,android.graphics.Color.BLACK,android.graphics.Color.TRANSPARENT),floatArrayOf(0f,solid,1f),android.graphics.Shader.TileMode.CLAMP)
+        c.drawRect(l,t,r,b,bandMask)
+        c.restoreToCount(layer)
+    }
     /** Mirrors [g] past each edge of [r] at [alpha]; [lit] (0..1) is how far the light has spread from the edges. */
     private fun reflect(c:Canvas,r:RectF,g:Bitmap?=glow,alpha:Float=1f,lit:Float=reveal){
         if(g==null||g.isRecycled||r.width()<=0f||alpha<=0f||lit<=0f)return
         glowPaint.alpha=(255*(1f-dismissShown)*alpha*(0.35f+0.65f*lit)).toInt().coerceIn(0,255)
         val reach=maxOf(height.toFloat(),width.toFloat())
-        if(r.top>0.5f){c.save();c.clipRect(0f,r.top*(1f-lit),width.toFloat(),r.top);c.scale(1f,-1f,0f,r.top);c.drawBitmap(g,null,RectF(r.left-reach,r.top,r.right+reach,r.bottom),glowPaint);c.restore()}
-        if(r.bottom<height-0.5f){c.save();c.clipRect(0f,r.bottom,width.toFloat(),r.bottom+(height-r.bottom)*lit);c.scale(1f,-1f,0f,r.bottom);c.drawBitmap(g,null,RectF(r.left-reach,r.top,r.right+reach,r.bottom),glowPaint);c.restore()}
-        if(r.left>0.5f){c.save();c.clipRect(r.left*(1f-lit),r.top,r.left,r.bottom);c.scale(-1f,1f,r.left,0f);c.drawBitmap(g,null,r,glowPaint);c.restore()}
-        if(r.right<width-0.5f){c.save();c.clipRect(r.right,r.top,r.right+(width-r.right)*lit,r.bottom);c.scale(-1f,1f,r.right,0f);c.drawBitmap(g,null,r,glowPaint);c.restore()}
+        val w=width.toFloat();val h=height.toFloat()
+        // Each band of light spreads out from the photo's edge with a soft, blurred front instead of a hard line.
+        if(r.top>0.5f)band(c,0f,0f,w,r.top,0f,r.top,0f,0f,lit){c.scale(1f,-1f,0f,r.top);c.drawBitmap(g,null,RectF(r.left-reach,r.top,r.right+reach,r.bottom),glowPaint)}
+        if(r.bottom<h-0.5f)band(c,0f,r.bottom,w,h,0f,r.bottom,0f,h,lit){c.scale(1f,-1f,0f,r.bottom);c.drawBitmap(g,null,RectF(r.left-reach,r.top,r.right+reach,r.bottom),glowPaint)}
+        if(r.left>0.5f)band(c,0f,r.top,r.left,r.bottom,r.left,0f,0f,0f,lit){c.scale(-1f,1f,r.left,0f);c.drawBitmap(g,null,r,glowPaint)}
+        if(r.right<w-0.5f)band(c,r.right,r.top,w,r.bottom,r.right,0f,w,0f,lit){c.scale(-1f,1f,r.right,0f);c.drawBitmap(g,null,r,glowPaint)}
     }
     // ---- Swipe down at fit-to-screen to close the photo, following the finger and springing back if let go early.
     /** Called once the picture has been flicked away (the gallery goes back to the grid). */

@@ -669,13 +669,27 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
             // Row positions are in list coordinates; the list sits inside the card's padding.
             val pad = c.dp(8)
             fun rowAt(y: Float) = (y - pad).let { ly -> rows.indexOfFirst { ly < it.bottom + c.dp(1) }.let { if (it < 0) rows.size - 1 else it } }
-            fun moveHi(i: Int, press: Boolean) {
+            // While the finger is down the highlight is glued to it (no animation to catch up with); rows react only
+            // when the finger crosses into another row; lifting snaps the highlight onto the row.
+            var pressedRow = -1
+            fun moveHi(i: Int, press: Boolean, fingerY: Float = Float.NaN) {
                 val r = rows[i]
-                hi.layoutParams = (hi.layoutParams as FrameLayout.LayoutParams).apply { height = r.height.coerceAtLeast(c.dp(52)) }
-                // First touch lands exactly under the finger; after that the pill glides from row to row.
-                if (hi.alpha < 0.05f) { hi.animate().cancel(); hi.translationY = (r.top - rows[0].top).toFloat(); hi.animate().alpha(1f).setDuration(90).start() }
-                else hi.animate().alpha(1f).translationY((r.top - rows[0].top).toFloat()).setInterpolator(Glass.EASE).setDuration(if (press) 90 else 180).start()
-                rows.forEachIndexed { k, row -> row.animate().scaleX(if (press && k == i) 0.985f else 1f).scaleY(if (press && k == i) 0.985f else 1f).setDuration(120).start() }
+                val rowH = r.height.coerceAtLeast(c.dp(52))
+                if (hi.layoutParams.height != rowH) hi.layoutParams = (hi.layoutParams as FrameLayout.LayoutParams).apply { height = rowH }
+                val rowY = (r.top - rows[0].top).toFloat()
+                hi.animate().cancel()
+                if (press && !fingerY.isNaN()) {
+                    val first = rows[0].top; val last = rows.last().bottom
+                    hi.translationY = ((fingerY - pad) - rowH / 2f - first).coerceIn(0f, (last - first - rowH).toFloat().coerceAtLeast(0f))
+                    hi.alpha = 1f
+                } else if (hi.alpha < 0.05f) { hi.translationY = rowY; hi.animate().alpha(1f).setDuration(90).start() }
+                else hi.animate().alpha(1f).translationY(rowY).setInterpolator(Glass.EASE).setDuration(140).start()
+                val target = if (press) i else -1
+                if (target != pressedRow) {
+                    rows.getOrNull(pressedRow)?.animate()?.scaleX(1f)?.scaleY(1f)?.setDuration(120)?.start()
+                    rows.getOrNull(target)?.animate()?.scaleX(0.985f)?.scaleY(0.985f)?.setDuration(90)?.start()
+                    pressedRow = target
+                }
             }
             var current = selected.coerceIn(0, rows.size - 1)
             // The highlight only appears under a finger; the chosen row already carries its own border.
@@ -684,7 +698,7 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
             fun handle(action: Int, y: Float) {
                 val i = rowAt(y)
                 when (action) {
-                    MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> { if (i != current) { current = i; Glass.tick(menu) }; moveHi(i, true) }
+                    MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> { if (i != current) { current = i; Glass.tick(menu) }; moveHi(i, true, y) }
                     MotionEvent.ACTION_UP -> { moveHi(i, false); choose(i, pick) }
                     MotionEvent.ACTION_CANCEL -> { moveHi(current, false); hi.animate().alpha(0f).setDuration(160).start() }
                 }
@@ -703,7 +717,7 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
                 val inside = lx >= -c.dp(24) && lx <= w + c.dp(24) && ly >= pad + rows[0].top - c.dp(4) && ly <= h + c.dp(12)
                 when {
                     inside -> handle(if (e.actionMasked == MotionEvent.ACTION_DOWN) MotionEvent.ACTION_MOVE else e.actionMasked, ly)
-                    else -> { rows.forEach { it.animate().scaleX(1f).scaleY(1f).setDuration(120).start() }; hi.animate().alpha(0f).setDuration(160).start() }
+                    else -> { rows.getOrNull(pressedRow)?.animate()?.scaleX(1f)?.scaleY(1f)?.setDuration(120)?.start(); pressedRow = -1; hi.animate().alpha(0f).setDuration(160).start() }
                 }
             }
         }

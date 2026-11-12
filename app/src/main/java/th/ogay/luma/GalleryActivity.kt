@@ -102,7 +102,7 @@ class GalleryActivity : ComponentActivity() {
     private var refreshCells: () -> Unit = {}
     private var pendingForget: List<String> = emptyList()
     private val mediaChange = registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { r ->
-        if (r.resultCode == RESULT_OK && pendingForget.isNotEmpty()) { val ids = pendingForget; luma.fileIo.execute { luma.shots.forget(ids) } }
+        if (r.resultCode == RESULT_OK && pendingForget.isNotEmpty()) { val ids = pendingForget; luma.fileIo.execute { stopWork(ids); luma.shots.forget(ids) } }
         if (r.resultCode == RESULT_OK) afterGrant?.invoke()
         if (r.resultCode == RESULT_OK) pendingNext?.let { selected = it.ifEmpty { null }; useAi = false }
         pendingNext = null
@@ -176,7 +176,7 @@ class GalleryActivity : ComponentActivity() {
         } else reload()
     }
     override fun onSaveInstanceState(out: Bundle) { super.onSaveInstanceState(out); out.putString("id", selected); out.putBoolean("ai", useAi); out.putInt("section", section); out.putString("albumKind", albumKind); out.putString("album", album) }
-    override fun onPause() { th.ogay.luma.ai.AiPace.watching = false; inlineVideo?.pause(); super.onPause() }
+    override fun onPause() { th.ogay.luma.ai.AiPace.watching = false; inlineVideo?.pause(); releasePeekVideo(); super.onPause() }
     override fun onDestroy() { thumbs.shutdownNow(); super.onDestroy() }
     private fun mediaGranted() = mediaPermissions.any { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }
     /** Android 14+: the person allowed only some photos. */
@@ -335,6 +335,8 @@ class GalleryActivity : ComponentActivity() {
             col.addView(buttons, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(14) })
         }.show()
     }
+    /** A deleted picture's AI job stops too; otherwise its ring and notification would keep turning for nothing. */
+    private fun stopWork(ids: List<String>) = ids.forEach { runCatching { EnhanceWorker.cancel(applicationContext, it) } }
     private fun trash(items: List<Item>) {
         val uris = items.flatMap { listOfNotNull(it.uri, it.shot?.ai, it.shot?.raw) }.filter { it.authority == MediaStore.AUTHORITY }.distinct()
         val ids = items.mapNotNull { it.shot?.id }
@@ -348,7 +350,7 @@ class GalleryActivity : ComponentActivity() {
             // Files this install created can go to the bin directly. For any other file Android insists on asking
             // in its own dialog, so only those are handed to the system request.
             val rest = uris.filter { u -> !runCatching { contentResolver.update(u, android.content.ContentValues().apply { put("is_trashed", 1) }, null, null) > 0 }.getOrDefault(false) }
-            if (rest.isEmpty()) runCatching { luma.shots.forget(ids) }
+            if (rest.isEmpty()) runCatching { stopWork(ids); luma.shots.forget(ids) }
             runOnUiThread {
                 if (isDestroyed) return@runOnUiThread
                 if (rest.isEmpty()) { if (open) { selected = nextId; useAi = false }; endSelection(); notice("ย้ายไปถังขยะแล้ว"); reload() }
@@ -811,7 +813,7 @@ class GalleryActivity : ComponentActivity() {
         val buckets = if (device) ordered(albums(items)) else emptyList()
         val hidden = prefList("album_hidden"); val pinned = prefList("album_pinned")
         if (managing) {
-            col.addView(text("ลาก ≡ เพื่อเรียง · ปักหมุดให้อยู่บนสุด · ซ่อนเพื่อเอาออกจากแท็บรูปภาพ", 12.5f, Glass.TEXT2).apply { maxLines = 3; setPadding(dp(16), dp(4), dp(16), dp(10)) }, -1, -2)
+            col.addView(text("ลาก ≡ หรือกดค้างแถวเพื่อเรียง · ปักหมุดให้อยู่บนสุด · ซ่อนเพื่อเอาออกจากแท็บรูปภาพ", 12.5f, Glass.TEXT2).apply { maxLines = 3; setPadding(dp(16), dp(4), dp(16), dp(10)) }, -1, -2)
             val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
             col.addView(list, -1, -2)
             manageList(list, buckets.toMutableList(), scroll)
@@ -907,23 +909,46 @@ class GalleryActivity : ComponentActivity() {
                 addView(IconView(this@GalleryActivity, if (isHidden) EYE_OFF else EYE, 2f).apply { tint = if (isHidden) Glass.ACCENT else Glass.TEXT2 }, FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER))
                 setOnClickListener { Glass.tick(this); if (isHidden) hidden.remove(a.name) else hidden.add(a.name); commit() } }, dp(48), dp(48))
             list.addView(row, LinearLayout.LayoutParams(-1, rowH - dp(8)).apply { setMargins(dp(12), dp(4), dp(12), dp(4)) })
-            var startY = 0f; var target = index
+            // The ≡ handle sits near the left edge, where Android's back gesture lives: the handle asks the
+            // system to leave that strip alone, so a drag there reorders instead of closing the gallery.
+            handle.addOnLayoutChangeListener { v, _, _, _, _, _, _, _, _ ->
+                if (Build.VERSION.SDK_INT >= 29) v.systemGestureExclusionRects = listOf(android.graphics.Rect(0, 0, v.width, v.height)) }
+            var startY = 0f; var target = index; var dragging = false
+            val slop = android.view.ViewConfiguration.get(this).scaledTouchSlop
+            fun begin(y: Float) { dragging = true; startY = y; target = index; scroll.requestDisallowInterceptTouchEvent(true)
+                row.elevation = dp(8).toFloat(); row.animate().scaleX(1.03f).scaleY(1.03f).setDuration(120).start(); Glass.tick(row) }
+            fun move(y: Float) {
+                val dy = y - startY; row.translationY = dy
+                val t = (index + Math.round(dy / rowH)).coerceIn(0, albums.lastIndex)
+                if (t != target) { target = t; Glass.tick(row)
+                    for (k in 0 until list.childCount) if (k != index) {
+                        val shift = when { k in (index + 1)..target -> -rowH; k in target until index -> rowH; else -> 0 }
+                        list.getChildAt(k).animate().translationY(shift.toFloat()).setInterpolator(Glass.EASE).setDuration(160).start()
+                    } }
+            }
+            fun end(cancel: Boolean) {
+                if (!dragging) return; dragging = false
+                if (!cancel && target != index) { val moved = albums.removeAt(index); albums.add(target, moved); commit(); return }
+                row.animate().translationY(0f).scaleX(1f).scaleY(1f).setDuration(160).start(); row.elevation = 0f
+                for (k in 0 until list.childCount) if (k != index) list.getChildAt(k).animate().translationY(0f).setDuration(160).start()
+            }
             handle.setOnTouchListener { _, e ->
                 when (e.actionMasked) {
-                    MotionEvent.ACTION_DOWN -> { startY = e.rawY; target = index; scroll.requestDisallowInterceptTouchEvent(true); row.elevation = dp(8).toFloat(); row.animate().scaleX(1.03f).scaleY(1.03f).setDuration(120).start(); Glass.tick(row) }
-                    MotionEvent.ACTION_MOVE -> {
-                        val dy = e.rawY - startY; row.translationY = dy
-                        val t = (index + Math.round(dy / rowH)).coerceIn(0, albums.lastIndex)
-                        if (t != target) { target = t; Glass.tick(row)
-                            for (k in 0 until list.childCount) if (k != index) {
-                                val shift = when { k in (index + 1)..target -> -rowH; k in target until index -> rowH; else -> 0 }
-                                list.getChildAt(k).animate().translationY(shift.toFloat()).setInterpolator(Glass.EASE).setDuration(160).start()
-                            } }
-                    }
-                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                        if (target != index) { val moved = albums.removeAt(index); albums.add(target, moved); commit() }
-                        else { row.animate().translationY(0f).scaleX(1f).scaleY(1f).setDuration(160).start(); row.elevation = 0f }
-                    }
+                    MotionEvent.ACTION_DOWN -> begin(e.rawY)
+                    MotionEvent.ACTION_MOVE -> if (dragging) move(e.rawY)
+                    // A cancel (the system took the touch) still keeps the place the finger reached, so nothing jumps back.
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> end(false)
+                }
+                true
+            }
+            // Holding anywhere else on the row also picks it up, away from the edge gesture entirely.
+            var downY = 0f; val lift = Runnable { begin(downY) }
+            row.setOnTouchListener { _, e ->
+                when (e.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> { downY = e.rawY; row.postDelayed(lift, android.view.ViewConfiguration.getLongPressTimeout().toLong()) }
+                    MotionEvent.ACTION_MOVE -> if (dragging) move(e.rawY) else if (kotlin.math.abs(e.rawY - downY) > slop) row.removeCallbacks(lift)
+                    MotionEvent.ACTION_UP -> { row.removeCallbacks(lift); end(false) }
+                    MotionEvent.ACTION_CANCEL -> { row.removeCallbacks(lift); end(!dragging) }
                 }
                 true
             }
@@ -1054,7 +1079,10 @@ class GalleryActivity : ComponentActivity() {
                 val w = (b.intrinsicWidth * sc).toInt(); val h = (b.intrinsicHeight * sc).toInt(); val l = (v.width - w) / 2; val t = (v.height - h) / 2
                 o.setRoundRect(l, t, l + w, t + h, dp(20).toFloat()) } }
             clipToOutline = true }
-        left.addView(image, LinearLayout.LayoutParams(-1, (resources.displayMetrics.heightPixels * 0.46f).toInt()))
+        val stage = FrameLayout(this).apply { addView(image, -1, -1) }
+        left.addView(stage, LinearLayout.LayoutParams(-1, (resources.displayMetrics.heightPixels * 0.46f).toInt()))
+        // A held video plays (silently, on a loop) right in the preview, over its first frame.
+        if (item.video) peekVideo(stage, item.uri)
         // Facts as a row of small tags rather than a line of text.
         val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(4), dp(12), dp(4), 0) }
         head.addView(FrameLayout(this).apply { background = glass(12, 0x1fffffff); addView(IconView(this@GalleryActivity, if (item.video) Icons.VIDEO else Icons.PHOTO, 1.8f).apply { tint = Glass.ACCENT }, FrameLayout.LayoutParams(dp(16), dp(16), Gravity.CENTER)) }, dp(30), dp(30))
@@ -1130,7 +1158,40 @@ class GalleryActivity : ComponentActivity() {
         if (t.alpha < 0.05f) { t.translationX = x + dp(18); t.translationY = y; t.scaleX = 0.7f; t.scaleY = 0.7f }
         t.animate().alpha(1f).translationX(x).translationY(y).scaleX(1f).scaleY(1f).setInterpolator(Glass.SPRING).setDuration(320).start()
     }
+    private var peekPlayer: android.media.MediaPlayer? = null
+    private fun peekVideo(stage: FrameLayout, uri: android.net.Uri) {
+        val tv = android.view.TextureView(this).apply { alpha = 0f; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: android.graphics.Outline) { o.setRoundRect(0, 0, v.width, v.height, dp(20).toFloat()) } }
+            clipToOutline = true }
+        stage.addView(tv, FrameLayout.LayoutParams(0, 0, Gravity.CENTER))
+        fun fit(vw: Int, vh: Int) {
+            if (vw <= 0 || vh <= 0 || stage.width <= 0) return
+            val sc = minOf(stage.width.toFloat() / vw, stage.height.toFloat() / vh)
+            tv.layoutParams = FrameLayout.LayoutParams((vw * sc).toInt(), (vh * sc).toInt(), Gravity.CENTER)
+        }
+        tv.surfaceTextureListener = object : android.view.TextureView.SurfaceTextureListener {
+            override fun onSurfaceTextureAvailable(st: android.graphics.SurfaceTexture, w: Int, h: Int) {
+                releasePeekVideo()
+                val mp = android.media.MediaPlayer(); peekPlayer = mp
+                runCatching {
+                    mp.setDataSource(this@GalleryActivity, uri); mp.setSurface(android.view.Surface(st)); mp.isLooping = true; mp.setVolume(0f, 0f)
+                    mp.setOnVideoSizeChangedListener { _, vw, vh -> fit(vw, vh) }
+                    mp.setOnInfoListener { _, what, _ -> if (what == android.media.MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START) tv.animate().alpha(1f).setDuration(200).start(); false }
+                    mp.setOnErrorListener { _, _, _ -> true }
+                    mp.setOnPreparedListener { if (peekPlayer === it) it.start() }
+                    mp.prepareAsync()
+                }.onFailure { releasePeekVideo() }
+            }
+            override fun onSurfaceTextureSizeChanged(st: android.graphics.SurfaceTexture, w: Int, h: Int) {}
+            override fun onSurfaceTextureDestroyed(st: android.graphics.SurfaceTexture): Boolean { releasePeekVideo(); return true }
+            override fun onSurfaceTextureUpdated(st: android.graphics.SurfaceTexture) {}
+        }
+        // Until the clip reports its size the view is 0×0; a first guess keeps the surface alive meanwhile.
+        stage.post { if (tv.width == 0) tv.layoutParams = FrameLayout.LayoutParams(stage.width, stage.height, Gravity.CENTER) }
+    }
+    private fun releasePeekVideo() { val mp = peekPlayer ?: return; peekPlayer = null; runCatching { mp.stop() }; runCatching { mp.release() } }
     private fun closePeek() {
+        releasePeekVideo()
         peekTip = null
         val layer = peek as? FrameLayout ?: return; peek = null; peekActions = emptyList(); peekHot = null; peekLabel = null
         Glass.blur(root, 0f)

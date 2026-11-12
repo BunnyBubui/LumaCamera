@@ -37,6 +37,8 @@ object ExportJob {
         val parts: (SlowFlow.Result?) -> List<Pair<Composition, File>>,
         val enhance: VideoEnhancer.Plan?, val finalFile: File?, val note: String,
         val cleanup: () -> Unit,
+        /** Backdrop kind per step ([ExportProgress.Backdrop]), so the process page can be rebuilt from anywhere. */
+        val kinds: List<Int> = emptyList(),
     )
 
     class State(val plan: Plan) {
@@ -184,9 +186,13 @@ class ExportService : Service() {
         val s = ExportJob.state
         val pc = s?.percent() ?: -1
         val eta = s?.etaMs?.takeIf { it > 0 }?.let { if (it < 60_000) " · ไม่ถึง 1 นาที" else " · อีก ~${it / 60_000 + 1} นาที" } ?: ""
-        return LiveNotice.progress(this, "Lumora · ส่งออกวิดีโอ", (s?.stepName() ?: "กำลังเริ่ม") + eta, pc, openGallery(),
+        return LiveNotice.progress(this, "Lumora · ส่งออกวิดีโอ", (s?.stepName() ?: "กำลังเริ่ม") + eta, pc, openProcess(),
             PendingIntent.getService(this, 1, Intent(this, ExportService::class.java).setAction(CANCEL), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
     }
+
+    /** While the export runs, the notification opens the process page; once it is done, the gallery. */
+    private fun openProcess() = PendingIntent.getActivity(this, 3, Intent(this, ExportActivity::class.java)
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
 
     private fun openGallery() = PendingIntent.getActivity(this, 2, Intent(this, GalleryActivity::class.java).putExtra("tab", "luma").putExtra("from", "export")
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
@@ -196,4 +202,45 @@ class ExportService : Service() {
     override fun onDestroy() { ExportJob.unlisten(update); super.onDestroy() }
 
     companion object { const val CANCEL = "th.ogay.luma.export.CANCEL" }
+}
+
+/**
+ * The in-app process page for a running export, opened from the live notification (or by trying to edit another
+ * video while one is exporting). It rebuilds the same progress screen the editor showed from [ExportJob.state].
+ */
+class ExportActivity : androidx.activity.ComponentActivity() {
+    private var prog: ExportProgress? = null
+    private val update: () -> Unit = { onJob() }
+    private val main = Handler(Looper.getMainLooper())
+
+    override fun onCreate(state: android.os.Bundle?) {
+        super.onCreate(state)
+        setContentView(android.widget.FrameLayout(this).apply { background = Glass.page() })
+        val s = ExportJob.state
+        if (s == null || !s.active) { openGallery(); finish(); return }
+        val kinds = s.plan.kinds.ifEmpty { List(s.plan.steps.size) { ExportProgress.Backdrop.EDIT } }
+        prog = ExportProgress(this, s.plan.thumb, s.plan.steps, kinds, { ExportJob.cancel() }, { finish() })
+        ExportJob.listen(update); onJob()
+    }
+
+    private fun onJob() {
+        val s = ExportJob.state ?: return finish()
+        if (isDestroyed) return
+        prog?.render(s)
+        when {
+            s.finished -> { ExportJob.unlisten(update); main.postDelayed({ if (!isDestroyed) {
+                notice(if (s.outputs.size > 1) "ส่งออก ${s.outputs.size} คลิปแล้ว" else "ส่งออกคลิปใหม่แล้ว"); openGallery(); finish() } }, 450) }
+            s.error != null -> { ExportJob.unlisten(update); prog?.remove(); prog = null
+                val d = GlassDialog.panel(this, "ส่งออกไม่ได้") { col, dialog ->
+                    col.addView(text("${s.error}\nวิดีโอต้นฉบับยังอยู่ครบ", 14f, Glass.TEXT2).apply { maxLines = 20; ellipsize = null })
+                    col.addView(GlassDialog.actions(this, "ปิด" to { dialog.dismiss() }), android.widget.LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
+                }
+                d.setOnDismissListener { finish() }; d.show() }
+            s.cancelled -> { ExportJob.unlisten(update); notice("ยกเลิกการส่งออกแล้ว"); finish() }
+        }
+    }
+
+    private fun openGallery() = runCatching { startActivity(Intent(this, GalleryActivity::class.java).putExtra("tab", "luma").putExtra("from", "export")) }
+
+    override fun onDestroy() { ExportJob.unlisten(update); main.removeCallbacksAndMessages(null); super.onDestroy() }
 }

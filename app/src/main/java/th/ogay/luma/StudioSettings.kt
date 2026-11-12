@@ -17,7 +17,7 @@ import android.widget.*
  * Full-screen glass settings. Every preference from the old sheet is kept with the same key and values;
  * choices open a glass drop-down at the row, toggles use GlassSwitch, and a search field filters rows live.
  */
-fun Activity.showStudioSettings(rawAvailable: Boolean, changed: () -> Unit) {
+fun Activity.showStudioSettings(rawAvailable: Boolean, closed: () -> Unit = {}, changed: () -> Unit) {
     val prefs = getSharedPreferences("camera", 0)
     val dialog = Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
     val host = FrameLayout(this).apply { background = Glass.page() }
@@ -126,8 +126,6 @@ fun Activity.showStudioSettings(rawAvailable: Boolean, changed: () -> Unit) {
     toggle("ไอคอนสถานะด้านบน", Icons.INFO, "show_status", true)
     section("ตั้งค่ารายโหมด")
     toggle("บุคคล: พรีวิวเบลอสด", Icons.PORTRAIT, "portrait_live", true, "เห็นพื้นหลังเบลอก่อนถ่าย ปิดเพื่อประหยัดแบต")
-    choose("HDR: ช่วงแสง", Icons.HDR, "hdr_spread", listOf("แคบ ±1 EV", "มาตรฐาน ±2 EV", "กว้าง ±3 EV"), listOf("1", "2", "3"), "2", listOf("ฉากแสงต่างกันน้อย", "ใช้ได้ทั่วไป", "ย้อนแสงจัด"))
-    toggle("HDR แบบ native EF2 (ทดลอง)", Icons.HDR, HdrCapture.NATIVE_KEY, note = "รวมภาพ HDR ด้วย OpenCV เพื่อเทียบกับ EF1 ยังไม่มีระบบกันเงาซ้อน")
     toggle("ความละเอียดสูง: ขยายด้วย AI", Icons.AI, "hires_ai", true, "เครื่องไม่เปิดเซนเซอร์ 50 MP ให้แอปอื่น โหมดนี้ถ่ายขนาดสูงสุดที่เปิดให้แล้วขยาย ×2 ด้วย AI ในเครื่อง ปิดไว้ถ้าอยากได้เฉพาะต้นฉบับ")
     choose("ถ่ายเร็ว: เริ่มต้นที่", Icons.FLASH, "quick_kind", listOf("แฟลชเร็ว", "แฟลชเร็วพิเศษ", "ถ่ายเร็ว (กีฬา)"), listOf("FLASH_NIGHT", "FLASH_FAST", "SPORT"), "FLASH_NIGHT", listOf("แฟลชเปิดทุกภาพ", "ไฟฉายค้างไว้ ถ่ายต่อได้ไว", "ชัตเตอร์สั้น ไม่ใช้แฟลช"), listOf(Icons.FLASH, Icons.FLASH, Icons.MOTION))
     choose("ภาพถ่าย: เฟรมเรตบนจอ", Icons.FILM, "fps_lock", listOf("ตามระบบ", "ล็อก 24 fps", "ล็อก 30 fps", "ล็อก 60 fps"), listOf("off", "24", "30", "60"), "off", listOf("ระบบลดเฟรมเองในที่มืด", "จอไม่ต่ำกว่า 24", "จอคงที่ 30", "ลื่นสุด ถ้ากล้องรองรับ"))
@@ -205,6 +203,7 @@ fun Activity.showStudioSettings(rawAvailable: Boolean, changed: () -> Unit) {
     dialog.setContentView(host, ViewGroup.LayoutParams(-1, -1))
     dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE or WindowManager.LayoutParams.SOFT_INPUT_STATE_HIDDEN)
     dialog.setOnKeyListener { _, code, e -> if (code == android.view.KeyEvent.KEYCODE_BACK && e.action == android.view.KeyEvent.ACTION_UP && menu.showing) { menu.dismiss(true); true } else false }
+    dialog.setOnDismissListener { closed() }
     dialog.show()
     if (!Glass.reduced(this)) { column.translationX = dp(40).toFloat(); column.alpha = 0f; column.animate().translationX(0f).alpha(1f).setInterpolator(Glass.EASE).setDuration(380).start() }
 }

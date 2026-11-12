@@ -77,7 +77,7 @@ class CameraActivity : ComponentActivity() {
         val ALL = listOf(
             BarMode("PORTRAIT", "บุคคล", Icons.PORTRAIT), BarMode("PHOTO", "ภาพถ่าย", Icons.PHOTO),
             BarMode("VIDEO", "วิดีโอ", Icons.VIDEO), BarMode("PRO", "โปร", Icons.PRO),
-            BarMode("HDR", "HDR", Icons.HDR), BarMode("HIRES", "ความละเอียดสูง", Icons.HIRES),
+            BarMode("HIRES", "ความละเอียดสูง", Icons.HIRES),
             BarMode("QUICK", "ถ่ายเร็ว", Icons.FLASH), BarMode("FILM", "ฟิล์ม", Icons.FILM))
         /** Flash-fast, flash-quick and sport share one bar entry; a chip picks which. */
         /** Modes where the long-exposure button is offered (they share the multi-frame capture path). */
@@ -255,7 +255,8 @@ class CameraActivity : ComponentActivity() {
         if (output == CaptureOutput.RAW_LOG) { output = CaptureOutput.RAW; prefs.edit().putString("output", output.name).apply() }
         if (output.enhance) output = CaptureOutput.JPEG
         if (prefs.getInt("night_frames", 6) > 12 || prefs.getInt("night_frames", 6) < 6) prefs.edit().putInt("night_frames", 6).apply()
-        mode = runCatching { PhotoMode.valueOf(prefs.getString("photo_mode", "PHOTO")!!) }.getOrDefault(PhotoMode.PHOTO)
+        // HDR is no longer a mode; a phone that was left on it opens in Photo.
+        mode = runCatching { PhotoMode.valueOf(prefs.getString("photo_mode", "PHOTO")!!) }.getOrDefault(PhotoMode.PHOTO).let { if (it == PhotoMode.HDR) PhotoMode.PHOTO else it }
         if (ALL.none { it.key == barKey(mode) }) mode = PhotoMode.PHOTO   // a mode that no longer exists (night, pro video) falls back to photo
         if(ALL.none { it.key == barKey(mode) })mode=PhotoMode.PHOTO
         shutterSound.load(MediaActionSound.SHUTTER_CLICK)
@@ -312,7 +313,7 @@ class CameraActivity : ComponentActivity() {
         // The video screen hands back a photo mode picked on its mode strip.
         prefs.getString("pending_mode", null)?.let { k -> prefs.edit().remove("pending_mode").apply(); if (::modeStrip.isInitialized) { val i = barKeys.indexOf(k); if (i >= 0) { modeStrip.select(i, false); pickBar(i) } else runCatching { PhotoMode.valueOf(k) }.getOrNull()?.let { selectMode(it) } } }
         if (prefs.getBoolean("pending_editor", false)) { prefs.edit().remove("pending_editor").apply(); host.postDelayed({ if (!isDestroyed) openEditor() }, 250) }
-        if (granted() && provider != null && capture == null) bind()
+        if (granted() && provider != null && capture == null && !restingForSettings) bind()
         if (!granted()) showPermission()
     }
     override fun onPause() {
@@ -1931,7 +1932,15 @@ class CameraActivity : ComponentActivity() {
     private var settingsSignature=""
     // Applied once the switch animation has finished, not on every tap, so the settings sheet stays smooth.
     private val applySettings=Runnable{applyAllSettings()}
-    private fun showAllSettings(){settingsSignature=cameraSignature();showStudioSettings(rawAvailable){host.removeCallbacks(applySettings);host.postDelayed(applySettings,420)}}
+    // The camera rests while the settings page covers it (no preview to keep alive, less heat and battery); every
+    // change is applied once, when the page closes, and the camera starts again.
+    private var restingForSettings=false
+    private fun showAllSettings(){settingsSignature=cameraSignature()
+        if(!busy&&!timerRunning){cancelModeSwitch();freezeFrame();provider?.unbindAll();capture=null;boundKey=null;restingForSettings=true}
+        showStudioSettings(rawAvailable,closed={afterSettings()}){if(!restingForSettings){host.removeCallbacks(applySettings);host.postDelayed(applySettings,420)}}}
+    private fun afterSettings(){if(isDestroyed)return;host.removeCallbacks(applySettings)
+        val rebind=cameraSignature()!=settingsSignature;val rested=restingForSettings;restingForSettings=false
+        applyAllSettings();if(rested&&!rebind&&!busy){boundKey=null;bind()}}
     private fun applyAllSettings(){if(isDestroyed)return
         val rebind=cameraSignature()!=settingsSignature;settingsSignature=cameraSignature()
         overlay.gridKind=Grids.kind(prefs)
@@ -2002,7 +2011,8 @@ class CameraActivity : ComponentActivity() {
     }
     private fun loadThumb() {
         luma.fileIo.execute {
-            val latest=luma.shots.latest() ?: return@execute
+            // With the last picture deleted there is nothing to show: the ring and the old thumbnail both go.
+            val latest=luma.shots.latest() ?: run { runOnUiThread { if(!isDestroyed&&::thumbWorking.isInitialized){ thumbWorking.visibility=View.GONE; thumb.setImageDrawable(null); lastThumbUri=null } }; return@execute }
             val working=latest.stage==Stage.CAPTURING||latest.stage==Stage.QUEUED||latest.stage==Stage.RUNNING
             runOnUiThread { if(!isDestroyed&&::thumbWorking.isInitialized) thumbWorking.visibility=if(working) View.VISIBLE else View.GONE }
             val uri=latest.uri

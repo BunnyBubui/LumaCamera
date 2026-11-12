@@ -38,6 +38,8 @@ object EnhanceUi {
     )
 
     fun show(activity: ComponentActivity, shot: Shot) {
+        // A video export holds the GPU and memory; the upscale waits until it is done.
+        if (ExportJob.running()) { activity.notice("กำลังส่งออกวิดีโออยู่ · เพิ่มรายละเอียดภาพได้เมื่อเสร็จแล้ว"); return }
         val prefs = activity.getSharedPreferences("enhance",0)
         var scale = prefs.getInt("scale",2).coerceIn(2,4)
         var model = MODELS.firstOrNull { it.profile.name == prefs.getString("profile","NATURAL") } ?: MODELS[0]
