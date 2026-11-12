@@ -669,13 +669,27 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
             // Row positions are in list coordinates; the list sits inside the card's padding.
             val pad = c.dp(8)
             fun rowAt(y: Float) = (y - pad).let { ly -> rows.indexOfFirst { ly < it.bottom + c.dp(1) }.let { if (it < 0) rows.size - 1 else it } }
-            fun moveHi(i: Int, press: Boolean) {
+            // While the finger is down the highlight is glued to it (no animation to catch up with); rows react only
+            // when the finger crosses into another row; lifting snaps the highlight onto the row.
+            var pressedRow = -1
+            fun moveHi(i: Int, press: Boolean, fingerY: Float = Float.NaN) {
                 val r = rows[i]
-                hi.layoutParams = (hi.layoutParams as FrameLayout.LayoutParams).apply { height = r.height.coerceAtLeast(c.dp(52)) }
-                // First touch lands exactly under the finger; after that the pill glides from row to row.
-                if (hi.alpha < 0.05f) { hi.animate().cancel(); hi.translationY = (r.top - rows[0].top).toFloat(); hi.animate().alpha(1f).setDuration(90).start() }
-                else hi.animate().alpha(1f).translationY((r.top - rows[0].top).toFloat()).setInterpolator(Glass.EASE).setDuration(if (press) 90 else 180).start()
-                rows.forEachIndexed { k, row -> row.animate().scaleX(if (press && k == i) 0.985f else 1f).scaleY(if (press && k == i) 0.985f else 1f).setDuration(120).start() }
+                val rowH = r.height.coerceAtLeast(c.dp(52))
+                if (hi.layoutParams.height != rowH) hi.layoutParams = (hi.layoutParams as FrameLayout.LayoutParams).apply { height = rowH }
+                val rowY = (r.top - rows[0].top).toFloat()
+                hi.animate().cancel()
+                if (press && !fingerY.isNaN()) {
+                    val first = rows[0].top; val last = rows.last().bottom
+                    hi.translationY = ((fingerY - pad) - rowH / 2f - first).coerceIn(0f, (last - first - rowH).toFloat().coerceAtLeast(0f))
+                    hi.alpha = 1f
+                } else if (hi.alpha < 0.05f) { hi.translationY = rowY; hi.animate().alpha(1f).setDuration(90).start() }
+                else hi.animate().alpha(1f).translationY(rowY).setInterpolator(Glass.EASE).setDuration(140).start()
+                val target = if (press) i else -1
+                if (target != pressedRow) {
+                    rows.getOrNull(pressedRow)?.animate()?.scaleX(1f)?.scaleY(1f)?.setDuration(120)?.start()
+                    rows.getOrNull(target)?.animate()?.scaleX(0.985f)?.scaleY(0.985f)?.setDuration(90)?.start()
+                    pressedRow = target
+                }
             }
             var current = selected.coerceIn(0, rows.size - 1)
             // The highlight only appears under a finger; the chosen row already carries its own border.
@@ -684,7 +698,7 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
             fun handle(action: Int, y: Float) {
                 val i = rowAt(y)
                 when (action) {
-                    MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> { if (i != current) { current = i; Glass.tick(menu) }; moveHi(i, true) }
+                    MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> { if (i != current) { current = i; Glass.tick(menu) }; moveHi(i, true, y) }
                     MotionEvent.ACTION_UP -> { moveHi(i, false); choose(i, pick) }
                     MotionEvent.ACTION_CANCEL -> { moveHi(current, false); hi.animate().alpha(0f).setDuration(160).start() }
                 }
@@ -703,7 +717,7 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
                 val inside = lx >= -c.dp(24) && lx <= w + c.dp(24) && ly >= pad + rows[0].top - c.dp(4) && ly <= h + c.dp(12)
                 when {
                     inside -> handle(if (e.actionMasked == MotionEvent.ACTION_DOWN) MotionEvent.ACTION_MOVE else e.actionMasked, ly)
-                    else -> { rows.forEach { it.animate().scaleX(1f).scaleY(1f).setDuration(120).start() }; hi.animate().alpha(0f).setDuration(160).start() }
+                    else -> { rows.getOrNull(pressedRow)?.animate()?.scaleX(1f)?.scaleY(1f)?.setDuration(120)?.start(); pressedRow = -1; hi.animate().alpha(0f).setDuration(160).start() }
                 }
             }
         }
@@ -762,6 +776,12 @@ class GlassSheet(private val host: FrameLayout, private val pivotYFromBottom: ()
     private val modal = ModalScope(host)
     var onClosed: () -> Unit = {}
     val showing get() = card != null
+    /** Room kept clear at the top and bottom (status and navigation bars) when the host runs under them. */
+    var topInset = 0; var bottomInset = 0
+    /** Raised above an earlier sheet when one sheet opens over another, so its shade dims that sheet too. */
+    var lift = 0f
+    /** The screen behind the sheet; it is blurred together with the sheet when something opens on top. */
+    var behind: View? = null
     private var dragged = 0f
     private var pendingRelease: Pair<Boolean, Float>? = null
     /** Follows a finger that is opening the sheet from the dock (see [open] with interactive = true). */
@@ -790,9 +810,9 @@ class GlassSheet(private val host: FrameLayout, private val pivotYFromBottom: ()
         if (card != null) return
         val c = host.context; val d = c.resources.displayMetrics.density
         modal.hide()
-        val s = View(c).apply { setBackgroundColor(0x52000000); alpha = 0f; isClickable = true; contentDescription = "ปิดแผง"; elevation = 14 * d; outlineProvider = null; setOnClickListener { close() } }
+        val s = View(c).apply { setBackgroundColor(0x52000000); alpha = 0f; isClickable = true; contentDescription = "ปิดแผง"; elevation = 14 * d + lift; outlineProvider = null; setOnClickListener { close() } }
         host.addView(s, FrameLayout.LayoutParams(-1, -1)); s.animate().alpha(1f).setDuration(300).start()
-        val sheet = LayerFrame(c).apply { background = c.glass(34, Glass.FILL_STRONG); elevation = 16 * d }
+        val sheet = LayerFrame(c).apply { background = c.glass(34, Glass.FILL_STRONG); elevation = 16 * d + lift }
         val scroll = ScrollView(c).apply { isVerticalScrollBarEnabled = false; overScrollMode = View.OVER_SCROLL_NEVER; clipToPadding = false }
         val b = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL; setPadding(c.dp(16), c.dp(4), c.dp(16), c.dp(20)) }
         val handle = FrameLayout(c).apply { contentDescription = "ปัดลงหรือแตะเพื่อปิด"; isClickable = true; isFocusable = true }
@@ -800,13 +820,21 @@ class GlassSheet(private val host: FrameLayout, private val pivotYFromBottom: ()
         b.addView(handle, LinearLayout.LayoutParams(c.dp(120), c.dp(48)).apply { gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = -c.dp(12) })
         // The whole top of the sheet follows the finger down; a quick flick or about a third of the way closes it, otherwise it springs back.
         sheet.pullZonePx = c.dp(88); sheet.clipToOutline = true
-        sheet.onPull = { end, dy, v -> if (!end) { sheet.translationY = if (dy > 0) dy else dy * 0.2f; pushBack(progress(sheet)) } else release(false, -v) }
+        var pullStep = 0
+        sheet.onPull = { end, dy, v -> if (!end) { sheet.translationY = if (dy > 0) dy else dy * 0.2f; pushBack(progress(sheet))
+                // The same soft ticks as opening, so pulling the sheet down feels like it slides under the finger.
+                val step = (dy / (22 * d)).toInt()
+                if (step != pullStep) { pullStep = step; if (c.getSharedPreferences("camera", 0).getBoolean("haptic", true)) sheet.performHapticFeedback(if (android.os.Build.VERSION.SDK_INT >= 27) HapticFeedbackConstants.TEXT_HANDLE_MOVE else HapticFeedbackConstants.CLOCK_TICK) }
+            } else { pullStep = 0; release(false, -v) } }
         handle.setOnClickListener { close() }
         b.addView(LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }, -1, -2)
         build(b.getChildAt(1) as LinearLayout, this)
+        // A sheet never shrinks while it is open: when its content gets shorter (another choice with a shorter
+        // note) the sheet keeps its height instead of jumping.
+        b.addOnLayoutChangeListener { v, _, top, _, bottom, _, _, _, _ -> val h = bottom - top; if (h > v.minimumHeight) v.minimumHeight = h }
         scroll.addView(b)
         sheet.addView(scroll, -1, -2)
-        host.addView(sheet, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply { setMargins(c.dp(8), c.dp(24), c.dp(8), c.dp(8)) })
+        host.addView(sheet, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply { setMargins(c.dp(8), c.dp(24) + topInset, c.dp(8), c.dp(8) + bottomInset) })
         shade = s; card = sheet; body = b; builder = build
         Sounds.play(c, Sounds.Kind.OPEN)
         if (interactive) {
@@ -823,8 +851,9 @@ class GlassSheet(private val host: FrameLayout, private val pivotYFromBottom: ()
     /** Softens the sheet while a menu sits on top of it, the way the prototype blurs what is behind a menu. */
     fun recede(on: Boolean) {
         val sheet = card ?: return
-        sheet.animate().alpha(if (on) 0.88f else 1f).setDuration(220).start()
-        Glass.blur(sheet, if (on) 3.5f else 0f)
+        // The whole screen behind goes soft evenly, not only the sheet.
+        sheet.animate().alpha(if (on) 0.9f else 1f).scaleX(if (on) 0.97f else 1f).scaleY(if (on) 0.97f else 1f).setDuration(220).start()
+        Glass.blur(sheet, if (on) 6f else 0f); behind?.let { Glass.blur(it, if (on) 6f else 0f) }
     }
     fun refresh() {
         val content = body?.getChildAt(1) as? LinearLayout ?: return; val build = builder ?: return
@@ -866,8 +895,11 @@ class AiRing(context: Context) : View(context) {
     init { visibility = GONE; isClickable = false }
 
     /** [percent] 0..100, or null while the work has not started and nothing can be measured yet. */
-    fun update(percent: Float?, text: String) {
-        caption = text
+    /** Second line under the caption: tiles done and the time left. */
+    private var detail = ""
+    private var eta = ""
+    fun update(percent: Float?, text: String, detailText: String? = null, etaText: String? = null) {
+        caption = text; if (detailText != null) detail = detailText; if (etaText != null) eta = etaText
         visibility = VISIBLE
         if (percent == null) {
             spinning = true; glide?.cancel()
@@ -878,10 +910,11 @@ class AiRing(context: Context) : View(context) {
         target = percent.coerceIn(0f, 100f)
         glide?.cancel()
         if (target < shown || Glass.reduced(context)) { shown = target; invalidate() }
-        else glide = ValueAnimator.ofFloat(shown, target).apply { duration = 1100; interpolator = LinearInterpolator(); addUpdateListener { shown = it.animatedValue as Float; invalidate() }; start() }
+        // Updates come several times a second; each glides on from where the last one is, so the number never stops or jumps.
+        else glide = ValueAnimator.ofFloat(shown, target).apply { duration = 650; interpolator = LinearInterpolator(); addUpdateListener { shown = it.animatedValue as Float; invalidate() }; start() }
         contentDescription = "$text ${String.format(Locale.US, "%.0f", target)} เปอร์เซ็นต์"
     }
-    fun hide() { glide?.cancel(); spin?.cancel(); spin = null; spinning = false; shown = 0f; target = 0f; visibility = GONE }
+    fun hide() { glide?.cancel(); spin?.cancel(); spin = null; spinning = false; shown = 0f; target = 0f; detail = ""; eta = ""; visibility = GONE }
     override fun onDetachedFromWindow() { glide?.cancel(); spin?.cancel(); spin = null; super.onDetachedFromWindow() }
 
     private val glow = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -890,6 +923,8 @@ class AiRing(context: Context) : View(context) {
     private val part = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xd9ffffff.toInt(); textSize = 20 * d; typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD) }
     private val pill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x59000000 }
     private val spark = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Glass.ACCENT }
+    private val etaPill = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val clock = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 2f * d; strokeCap = Paint.Cap.ROUND }
     private val star = android.graphics.Path()
     private var sized = 0
 
@@ -929,10 +964,19 @@ class AiRing(context: Context) : View(context) {
             val w1 = big.measureText(whole); val w2 = part.measureText(rest); val x = cx - (w1 + w2) / 2f; val base = cy + big.textSize * 0.36f
             c.drawText(whole, x, base, big); c.drawText(rest, x + w1 + 1 * d, base, part); big.textAlign = Paint.Align.CENTER
         }
-        if (caption.isNotEmpty()) {
-            val tw = small.measureText(caption); val py = cy + r + 60 * d
-            c.drawRoundRect(cx - tw / 2 - 14 * d, py - 20 * d, cx + tw / 2 + 14 * d, py + 10 * d, 15 * d, 15 * d, pill)
-            c.drawText(caption, cx, py, small)
+        // Same reading order as the video export page: title, what is done and by which model, then the time left in a pill.
+        var y = cy + r + 62 * d
+        if (caption.isNotEmpty()) { big.textSize = 19 * d; c.drawText(caption, cx, y, big); y += 30 * d }
+        if (detail.isNotEmpty()) { small.textSize = 15 * d; small.color = Glass.TEXT2; c.drawText(detail, cx, y, small); y += 26 * d }
+        if (eta.isNotEmpty()) {
+            small.textSize = 15 * d; small.color = Color.WHITE; small.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            val tw = small.measureText(eta); val icon = 22 * d; val w = tw + icon + 40 * d; val l = cx - w / 2
+            etaPill.color = 0x40ff9f45; c.drawRoundRect(l, y, l + w, y + 38 * d, 19 * d, 19 * d, etaPill)
+            val ix = l + 18 * d + icon / 2; val iy = y + 19 * d
+            clock.color = Glass.ACCENT; c.drawCircle(ix, iy, icon * 0.4f, clock)
+            c.drawLine(ix, iy, ix, iy - icon * 0.25f, clock); c.drawLine(ix, iy, ix + icon * 0.18f, iy, clock)
+            small.textAlign = Paint.Align.LEFT; c.drawText(eta, l + 18 * d + icon + 6 * d, iy + 5.5f * d, small); small.textAlign = Paint.Align.CENTER
+            small.typeface = Typeface.DEFAULT
         }
     }
 }
@@ -1146,4 +1190,22 @@ class GlassTabs(context: Context, list: List<Pair<String, String>>, selected: In
         val w = slot(); knob.layout(0, inset, w, b - t - inset); place()
     }
     override fun onDetachedFromWindow() { anim?.cancel(); super.onDetachedFromWindow() }
+}
+
+/**
+ * The camera's glass sheet over any screen: it rises with the same liquid animation and sound, follows the finger
+ * down (with soft ticks) and closes past about a third, and the back gesture closes it. Call [GlassSheet.open].
+ */
+fun androidx.activity.ComponentActivity.screenSheet(): GlassSheet {
+    val decor = window.decorView as FrameLayout
+    val bars = androidx.core.view.ViewCompat.getRootWindowInsets(decor)?.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+    val sheet = GlassSheet(decor, { dp(40).toFloat() })
+    sheet.topInset = bars?.top ?: 0; sheet.bottomInset = bars?.bottom ?: 0
+    sheet.behind = decor.getChildAt(0)
+    // A sheet opened over another sits above it (its shade dims the first one too).
+    sheet.lift = (0 until decor.childCount).maxOfOrNull { decor.getChildAt(it).elevation }?.let { if (it >= 14 * resources.displayMetrics.density) it - 12 * resources.displayMetrics.density else 0f } ?: 0f
+    val back = object : androidx.activity.OnBackPressedCallback(true) { override fun handleOnBackPressed() { sheet.close() } }
+    onBackPressedDispatcher.addCallback(this, back)
+    sheet.onClosed = { back.remove() }
+    return sheet
 }

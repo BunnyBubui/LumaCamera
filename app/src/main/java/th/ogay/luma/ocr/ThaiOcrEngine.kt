@@ -2,6 +2,7 @@ package th.ogay.luma.ocr
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.RectF
 import android.os.Build
 import android.os.Looper
 import android.os.SystemClock
@@ -62,6 +63,41 @@ class ThaiOcrEngine {
             } finally {
                 bgr.release()
             }
+        }
+    }
+
+
+    /**
+     * Returns potential text line rectangles in the exact input bitmap coordinates.
+     * Detector-only: characters are NEVER guessed or replaced. False positive and
+     * missed text boxes remain possible, so this is an enhancement guard, not OCR validation.
+     * Must be called on a background thread.
+     */
+    fun detectTextBoxes(
+        context: Context, bitmap: Bitmap, timeoutMs: Long, isCancelled: () -> Boolean
+    ): List<RectF> {
+        check(Looper.myLooper() != Looper.getMainLooper()) { "ห้ามตรวจข้อความบน main thread" }
+        require(!bitmap.isRecycled) { "Bitmap ถูก recycle แล้ว" }
+        require(timeoutMs > 0)
+        val start = SystemClock.elapsedRealtime()
+        val deadline = if (timeoutMs > Long.MAX_VALUE - start) Long.MAX_VALUE else start + timeoutMs
+        val checkpoint = {
+            if (isCancelled() || Thread.currentThread().isInterrupted) throw ThaiOcrCancelledException()
+            if (SystemClock.elapsedRealtime() > deadline) throw ThaiOcrTimeoutException(timeoutMs)
+        }
+        synchronized(lock) {
+            checkpoint()
+            val ocr = load(context)
+            val bgr = Mat()
+            try {
+                toBgr(bitmap, bgr)
+                return ocr.detectTextQuads(bgr, checkpoint).map { q ->
+                    RectF(minOf(q[0],q[2],q[4],q[6]), minOf(q[1],q[3],q[5],q[7]),
+                        maxOf(q[0],q[2],q[4],q[6]), maxOf(q[1],q[3],q[5],q[7]))
+                }
+            } catch (e: OutOfMemoryError) {
+                throw ThaiOcrException("หน่วยความจำไม่พอสำหรับตรวจตำแหน่งข้อความ", e)
+            } finally { bgr.release() }
         }
     }
 

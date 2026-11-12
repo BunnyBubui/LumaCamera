@@ -59,7 +59,10 @@ object Glass {
     /** Haptic plus a matching soft click: detents tick, taps click, long presses open. */
     /** True while a video records: the phone's vibration motor and click sounds were picked up by the microphone (heard as a "zoom sound"). */
     @Volatile var quiet = false
+    /** When the last feedback played, so the automatic click feedback never doubles a button's own. */
+    @Volatile var lastTick = 0L
     fun tick(v: View, type: Int = HapticFeedbackConstants.CLOCK_TICK) {
+        lastTick = android.os.SystemClock.uptimeMillis()
         if (quiet) return
         if (v.context.getSharedPreferences("camera", 0).getBoolean("haptic", true)) v.performHapticFeedback(type)
         Sounds.play(v.context, when (type) { HapticFeedbackConstants.CLOCK_TICK -> Sounds.Kind.DETENT; HapticFeedbackConstants.LONG_PRESS -> Sounds.Kind.OPEN; else -> Sounds.Kind.TAP })

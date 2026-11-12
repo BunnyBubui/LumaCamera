@@ -59,6 +59,7 @@ fun Activity.installRoot(root: View) {
         insets
     }
     setContentView(root)
+    ClickFeedback.install(this)
 }
 fun zoomText(ratio: Float): String = String.format(Locale.US,
     if (kotlin.math.abs(ratio-ratio.roundToInt()) < 0.025f) "%.0f×" else "%.1f×",ratio)
@@ -152,3 +153,40 @@ fun androidx.camera.view.PreviewView.smallFrame(width: Int): android.graphics.Bi
     android.graphics.Canvas(out).drawBitmap(src, m, android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG))
     src.recycle(); out
 }.getOrNull()
+
+
+/**
+ * Sound and haptic for every tap on anything clickable, in every screen. Buttons that already call
+ * [Glass.tick] keep their own feedback (a tick in the last 150 ms means the button handled it).
+ */
+object ClickFeedback {
+    fun install(a: Activity) {
+        val w = a.window; val inner = w.callback ?: return
+        if (inner is Wrapper) return
+        w.callback = Wrapper(inner)
+    }
+    private class Wrapper(private val inner: android.view.Window.Callback) : android.view.Window.Callback by inner {
+        private var target: View? = null; private var downAt = 0L
+        override fun dispatchTouchEvent(e: android.view.MotionEvent): Boolean {
+            val root = (inner as? Activity)?.window?.decorView
+            if (e.actionMasked == android.view.MotionEvent.ACTION_DOWN && root != null) { target = hit(root, e.rawX.toInt(), e.rawY.toInt()); downAt = android.os.SystemClock.uptimeMillis() }
+            val handled = inner.dispatchTouchEvent(e)
+            if (e.actionMasked == android.view.MotionEvent.ACTION_UP) {
+                val v = target; target = null
+                if (v != null && v.isEnabled && v.isAttachedToWindow && inside(v, e.rawX.toInt(), e.rawY.toInt()) && Glass.lastTick < downAt &&
+                    android.os.SystemClock.uptimeMillis() - downAt < android.view.ViewConfiguration.getLongPressTimeout()) {
+                    v.post { if (Glass.lastTick < downAt) Glass.tick(v, android.view.HapticFeedbackConstants.VIRTUAL_KEY) }
+                }
+            }
+            if (e.actionMasked == android.view.MotionEvent.ACTION_CANCEL) target = null
+            return handled
+        }
+        private fun inside(v: View, x: Int, y: Int): Boolean { val r = android.graphics.Rect(); return v.getGlobalVisibleRect(r) && r.contains(x, y) }
+        /** The deepest visible view under the finger that reacts to clicks. */
+        private fun hit(v: View, x: Int, y: Int): View? {
+            if (v.visibility != View.VISIBLE || v.alpha <= 0.01f || !inside(v, x, y)) return null
+            if (v is android.view.ViewGroup) for (i in v.childCount - 1 downTo 0) hit(v.getChildAt(i), x, y)?.let { return it }
+            return if (v.isClickable && v.hasOnClickListeners()) v else null
+        }
+    }
+}

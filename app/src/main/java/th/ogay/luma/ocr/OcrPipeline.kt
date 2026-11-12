@@ -43,6 +43,15 @@ internal class OcrPipeline(private val detector: Net, private val recognizer: Ne
         return OcrLayout.groupLines(boxes, texts, angle)
     }
 
+    /** Detection-only entry point for restoration guards; does not invent/recognise text. */
+    fun detectTextQuads(bgr: Mat, checkpoint: () -> Unit): List<FloatArray> {
+        checkpoint()
+        val quads = detect(bgr)
+        checkpoint()
+        val angle = OcrLayout.frameAngle(quads)
+        return OcrLayout.keepAfterFragments(quads, angle).map { quads[it] }
+    }
+
     private fun detect(bgr: Mat): List<FloatArray> {
         val h = bgr.rows(); val w = bgr.cols()
         val (rh, rw) = OcrLayout.detSize(h, w)

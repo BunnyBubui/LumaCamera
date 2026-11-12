@@ -59,6 +59,8 @@ class CameraActivity : ComponentActivity() {
     companion object {
         /** Rear camera zoom limit: hardware zoom, then the app's crop enlarged by AI SR1 when the photo is saved. */
         const val SUPER_ZOOM = 500f
+        /** Highest zoom the back camera does itself; above it the app crops (see hardwareMax). */
+        const val MAP_HW = 10f
         /** Front camera: the system stops at 10×; the app crops up to here. */
         const val FRONT_ZOOM = 20f
         /** Fast-shot types: shutter time in nanoseconds and the ISO that keeps the picture usable. */
@@ -77,7 +79,7 @@ class CameraActivity : ComponentActivity() {
         val ALL = listOf(
             BarMode("PORTRAIT", "บุคคล", Icons.PORTRAIT), BarMode("PHOTO", "ภาพถ่าย", Icons.PHOTO),
             BarMode("VIDEO", "วิดีโอ", Icons.VIDEO), BarMode("PRO", "โปร", Icons.PRO),
-            BarMode("HDR", "HDR", Icons.HDR), BarMode("HIRES", "ความละเอียดสูง", Icons.HIRES),
+            BarMode("HIRES", "ความละเอียดสูง", Icons.HIRES),
             BarMode("QUICK", "ถ่ายเร็ว", Icons.FLASH), BarMode("FILM", "ฟิล์ม", Icons.FILM))
         /** Flash-fast, flash-quick and sport share one bar entry; a chip picks which. */
         /** Modes where the long-exposure button is offered (they share the multi-frame capture path). */
@@ -164,10 +166,7 @@ class CameraActivity : ComponentActivity() {
     private lateinit var lookSheet: GlassSheet
     private lateinit var nightCard: LinearLayout
     private lateinit var nightCount: TextView
-    private lateinit var miniCard: FrameLayout
-    private lateinit var miniImage: ImageView
-    private lateinit var miniBox: View
-    private lateinit var miniLabel: TextView
+    private lateinit var zoomMap: ZoomMap
     private lateinit var chips: CenterStrip
     private lateinit var chipFrame: FrameLayout
     private lateinit var dial: LinearLayout
@@ -188,6 +187,16 @@ class CameraActivity : ComponentActivity() {
     private lateinit var editor: GlassSheet
     private val modeLabels = mutableListOf<Pair<TextView, IconView>>()
     private val turner = IconTurner()
+    /** Home (every feature in one place) answers with a photo mode to switch to, if one was chosen. */
+    private val home = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()) { r ->
+        val m = r.data?.getStringExtra(HomeActivity.RESULT_MODE)?.let { runCatching { PhotoMode.valueOf(it) }.getOrNull() } ?: return@registerForActivityResult
+        if (m != mode && ALL.any { it.key == barKey(m) }) selectMode(m)
+    }
+    private fun openHome() {
+        if (busy || timerRunning) return
+        home.launch(Intent(this, HomeActivity::class.java))
+        @Suppress("DEPRECATION") overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out)
+    }
     /** Contents that turn upright in landscape: round buttons' icons, the gallery thumb, lens pills and mode icons. */
     private fun turnables(): List<View> = listOfNotNull(thumb, flipIcon, macroButton.getChildAt(0), nightButton.getChildAt(0), apertureButton, lookButton.getChildAt(0), lockIcon, dialValue) +
         (0 until statusRow.childCount).map { statusRow.getChildAt(it) } +
@@ -227,7 +236,6 @@ class CameraActivity : ComponentActivity() {
     private var nightRunning = false
     private var openChip: String? = null
     private var dialing = false
-    private val lensShots = HashMap<Float, Bitmap>()
     private var renderedZooms: List<Float> = emptyList()
     private val permissions get() = buildList {
         add(Manifest.permission.CAMERA)
@@ -246,7 +254,8 @@ class CameraActivity : ComponentActivity() {
         if (output == CaptureOutput.RAW_LOG) { output = CaptureOutput.RAW; prefs.edit().putString("output", output.name).apply() }
         if (output.enhance) output = CaptureOutput.JPEG
         if (prefs.getInt("night_frames", 6) > 12 || prefs.getInt("night_frames", 6) < 6) prefs.edit().putInt("night_frames", 6).apply()
-        mode = runCatching { PhotoMode.valueOf(prefs.getString("photo_mode", "PHOTO")!!) }.getOrDefault(PhotoMode.PHOTO)
+        // HDR is no longer a mode; a phone that was left on it opens in Photo.
+        mode = runCatching { PhotoMode.valueOf(prefs.getString("photo_mode", "PHOTO")!!) }.getOrDefault(PhotoMode.PHOTO).let { if (it == PhotoMode.HDR) PhotoMode.PHOTO else it }
         if (ALL.none { it.key == barKey(mode) }) mode = PhotoMode.PHOTO   // a mode that no longer exists (night, pro video) falls back to photo
         if(ALL.none { it.key == barKey(mode) })mode=PhotoMode.PHOTO
         shutterSound.load(MediaActionSound.SHUTTER_CLICK)
@@ -255,6 +264,8 @@ class CameraActivity : ComponentActivity() {
         rear = state?.getBoolean("rear",true) ?: true
         ratio = state?.getFloat("zoom",1f) ?: 1f
         buildScreen()
+        // Opening animation on a fresh start from the launcher; the camera keeps starting underneath it.
+        if (state == null && intent?.action == Intent.ACTION_MAIN && !Glass.reduced(this) && prefs.getBoolean("intro", true)) LumoraIntro.show(host)
         onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
             override fun handleOnBackPressed() { if (!closeTopLayer()) { isEnabled = false; onBackPressedDispatcher.onBackPressed(); isEnabled = true } }
         })
@@ -301,7 +312,7 @@ class CameraActivity : ComponentActivity() {
         // The video screen hands back a photo mode picked on its mode strip.
         prefs.getString("pending_mode", null)?.let { k -> prefs.edit().remove("pending_mode").apply(); if (::modeStrip.isInitialized) { val i = barKeys.indexOf(k); if (i >= 0) { modeStrip.select(i, false); pickBar(i) } else runCatching { PhotoMode.valueOf(k) }.getOrNull()?.let { selectMode(it) } } }
         if (prefs.getBoolean("pending_editor", false)) { prefs.edit().remove("pending_editor").apply(); host.postDelayed({ if (!isDestroyed) openEditor() }, 250) }
-        if (granted() && provider != null && capture == null) bind()
+        if (granted() && provider != null && capture == null && !restingForSettings) bind()
         if (!granted()) showPermission()
     }
     override fun onPause() {
@@ -376,6 +387,15 @@ class CameraActivity : ComponentActivity() {
         lockButton = glassButton(lockIcon, 48, "ล็อกความสว่าง") { toggleAeLock() }.apply { alpha = 0f; visibility = View.GONE }
         stage.addView(lockButton, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.START or Gravity.BOTTOM).apply { leftMargin = dp(8); bottomMargin = dp(140) })
 
+        // Top left: Home ("‹ ⌂ หน้าหลัก"), where the main parts of Lumora can be opened.
+        stage.addView(LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL; background = glass(24, Glass.FILL); setPadding(dp(8), 0, dp(16), 0)
+            isClickable = true; contentDescription = "หน้าหลัก"; glassTouch()
+            addView(IconView(this@CameraActivity, HomeActivity.BACK_SMALL, 2.2f).apply { alpha = 0.7f }, dp(14), dp(14))
+            addView(IconView(this@CameraActivity, HomeActivity.HOUSE, 2f).apply { tag = IconTurner.TAG }, LinearLayout.LayoutParams(dp(21), dp(21)).apply { leftMargin = dp(3) })
+            addView(text("หน้าหลัก", 13.5f, Color.WHITE, true).apply { setPadding(dp(7), 0, 0, 0) })
+            setOnClickListener { Glass.tick(this); openHome() }
+        }, FrameLayout.LayoutParams(-2, dp(48), Gravity.TOP or Gravity.START).apply { setMargins(dp(10), dp(6), 0, 0) })
         statusRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL or Gravity.END; contentDescription = "สิ่งที่เปิดอยู่"; minimumWidth = dp(48); isClickable = true; setOnClickListener { openPanel() } }
         stage.addView(statusRow, FrameLayout.LayoutParams(-2, dp(48), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(6), dp(12), 0) })
         banner = text("ล็อก AE/AF", 13f, Glass.ACCENT, true).apply { background = glass(16); setPadding(dp(14), dp(6), dp(14), dp(6)); visibility = View.GONE }
@@ -567,15 +587,8 @@ class CameraActivity : ComponentActivity() {
         stage.addView(nightCard, FrameLayout.LayoutParams(dp(230), -2, Gravity.CENTER))
     }
     private fun buildMiniMap() {
-        miniCard = FrameLayout(this).apply { background = glass(18); setPadding(dp(4), dp(4), dp(4), dp(4)); visibility = View.GONE; contentDescription = "ภาพเต็มจากเลนส์ กรอบคือส่วนที่ซูมอยู่" }
-        val inner = FrameLayout(this).apply { clipToOutline = true; outlineProvider = object : ViewOutlineProvider() { override fun getOutline(v: View, o: Outline) { o.setRoundRect(0, 0, v.width, v.height, dp(14).toFloat()) } } }
-        miniImage = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP; setBackgroundColor(PANEL) }
-        miniBox = View(this).apply { background = android.graphics.drawable.GradientDrawable().apply { setStroke(dp(2), Glass.ACCENT); cornerRadius = dp(3).toFloat() } }
-        miniLabel = text("1×", 10.5f, Color.WHITE, true).apply { background = glass(9); setPadding(dp(7), dp(1), dp(7), dp(1)) }
-        inner.addView(miniImage, -1, -1); inner.addView(miniBox, FrameLayout.LayoutParams(dp(40), dp(54), Gravity.CENTER))
-        inner.addView(miniLabel, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.START).apply { setMargins(dp(4), 0, 0, dp(4)) })
-        miniCard.addView(inner, -1, -1)
-        stage.addView(miniCard, FrameLayout.LayoutParams(dp(98), dp(130), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(56), dp(12), 0) })
+        zoomMap = ZoomMap(this).apply { busy = { this@CameraActivity.busy } }
+        stage.addView(zoomMap, FrameLayout.LayoutParams(dp(98), dp(130), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(56), dp(12), 0) })
     }
     private fun buildDial() {
         dial = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = glass(24); setPadding(dp(16), dp(12), dp(16), dp(12)); visibility = View.GONE }
@@ -808,27 +821,7 @@ class CameraActivity : ComponentActivity() {
     // The chip strip steps aside while the zoom wheel is out (they overlapped in PRO and ถ่ายเร็ว).
     private val hideWheel = Runnable { dialing = false; wheel.show(false); zooms.animate().alpha(1f).setDuration(200).start(); chipFrame.animate().alpha(1f).setDuration(200).start(); refresh() }
     private var lastShot = 0L
-    /** Keeps one small frame per lens for the minimap; never more than two, each about 240 px wide. */
-    private fun snapshotLens(lens: Float) {
-        if (lens != 1f && lens != 3.5f) return
-        val now = android.os.SystemClock.uptimeMillis(); if (now - lastShot < 1500 && lensShots.containsKey(lens)) return; lastShot = now
-        val small = preview.smallFrame(240) ?: return
-        // A frame grabbed while the lens is still switching is black; keep the previous map instead.
-        val px = IntArray(small.width * small.height); small.getPixels(px, 0, small.width, 0, 0, small.width, small.height)
-        val mean = px.sumOf { ((it shr 16 and 255) + (it shr 8 and 255) + (it and 255)).toLong() } / (3L * px.size)
-        if (mean < 4 && lensShots.containsKey(lens)) { small.recycle(); return }
-        lensShots.put(lens, small)?.recycle()
-    }
-    private fun clearLensShots() { lensShots.values.forEach { it.recycle() }; lensShots.clear(); if (::miniImage.isInitialized) miniImage.setImageDrawable(null) }
-    private var miniLive = false
-    private val miniTicker = object : Runnable { override fun run() {
-        if (!miniLive || isDestroyed || miniCard.visibility != View.VISIBLE) { miniLive = false; return }
-        if (!busy) preview.smallFrame(180)?.let { small ->
-            val old = (miniImage.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
-            miniImage.setImageBitmap(small); if (old != null && old !== small && !lensShots.containsValue(old)) old.recycle()
-        }
-        miniCard.postDelayed(this, 160)
-    } }
+    private fun clearLensShots() { if (::zoomMap.isInitialized) zoomMap.clear() }
     private fun refreshZoomUi() {
         val (lo, hi) = range()
         wheel.minZoom = lo; wheel.maxZoom = hi; wheel.lenses = renderedZooms; wheel.zoom = ratio
@@ -841,21 +834,10 @@ class CameraActivity : ComponentActivity() {
             if (lp.width != size) { lp.width = size; lp.height = size; t.layoutParams = lp }
             (t.background as? GlassDrawable)?.fill = if (on) 0x8c000000.toInt() else 0x1affffff
         }
-        // The map is the frame seen while resting exactly on a lens (1× or 3.5×), refreshed every 1.5 s there.
-        if (rear && !busy && !zoomSettling && preview.previewStreamState.value == PreviewView.StreamState.STREAMING)
-            renderedZooms.firstOrNull { (it == 1f || it == 3.5f) && abs(ratio - it) < 0.02f }?.let { snapshotLens(it) }
-        val showMini = ratio > 10f && rear
+        // The map keeps a wide frame of each lens whenever the zoom is still near it, and shows it past 10×.
         val lens = if (ratio >= 3.5f && renderedZooms.contains(3.5f)) 3.5f else 1f
-        if (showMini && miniCard.visibility != View.VISIBLE) { miniCard.visibility = View.VISIBLE; Liquid.show(miniCard, miniCard.width.toFloat(), 0f, false) }
-        if (!showMini && miniCard.visibility == View.VISIBLE) Liquid.hide(miniCard, miniCard.width.toFloat(), 0f, false)
-        if (showMini) {
-            miniLabel.text = zoomText(lens)
-            // When the app does the zoom by cropping, the stream is still the whole lens view, so the small map can be live.
-            if (appCrop() > 1.01f && abs(minOf(ratio, hardwareMax()) - lens) < 0.05f) { if (!miniLive) { miniLive = true; miniCard.post(miniTicker) } }
-            else { miniLive = false; lensShots[lens]?.let { miniImage.setImageBitmap(it) } }
-            val f = (lens / ratio).coerceIn(0.05f, 1f).pow(0.5f); val lp = miniBox.layoutParams
-            lp.width = (dp(90) * f).roundToInt(); lp.height = (dp(120) * f).roundToInt(); miniBox.layoutParams = lp
-        }
+        if (rear && !busy && !zoomSettling && preview.previewStreamState.value == PreviewView.StreamState.STREAMING) zoomMap.capture(preview, ratio, lens)
+        zoomMap.update(if (rear) ratio else 1f, lens, if (appCrop() > 1.01f) minOf(ratio, hardwareMax()) else null)
     }
 
     // ---------- Pro chips and dial ----------
@@ -1107,8 +1089,37 @@ class CameraActivity : ComponentActivity() {
     /** Preview thumbnail source: one small still of the live view, so every look shows real colours. */
     private var lookSampleCache: Bitmap? = null
     private val lookImages = mutableListOf<ImageView>()
-    /** A small still of the live view, read before any colour filter, so every thumbnail starts from the camera's own colour. */
-    private fun grabLookSample(): Bitmap? = preview.smallFrame(132)
+    /**
+     * A small still of the live view in the camera's own colour, so every thumbnail starts from the same picture.
+     * The live view carries the chosen look as a colour filter and Android's snapshot includes it, which made each
+     * thumbnail show its look on top of the current one; the snapshot is turned back by the inverse of that look.
+     * A look that cannot be undone (black and white) keeps the last clean still instead.
+     */
+    private fun grabLookSample(): Bitmap? {
+        val raw = preview.smallFrame(132) ?: return null
+        val active = Films.active(prefs, mode == PhotoMode.FILM)?.first ?: return raw
+        val inverse = invertColor(active) ?: run { raw.recycle(); return null }
+        return runCatching { Bitmap.createBitmap(raw.width, raw.height, Bitmap.Config.ARGB_8888).also { out ->
+            android.graphics.Canvas(out).drawBitmap(raw, 0f, 0f, Paint().apply { colorFilter = ColorMatrixColorFilter(inverse) }) } }.getOrNull().also { raw.recycle() }
+    }
+    /** Inverse of the colour part of a look (3×3 plus offsets), or null when it squeezes colours together too far to undo. */
+    private fun invertColor(cm: ColorMatrix): ColorMatrix? {
+        val m = cm.array
+        val a = doubleArrayOf(m[0].toDouble(), m[1].toDouble(), m[2].toDouble(), m[5].toDouble(), m[6].toDouble(), m[7].toDouble(), m[10].toDouble(), m[11].toDouble(), m[12].toDouble())
+        val det = a[0] * (a[4] * a[8] - a[5] * a[7]) - a[1] * (a[3] * a[8] - a[5] * a[6]) + a[2] * (a[3] * a[7] - a[4] * a[6])
+        if (kotlin.math.abs(det) < 0.02) return null
+        val i = doubleArrayOf(
+            (a[4] * a[8] - a[5] * a[7]) / det, (a[2] * a[7] - a[1] * a[8]) / det, (a[1] * a[5] - a[2] * a[4]) / det,
+            (a[5] * a[6] - a[3] * a[8]) / det, (a[0] * a[8] - a[2] * a[6]) / det, (a[2] * a[3] - a[0] * a[5]) / det,
+            (a[3] * a[7] - a[4] * a[6]) / det, (a[1] * a[6] - a[0] * a[7]) / det, (a[0] * a[4] - a[1] * a[3]) / det)
+        val o = doubleArrayOf(m[4].toDouble(), m[9].toDouble(), m[14].toDouble())
+        fun off(r: Int) = -(i[r * 3] * o[0] + i[r * 3 + 1] * o[1] + i[r * 3 + 2] * o[2])
+        return ColorMatrix(floatArrayOf(
+            i[0].toFloat(), i[1].toFloat(), i[2].toFloat(), 0f, off(0).toFloat(),
+            i[3].toFloat(), i[4].toFloat(), i[5].toFloat(), 0f, off(1).toFloat(),
+            i[6].toFloat(), i[7].toFloat(), i[8].toFloat(), 0f, off(2).toFloat(),
+            0f, 0f, 0f, 1f, 0f))
+    }
     /** While the sheet is open the thumbnails follow the live view, a few times a second. */
     private val lookTicker = object : Runnable { override fun run() {
         if (!lookSheet.showing || isDestroyed) return
@@ -1154,42 +1165,72 @@ class CameraActivity : ComponentActivity() {
         val scroll = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; clipChildren = false; clipToPadding = false; addView(row, -2, -2) }
         val cells = mutableListOf<LookCell>()
         if (mode == PhotoMode.FILM) {
-            // Everything is in reach without sideways hunting: the groups wrap onto two lines (Lumora's own looks first),
-            // and each group shows eight looks at a time in a grid; a swipe turns the page.
+            // One line of film families, one strip of large film cards, and the chosen film named under them.
+            // Each card is the live view in that film's colour, its name on the picture; the chosen card is lit.
             fun current() = Films.byId(prefs.getString("film", null)) ?: Films.default
             var group = current().group
-            val groups = FlowLayout(this).apply { gap = dp(6); setPadding(dp(2), dp(2), dp(2), dp(8)) }
-            val pager = SnapScroll(this); val pages = LinearLayout(this); pager.addView(pages, -2, -2)
-            val dots = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(0, dp(2), 0, dp(4)) }
-            val pw = resources.displayMetrics.widthPixels - dp(48)
-            fun dot(on: Int) { for (i in 0 until dots.childCount) dots.getChildAt(i).alpha = if (i == on) 1f else 0.3f }
-            pager.onPage = { dot(it) }
+            val tabRow = LinearLayout(this).apply { setPadding(dp(2), dp(2), dp(2), dp(2)) }
+            val tabScroll = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; overScrollMode = View.OVER_SCROLL_NEVER; addView(tabRow, -2, -2) }
+            val strip = LinearLayout(this).apply { setPadding(dp(2), dp(12), dp(2), dp(8)); clipChildren = false; clipToPadding = false }
+            val stripScroll = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; clipChildren = false; clipToPadding = false; overScrollMode = View.OVER_SCROLL_NEVER; addView(strip, -2, -2) }
+            val nowName = text("", 16f, Color.WHITE, true)
+            val nowNote = text("", 12.5f, Glass.TEXT2).apply { maxLines = 2; ellipsize = null; minLines = 2 }
+            val nowTraits = FlowLayout(this).apply { gap = dp(6); setPadding(0, dp(8), 0, 0) }
+            val nowBest = text("", 12.5f, Glass.ACCENT, true).apply { setPadding(0, dp(8), 0, 0) }
+            val familyNote = text("", 12f, Glass.TEXT3).apply { setPadding(dp(4), dp(8), dp(4), 0); maxLines = 2; minLines = 2 }
+            val cards = mutableListOf<Pair<Film, FrameLayout>>()
+            fun mark(animate: Boolean) {
+                val cur = current()
+                cards.forEach { (f, card) -> val on = f.id == cur.id
+                    card.foreground = if (on) android.graphics.drawable.GradientDrawable().apply { setStroke(dp(3), Glass.ACCENT); cornerRadius = dp(20).toFloat() } else null
+                    card.getChildAt(card.childCount - 1).visibility = if (on) View.VISIBLE else View.GONE
+                    val sc = if (on) 1f else 0.93f
+                    if (animate) card.animate().scaleX(sc).scaleY(sc).setInterpolator(Glass.SPRING).setDuration(360).start() else { card.scaleX = sc; card.scaleY = sc } }
+                nowName.text = cur.name
+                nowNote.text = cur.note.ifEmpty { "ฟิล์มในกลุ่ม ${cur.group}" }
+                nowTraits.removeAllViews()
+                Films.traits(cur).forEach { tr -> nowTraits.addView(text(tr, 11.5f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; background = glass(12, 0x14ffffff); setPadding(dp(9), 0, dp(9), 0) }, android.view.ViewGroup.LayoutParams(-2, dp(24))) }
+                nowBest.text = "เหมาะกับ: " + Films.bestFor(cur)
+            }
+            fun card(f: Film): FrameLayout = FrameLayout(this).apply {
+                isClickable = true; contentDescription = f.name; glassTouch()
+                clipToOutline = true; outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: Outline) { o.setRoundRect(0, 0, v.width, v.height, dp(20).toFloat()) } }
+                val img = ImageView(this@CameraActivity).apply { scaleType = ImageView.ScaleType.CENTER_CROP; lookSampleCache?.let { setImageBitmap(it) } ?: setBackgroundColor(0xff34506a.toInt()); colorFilter = ColorMatrixColorFilter(Films.matrix(f)) }
+                lookImages += img
+                addView(img, -1, -1)
+                addView(View(this@CameraActivity).apply { background = android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.BOTTOM_TOP, intArrayOf(0xcc000000.toInt(), 0x00000000)) }, FrameLayout.LayoutParams(-1, dp(56), Gravity.BOTTOM))
+                addView(text(f.name.removePrefix("Lumora "), 12.5f, Color.WHITE, true).apply { maxLines = 2; ellipsize = null; setPadding(dp(10), 0, dp(8), dp(9)) }, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+                addView(FrameLayout(this@CameraActivity).apply { background = glass(11, Glass.ACCENT); addView(IconView(this@CameraActivity, Icons.CHECK, 2.6f).apply { tint = Glass.ON_ACCENT }, FrameLayout.LayoutParams(dp(13), dp(13), Gravity.CENTER)) },
+                    FrameLayout.LayoutParams(dp(22), dp(22), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(7), dp(7), 0) })
+                setOnClickListener { prefs.edit().putString("film", f.id).apply(); applyLook(); mark(true); Glass.tick(this) }
+            }
             fun fillFilms() {
-                pages.removeAllViews(); cells.clear(); lookImages.clear(); dots.removeAllViews()
-                val films = Films.inGroup(group)
-                films.chunked(8).forEach { chunk ->
-                    val grid = GridLayout(this).apply { columnCount = 4 }
-                    chunk.forEach { f -> grid.addView(lookThumb(Films.matrix(f), f.name.removePrefix("Lumora "), f.id, cells, 68) { prefs.edit().putString("film", f.id).apply(); applyLook(); markLook(cells, f.id); Glass.tick(pager) },
-                        GridLayout.LayoutParams().apply { width = pw / 4; height = GridLayout.LayoutParams.WRAP_CONTENT; bottomMargin = dp(6) }) }
-                    pages.addView(grid, pw, -2)
-                    dots.addView(View(this).apply { background = glass(3, 0xffffffff.toInt()) }, LinearLayout.LayoutParams(dp(6), dp(6)).apply { setMargins(dp(3), 0, dp(3), 0) })
-                }
-                dots.visibility = if (dots.childCount > 1) View.VISIBLE else View.INVISIBLE
-                markLook(cells, current().id)
-                val page = films.indexOfFirst { it.id == current().id }.coerceAtLeast(0) / 8
-                dot(page); pager.post { pager.go(page, false) }
+                strip.removeAllViews(); cards.clear(); lookImages.clear()
+                Films.inGroup(group).forEach { f -> val c = card(f); cards += f to c; strip.addView(c, LinearLayout.LayoutParams(dp(100), dp(134)).apply { setMargins(dp(4), 0, dp(4), 0) }) }
+                mark(false)
+                val at = cards.indexOfFirst { it.first.id == current().id }
+                stripScroll.post { stripScroll.smoothScrollTo(if (at < 0) 0 else (at * dp(108) - stripScroll.width / 2 + dp(54)).coerceAtLeast(0), 0) }
             }
-            fun styleGroups() { for (i in 0 until groups.childCount) { val t = groups.getChildAt(i) as TextView; val on = t.text == group; val own = t.text == "Lumora"
-                t.setTextColor(if (on) Color.BLACK else if (own) Glass.ACCENT else Glass.TEXT2); t.typeface = if (on || own) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT
-                t.background = glass(17, if (on) 0xebffffff.toInt() else 0x14ffffff) } }
+            // Each family is a rounded square with its own mark; the chosen one is lit.
+            fun styleTabs() { for (i in 0 until tabRow.childCount) { val tile = tabRow.getChildAt(i) as LinearLayout; val g = tile.tag as String; val on = g == group
+                val ink = if (on) Color.BLACK else if (g == "Lumora") Glass.ACCENT else Color.WHITE
+                (tile.getChildAt(0) as IconView).tint = ink
+                (tile.getChildAt(1) as TextView).apply { setTextColor(ink); typeface = if (on) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT }
+                tile.background = glass(22, if (on) 0xebffffff.toInt() else 0x14ffffff) }
+                familyNote.text = Films.groupBlurb(group) }
             Films.groups.forEach { g ->
-                groups.addView(text(g, 12.5f).apply { gravity = Gravity.CENTER; setPadding(dp(13), 0, dp(13), 0); isClickable = true; glassTouch()
-                    setOnClickListener { if (group != g) { group = g; styleGroups(); fillFilms(); Glass.tick(groups) } } }, android.view.ViewGroup.LayoutParams(-2, dp(34)))
+                val tile = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; tag = g; isClickable = true; glassTouch(); contentDescription = "กลุ่ม $g"
+                    setOnClickListener { if (group != g) { group = g; styleTabs(); fillFilms(); Glass.tick(tabRow) } } }
+                tile.addView(IconView(this, Films.groupIcon(g), 1.9f), LinearLayout.LayoutParams(dp(26), dp(26)))
+                tile.addView(text(g, 11f).apply { gravity = Gravity.CENTER; maxLines = 1; setPadding(dp(4), dp(5), dp(4), 0) }, -2, -2)
+                tabRow.addView(tile, LinearLayout.LayoutParams(dp(76), dp(70)).apply { rightMargin = dp(8) })
             }
-            styleGroups()
-            host.addView(groups, -1, -2)
+            styleTabs()
+            host.addView(tabScroll, -1, -2)
+            host.addView(familyNote, -1, -2)
             fillFilms()
-            host.addView(pager, pw, -2); host.addView(dots, -1, dp(14))
+            host.addView(stripScroll, -1, -2)
+            host.addView(LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(6), dp(4), dp(6), dp(6)); addView(nowName); addView(nowNote); addView(nowTraits); addView(nowBest) }, -1, -2)
         } else {
             LOOKS.forEachIndexed { i, name -> row.addView(lookThumb(lookMatrix(i, 0, 0), name, "$i", cells) { prefs.edit().putInt("look", i).apply(); applyLook(); markLook(cells, "$i"); Glass.tick(row) }, LinearLayout.LayoutParams(dp(94), -2)) }
             markLook(cells, "${prefs.getInt("look", 0)}")
@@ -1518,7 +1559,12 @@ class CameraActivity : ComponentActivity() {
     }
     /** Highest ratio the camera zooms by itself; beyond it the app crops the preview and AI SR1 enlarges the photo. */
     private fun cropPref(): Float = (prefs.getString("crop_from", null) ?: if (prefs.getBoolean("software", false)) "1" else "0").toFloatOrNull() ?: 0f
-    private fun hardwareMax(): Float = if(software && rear) minOf(cropFrom, camera?.cameraInfo?.zoomState?.value?.maxZoomRatio ?: cropFrom) else camera?.cameraInfo?.zoomState?.value?.maxZoomRatio ?: 1f
+    /**
+     * The zoom the camera itself does; past it the app crops. On the back camera it stops at 10× (the tele lens with
+     * its sharp in-sensor crop): the stream then stays wider than the picture, so the small map can show it live.
+     */
+    private fun hardwareMax(): Float = (if(software && rear) minOf(cropFrom, camera?.cameraInfo?.zoomState?.value?.maxZoomRatio ?: cropFrom) else camera?.cameraInfo?.zoomState?.value?.maxZoomRatio ?: 1f)
+        .let { if (rear) minOf(it, MAP_HW) else it }
     private fun range(): Pair<Float,Float> {
         val z=camera?.cameraInfo?.zoomState?.value
         val lo=if(software && rear && cropFrom<=1f) 1f else z?.minZoomRatio ?: 1f
@@ -1916,11 +1962,23 @@ class CameraActivity : ComponentActivity() {
     private var settingsSignature=""
     // Applied once the switch animation has finished, not on every tap, so the settings sheet stays smooth.
     private val applySettings=Runnable{applyAllSettings()}
-    private fun showAllSettings(){settingsSignature=cameraSignature();showStudioSettings(rawAvailable){host.removeCallbacks(applySettings);host.postDelayed(applySettings,420)}}
+    // The camera rests while the settings page covers it (no preview to keep alive, less heat and battery); every
+    // change is applied once, when the page closes, and the camera starts again.
+    private var restingForSettings=false
+    private fun showAllSettings(){settingsSignature=cameraSignature()
+        if(!busy&&!timerRunning){cancelModeSwitch();freezeFrame();provider?.unbindAll();capture=null;boundKey=null;restingForSettings=true}
+        showStudioSettings(rawAvailable,closed={afterSettings()}){askLocationIfNeeded();if(!restingForSettings){host.removeCallbacks(applySettings);host.postDelayed(applySettings,420)}}}
+    /** Turning on location tags asks for the permission right away, on the settings page, not later on the camera. */
+    private fun askLocationIfNeeded(){if(prefs.getBoolean("gps",false)&&ContextCompat.checkSelfPermission(this,Manifest.permission.ACCESS_COARSE_LOCATION)!=PackageManager.PERMISSION_GRANTED&&!askedLocation){askedLocation=true;locationRequest.launch(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION,Manifest.permission.ACCESS_FINE_LOCATION))}
+        if(!prefs.getBoolean("gps",false))askedLocation=false}
+    private var askedLocation=false
+    private fun afterSettings(){if(isDestroyed)return;host.removeCallbacks(applySettings)
+        val rebind=cameraSignature()!=settingsSignature;val rested=restingForSettings;restingForSettings=false
+        applyAllSettings();if(rested&&!rebind&&!busy){boundKey=null;bind()}}
     private fun applyAllSettings(){if(isDestroyed)return
         val rebind=cameraSignature()!=settingsSignature;settingsSignature=cameraSignature()
         overlay.gridKind=Grids.kind(prefs)
-        if(prefs.getBoolean("gps",false)&&ContextCompat.checkSelfPermission(this,Manifest.permission.ACCESS_COARSE_LOCATION)!=PackageManager.PERMISSION_GRANTED)locationRequest.launch(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION,Manifest.permission.ACCESS_FINE_LOCATION))
+        if(!askedLocation&&prefs.getBoolean("gps",false)&&ContextCompat.checkSelfPermission(this,Manifest.permission.ACCESS_COARSE_LOCATION)!=PackageManager.PERMISSION_GRANTED)locationRequest.launch(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION,Manifest.permission.ACCESS_FINE_LOCATION))
         if(!rebind){overlay.invalidate();refresh();return}
         run{auto=false;cropFrom=cropPref();software=cropFrom>0f;boundKey=null;overlay.gridKind=Grids.kind(prefs)
         refresh();if(!busy){layoutMask(stage.width,stage.height);bind()}
@@ -1987,7 +2045,8 @@ class CameraActivity : ComponentActivity() {
     }
     private fun loadThumb() {
         luma.fileIo.execute {
-            val latest=luma.shots.latest() ?: return@execute
+            // With the last picture deleted there is nothing to show: the ring and the old thumbnail both go.
+            val latest=luma.shots.latest() ?: run { runOnUiThread { if(!isDestroyed&&::thumbWorking.isInitialized){ thumbWorking.visibility=View.GONE; thumb.setImageDrawable(null); lastThumbUri=null } }; return@execute }
             val working=latest.stage==Stage.CAPTURING||latest.stage==Stage.QUEUED||latest.stage==Stage.RUNNING
             runOnUiThread { if(!isDestroyed&&::thumbWorking.isInitialized) thumbWorking.visibility=if(working) View.VISIBLE else View.GONE }
             val uri=latest.uri

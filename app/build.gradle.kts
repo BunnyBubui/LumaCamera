@@ -47,7 +47,7 @@ android {
         }
     }
     buildTypes {
-        debug { applicationIdSuffix = ".dev" }
+        debug { applicationIdSuffix = ".preview" }
         create("beta") {
             initWith(getByName("release"))
             applicationIdSuffix = ".beta"
