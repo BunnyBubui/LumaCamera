@@ -1312,46 +1312,16 @@ class CameraActivity : ComponentActivity() {
             tabRow.addView(tile, LinearLayout.LayoutParams(dp(76), dp(70)).apply { rightMargin = dp(8) })
         }
 
-        // ---- film-only controls ----
-        val fxTabs = listOf("ความแรง", "เกรน", "ขอบมืด", "ฟุ้งแสง", "รั่วแสง", "กรอบ", "วันที่")
-        var fxTab = 0
-        val fxChipRow = LinearLayout(this).apply { setPadding(dp(2), dp(2), dp(2), dp(2)) }
-        val fxScroll = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; overScrollMode = View.OVER_SCROLL_NEVER; addView(fxChipRow, -2, -2) }
-        val fxBody = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(2), dp(6), dp(2), 0) }
-        fun setFx(n: FilmFx) { fx = n; Films.saveFx(prefs, current(), n); applyLook() }
-        fun slider(values: List<String>, index: Int, hint: String, onIdx: (Int) -> Unit): View = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL
-            val row = LinearLayout(this@CameraActivity).apply { gravity = Gravity.CENTER_VERTICAL }
-            val value = text(values[index], 13f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; background = glass(12, 0x14ffffff) }
-            val sl = GlassSlider(this@CameraActivity).apply { this.values = values; grad = intArrayOf(0xff3a3a3c.toInt(), Glass.ACCENT); this.index = index; contentDescription = hint }
-            sl.onChange = { i -> value.text = values[i]; onIdx(i) }
-            row.addView(sl, LinearLayout.LayoutParams(0, dp(48), 1f)); row.addView(value, LinearLayout.LayoutParams(dp(56), dp(36)).apply { leftMargin = dp(10) })
-            addView(row); addView(text(hint, 12f, Glass.TEXT3).apply { setPadding(dp(4), 0, 0, 0) })
-        }
-        fun choices(names: List<String>, at: Int, hint: String, onPick: (Int) -> Unit): View = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL
-            val row = LinearLayout(this@CameraActivity)
-            names.forEachIndexed { i, n -> row.addView(text(n, 13.5f, if (i == at) Glass.ACCENT else Color.WHITE, i == at).apply { gravity = Gravity.CENTER; isClickable = true; glassTouch(); contentDescription = n
-                background = if (i == at) android.graphics.drawable.GradientDrawable().apply { cornerRadius = dp(20).toFloat(); setColor(0x33ff9f45); setStroke(dp(2), Glass.ACCENT) } else glass(20, 0x14ffffff)
-                setOnClickListener { onPick(i); Glass.tick(this) } }, LinearLayout.LayoutParams(0, dp(44), 1f).apply { if (i > 0) leftMargin = dp(8) }) }
-            addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(2) }); addView(text(hint, 12f, Glass.TEXT3).apply { setPadding(dp(4), dp(6), 0, 0) })
-        }
-        fun stepLabels(max: Int) = (0..10).map { "${it * max / 10}%" }
+        // ---- one control: how strong the film colour is ----
+        val fxBody = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(2), dp(2), dp(2), 0) }
         renderFx = {
             fxBody.removeAllViews()
-            for (i in 0 until fxChipRow.childCount) { val t = fxChipRow.getChildAt(i) as TextView; val on = i == fxTab
-                t.setTextColor(if (on) Glass.ACCENT else Color.WHITE); t.typeface = if (on) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT
-                t.background = if (on) android.graphics.drawable.GradientDrawable().apply { cornerRadius = dp(18).toFloat(); setColor(0x33ff9f45); setStroke(dp(1), Glass.ACCENT) } else glass(18, 0x14ffffff) }
-            fxBody.addView(when (fxTab) {
-                0 -> slider(stepLabels(100), Math.round(fx.strength * 10), "ความแรงของสีฟิล์ม · 0% คือสีเดิมของกล้อง") { setFx(fx.copy(strength = it / 10f)) }
-                1 -> slider(stepLabels(200), Math.round(fx.grain * 5), "เม็ดเกรนของฟิล์มนี้ · 100% คือค่าตามต้นฉบับ") { setFx(fx.copy(grain = it / 5f)) }
-                2 -> slider(stepLabels(200), Math.round(fx.vignette * 5), "ความมืดที่มุมภาพ · 100% คือค่าตามต้นฉบับ") { setFx(fx.copy(vignette = it / 5f)) }
-                3 -> slider(stepLabels(100), Math.round(fx.glow * 10), "แสงฟุ้งสีอุ่นรอบจุดสว่าง แบบฟิล์มที่แสงล้น") { setFx(fx.copy(glow = it / 10f)) }
-                4 -> choices(FilmFx.LEAKS, fx.leak, "แสงรั่วเข้าฟิล์ม ตำแหน่งเปลี่ยนไปทุกรูป") { setFx(fx.copy(leak = it)); renderFx() }
-                5 -> choices(FilmFx.FRAMES, fx.frame, "กรอบแบบรูปอัดหรือแผ่นฟิล์ม ภาพที่บันทึกจะถูกย่อลงในกรอบ") { setFx(fx.copy(frame = it)); renderFx() }
-                else -> choices(listOf("ปิด", "ประทับวันที่"), if (fx.date) 1 else 0, "ตัวเลขสีส้มมุมขวาล่าง แบบกล้องฟิล์มยุค 90") { setFx(fx.copy(date = it == 1)); renderFx() }
-            }, -1, -2)
+            val values = (0..10).map { "${it * 10}%" }
+            val value = text(values[Math.round(fx.strength * 10)], 13f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; background = glass(12, 0x14ffffff) }
+            val sl = GlassSlider(this).apply { this.values = values; grad = intArrayOf(0xff3a3a3c.toInt(), Glass.ACCENT); index = Math.round(fx.strength * 10); contentDescription = "ความแรงของสีฟิล์ม" }
+            sl.onChange = { i -> value.text = values[i]; fx = fx.copy(strength = i / 10f); Films.saveFx(prefs, current(), fx); applyLook() }
+            fxBody.addView(sl, LinearLayout.LayoutParams(0, dp(48), 1f)); fxBody.addView(value, LinearLayout.LayoutParams(dp(56), dp(36)).apply { leftMargin = dp(10) })
         }
-        fxTabs.forEachIndexed { i, n -> fxChipRow.addView(text(n, 13.5f).apply { gravity = Gravity.CENTER; setPadding(dp(16), 0, dp(16), 0); isClickable = true; glassTouch(); contentDescription = n
-            setOnClickListener { fxTab = i; renderFx(); Glass.tick(this) } }, LinearLayout.LayoutParams(-2, dp(38)).apply { rightMargin = dp(8) }) }
 
         // ---- search and saved ----
         fun morph(open: Boolean) {
@@ -1404,7 +1374,6 @@ class CameraActivity : ComponentActivity() {
         detail.addView(LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), 0, dp(8), 0); addView(nowName); addView(nowNote); addView(nowBest.apply { setPadding(0, dp(2), 0, 0) }) }, LinearLayout.LayoutParams(0, -2, 1f))
         detail.addView(heartBtn, dp(40), dp(40))
         box.addView(detail, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(2); bottomMargin = dp(10) })
-        box.addView(fxScroll, -1, -2)
         box.addView(fxBody, -1, -2)
         renderFx()
 
