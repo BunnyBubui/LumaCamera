@@ -387,8 +387,8 @@ class CameraActivity : ComponentActivity() {
         stage.addView(lockButton, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.START or Gravity.BOTTOM).apply { leftMargin = dp(8); bottomMargin = dp(140) })
 
         // Top left: Home, where every part of Lumora can be opened.
-        stage.addView(glassButton(IconView(this, HomeActivity.HOME_ICON, 2f).apply { tag = IconTurner.TAG }, 44, "หน้าหลัก ฟีเจอร์ทั้งหมดของ Lumora") { openHome() },
-            FrameLayout.LayoutParams(dp(44), dp(44), Gravity.TOP or Gravity.START).apply { setMargins(dp(12), dp(8), 0, 0) })
+        stage.addView(glassButton(IconView(this, HomeActivity.HOME_ICON, 2f).apply { tag = IconTurner.TAG }, 48, "หน้าหลัก ฟีเจอร์ทั้งหมดของ Lumora") { openHome() },
+            FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP or Gravity.START).apply { setMargins(dp(10), dp(6), 0, 0) })
         statusRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL or Gravity.END; contentDescription = "สิ่งที่เปิดอยู่"; minimumWidth = dp(48); isClickable = true; setOnClickListener { openPanel() } }
         stage.addView(statusRow, FrameLayout.LayoutParams(-2, dp(48), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(6), dp(12), 0) })
         banner = text("ล็อก AE/AF", 13f, Glass.ACCENT, true).apply { background = glass(16); setPadding(dp(14), dp(6), dp(14), dp(6)); visibility = View.GONE }
