@@ -88,7 +88,7 @@ class InspectView(context: Context) : View(context) {
     fun show(uri:Uri,placeholder:Bitmap?){
         if(source==uri){pageX=0f;invalidate();return}
         show(uri);stale?.free();stale=null
-        if(placeholder!=null&&!placeholder.isRecycled&&width>0&&height>0){aspect=placeholder.width.toFloat()/placeholder.height;val f=box(width,height,aspect,1f,0.5f,0.5f);base=Tile(placeholder,RectF(f),RectF(f),false);tile=base;glowFrom(placeholder)}
+        if(placeholder!=null&&!placeholder.isRecycled&&width>0&&height>0){aspect=placeholder.width.toFloat()/placeholder.height;val f=box(width,height,aspect,1f,0.5f,0.5f);base=Tile(placeholder,RectF(f),RectF(f),false);tile=base;glowFrom(placeholder);revealAnim?.cancel();reveal=1f}
         pageAnim?.cancel();pageX=0f;invalidate()
     }
     /** No picture that way: back to rest. */
@@ -208,7 +208,7 @@ class InspectView(context: Context) : View(context) {
                 working=false
                 if(!dead && uri==source) {
                     // A tile decoded for an older position is still used: it is drawn mapped to where the picture is now.
-                    if(next!=null){aspect=ratio;tile?.takeIf{it!==base}?.free();tile=next;if(base==null&&z<=1.001f){base=next;glowFrom(next.image)};stale?.free();stale=null;invalidate()}
+                    if(next!=null){aspect=ratio;tile?.takeIf{it!==base}?.free();tile=next;if(base==null&&z<=1.001f){base=next;glowFrom(next.image,glow==null)};stale?.free();stale=null;invalidate()}
                     else if(job==version&&tile==null) context.notice("เปิดภาพไม่ได้ อาจถูกลบออกจากแกลเลอรี")
                 } else next?.image?.recycle()
                 if(job!=version) schedule()
@@ -249,24 +249,33 @@ class InspectView(context: Context) : View(context) {
     private var glow:Bitmap?=null
     var reflections=true
     private val glowPaint=Paint(Paint.FILTER_BITMAP_FLAG).apply{colorFilter=ColorMatrixColorFilter(ColorMatrix().apply{setSaturation(1.15f);postConcat(ColorMatrix().apply{setScale(0.5f,0.5f,0.5f,1f)})})}
-    private fun glowFrom(b:Bitmap){
-        if(b.isRecycled||b.width<=0)return
+    // The reflection lights up from the picture's top and bottom edges outward when a picture opens.
+    private var reveal=1f;private var revealAnim:android.animation.ValueAnimator?=null
+    private fun lightUp(){revealAnim?.cancel();if(th.ogay.luma.Glass.reduced(context)){reveal=1f;return};reveal=0f
+        revealAnim=android.animation.ValueAnimator.ofFloat(0f,1f).apply{duration=950;interpolator=android.view.animation.PathInterpolator(0.25f,0.1f,0.25f,1f);addUpdateListener{reveal=it.animatedValue as Float;invalidate()};start()}}
+    // The neighbour's reflection, made once per neighbour picture, so it fades in while a page is turned.
+    private var nGlow:Bitmap?=null;private var nGlowFor:Bitmap?=null
+    private fun neighbourGlow(b:Bitmap):Bitmap?{if(nGlowFor!==b){nGlow?.recycle();nGlow=makeGlow(b);nGlowFor=b};return nGlow}
+    private fun glowFrom(b:Bitmap,animate:Boolean=false){val g=makeGlow(b)?:return;glow?.recycle();glow=g;if(animate)lightUp()}
+    private fun makeGlow(b:Bitmap):Bitmap?{
+        if(b.isRecycled||b.width<=0)return null
         val w=24;val h=(24f*b.height/b.width).toInt().coerceIn(4,96)
-        val small=runCatching{Bitmap.createScaledBitmap(b,w,h,true)}.getOrNull()?:return
+        val small=runCatching{Bitmap.createScaledBitmap(b,w,h,true)}.getOrNull()?:return null
         // Scaled down twice more and back up: a cheap blur that keeps only the broad colours.
         val tiny=runCatching{Bitmap.createScaledBitmap(small,(w/3).coerceAtLeast(2),(h/3).coerceAtLeast(2),true)}.getOrNull()
         val soft=tiny?.let{runCatching{Bitmap.createScaledBitmap(it,w,h,true)}.getOrNull()}?:small
         if(soft!==small)small.recycle();if(tiny!=null&&tiny!==soft)tiny.recycle()
-        glow?.recycle();glow=soft
+        return soft
     }
-    private fun reflect(c:Canvas,r:RectF){
-        val g=glow?:return;if(g.isRecycled||r.width()<=0f)return
-        glowPaint.alpha=(255*(1f-dismissShown)).toInt()
+    /** Mirrors [g] past each edge of [r] at [alpha]; [lit] (0..1) is how far the light has spread from the edges. */
+    private fun reflect(c:Canvas,r:RectF,g:Bitmap?=glow,alpha:Float=1f,lit:Float=reveal){
+        if(g==null||g.isRecycled||r.width()<=0f||alpha<=0f||lit<=0f)return
+        glowPaint.alpha=(255*(1f-dismissShown)*alpha*(0.35f+0.65f*lit)).toInt().coerceIn(0,255)
         val reach=maxOf(height.toFloat(),width.toFloat())
-        if(r.top>0.5f){c.save();c.clipRect(0f,0f,width.toFloat(),r.top);c.scale(1f,-1f,0f,r.top);c.drawBitmap(g,null,RectF(r.left-reach,r.top,r.right+reach,r.bottom),glowPaint);c.restore()}
-        if(r.bottom<height-0.5f){c.save();c.clipRect(0f,r.bottom,width.toFloat(),height.toFloat());c.scale(1f,-1f,0f,r.bottom);c.drawBitmap(g,null,RectF(r.left-reach,r.top,r.right+reach,r.bottom),glowPaint);c.restore()}
-        if(r.left>0.5f){c.save();c.clipRect(0f,r.top,r.left,r.bottom);c.scale(-1f,1f,r.left,0f);c.drawBitmap(g,null,r,glowPaint);c.restore()}
-        if(r.right<width-0.5f){c.save();c.clipRect(r.right,r.top,width.toFloat(),r.bottom);c.scale(-1f,1f,r.right,0f);c.drawBitmap(g,null,r,glowPaint);c.restore()}
+        if(r.top>0.5f){c.save();c.clipRect(0f,r.top*(1f-lit),width.toFloat(),r.top);c.scale(1f,-1f,0f,r.top);c.drawBitmap(g,null,RectF(r.left-reach,r.top,r.right+reach,r.bottom),glowPaint);c.restore()}
+        if(r.bottom<height-0.5f){c.save();c.clipRect(0f,r.bottom,width.toFloat(),r.bottom+(height-r.bottom)*lit);c.scale(1f,-1f,0f,r.bottom);c.drawBitmap(g,null,RectF(r.left-reach,r.top,r.right+reach,r.bottom),glowPaint);c.restore()}
+        if(r.left>0.5f){c.save();c.clipRect(r.left*(1f-lit),r.top,r.left,r.bottom);c.scale(-1f,1f,r.left,0f);c.drawBitmap(g,null,r,glowPaint);c.restore()}
+        if(r.right<width-0.5f){c.save();c.clipRect(r.right,r.top,r.right+(width-r.right)*lit,r.bottom);c.scale(-1f,1f,r.right,0f);c.drawBitmap(g,null,r,glowPaint);c.restore()}
     }
     // ---- Swipe down at fit-to-screen to close the photo, following the finger and springing back if let go early.
     /** Called once the picture has been flicked away (the gallery goes back to the grid). */
@@ -318,7 +327,14 @@ class InspectView(context: Context) : View(context) {
         val cur=box(width,height,aspect,zoom,cx,cy)
         if(dismissY!=0f){val k=1f-0.35f*dismissShown;c.save();c.translate(0f,dismissY*0.85f);c.scale(k,k,width/2f,cur.centerY())}
         // Around the picture, a soft blurred mirror of its own edges, so it never ends in a hard cut.
-        if(reflections&&pageX==0f&&zoom<=1.05f)reflect(c,cur)
+        if(reflections&&zoom<=1.05f){
+            // While a page turns, this picture's reflection slides and fades out as the neighbour's slides and fades in,
+            // so the edges never go black between pictures.
+            val k=(kotlin.math.abs(pageX)/(width+gap)).coerceIn(0f,1f)
+            if(pageX!=0f){c.save();c.translate(pageX,0f)};reflect(c,cur,glow,1f-k);if(pageX!=0f)c.restore()
+            if(pageX!=0f){val dir=if(pageX<0)1 else -1
+                neighbour?.invoke(dir)?.takeIf{!it.isRecycled}?.let{b->val f=box(width,height,b.width.toFloat()/b.height,1f,0.5f,0.5f);f.offset(pageX+dir*(width+gap),0f);reflect(c,f,neighbourGlow(b),k,1f)}}
+        }
         if(pageX!=0f){
             // Page turn: this picture and its neighbour move together, like two prints side by side.
             val dir=if(pageX<0)1 else -1
@@ -334,5 +350,5 @@ class InspectView(context: Context) : View(context) {
         // Soft shade under the floating top bar and bottom actions, so they read on any picture.
         if(dismissShown<1f){fade.alpha=(255*(1f-dismissShown)).toInt();fadeBottom.alpha=fade.alpha
             c.drawRect(0f,0f,width.toFloat(),shadeTop,fade);c.drawRect(0f,height-shadeBottom,width.toFloat(),height.toFloat(),fadeBottom)}}
-    override fun onDetachedFromWindow(){dead=true;glow?.recycle();glow=null;dismissAnim?.cancel();motion?.cancel();pageAnim?.cancel();otherAnim?.cancel();other?.recycle();other=null;runCatching{io.execute{dec?.recycle();dec=null}};io.shutdown();tile?.takeIf{it!==base}?.free();base?.free();stale?.free();stale=null;tile=null;base=null;super.onDetachedFromWindow()}
+    override fun onDetachedFromWindow(){dead=true;glow?.recycle();glow=null;nGlow?.recycle();nGlow=null;nGlowFor=null;revealAnim?.cancel();dismissAnim?.cancel();motion?.cancel();pageAnim?.cancel();otherAnim?.cancel();other?.recycle();other=null;runCatching{io.execute{dec?.recycle();dec=null}};io.shutdown();tile?.takeIf{it!==base}?.free();base?.free();stale?.free();stale=null;tile=null;base=null;super.onDetachedFromWindow()}
 }

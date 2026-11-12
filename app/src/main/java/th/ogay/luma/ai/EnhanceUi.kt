@@ -56,8 +56,8 @@ object EnhanceUi {
                         prefs.edit().putInt("scale",scale).putInt("strength2",strength).apply()
                         val spec = EnhanceSpec(scale,strength)
                         // Progress and "finished" are shown as a notification once the app is left; Android 13+ asks the user first.
-                        if (android.os.Build.VERSION.SDK_INT >= 33 && androidx.core.content.ContextCompat.checkSelfPermission(activity, "android.permission.POST_NOTIFICATIONS") != android.content.pm.PackageManager.PERMISSION_GRANTED)
-                            runCatching { androidx.core.app.ActivityCompat.requestPermissions(activity, arrayOf("android.permission.POST_NOTIFICATIONS"), 71) }
+                        // On Android 16 live updates (OPPO's live alerts) are asked for as well.
+                        th.ogay.luma.LiveNotice.askPermissions(activity)
                         activity.luma.fileIo.execute { if (activity.luma.shots.queueEnhancement(shot.id,spec)) EnhanceWorker.enqueue(activity.applicationContext,shot.id,true) }
                         dialog.dismiss()
                     }

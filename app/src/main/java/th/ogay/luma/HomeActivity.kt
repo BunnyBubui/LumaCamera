@@ -28,6 +28,7 @@ import kotlin.math.sin
  * itself still opens straight into the camera). Photo modes return to the camera in that mode; the editors
  * open Lumora's gallery to choose what to edit.
  */
+@androidx.annotation.OptIn(markerClass = [androidx.camera.camera2.interop.ExperimentalCamera2Interop::class])
 class HomeActivity : ComponentActivity() {
     companion object {
         /** Result extra: the photo mode the camera should switch to. */

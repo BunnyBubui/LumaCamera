@@ -20,7 +20,7 @@ import kotlin.math.roundToInt
  */
 object VideoEnhancer {
     class Plan(val shortSide: Int, val fps: Float, val ai: Boolean)
-    class Progress(val fraction: Float, val etaMs: Long, val frames: Int, val backend: String)
+    class Progress(val fraction: Float, val etaMs: Long, val frames: Int, val total: Int, val backend: String)
 
     /** Output size for [shortSide] keeping the shape (even numbers, coded orientation). */
     fun size(w: Int, h: Int, shortSide: Int): Pair<Int, Int> {
@@ -76,7 +76,7 @@ object VideoEnhancer {
                 prev = big; prevGray = gray; prevPts = pts
                 val done = (pts.toFloat() / total).coerceIn(0.001f, 1f)
                 val spent = SystemClock.elapsedRealtime() - started
-                progress(Progress(done, (spent / done * (1 - done)).toLong(), enc.frames, sr?.backend ?: ""))
+                progress(Progress(done, (spent / done * (1 - done)).toLong(), enc.frames, (total / 1_000_000.0 * plan.fps).toInt(), sr?.backend ?: ""))
             }
             if (cancel.get()) error("cancelled")
             val e = enc ?: error("ไม่พบเฟรมในคลิป")

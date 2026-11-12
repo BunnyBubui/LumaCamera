@@ -114,21 +114,10 @@ class EnhanceWorker(context: Context, params: WorkerParameters) : Worker(context
 
     private fun foreground(shot: Shot, progress: Int): ForegroundInfo {
         val context = applicationContext
-        if (Build.VERSION.SDK_INT >= 26) context.getSystemService(NotificationManager::class.java)
-            .createNotificationChannel(NotificationChannel("luma-ai","ประมวลผลภาพ AI",NotificationManager.IMPORTANCE_LOW))
         val scale = if (shot.aiModel == EnhanceSpec.MODEL) "×${shot.aiScale}" else "SR1"
-        // Asks Android 16 to show this as a live update (OPPO calls it a live alert): a chip in the status bar with the
-        // percentage, and the card kept open on the lock screen. Older systems ignore the extras and show a normal
-        // progress notification.
-        val live = android.os.Bundle().apply { putBoolean("android.requestPromotedOngoing", true); putString("android.shortCriticalText", "$progress%") }
-        val notification = NotificationCompat.Builder(context,"luma-ai")
-            .setSmallIcon(R.drawable.ic_stat_ai).setContentTitle("Lumora · กำลังเพิ่มรายละเอียดภาพ $scale")
-            .setContentText(if (progress == 0) "กำลังเตรียมภาพ" else "ทำไปแล้ว $progress% · แตะเพื่อดู")
-            .setSubText("AI").setCategory(NotificationCompat.CATEGORY_PROGRESS).setContentIntent(openGallery(shot))
-            .setOngoing(true).setOnlyAlertOnce(true).setProgress(100,progress,progress==0).addExtras(live)
-            .setColor(0xffff9f45.toInt())
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel,"ยกเลิก",
-                WorkManager.getInstance(context).createCancelPendingIntent(id)).build()
+        val notification = LiveNotice.progress(context, "Lumora · กำลังเพิ่มรายละเอียดภาพ $scale",
+            if (progress == 0) "กำลังเตรียมภาพ" else "ทำไปแล้ว $progress% · แตะเพื่อดู", if (progress == 0) -1 else progress,
+            openGallery(shot), WorkManager.getInstance(context).createCancelPendingIntent(id))
         val notificationId = 40000+(shot.id.hashCode() and 0x7fff)
         return if (Build.VERSION.SDK_INT >= 29) ForegroundInfo(notificationId,notification,ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
             else ForegroundInfo(notificationId,notification)
@@ -136,15 +125,9 @@ class EnhanceWorker(context: Context, params: WorkerParameters) : Worker(context
 
     /** "Finished" notice, only when the app is not on screen (there the picture itself shows it). */
     private fun finished(shot: Shot) = runCatching {
-        val context = applicationContext
         val state = android.app.ActivityManager.RunningAppProcessInfo(); android.app.ActivityManager.getMyMemoryState(state)
         if (state.importance == android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND) return@runCatching
-        val manager = context.getSystemService(NotificationManager::class.java)
-        if (Build.VERSION.SDK_INT >= 26) manager.createNotificationChannel(NotificationChannel("luma-ai-done","ภาพ AI เสร็จแล้ว",NotificationManager.IMPORTANCE_DEFAULT))
-        manager.notify(50000+(shot.id.hashCode() and 0x7fff), NotificationCompat.Builder(context,"luma-ai-done")
-            .setSmallIcon(R.drawable.ic_stat_ai).setContentTitle("ภาพ AI เสร็จแล้ว")
-            .setContentText("เพิ่มรายละเอียด ×${shot.aiScale.coerceAtLeast(1)} เรียบร้อย · แตะเพื่อเปิดดู")
-            .setAutoCancel(true).setColor(0xffff9f45.toInt()).setContentIntent(openGallery(shot)).build())
+        LiveNotice.done(applicationContext, 50000+(shot.id.hashCode() and 0x7fff), "ภาพ AI เสร็จแล้ว", "เพิ่มรายละเอียด ×${shot.aiScale.coerceAtLeast(1)} เรียบร้อย · แตะเพื่อเปิดดู", openGallery(shot))
     }
 
     companion object {

@@ -202,7 +202,8 @@ object VideoEdit {
      * Transformer with the clip editor's decoder choice: on emulators the Goldfish decoder can drop surface frames,
      * so Android's software decoder goes first and only one frame is in flight. Phones keep the normal decoders.
      */
-    fun transformer(c: Context, listener: Transformer.Listener): Transformer {
+    /** [looper] runs the export and its callbacks on that thread (the export job); default is the caller's. */
+    fun transformer(c: Context, listener: Transformer.Listener, looper: android.os.Looper? = null): Transformer {
         val emulator = Util.isRunningOnEmulator()
         val selector = MediaCodecSelector { mime, secure, tunnel ->
             val codecs = MediaCodecSelector.DEFAULT.getDecoderInfos(mime, secure, tunnel)
@@ -216,6 +217,7 @@ object VideoEdit {
             }
         }
         return Transformer.Builder(c).setAssetLoaderFactory(DefaultAssetLoaderFactory(c, decoder, Clock.DEFAULT, null))
-            .setMaxDelayBetweenMuxerSamplesMs(90_000).setVideoMimeType(MimeTypes.VIDEO_H264).setPortraitEncodingEnabled(true).addListener(listener).build()
+            .setMaxDelayBetweenMuxerSamplesMs(90_000).setVideoMimeType(MimeTypes.VIDEO_H264).setPortraitEncodingEnabled(true).addListener(listener)
+            .apply { if (looper != null) setLooper(looper) }.build()
     }
 }
