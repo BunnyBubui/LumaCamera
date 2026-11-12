@@ -309,6 +309,7 @@ class CameraActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume(); orientation.enable(); loadThumb();if(modePending){modeHandler.removeCallbacks(switchMode);modeHandler.post(switchMode)}
         if (::modeStrip.isInitialized) syncModeStrip(false)
+        calmBackdrop()
         // The video screen hands back a photo mode picked on its mode strip.
         prefs.getString("pending_mode", null)?.let { k -> prefs.edit().remove("pending_mode").apply(); if (::modeStrip.isInitialized) { val i = barKeys.indexOf(k); if (i >= 0) { modeStrip.select(i, false); pickBar(i) } else runCatching { PhotoMode.valueOf(k) }.getOrNull()?.let { selectMode(it) } } }
         if (prefs.getBoolean("pending_editor", false)) { prefs.edit().remove("pending_editor").apply(); host.postDelayed({ if (!isDestroyed) openEditor() }, 250) }
@@ -325,7 +326,7 @@ class CameraActivity : ComponentActivity() {
         timerGeneration++;timerRunning=false;hideCountdown()
         menu.dismiss(false)
         zooms.finish(); wheel.removeCallbacks(hideWheel); hideWheel.run()
-        clearLensShots()
+        // The zoom map keeps its 1× picture across leaving the app; clearing it here left the map empty on return.
         portraitLive?.stop(); qr?.stop()
         super.onPause()
     }
@@ -351,6 +352,9 @@ class CameraActivity : ComponentActivity() {
         panel = GlassSheet(host, { handlePivot() }) { pushBack(it) }
         editor = GlassSheet(host, { handlePivot() }) { pushBack(it) }
         lookSheet = GlassSheet(host, { handlePivot() }) { pushBack(it) }
+        // Safety net: once every sheet and menu is gone the backdrop must be gone too, whatever animation ran late.
+        val calm: () -> Unit = { host.postDelayed({ calmBackdrop() }, 520) }
+        panel.onClosed = calm; editor.onClosed = calm; lookSheet.onClosed = calm
         // One modal owner: a menu over a sheet adds no second dim, and the sheet below keeps its push-back.
         menu.over = { panel.showing || editor.showing || lookSheet.showing }
         // Portrait stacks the dock under the viewfinder; landscape puts it beside, so the viewfinder keeps its height.
@@ -547,15 +551,26 @@ class CameraActivity : ComponentActivity() {
         }
         val k = f.coerceIn(0f, 1f)
         if (k > 0.001f) {
-            if (b.visibility != View.VISIBLE) { b.visibility = View.VISIBLE; pushedBack = true }
+            // pushedBack must be set on every call: a late call that cancelled the fade-out used to leave the
+            // backdrop half visible with pushedBack false, so the closing call skipped it and the screen stayed dark.
+            b.visibility = View.VISIBLE; pushedBack = true
             // The live view keeps playing behind the sheet; it is only dimmed and softened a little.
             // Only dimmed: blurring the whole column (live preview included) on every frame made sheets and menus stutter.
             b.animate().cancel(); b.alpha = 0.5f * k
-        } else if (pushedBack) {
+        } else if (pushedBack || b.visibility == View.VISIBLE) {
             pushedBack = false
             columnView?.let { Glass.blur(it, 0f) }
             b.animate().alpha(0f).setDuration(if (Glass.reduced(this)) 0 else 200).withEndAction { if (!pushedBack) b.visibility = View.GONE }.start()
         }
+    }
+    /** Clears the dimmed backdrop at once when nothing that needs it is open (after a sheet closes and on resume). */
+    private fun calmBackdrop() {
+        if (isDestroyed || !::panel.isInitialized) return
+        if (panel.showing || editor.showing || lookSheet.showing || menu.showing) return
+        pushAnim?.cancel(); pushAnim = null
+        backdrop?.let { it.animate().cancel(); it.alpha = 0f; it.visibility = View.GONE }
+        pushedBack = false
+        columnView?.let { Glass.blur(it, 0f) }
     }
     private var pushAnim: android.animation.ValueAnimator? = null
     /** Menus without a sheet fade the backdrop in and out instead of snapping. */
@@ -821,7 +836,6 @@ class CameraActivity : ComponentActivity() {
     // The chip strip steps aside while the zoom wheel is out (they overlapped in PRO and ถ่ายเร็ว).
     private val hideWheel = Runnable { dialing = false; wheel.show(false); zooms.animate().alpha(1f).setDuration(200).start(); chipFrame.animate().alpha(1f).setDuration(200).start(); refresh() }
     private var lastShot = 0L
-    private fun clearLensShots() { if (::zoomMap.isInitialized) zoomMap.clear() }
     private fun refreshZoomUi() {
         val (lo, hi) = range()
         wheel.minZoom = lo; wheel.maxZoom = hi; wheel.lenses = renderedZooms; wheel.zoom = ratio
