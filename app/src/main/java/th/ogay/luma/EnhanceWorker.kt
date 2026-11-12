@@ -106,7 +106,7 @@ class EnhanceWorker(context: Context, params: WorkerParameters) : Worker(context
             db.aiState(key,shot.aiToken,Stage.FAILED,error=e.localizedMessage ?: "สร้างภาพ AI ไม่สำเร็จ")
         } catch (e: LinkageError) {
             db.aiState(key,shot.aiToken,Stage.FAILED,error="โหลดระบบ AI ไม่สำเร็จ: ${e.javaClass.simpleName}")
-        } finally { temp.delete() }
+        } finally { temp.delete(); th.ogay.luma.ai.AiProgress.end(key) }
         return Result.failure()
     }
 
@@ -119,7 +119,7 @@ class EnhanceWorker(context: Context, params: WorkerParameters) : Worker(context
         val context = applicationContext
         val scale = when (shot.aiModel) { EnhanceSpec.NATURAL_MODEL -> "Natural ×${shot.aiScale}"; EnhanceSpec.MODEL -> "Classic ×${shot.aiScale}"; else -> "SR1" }
         val notification = LiveNotice.progress(context, "Lumora · กำลังเพิ่มรายละเอียดภาพ $scale",
-            if (progress == 0) "กำลังเตรียมภาพ" else "ทำไปแล้ว $progress% · แตะเพื่อดู", if (progress == 0) -1 else progress,
+            if (progress == 0) "กำลังเตรียมภาพ" else "ทำไปแล้ว $progress%" + th.ogay.luma.ai.AiProgress.etaText().let { if (it.isEmpty()) "" else " · $it" }, if (progress == 0) -1 else progress,
             openGallery(shot), WorkManager.getInstance(context).createCancelPendingIntent(id))
         val notificationId = 40000+(shot.id.hashCode() and 0x7fff)
         return if (Build.VERSION.SDK_INT >= 29) ForegroundInfo(notificationId,notification,ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)

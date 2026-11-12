@@ -164,10 +164,7 @@ class CameraActivity : ComponentActivity() {
     private lateinit var lookSheet: GlassSheet
     private lateinit var nightCard: LinearLayout
     private lateinit var nightCount: TextView
-    private lateinit var miniCard: FrameLayout
-    private lateinit var miniImage: ImageView
-    private lateinit var miniBox: View
-    private lateinit var miniLabel: TextView
+    private lateinit var zoomMap: ZoomMap
     private lateinit var chips: CenterStrip
     private lateinit var chipFrame: FrameLayout
     private lateinit var dial: LinearLayout
@@ -237,7 +234,6 @@ class CameraActivity : ComponentActivity() {
     private var nightRunning = false
     private var openChip: String? = null
     private var dialing = false
-    private val lensShots = HashMap<Float, Bitmap>()
     private var renderedZooms: List<Float> = emptyList()
     private val permissions get() = buildList {
         add(Manifest.permission.CAMERA)
@@ -587,15 +583,8 @@ class CameraActivity : ComponentActivity() {
         stage.addView(nightCard, FrameLayout.LayoutParams(dp(230), -2, Gravity.CENTER))
     }
     private fun buildMiniMap() {
-        miniCard = FrameLayout(this).apply { background = glass(18); setPadding(dp(4), dp(4), dp(4), dp(4)); visibility = View.GONE; contentDescription = "ภาพเต็มจากเลนส์ กรอบคือส่วนที่ซูมอยู่" }
-        val inner = FrameLayout(this).apply { clipToOutline = true; outlineProvider = object : ViewOutlineProvider() { override fun getOutline(v: View, o: Outline) { o.setRoundRect(0, 0, v.width, v.height, dp(14).toFloat()) } } }
-        miniImage = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP; setBackgroundColor(PANEL) }
-        miniBox = View(this).apply { background = android.graphics.drawable.GradientDrawable().apply { setStroke(dp(2), Glass.ACCENT); cornerRadius = dp(3).toFloat() } }
-        miniLabel = text("1×", 10.5f, Color.WHITE, true).apply { background = glass(9); setPadding(dp(7), dp(1), dp(7), dp(1)) }
-        inner.addView(miniImage, -1, -1); inner.addView(miniBox, FrameLayout.LayoutParams(dp(40), dp(54), Gravity.CENTER))
-        inner.addView(miniLabel, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.START).apply { setMargins(dp(4), 0, 0, dp(4)) })
-        miniCard.addView(inner, -1, -1)
-        stage.addView(miniCard, FrameLayout.LayoutParams(dp(98), dp(130), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(56), dp(12), 0) })
+        zoomMap = ZoomMap(this).apply { busy = { this@CameraActivity.busy } }
+        stage.addView(zoomMap, FrameLayout.LayoutParams(dp(98), dp(130), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(56), dp(12), 0) })
     }
     private fun buildDial() {
         dial = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = glass(24); setPadding(dp(16), dp(12), dp(16), dp(12)); visibility = View.GONE }
@@ -828,27 +817,7 @@ class CameraActivity : ComponentActivity() {
     // The chip strip steps aside while the zoom wheel is out (they overlapped in PRO and ถ่ายเร็ว).
     private val hideWheel = Runnable { dialing = false; wheel.show(false); zooms.animate().alpha(1f).setDuration(200).start(); chipFrame.animate().alpha(1f).setDuration(200).start(); refresh() }
     private var lastShot = 0L
-    /** Keeps one small frame per lens for the minimap; never more than two, each about 240 px wide. */
-    private fun snapshotLens(lens: Float) {
-        if (lens != 1f && lens != 3.5f) return
-        val now = android.os.SystemClock.uptimeMillis(); if (now - lastShot < 1500 && lensShots.containsKey(lens)) return; lastShot = now
-        val small = preview.smallFrame(240) ?: return
-        // A frame grabbed while the lens is still switching is black; keep the previous map instead.
-        val px = IntArray(small.width * small.height); small.getPixels(px, 0, small.width, 0, 0, small.width, small.height)
-        val mean = px.sumOf { ((it shr 16 and 255) + (it shr 8 and 255) + (it and 255)).toLong() } / (3L * px.size)
-        if (mean < 4 && lensShots.containsKey(lens)) { small.recycle(); return }
-        lensShots.put(lens, small)?.recycle()
-    }
-    private fun clearLensShots() { lensShots.values.forEach { it.recycle() }; lensShots.clear(); if (::miniImage.isInitialized) miniImage.setImageDrawable(null) }
-    private var miniLive = false
-    private val miniTicker = object : Runnable { override fun run() {
-        if (!miniLive || isDestroyed || miniCard.visibility != View.VISIBLE) { miniLive = false; return }
-        if (!busy) preview.smallFrame(180)?.let { small ->
-            val old = (miniImage.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap
-            miniImage.setImageBitmap(small); if (old != null && old !== small && !lensShots.containsValue(old)) old.recycle()
-        }
-        miniCard.postDelayed(this, 160)
-    } }
+    private fun clearLensShots() { if (::zoomMap.isInitialized) zoomMap.clear() }
     private fun refreshZoomUi() {
         val (lo, hi) = range()
         wheel.minZoom = lo; wheel.maxZoom = hi; wheel.lenses = renderedZooms; wheel.zoom = ratio
@@ -861,21 +830,10 @@ class CameraActivity : ComponentActivity() {
             if (lp.width != size) { lp.width = size; lp.height = size; t.layoutParams = lp }
             (t.background as? GlassDrawable)?.fill = if (on) 0x8c000000.toInt() else 0x1affffff
         }
-        // The map is the frame seen while resting exactly on a lens (1× or 3.5×), refreshed every 1.5 s there.
-        if (rear && !busy && !zoomSettling && preview.previewStreamState.value == PreviewView.StreamState.STREAMING)
-            renderedZooms.firstOrNull { (it == 1f || it == 3.5f) && abs(ratio - it) < 0.02f }?.let { snapshotLens(it) }
-        val showMini = ratio > 10f && rear
+        // The map keeps a wide frame of each lens whenever the zoom is still near it, and shows it past 10×.
         val lens = if (ratio >= 3.5f && renderedZooms.contains(3.5f)) 3.5f else 1f
-        if (showMini && miniCard.visibility != View.VISIBLE) { miniCard.visibility = View.VISIBLE; Liquid.show(miniCard, miniCard.width.toFloat(), 0f, false) }
-        if (!showMini && miniCard.visibility == View.VISIBLE) Liquid.hide(miniCard, miniCard.width.toFloat(), 0f, false)
-        if (showMini) {
-            miniLabel.text = zoomText(lens)
-            // When the app does the zoom by cropping, the stream is still the whole lens view, so the small map can be live.
-            if (appCrop() > 1.01f && abs(minOf(ratio, hardwareMax()) - lens) < 0.05f) { if (!miniLive) { miniLive = true; miniCard.post(miniTicker) } }
-            else { miniLive = false; lensShots[lens]?.let { miniImage.setImageBitmap(it) } }
-            val f = (lens / ratio).coerceIn(0.05f, 1f).pow(0.5f); val lp = miniBox.layoutParams
-            lp.width = (dp(90) * f).roundToInt(); lp.height = (dp(120) * f).roundToInt(); miniBox.layoutParams = lp
-        }
+        if (rear && !busy && !zoomSettling && preview.previewStreamState.value == PreviewView.StreamState.STREAMING) zoomMap.capture(preview, ratio, lens)
+        zoomMap.update(if (rear) ratio else 1f, lens, appCrop() > 1.01f && abs(minOf(ratio, hardwareMax()) - lens) < 0.05f)
     }
 
     // ---------- Pro chips and dial ----------
@@ -1127,8 +1085,37 @@ class CameraActivity : ComponentActivity() {
     /** Preview thumbnail source: one small still of the live view, so every look shows real colours. */
     private var lookSampleCache: Bitmap? = null
     private val lookImages = mutableListOf<ImageView>()
-    /** A small still of the live view, read before any colour filter, so every thumbnail starts from the camera's own colour. */
-    private fun grabLookSample(): Bitmap? = preview.smallFrame(132)
+    /**
+     * A small still of the live view in the camera's own colour, so every thumbnail starts from the same picture.
+     * The live view carries the chosen look as a colour filter and Android's snapshot includes it, which made each
+     * thumbnail show its look on top of the current one; the snapshot is turned back by the inverse of that look.
+     * A look that cannot be undone (black and white) keeps the last clean still instead.
+     */
+    private fun grabLookSample(): Bitmap? {
+        val raw = preview.smallFrame(132) ?: return null
+        val active = Films.active(prefs, mode == PhotoMode.FILM)?.first ?: return raw
+        val inverse = invertColor(active) ?: run { raw.recycle(); return null }
+        return runCatching { Bitmap.createBitmap(raw.width, raw.height, Bitmap.Config.ARGB_8888).also { out ->
+            android.graphics.Canvas(out).drawBitmap(raw, 0f, 0f, Paint().apply { colorFilter = ColorMatrixColorFilter(inverse) }) } }.getOrNull().also { raw.recycle() }
+    }
+    /** Inverse of the colour part of a look (3×3 plus offsets), or null when it squeezes colours together too far to undo. */
+    private fun invertColor(cm: ColorMatrix): ColorMatrix? {
+        val m = cm.array
+        val a = doubleArrayOf(m[0].toDouble(), m[1].toDouble(), m[2].toDouble(), m[5].toDouble(), m[6].toDouble(), m[7].toDouble(), m[10].toDouble(), m[11].toDouble(), m[12].toDouble())
+        val det = a[0] * (a[4] * a[8] - a[5] * a[7]) - a[1] * (a[3] * a[8] - a[5] * a[6]) + a[2] * (a[3] * a[7] - a[4] * a[6])
+        if (kotlin.math.abs(det) < 0.02) return null
+        val i = doubleArrayOf(
+            (a[4] * a[8] - a[5] * a[7]) / det, (a[2] * a[7] - a[1] * a[8]) / det, (a[1] * a[5] - a[2] * a[4]) / det,
+            (a[5] * a[6] - a[3] * a[8]) / det, (a[0] * a[8] - a[2] * a[6]) / det, (a[2] * a[3] - a[0] * a[5]) / det,
+            (a[3] * a[7] - a[4] * a[6]) / det, (a[1] * a[6] - a[0] * a[7]) / det, (a[0] * a[4] - a[1] * a[3]) / det)
+        val o = doubleArrayOf(m[4].toDouble(), m[9].toDouble(), m[14].toDouble())
+        fun off(r: Int) = -(i[r * 3] * o[0] + i[r * 3 + 1] * o[1] + i[r * 3 + 2] * o[2])
+        return ColorMatrix(floatArrayOf(
+            i[0].toFloat(), i[1].toFloat(), i[2].toFloat(), 0f, off(0).toFloat(),
+            i[3].toFloat(), i[4].toFloat(), i[5].toFloat(), 0f, off(1).toFloat(),
+            i[6].toFloat(), i[7].toFloat(), i[8].toFloat(), 0f, off(2).toFloat(),
+            0f, 0f, 0f, 1f, 0f))
+    }
     /** While the sheet is open the thumbnails follow the live view, a few times a second. */
     private val lookTicker = object : Runnable { override fun run() {
         if (!lookSheet.showing || isDestroyed) return

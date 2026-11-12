@@ -46,6 +46,8 @@ object ExportJob {
         @Volatile var frames = 0; @Volatile var totalFrames = 0
         @Volatile var finished = false; @Volatile var error: String? = null; @Volatile var cancelled = false
         @Volatile var outputs: List<File> = emptyList()
+        /** Gallery addresses of the saved clips, so the gallery can open the new one rather than the original. */
+        @Volatile var uris: List<android.net.Uri> = emptyList()
         val active get() = !finished && error == null && !cancelled
         fun percent(): Int {
             val w = plan.weights; val total = w.sum().coerceAtLeast(0.001f)
@@ -134,8 +136,8 @@ object ExportJob {
 
     private fun publish(app: Context, s: State, files: List<File>) {
         s.stage = s.plan.stageSave; s.fraction = 0.3f; s.detail = "กำลังบันทึกไฟล์"; changed()
-        runCatching { files.forEach { f -> MediaLedger.publishVideo(app, f, f.name, s.plan.note) } }
-            .onSuccess { s.outputs = files; s.stage = s.plan.steps.size; s.fraction = 0f; s.finished = true; s.detail = "เสร็จแล้ว"; end() }
+        runCatching { files.map { f -> MediaLedger.publishVideo(app, f, f.name, s.plan.note) } }
+            .onSuccess { u -> s.uris = u; s.outputs = files; s.stage = s.plan.steps.size; s.fraction = 0f; s.finished = true; s.detail = "เสร็จแล้ว"; end() }
             .onFailure { fail(s, "บันทึกไฟล์ไม่ได้ · ${it.localizedMessage}") }
     }
 
@@ -229,7 +231,7 @@ class ExportActivity : androidx.activity.ComponentActivity() {
         prog?.render(s)
         when {
             s.finished -> { ExportJob.unlisten(update); main.postDelayed({ if (!isDestroyed) {
-                notice(if (s.outputs.size > 1) "ส่งออก ${s.outputs.size} คลิปแล้ว" else "ส่งออกคลิปใหม่แล้ว"); openGallery(); finish() } }, 450) }
+                notice(if (s.outputs.size > 1) "ส่งออก ${s.outputs.size} คลิปแล้ว" else "ส่งออกคลิปใหม่แล้ว"); openGallery(s.uris.lastOrNull()); finish() } }, 450) }
             s.error != null -> { ExportJob.unlisten(update); prog?.remove(); prog = null
                 val d = GlassDialog.panel(this, "ส่งออกไม่ได้") { col, dialog ->
                     col.addView(text("${s.error}\nวิดีโอต้นฉบับยังอยู่ครบ", 14f, Glass.TEXT2).apply { maxLines = 20; ellipsize = null })
@@ -240,7 +242,8 @@ class ExportActivity : androidx.activity.ComponentActivity() {
         }
     }
 
-    private fun openGallery() = runCatching { startActivity(Intent(this, GalleryActivity::class.java).putExtra("tab", "luma").putExtra("from", "export")) }
+    private fun openGallery(uri: android.net.Uri? = null) = runCatching { startActivity(Intent(this, GalleryActivity::class.java).putExtra("tab", "luma").putExtra("from", "export")
+        .apply { if (uri != null) putExtra("open", "ledger:$uri") }) }
 
     override fun onDestroy() { ExportJob.unlisten(update); main.removeCallbacksAndMessages(null); super.onDestroy() }
 }

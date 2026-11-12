@@ -948,7 +948,9 @@ class VideoEditorActivity : ComponentActivity() {
         prog?.render(s)
         when {
             s.finished -> { ExportJob.unlisten(jobListener); handler.postDelayed({
-                hideProgress(); notice(if (s.outputs.size > 1) "ส่งออก ${s.outputs.size} คลิปแล้ว · ต้นฉบับยังอยู่" else "ส่งออกคลิปใหม่แล้ว · ต้นฉบับยังอยู่"); setResult(RESULT_OK); finish() }, 450) }
+                hideProgress(); notice(if (s.outputs.size > 1) "ส่งออก ${s.outputs.size} คลิปแล้ว · ต้นฉบับยังอยู่" else "ส่งออกคลิปใหม่แล้ว · ต้นฉบับยังอยู่")
+                // The gallery then opens the clip that was just made, not the original it was cut from.
+                setResult(RESULT_OK, Intent().apply { s.uris.lastOrNull()?.let { putExtra("open", "ledger:$it") } }); finish() }, 450) }
             s.error != null -> { ExportJob.unlisten(jobListener); hideProgress(); failed(s.error ?: "") }
             s.cancelled -> { ExportJob.unlisten(jobListener); hideProgress() }
         }

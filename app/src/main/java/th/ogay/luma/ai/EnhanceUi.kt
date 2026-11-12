@@ -37,7 +37,25 @@ object EnhanceUi {
             "strength2", 120, 150),
     )
 
-    fun show(activity: ComponentActivity, shot: Shot) {
+    /** Any picture on the phone: it joins the Lumora list as a reference to the original (never moved or deleted). */
+    fun showForUri(activity: ComponentActivity, uri: android.net.Uri, onQueued: (Shot) -> Unit = {}) {
+        val app = activity.luma
+        app.fileIo.execute {
+            val shot = app.shots.all().firstOrNull { it.uri == uri } ?: run {
+                val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                runCatching { activity.contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, o) } }
+                if (o.outWidth <= 0 || o.outHeight <= 0) null
+                else Shot(java.util.UUID.randomUUID().toString(), System.currentTimeMillis(), uri, Dimensions(o.outWidth, o.outHeight),
+                    1f, true, null, null, Decision.OFF, Stage.ORIGINAL, null, 0, null, false).also { app.shots.insert(it) }
+            }
+            activity.runOnUiThread {
+                if (activity.isDestroyed) return@runOnUiThread
+                if (shot == null) activity.notice("เปิดภาพนี้ไม่ได้") else show(activity, shot) { onQueued(shot) }
+            }
+        }
+    }
+
+    fun show(activity: ComponentActivity, shot: Shot, onQueued: () -> Unit = {}) {
         // A video export holds the GPU and memory; the upscale waits until it is done.
         if (ExportJob.running()) { activity.notice("กำลังส่งออกวิดีโออยู่ · เพิ่มรายละเอียดภาพได้เมื่อเสร็จแล้ว"); return }
         val prefs = activity.getSharedPreferences("enhance",0)
@@ -47,19 +65,11 @@ object EnhanceUi {
         fun spec() = EnhanceSpec(scale, strength, model.profile)
         val a = activity
 
-        // The panel fills the window so the model dropdown can open over it, like every other dropdown in the app.
-        val host = FrameLayout(a)
-        val dialog = object : android.app.Dialog(a) {
-            override fun dispatchTouchEvent(ev: MotionEvent): Boolean = GlassMenu.route(ev) { super.dispatchTouchEvent(it) } ?: super.dispatchTouchEvent(ev)
-        }
-        dialog.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
-        val menu = GlassMenu(host)
-        val card = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; background = a.glass(28, Glass.FILL_STRONG); setPadding(a.dp(18), a.dp(18), a.dp(18), a.dp(16)); isClickable = true }
-        val column = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
-        card.addView(ScrollView(a).apply { isVerticalScrollBarEnabled = false; addView(column) }, LinearLayout.LayoutParams(-1, -2, 1f))
-        val cardW = minOf((a.resources.displayMetrics.widthPixels * 0.92f).toInt(), a.dp(440))
-        host.addView(card, FrameLayout.LayoutParams(cardW, -2, Gravity.CENTER).apply { topMargin = a.dp(24); bottomMargin = a.dp(24) })
-        host.setOnClickListener { dialog.dismiss() }
+        // A glass sheet like the camera's: it rises from the bottom, follows the finger down and closes past a third.
+        val sheet = a.screenSheet()
+        val menu = GlassMenu(a.window.decorView as FrameLayout) { on -> sheet.recede(on) }
+        sheet.onClosed.let { closed -> sheet.onClosed = { menu.dismiss(false); closed() } }
+        val column = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; setPadding(a.dp(4), 0, a.dp(4), 0) }
         fun label(value: String, size: Float = 13f, color: Int = Glass.TEXT2) = a.text(value, size, color).apply { maxLines = 12; ellipsize = null; setLineSpacing(0f, 1.18f) }
 
         // Header: the AI mark, the title and where the work happens.
@@ -101,7 +111,7 @@ object EnhanceUi {
         val cellViews = (2..4).map { n -> a.text("×$n", 15f, Color.WHITE, true).apply { gravity = Gravity.CENTER; isClickable = true; contentDescription = "ขยาย ×$n" }.also { cells.addView(it, LinearLayout.LayoutParams(0, -1, 1f)) } }
         seg.addView(cells, FrameLayout.LayoutParams(-1, -1))
         fun place(animate: Boolean) { val w = (seg.width - a.dp(6)) / 3f; knob.layoutParams = (knob.layoutParams as FrameLayout.LayoutParams).apply { width = w.toInt() }; knob.requestLayout()
-            val x = (scale - 2) * w; if (animate) knob.animate().translationX(x).setInterpolator(Glass.SPRING).setDuration(360).start() else knob.translationX = x }
+            val x = (scale - 2) * w; if (animate) knob.animate().translationX(x).setInterpolator(Glass.EASE).setDuration(280).start() else knob.translationX = x }
         cellViews.forEachIndexed { i, c -> c.setOnClickListener { scale = i + 2; place(true); Glass.tick(c); updateSize() } }
         seg.post { place(false) }
         column.addView(seg, LinearLayout.LayoutParams(-1, a.dp(50)))
@@ -136,8 +146,8 @@ object EnhanceUi {
         }
 
         column.addView(GlassDialog.actions(a,
-            "ปิด" to { dialog.dismiss() },
-            "ดูตัวอย่าง" to { preview(a, shot, spec()) },
+            "ปิด" to { sheet.close() },
+            "ดูตัวอย่าง" to { preview(a, shot, spec(), sheet) },
             "สร้างภาพ" to start@{
                 val requested = try { spec().also { it.output(shot.size) } } catch (e: IllegalArgumentException) { a.notice(e.message ?: "ขนาดภาพเกินขีดจำกัด"); return@start }
                 // One heavy job at a time: a video export and an AI upscale both take the whole GPU and memory.
@@ -148,44 +158,34 @@ object EnhanceUi {
                 val app = a.luma
                 app.fileIo.execute {
                     if (app.shots.upscaling()) { a.runOnUiThread { if (!a.isDestroyed) a.notice("มีภาพที่กำลังเพิ่มรายละเอียดอยู่ รอให้เสร็จก่อน") }; return@execute }
-                    if (app.shots.queueEnhancement(shot.id, requested)) EnhanceWorker.enqueue(a.applicationContext, shot.id, true)
+                    if (app.shots.queueEnhancement(shot.id, requested)) { EnhanceWorker.enqueue(a.applicationContext, shot.id, true); a.runOnUiThread { if (!a.isDestroyed) onQueued() } }
                 }
-                dialog.dismiss()
+                sheet.close()
             }), LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(14) })
 
-        dialog.setContentView(host)
-        dialog.window?.apply {
-            setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
-            setLayout(android.view.WindowManager.LayoutParams.MATCH_PARENT, android.view.WindowManager.LayoutParams.MATCH_PARENT)
-            setDimAmount(0.45f)
-        }
-        dialog.setOnShowListener { if (!Glass.reduced(a)) { card.alpha = 0f; card.translationY = a.dp(22).toFloat(); card.scaleX = 0.96f; card.scaleY = 0.96f
-            card.animate().alpha(1f).translationY(0f).scaleX(1f).scaleY(1f).setInterpolator(Glass.SPRING).setDuration(380).start() } }
-        dialog.setOnDismissListener { menu.dismiss(false) }
-        dialog.show()
+        sheet.open { body, _ -> body.addView(column, -1, -2) }
     }
 
     @Suppress("DEPRECATION")
-    private fun preview(activity: ComponentActivity, shot: Shot, spec: EnhanceSpec) {
+    private fun preview(activity: ComponentActivity, shot: Shot, spec: EnhanceSpec, parent: GlassSheet? = null) {
         val stopped = AtomicBoolean(false)
-        val image = ImageView(activity).apply { adjustViewBounds=true; scaleType=ImageView.ScaleType.FIT_CENTER; contentDescription="ตัวอย่างรายละเอียดกลางภาพ" }
-        var original: Bitmap? = null; var enhanced: Bitmap? = null; var after=true
-        var titleView: TextView? = null
-        val name = if (spec.profile == EnhanceProfile.NATURAL) "Natural" else "Classic"
-        fun setTitle(t: String) { titleView?.text = t }
-        val dialog = GlassDialog.panel(activity, "กำลังสร้างตัวอย่าง $name…") { column, d ->
-            image.clipToOutline = true
-            image.outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: android.graphics.Outline) { o.setRoundRect(0, 0, v.width, v.height, activity.dp(18).toFloat()) } }
-            column.addView(image, LinearLayout.LayoutParams(-1, -2).apply { topMargin = activity.dp(6) })
-            column.addView(GlassDialog.actions(activity, "ปิด" to { d.dismiss() }, "ก่อน / หลัง" to {
-                if (enhanced != null) { after=!after
-                    image.animate().alpha(0.35f).setDuration(90).withEndAction { image.setImageBitmap(if(after) enhanced else original); image.animate().alpha(1f).setDuration(160).start() }.start()
-                    setTitle(if(after) "หลัง AI $name ×${spec.scale}" else "ต้นฉบับขยาย ×${spec.scale}") }
-            }), LinearLayout.LayoutParams(-1, -2).apply { topMargin = activity.dp(12) })
+        val name = if (spec.profile == EnhanceProfile.NATURAL) "Natural SR3" else "Classic SR2"
+        val compare = CompareView(activity)
+        val title = activity.text("กำลังสร้างตัวอย่าง…", 17f, Color.WHITE, true)
+        val sheet = activity.screenSheet()
+        parent?.recede(true)
+        sheet.onClosed.let { closed -> sheet.onClosed = { stopped.set(true); parent?.recede(false); compare.release(); closed() } }
+        sheet.open { col, sh ->
+            val head = LinearLayout(activity).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(activity.dp(4), 0, activity.dp(4), activity.dp(10)) }
+            head.addView(LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL
+                addView(title); addView(activity.text("$name · ×${spec.scale} · ความแรง ${spec.strength}% · ส่วนกลางภาพ", 12f, Glass.TEXT3)) }, LinearLayout.LayoutParams(0, -2, 1f))
+            head.addView(FrameLayout(activity).apply { background = activity.glass(22, 0x1affffff); isClickable = true; contentDescription = "ปิดตัวอย่าง"; glassTouch()
+                addView(IconView(activity, Icons.CLOSE, 2f), FrameLayout.LayoutParams(activity.dp(18), activity.dp(18), Gravity.CENTER)); setOnClickListener { Glass.tick(this); sh.close() } }, activity.dp(44), activity.dp(44))
+            col.addView(head, -1, -2)
+            val side = minOf(activity.resources.displayMetrics.widthPixels - activity.dp(40), (activity.resources.displayMetrics.heightPixels * 0.55f).toInt())
+            col.addView(compare, LinearLayout.LayoutParams(-1, side))
+            col.addView(activity.text("ลากเส้นกลางเพื่อเทียบ ซ้ายคือภาพขยายปกติ ขวาคือ AI", 12f, Glass.TEXT3).apply { gravity = Gravity.CENTER; setPadding(0, activity.dp(10), 0, activity.dp(4)) }, -1, -2)
         }
-        titleView = dialog.findViewById<View>(android.R.id.content)?.findViewWithTag<TextView>("title")
-        dialog.setOnDismissListener { stopped.set(true); image.setImageDrawable(null); original?.recycle(); enhanced?.recycle() }
-        dialog.show()
         previews.execute {
             var a: Bitmap? = null; var b: Bitmap? = null
             try {
@@ -223,15 +223,72 @@ object EnhanceUi {
                 val first=a; val second=b
                 activity.runOnUiThread {
                     if(stopped.get() || activity.isDestroyed) { first?.recycle(); second?.recycle() }
-                    else { original=first; enhanced=second; image.setImageBitmap(second); setTitle("หลัง AI $name ×${spec.scale}") }
+                    else { compare.set(first, second); title.text = "ตัวอย่างก่อน / หลัง" }
                 }
             } catch(e: Exception) {
                 a?.recycle(); b?.recycle()
-                activity.runOnUiThread { if(!stopped.get() && !activity.isDestroyed) { dialog.dismiss(); activity.notice(e.message ?: "สร้างตัวอย่างไม่ได้") } }
+                activity.runOnUiThread { if(!stopped.get() && !activity.isDestroyed) { sheet.close(); activity.notice(e.message ?: "สร้างตัวอย่างไม่ได้") } }
             } catch(e: LinkageError) {
                 a?.recycle(); b?.recycle()
-                activity.runOnUiThread { if(!stopped.get() && !activity.isDestroyed) { dialog.dismiss(); activity.notice("โหลดระบบ AI ไม่สำเร็จ") } }
+                activity.runOnUiThread { if(!stopped.get() && !activity.isDestroyed) { sheet.close(); activity.notice("โหลดระบบ AI ไม่สำเร็จ") } }
             }
+        }
+    }
+
+    /**
+     * Before / after in one picture: the plain upscale on the left of a divider, the AI result on the right. Drag the
+     * divider to compare; small labels name each side. Until the AI result arrives a soft light sweeps across.
+     */
+    private class CompareView(c: android.content.Context) : View(c) {
+        private var before: Bitmap? = null; private var after: Bitmap? = null
+        private var split = 0.5f; private var sweep = 0f
+        private val d = c.resources.displayMetrics.density
+        private val paint = android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG)
+        private val line = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; strokeWidth = 2 * d }
+        private val knob = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; setShadowLayer(6 * d, 0f, 2 * d, 0x66000000) }
+        private val arrow = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = 0xff1c2233.toInt(); style = android.graphics.Paint.Style.STROKE; strokeWidth = 2 * d; strokeCap = android.graphics.Paint.Cap.ROUND; strokeJoin = android.graphics.Paint.Join.ROUND }
+        private val tag = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textSize = 12 * d; typeface = android.graphics.Typeface.DEFAULT_BOLD }
+        private val tagBg = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = 0x8c000000.toInt() }
+        private val glow = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+        private val clip = android.graphics.Path(); private val box = android.graphics.RectF(); private val src = android.graphics.RectF()
+        private val loading = android.animation.ValueAnimator.ofFloat(0f, 1f).apply { duration = 1400; repeatCount = android.animation.ValueAnimator.INFINITE; addUpdateListener { sweep = it.animatedValue as Float; invalidate() } }
+        init { contentDescription = "ตัวอย่างก่อนและหลัง AI"; setBackgroundColor(0x14ffffff) }
+        override fun onAttachedToWindow() { super.onAttachedToWindow(); if (after == null && !Glass.reduced(context)) loading.start() }
+        override fun onDetachedFromWindow() { loading.cancel(); super.onDetachedFromWindow() }
+        fun set(b: Bitmap?, a: Bitmap?) { before = b; after = a; loading.cancel(); split = 1f
+            // The divider glides in from the right so the change is seen once.
+            android.animation.ValueAnimator.ofFloat(1f, 0.5f).apply { duration = 700; interpolator = Glass.EASE; addUpdateListener { split = it.animatedValue as Float; invalidate() } }.start() }
+        fun release() { before?.recycle(); after?.recycle(); before = null; after = null }
+        override fun onDraw(cv: android.graphics.Canvas) {
+            val w = width.toFloat(); val h = height.toFloat(); val r = 20 * d
+            clip.reset(); clip.addRoundRect(0f, 0f, w, h, r, r, android.graphics.Path.Direction.CW); cv.save(); cv.clipPath(clip)
+            val a = after; val b = before
+            if (a == null || b == null) {
+                glow.shader = android.graphics.LinearGradient(w * (sweep * 1.6f - 0.6f), 0f, w * (sweep * 1.6f - 0.1f), h, intArrayOf(0x00ffffff, 0x2effffff, 0x00ffffff), null, android.graphics.Shader.TileMode.CLAMP)
+                cv.drawRect(0f, 0f, w, h, glow); cv.restore(); return
+            }
+            // Centre-crop the square sample into the view.
+            val sc = maxOf(w / a.width, h / a.height); val dw = a.width * sc; val dh = a.height * sc
+            box.set((w - dw) / 2, (h - dh) / 2, (w + dw) / 2, (h + dh) / 2)
+            val x = w * split
+            cv.save(); cv.clipRect(0f, 0f, x, h); cv.drawBitmap(b, null, box, paint); cv.restore()
+            cv.save(); cv.clipRect(x, 0f, w, h); cv.drawBitmap(a, null, box, paint); cv.restore()
+            fun label(t: String, left: Boolean) { val tw = tag.measureText(t); val px = 10 * d; val bx = if (left) 12 * d else w - 12 * d - tw - 2 * px
+                src.set(bx, 12 * d, bx + tw + 2 * px, 12 * d + 24 * d); cv.drawRoundRect(src, 12 * d, 12 * d, tagBg); cv.drawText(t, bx + px, src.centerY() + 4 * d, tag) }
+            if (split > 0.18f) label("ก่อน", true); if (split < 0.82f) label("AI", false)
+            cv.drawLine(x, 0f, x, h, line); cv.drawCircle(x, h / 2, 16 * d, knob)
+            val ay = h / 2; val s = 4 * d
+            cv.drawLine(x - 3 * d, ay - s, x - 3 * d - s, ay, arrow); cv.drawLine(x - 3 * d - s, ay, x - 3 * d, ay + s, arrow)
+            cv.drawLine(x + 3 * d, ay - s, x + 3 * d + s, ay, arrow); cv.drawLine(x + 3 * d + s, ay, x + 3 * d, ay + s, arrow)
+            cv.restore()
+        }
+        private var lastTick = -1
+        override fun onTouchEvent(e: android.view.MotionEvent): Boolean {
+            if (after == null) return false
+            if (e.actionMasked == android.view.MotionEvent.ACTION_DOWN) parent?.requestDisallowInterceptTouchEvent(true)
+            split = (e.x / width).coerceIn(0f, 1f)
+            val t = (split * 10).toInt(); if (t != lastTick) { lastTick = t; performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK) }
+            invalidate(); return true
         }
     }
 }

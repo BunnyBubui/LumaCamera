@@ -73,6 +73,10 @@ class GalleryActivity : ComponentActivity() {
     private val editPhoto = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
         r.data?.getStringExtra(PhotoEditorActivity.RESULT_ID)?.let { if (r.resultCode == RESULT_OK) { selected = it; useAi = false; reload() } }
     }
+    /** After an export the editor names the new clip; the viewer moves onto it. */
+    private val editVideo = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+        r.data?.getStringExtra("open")?.let { if (r.resultCode == RESULT_OK) { selected = it; useAi = false; viewerFromCamera = false; reload() } }
+    }
     private var queryText = ""
     private var lastItems: List<Item> = emptyList()
     private lateinit var host: FrameLayout
@@ -161,7 +165,7 @@ class GalleryActivity : ComponentActivity() {
             runOnUiThread { aiBusy = busy; if (!busy) aiBadge.done() } }
         luma.shots.changes.observe(this) { if (!device || selected != null) reload(); checkAi() }
         luma.shots.progress.observe(this) { p: Pair<String, Int> -> val id = p.first; val percent = p.second
-            if (selected == id && showingId == id && ::ring.isInitialized && ring.visibility == View.VISIBLE) ring.update(percent.toFloat(), ring.caption)
+            if (selected == id && showingId == id && ::ring.isInitialized && ring.visibility == View.VISIBLE && th.ogay.luma.ai.AiProgress.shotId != id) ring.update(percent.toFloat(), ring.caption)
             // Anywhere else in the gallery a small ring in the corner shows the AI is still working; a tap goes to that photo.
             aiRunning = id; if (aiBusy && selected != id) aiBadge.update(percent.toFloat()) else aiBadge.done()
         }
@@ -1106,7 +1110,7 @@ class GalleryActivity : ComponentActivity() {
         }
         act(HEART, "รายการโปรด", Color.WHITE) { favourite(listOf(item)) }
         if (!item.file) act(EditorKit.ADJUST, if (item.video) "ตัดต่อ" else "แก้ไขภาพ", Color.WHITE) {
-            if (item.video) startActivity(VideoEditorActivity.intent(this, item.uri)) else editPhoto.launch(PhotoEditorActivity.intent(this, item.shot?.ai ?: item.uri)) }
+            if (item.video) editVideo.launch(VideoEditorActivity.intent(this, item.uri)) else editPhoto.launch(PhotoEditorActivity.intent(this, item.shot?.ai ?: item.uri)) }
         if (!item.video && !item.file) act(Icons.AI, "ปรับด้วย AI", Glass.ACCENT) { item.shot?.let { EnhanceUi.show(this, it) } ?: enhanceDevice(item.uri) }
         act(RENAME, "เปลี่ยนชื่อ", Color.WHITE) { rename(item) }
         act(Icons.SHARE, "แชร์", Color.WHITE) { share(item) }
@@ -1226,22 +1230,7 @@ class GalleryActivity : ComponentActivity() {
     }
 
     /** Any photo on the phone can go through the AI: it joins the Lumora list as a reference to the original (never moved or deleted). */
-    private fun enhanceDevice(uri: Uri) {
-        luma.fileIo.execute {
-            val existing = luma.shots.all().firstOrNull { it.uri == uri }
-            val shot = existing ?: run {
-                val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                runCatching { contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, o) } }
-                if (o.outWidth <= 0 || o.outHeight <= 0) null
-                else Shot(java.util.UUID.randomUUID().toString(), System.currentTimeMillis(), uri, Dimensions(o.outWidth, o.outHeight),
-                    1f, true, null, null, Decision.OFF, Stage.ORIGINAL, null, 0, null, false).also { luma.shots.insert(it) }
-            }
-            runOnUiThread {
-                if (isDestroyed) return@runOnUiThread
-                if (shot == null) notice("เปิดภาพนี้ไม่ได้") else EnhanceUi.show(this, shot)
-            }
-        }
-    }
+    private fun enhanceDevice(uri: Uri) = EnhanceUi.showForUri(this, uri)
 
     // ---------- Lumora video or file from the ledger ----------
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
@@ -1274,20 +1263,47 @@ class GalleryActivity : ComponentActivity() {
 
     // ---------- Any video (Lumora's or the phone's): the player in the viewer, swipe for the next item ----------
     private var inlineVideo: InlineVideo? = null
+    /**
+     * While the open photo's AI runs, its ring reads the live tile count about three times a second: the number
+     * moves smoothly, and the time left and tiles done show under it, like the video export page.
+     */
+    private val aiPoll = object : Runnable { override fun run() {
+        val id = selected ?: return
+        if (!::ring.isInitialized || ring.visibility != View.VISIBLE || showingId != id || isDestroyed) return
+        val p = th.ogay.luma.ai.AiProgress
+        if (p.shotId == id) {
+            if (p.total > 0) ring.update(p.fraction() * 99f, ring.caption, listOf("${String.format(Locale.US, "%,d", p.done)} / ${String.format(Locale.US, "%,d", p.total)} ไทล์", p.etaText()).filter { it.isNotEmpty() }.joinToString(" · "))
+            else ring.update(null, ring.caption, p.step)
+        }
+        host.postDelayed(this, 330)
+    } }
+    private var stepDir = 0
     private fun showVideoItem(item: Item) {
-        showingId = item.key; viewerKind = ""; immersive(false); root.removeAllViews()
-        viewerBar("วิดีโอ").addView(roundButton(Icons.INFO, "รายละเอียด") { itemInfo(item) }, dp(48), dp(48))
-        val player = InlineVideo(this, item.uri, cache.get(item.key)).apply { onSwipe = { step(it) } }
+        showingId = item.key; viewerKind = ""; root.removeAllViews()
+        // Like the photo viewer: the clip fills the screen and the bars float over its glow.
+        immersive(true)
+        val player = InlineVideo(this, item.uri, cache.get(item.key), prefs.getBoolean("gallery_reflect", true)).apply { onSwipe = { stepDir = it; step(it) } }
         inlineVideo = player
-        root.addView(player, LinearLayout.LayoutParams(-1, 0, 1f))
-        if (!Glass.reduced(this)) { player.alpha = 0f; player.animate().alpha(1f).setDuration(240).start() }
-        thumbs.execute { val b = thumbnail(item, 1080); runOnUiThread { if (showingId == item.key) player.poster(b) } }
-        status = text(listOf(item.name, formatTime(item.time)).filter { it.isNotBlank() }.joinToString(" · "), 12.5f, Glass.TEXT2).apply { gravity = Gravity.CENTER; maxLines = 2; setPadding(dp(16), dp(8), dp(16), dp(2)) }
-        root.addView(status, -1, -2)
+        val frame = FrameLayout(this).apply { addView(player, -1, -1) }
+        root.addView(frame, LinearLayout.LayoutParams(-1, 0, 1f))
+        val top = viewerBar("วิดีโอ").also { root.removeView(it) }
+        top.addView(roundButton(Icons.INFO, "รายละเอียด") { itemInfo(item) }, dp(48), dp(48))
         toggle = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(dp(6), dp(2), dp(6), dp(10)) }
-        root.addView(toggle, -1, -2)
+        val bottom = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, 0, 0, bars.bottom)
+            background = android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.BOTTOM_TOP, intArrayOf(0x99000000.toInt(), 0x00000000)) }
+        bottom.addView(toggle, -1, -2)
+        frame.addView(top, FrameLayout.LayoutParams(-1, -2, Gravity.TOP).apply { topMargin = bars.top })
+        frame.addView(bottom, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+        viewerTop = top; viewerBottom = bottom
+        bottom.post { player.controlsInset(bottom.height) }
+        player.onChrome = { on -> listOf(top, bottom).forEach { it.animate().alpha(if (on) 1f else 0f).setDuration(220).start() } }
+        // Moving to the next clip slides it in from the side the finger pushed, instead of a flash.
+        if (!Glass.reduced(this)) { player.alpha = 0f; player.translationX = stepDir * dp(56).toFloat()
+            player.animate().alpha(1f).translationX(0f).setInterpolator(Glass.EASE).setDuration(260).start() }
+        stepDir = 0
+        thumbs.execute { val b = thumbnail(item, 1080); runOnUiThread { if (showingId == item.key) player.poster(b) } }
         chip("แชร์", false, Icons.SHARE) { if (item.key.startsWith("device:")) share(item) else MediaLedger.share(this, item.uri, item.mime.ifEmpty { "video/mp4" }) }
-        chip("ตัดต่อ", false, EditorKit.SCISSORS) { startActivity(VideoEditorActivity.intent(this, item.uri)) }
+        chip("ตัดต่อ", false, EditorKit.SCISSORS) { editVideo.launch(VideoEditorActivity.intent(this, item.uri)) }
         chip("รายละเอียด", false, Icons.INFO) { itemInfo(item) }
         chip("ลบ", false, TRASH) { confirmDelete(listOf(item)) }
         preloadNear()
@@ -1332,6 +1348,9 @@ class GalleryActivity : ComponentActivity() {
             toggle("เปิดภาพ AI ก่อน", Icons.AI, "gallery_open_ai", true, "กดค้างปุ่มต้นฉบับเพื่อเทียบ")
             toggle("พื้นหลังสะท้อนภาพ", Icons.PHOTO, "gallery_reflect", true, "ขอบบนล่างเป็นภาพสะท้อนนุ่ม ๆ แทนพื้นสีเรียบ")
             toggle("ปัดลงเพื่อปิดภาพ", Icons.CHEVRON_UP, "gallery_swipe_close", true)
+            section("วิดีโอ")
+            toggle("เล่นวิดีโออัตโนมัติ", Icons.VIDEO, "video_autoplay", false, "เริ่มเล่นทันทีที่เปิดหรือปัดมาที่วิดีโอ ปิดไว้จะเล่นเมื่อแตะปุ่มเล่น ปัดดูได้ลื่นกว่า")
+            choose("เสียงเมื่อเริ่มเล่น", Icons.SOUND, "video_sound_i", listOf("เปิดเสียงทุกครั้ง", "ปิดเสียงทุกครั้ง"), listOf(1, 0), 1, notes = listOf("ได้ยินเสียงทันที", "แตะปุ่มลำโพงเพื่อเปิดเสียง"))
             section("การลบ")
             toggle("ถามก่อนลบภาพของ Lumora", TRASH, "gallery_ask_delete", true, "ภาพจากแอปอื่น ระบบจะถามเองเสมอ")
             section("AI")
@@ -1371,7 +1390,7 @@ class GalleryActivity : ComponentActivity() {
         // The AI works at full speed only while its progress is on screen.
         th.ogay.luma.ai.AiPace.watching = s.stage == Stage.RUNNING || s.stage == Stage.QUEUED
         when (s.stage) {
-            Stage.RUNNING -> ring.update(s.aiProgress.toFloat(), "เพิ่มรายละเอียด AI ×${s.aiScale.coerceAtLeast(1)}")
+            Stage.RUNNING -> { ring.update(s.aiProgress.toFloat(), "เพิ่มรายละเอียด AI ×${s.aiScale.coerceAtLeast(1)}"); host.removeCallbacks(aiPoll); host.post(aiPoll) }
             Stage.QUEUED -> ring.update(null, "รอคิวประมวลผล AI")
             Stage.CAPTURING -> ring.update(100f * s.frames / s.requestedFrames.coerceAtLeast(1), "กำลังถ่าย ${s.frames}/${s.requestedFrames} เฟรม")
             else -> ring.hide()

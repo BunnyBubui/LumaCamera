@@ -53,7 +53,7 @@ class VideoActivity:ComponentActivity(){
     private lateinit var preview:PreviewView;private lateinit var status:TextView;private lateinit var config:TextView
     private lateinit var shutter:ShutterButton;private lateinit var pause:FrameLayout;private lateinit var pauseIcon:IconView
     private lateinit var library:FrameLayout;private lateinit var flip:FrameLayout;private lateinit var stage:FrameLayout
-    private lateinit var zooms:ZoomCapsule;private lateinit var wheel:ZoomWheel
+    private lateinit var zooms:ZoomCapsule;private lateinit var wheel:ZoomWheel;private var zoomMap:ZoomMap?=null
     private lateinit var tabs:FrameLayout;private lateinit var knob:View;private val tabLabels=mutableListOf<TextView>()
     private lateinit var chipFrame:FrameLayout;private lateinit var chips:CenterStrip;private val chipTexts=mutableListOf<Pair<TextView,TextView>>()
     private lateinit var dial:LinearLayout;private lateinit var dialTitle:TextView;private lateinit var dialValue:TextView;private lateinit var slider:GlassSlider
@@ -423,6 +423,8 @@ class VideoActivity:ComponentActivity(){
         config.visibility=android.view.View.GONE // settings open by swiping up the dock, as in photo mode
         // Slow-motion records no sound; say so where it stays visible, since the status line changes.
         if(slow)stage.addView(text("Slow-motion · ไม่มีเสียง",12.5f,Glass.TEXT2,true).apply{gravity=Gravity.CENTER;maxLines=3;ellipsize=null;maxWidth=dp(170);minHeight=dp(48);background=glass(22);setPadding(dp(14),0,dp(14),0)},FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.START).apply{setMargins(dp(12),dp(6),0,0)})
+        // The same small wide-view map as photo mode, shown past 10×.
+        zoomMap=ZoomMap(this).also{m->m.busy={false};stage.addView(m,FrameLayout.LayoutParams(dp(98),dp(130),Gravity.TOP or Gravity.END).apply{setMargins(0,dp(64),dp(12),0)})}
         wheel=ZoomWheel(this).apply{alpha=0f;visibility=android.view.View.VISIBLE};stage.addView(wheel,FrameLayout.LayoutParams(-1,dp(150),Gravity.BOTTOM).apply{bottomMargin=dp(4)})
         zooms=ZoomCapsule(this).apply{background=glass(28);setPadding(dp(4),dp(4),dp(4),dp(4));contentDescription="ระยะเลนส์ ลากซ้ายขวาเพื่อซูมละเอียด"}
         stage.addView(zooms,FrameLayout.LayoutParams(-2,dp(56),Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply{bottomMargin=dp(8)});zooms.visibility=android.view.View.GONE
@@ -534,6 +536,9 @@ class VideoActivity:ComponentActivity(){
             val lp=t.layoutParams as FrameLayout.LayoutParams;val size=dp(if(on)40 else 32);if(lp.width!=size){lp.width=size;lp.height=size;t.layoutParams=lp}
             (t.background as? GlassDrawable)?.let{it.fill=if(on)0x8c000000.toInt() else 0x1affffff;it.invalidateSelf()}}
         wheel.minZoom=z.minZoomRatio;wheel.maxZoom=zMax(z);wheel.lenses=stops;wheel.zoom=zNow(z)
+        zoomMap?.let{m->val now=zNow(z);val lens=if(now>=3.5f&&stops.contains(3.5f))3.5f else 1f
+            if(!dual&&extraZoom<=1.001f&&preview.previewStreamState.value==PreviewView.StreamState.STREAMING)m.capture(preview,now,lens)
+            m.update(if(dual)1f else now,lens,false)}
     }
     /** Zoom pauses while an adjuster is open so a stray pinch never fights with it. */
     private fun zoomLocked()=openChip!=null

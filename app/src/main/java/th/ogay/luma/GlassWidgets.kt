@@ -776,6 +776,8 @@ class GlassSheet(private val host: FrameLayout, private val pivotYFromBottom: ()
     private val modal = ModalScope(host)
     var onClosed: () -> Unit = {}
     val showing get() = card != null
+    /** Room kept clear at the top and bottom (status and navigation bars) when the host runs under them. */
+    var topInset = 0; var bottomInset = 0
     private var dragged = 0f
     private var pendingRelease: Pair<Boolean, Float>? = null
     /** Follows a finger that is opening the sheet from the dock (see [open] with interactive = true). */
@@ -814,13 +816,18 @@ class GlassSheet(private val host: FrameLayout, private val pivotYFromBottom: ()
         b.addView(handle, LinearLayout.LayoutParams(c.dp(120), c.dp(48)).apply { gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = -c.dp(12) })
         // The whole top of the sheet follows the finger down; a quick flick or about a third of the way closes it, otherwise it springs back.
         sheet.pullZonePx = c.dp(88); sheet.clipToOutline = true
-        sheet.onPull = { end, dy, v -> if (!end) { sheet.translationY = if (dy > 0) dy else dy * 0.2f; pushBack(progress(sheet)) } else release(false, -v) }
+        var pullStep = 0
+        sheet.onPull = { end, dy, v -> if (!end) { sheet.translationY = if (dy > 0) dy else dy * 0.2f; pushBack(progress(sheet))
+                // The same soft ticks as opening, so pulling the sheet down feels like it slides under the finger.
+                val step = (dy / (22 * d)).toInt()
+                if (step != pullStep) { pullStep = step; if (c.getSharedPreferences("camera", 0).getBoolean("haptic", true)) sheet.performHapticFeedback(if (android.os.Build.VERSION.SDK_INT >= 27) HapticFeedbackConstants.TEXT_HANDLE_MOVE else HapticFeedbackConstants.CLOCK_TICK) }
+            } else { pullStep = 0; release(false, -v) } }
         handle.setOnClickListener { close() }
         b.addView(LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }, -1, -2)
         build(b.getChildAt(1) as LinearLayout, this)
         scroll.addView(b)
         sheet.addView(scroll, -1, -2)
-        host.addView(sheet, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply { setMargins(c.dp(8), c.dp(24), c.dp(8), c.dp(8)) })
+        host.addView(sheet, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply { setMargins(c.dp(8), c.dp(24) + topInset, c.dp(8), c.dp(8) + bottomInset) })
         shade = s; card = sheet; body = b; builder = build
         Sounds.play(c, Sounds.Kind.OPEN)
         if (interactive) {
@@ -880,8 +887,10 @@ class AiRing(context: Context) : View(context) {
     init { visibility = GONE; isClickable = false }
 
     /** [percent] 0..100, or null while the work has not started and nothing can be measured yet. */
-    fun update(percent: Float?, text: String) {
-        caption = text
+    /** Second line under the caption: tiles done and the time left. */
+    private var detail = ""
+    fun update(percent: Float?, text: String, detailText: String? = null) {
+        caption = text; if (detailText != null) detail = detailText
         visibility = VISIBLE
         if (percent == null) {
             spinning = true; glide?.cancel()
@@ -892,10 +901,11 @@ class AiRing(context: Context) : View(context) {
         target = percent.coerceIn(0f, 100f)
         glide?.cancel()
         if (target < shown || Glass.reduced(context)) { shown = target; invalidate() }
-        else glide = ValueAnimator.ofFloat(shown, target).apply { duration = 1100; interpolator = LinearInterpolator(); addUpdateListener { shown = it.animatedValue as Float; invalidate() }; start() }
+        // Updates come several times a second; each glides on from where the last one is, so the number never stops or jumps.
+        else glide = ValueAnimator.ofFloat(shown, target).apply { duration = 650; interpolator = LinearInterpolator(); addUpdateListener { shown = it.animatedValue as Float; invalidate() }; start() }
         contentDescription = "$text ${String.format(Locale.US, "%.0f", target)} เปอร์เซ็นต์"
     }
-    fun hide() { glide?.cancel(); spin?.cancel(); spin = null; spinning = false; shown = 0f; target = 0f; visibility = GONE }
+    fun hide() { glide?.cancel(); spin?.cancel(); spin = null; spinning = false; shown = 0f; target = 0f; detail = ""; visibility = GONE }
     override fun onDetachedFromWindow() { glide?.cancel(); spin?.cancel(); spin = null; super.onDetachedFromWindow() }
 
     private val glow = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -947,6 +957,8 @@ class AiRing(context: Context) : View(context) {
             val tw = small.measureText(caption); val py = cy + r + 60 * d
             c.drawRoundRect(cx - tw / 2 - 14 * d, py - 20 * d, cx + tw / 2 + 14 * d, py + 10 * d, 15 * d, 15 * d, pill)
             c.drawText(caption, cx, py, small)
+            if (detail.isNotEmpty()) { val ds = small.textSize; small.textSize = 12.5f * d; small.color = 0xb3ffffff.toInt()
+                c.drawText(detail, cx, py + 30 * d, small); small.textSize = ds; small.color = Glass.TEXT2 }
         }
     }
 }
@@ -1160,4 +1172,19 @@ class GlassTabs(context: Context, list: List<Pair<String, String>>, selected: In
         val w = slot(); knob.layout(0, inset, w, b - t - inset); place()
     }
     override fun onDetachedFromWindow() { anim?.cancel(); super.onDetachedFromWindow() }
+}
+
+/**
+ * The camera's glass sheet over any screen: it rises with the same liquid animation and sound, follows the finger
+ * down (with soft ticks) and closes past about a third, and the back gesture closes it. Call [GlassSheet.open].
+ */
+fun androidx.activity.ComponentActivity.screenSheet(): GlassSheet {
+    val decor = window.decorView as FrameLayout
+    val bars = androidx.core.view.ViewCompat.getRootWindowInsets(decor)?.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+    val sheet = GlassSheet(decor, { dp(40).toFloat() })
+    sheet.topInset = bars?.top ?: 0; sheet.bottomInset = bars?.bottom ?: 0
+    val back = object : androidx.activity.OnBackPressedCallback(true) { override fun handleOnBackPressed() { sheet.close() } }
+    onBackPressedDispatcher.addCallback(this, back)
+    sheet.onClosed = { back.remove() }
+    return sheet
 }

@@ -72,25 +72,55 @@ object LiveNotice {
             .setAutoCancel(true).setColor(Glass.ACCENT).setContentIntent(open).build())
     }
 
-    /**
-     * Asks for notifications, and on Android 16 also for live updates (the system shows them only when the user
-     * allows it for the app): if they are off, the app's live-update settings page opens.
-     */
-    fun askPermissions(a: Activity) {
-        if (Build.VERSION.SDK_INT >= 33 && androidx.core.content.ContextCompat.checkSelfPermission(a, android.Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            runCatching { androidx.core.app.ActivityCompat.requestPermissions(a, arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 7) }
-            return
-        }
-        askLive(a)
+    /** True when nothing is left to ask: notifications are allowed and (on Android 16) live updates too, or were declined once. */
+    private fun settled(c: Context): Boolean {
+        val notify = Build.VERSION.SDK_INT < 33 || androidx.core.content.ContextCompat.checkSelfPermission(c, android.Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        return notify && !needsLive(c)
+    }
+    fun needsLive(c: Context): Boolean {
+        if (Build.VERSION.SDK_INT < 36) return false
+        if (c.getSharedPreferences("camera", 0).getBoolean("live_asked2", false)) return false
+        return !c.getSystemService(NotificationManager::class.java).canPostPromotedNotifications()
     }
 
-    fun askLive(a: Activity) {
-        if (Build.VERSION.SDK_INT < 36) return
-        val m = a.getSystemService(NotificationManager::class.java)
-        val prefs = a.getSharedPreferences("camera", 0)
-        if (m.canPostPromotedNotifications() || prefs.getBoolean("live_asked", false)) return
-        prefs.edit().putBoolean("live_asked", true).apply()
-        a.notice("เปิด \"การแจ้งเตือนแบบสด\" ให้ Lumora เพื่อดูความคืบหน้าบนแถบสถานะ")
-        runCatching { a.startActivity(Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_PROMOTION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, a.packageName)) }
+    /**
+     * Asks for notifications and live alerts together, one after the other in a single flow: the system's
+     * notification question first, then (Android 16) a short card that opens the live-alert switch.
+     */
+    fun askPermissions(a: Activity) {
+        if (settled(a)) return
+        runCatching { a.startActivity(Intent(a, NoticeAskActivity::class.java)) }
+    }
+}
+
+/** The two permission steps in a row, over the screen that asked. Finishes itself when done. */
+class NoticeAskActivity : androidx.activity.ComponentActivity() {
+    private val ask = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.RequestPermission()) { ok -> if (ok) liveStep() else finish() }
+    private var sentToSettings = false
+
+    override fun onCreate(state: android.os.Bundle?) {
+        super.onCreate(state)
+        val notify = Build.VERSION.SDK_INT < 33 || androidx.core.content.ContextCompat.checkSelfPermission(this, android.Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (!notify) ask.launch(android.Manifest.permission.POST_NOTIFICATIONS) else liveStep()
+    }
+
+    override fun onResume() { super.onResume(); if (sentToSettings) finish() }
+
+    private fun liveStep() {
+        if (!LiveNotice.needsLive(this)) { finish(); return }
+        val d = GlassDialog.panel(this, "เปิด Live Alerts ด้วยไหม") { col, dialog ->
+            col.addView(text("Lumora จะแสดงความคืบหน้าของการส่งออกวิดีโอและการเพิ่มรายละเอียดด้วย AI บนแถบสถานะและหน้าจอล็อก แตะ \"เปิด\" แล้วเปิดสวิตช์ \"Live Alerts\" ในหน้าที่ขึ้นมา", 14f, Glass.TEXT2).apply { maxLines = 8; ellipsize = null; setLineSpacing(0f, 1.15f) })
+            col.addView(GlassDialog.actions(this, "ไม่ตอนนี้" to { dialog.dismiss() }, "เปิด" to {
+                sentToSettings = true; dialog.setOnDismissListener(null); dialog.dismiss()
+                // Android 16's own live-update page; OPPO puts the same switch on the app's notification page.
+                val pkg = packageName
+                val opened = runCatching { startActivity(Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_PROMOTION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, pkg)) }.isSuccess ||
+                    runCatching { startActivity(Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, pkg)) }.isSuccess
+                getSharedPreferences("camera", 0).edit().putBoolean("live_asked2", true).apply()
+                if (!opened) finish()
+            }), android.widget.LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(14) })
+        }
+        d.setOnDismissListener { getSharedPreferences("camera", 0).edit().putBoolean("live_asked2", true).apply(); finish() }
+        d.show()
     }
 }

@@ -2,120 +2,232 @@ package th.ogay.luma
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.LinearGradient
+import android.graphics.Paint
+import android.graphics.RectF
+import android.graphics.Shader
+import android.graphics.SurfaceTexture
 import android.media.MediaPlayer
 import android.net.Uri
+import android.os.Build
 import android.view.GestureDetector
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
+import android.view.Surface
+import android.view.TextureView
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.SeekBar
 import android.widget.TextView
-import android.widget.VideoView
 import java.util.Locale
 import kotlin.math.abs
 
 /**
- * The video player inside the gallery viewer, in the same glass style as [VideoPlayerActivity]: the first frame
- * until play, a round play/pause button, and a bottom panel with the position, time, speed and sound. Tap shows
- * or hides the controls; a sideways swipe moves to the next or previous item ([onSwipe]).
+ * The video player inside the gallery viewer. Nothing is decoded until play is pressed (or autoplay is on), so
+ * swiping between videos only swaps still pictures: no decoder starting and stopping, no black flash.
+ * Behind the clip glows a blurred copy of its first frame, like the photo viewer's reflection. A tap shows or hides
+ * the controls; a sideways fling moves to the next or previous item ([onSwipe]).
  */
-class InlineVideo(c: Context, private val uri: Uri, still: Bitmap?) : FrameLayout(c) {
+class InlineVideo(c: Context, private val uri: Uri, still: Bitmap?, private val glowOn: Boolean = true) : FrameLayout(c) {
     var onSwipe: (Int) -> Unit = {}
-    private val video = VideoView(c)
-    private val poster = ImageView(c).apply { scaleType = ImageView.ScaleType.FIT_CENTER; setImageBitmap(still) }
-    private val play = IconView(c, VideoPlayerActivity.PLAY, 2f)
-    private val seek = SeekBar(c)
-    private val time: TextView
-    private val center: View
-    private val bottom: LinearLayout
+    /** Called when the controls appear or hide, so the gallery can fade its own bars with them. */
+    var onChrome: (Boolean) -> Unit = {}
+    private val prefs = c.getSharedPreferences("camera", 0)
+    private val glow = ImageView(c).apply { scaleType = ImageView.ScaleType.CENTER_CROP; alpha = 0.55f; importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }
+    private val poster = ImageView(c).apply { scaleType = ImageView.ScaleType.FIT_CENTER; importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }
+    private var texture: TextureView? = null
     private var player: MediaPlayer? = null
     private var prepared = false
-    private var startWhenReady = false
+    private var playing = false
+    private var pendingSeek = -1
+    private var durationMs = 0
+    private var videoW = 0; private var videoH = 0
     private var speed = 1f
-    private var muted = false
+    private var muted = prefs.getInt("video_sound_i", 1) == 0
     private var shown = true
-    private val tick = object : Runnable { override fun run() { update(); if (isAttachedToWindow) postDelayed(this, 120) } }
+    private val bigPlay = IconView(c, VideoPlayerActivity.PLAY, 2f)
+    private val smallPlay = IconView(c, VideoPlayerActivity.PLAY, 2.2f)
+    private val center: View
+    private val controls: LinearLayout
+    private val scrub = Scrubber(c)
+    private val now: TextView
+    private val total: TextView
+    private val tick = object : Runnable { override fun run() { update(); if (isAttachedToWindow && playing) postDelayed(this, 100) } }
     private val hide = Runnable { showChrome(false) }
 
     init {
-        setBackgroundColor(Glass.NAVY_DEEP)
-        addView(video, LayoutParams(-1, -1, Gravity.CENTER))
+        clipChildren = false
+        if (glowOn) addView(glow, -1, -1)
         addView(poster, -1, -1)
-        video.setVideoURI(uri)
-        video.setOnPreparedListener { mp -> player = mp; prepared = true; mp.isLooping = false; seek.max = video.duration.coerceAtLeast(1); update()
-            if (startWhenReady) start() else video.seekTo(1) }
-        video.setOnCompletionListener { refresh(); showChrome(true) }
-        video.setOnErrorListener { _, _, _ -> context.notice("เล่นไฟล์นี้ไม่ได้"); true }
+        setStill(still)
 
-        center = FrameLayout(c).apply { background = context.glass(40, 0x40ffffff); isClickable = true; contentDescription = "เล่นหรือหยุด"; glassTouch()
-            addView(play, LayoutParams(context.dp(30), context.dp(30), Gravity.CENTER)); setOnClickListener { Glass.tick(this); toggle() } }
-        addView(center, LayoutParams(c.dp(80), c.dp(80), Gravity.CENTER))
+        center = FrameLayout(c).apply { background = context.glass(42, 0x33ffffff); isClickable = true; contentDescription = "เล่นหรือหยุด"; glassTouch()
+            addView(bigPlay, LayoutParams(context.dp(30), context.dp(30), Gravity.CENTER).apply { leftMargin = context.dp(3) }); setOnClickListener { Glass.tick(this); toggle() } }
+        addView(center, LayoutParams(c.dp(78), c.dp(78), Gravity.CENTER))
 
-        bottom = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL; background = context.glass(26); setPadding(context.dp(16), context.dp(8), context.dp(16), context.dp(10)) }
-        seek.apply {
-            progressTintList = android.content.res.ColorStateList.valueOf(Glass.ACCENT); thumbTintList = progressTintList; contentDescription = "ตำแหน่งในคลิป"
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(s: SeekBar, p: Int, user: Boolean) { if (user) { poster.visibility = View.GONE; video.seekTo(p); update() } }
-                override fun onStartTrackingTouch(s: SeekBar) { removeCallbacks(hide) }
-                override fun onStopTrackingTouch(s: SeekBar) { scheduleHide() }
-            })
-        }
-        bottom.addView(seek, -1, c.dp(36))
-        val row = LinearLayout(c).apply { gravity = Gravity.CENTER_VERTICAL }
-        time = c.text("0:00 / 0:00", 13f, Glass.TEXT2)
-        row.addView(time, LinearLayout.LayoutParams(0, -2, 1f))
-        val speedLabel = c.text("1×", 13f, Color.WHITE, true)
-        row.addView(speedLabel.apply { gravity = Gravity.CENTER; background = context.glass(18, 0x1affffff); setPadding(context.dp(14), 0, context.dp(14), 0); minWidth = context.dp(56); isClickable = true
-            contentDescription = "ความเร็วการเล่น"; glassTouch()
-            setOnClickListener { Glass.tick(this); speed = when (speed) { 1f -> 1.5f; 1.5f -> 2f; 2f -> 0.5f; else -> 1f }; text = "${if (speed % 1f == 0f) speed.toInt().toString() else speed.toString()}×"; applySpeed() } },
-            LinearLayout.LayoutParams(-2, c.dp(44)).apply { rightMargin = c.dp(8) })
+        // One slim glass capsule: play, elapsed time, the scrubber, the length, speed and sound.
+        controls = LinearLayout(c).apply { gravity = Gravity.CENTER_VERTICAL; background = context.glass(26, 0x2effffff); setPadding(context.dp(6), context.dp(4), context.dp(6), context.dp(4)) }
+        controls.addView(round(smallPlay, "เล่นหรือหยุด") { toggle() }, c.dp(44), c.dp(44))
+        now = c.text("0:00", 12.5f, Color.WHITE, true).apply { gravity = Gravity.CENTER; minWidth = c.dp(38) }
+        controls.addView(now, -2, -2)
+        scrub.onSeek = { ms, done -> seekTo(ms); if (done) scheduleHide() else removeCallbacks(hide) }
+        controls.addView(scrub, LinearLayout.LayoutParams(0, c.dp(44), 1f).apply { leftMargin = c.dp(6); rightMargin = c.dp(6) })
+        total = c.text("0:00", 12.5f, Glass.TEXT2).apply { gravity = Gravity.CENTER; minWidth = c.dp(38) }
+        controls.addView(total, -2, -2)
+        val speedLabel = c.text("1×", 12.5f, Color.WHITE, true).apply { gravity = Gravity.CENTER }
+        controls.addView(FrameLayout(c).apply { isClickable = true; contentDescription = "ความเร็วการเล่น"; glassTouch(); addView(speedLabel, LayoutParams(-2, -2, Gravity.CENTER))
+            setOnClickListener { Glass.tick(this); speed = when (speed) { 1f -> 1.5f; 1.5f -> 2f; 2f -> 0.5f; else -> 1f }
+                speedLabel.text = "${if (speed % 1f == 0f) speed.toInt().toString() else speed.toString()}×"; applySpeed() } }, c.dp(44), c.dp(44))
         val on = "M4 9h4l5-4v14l-5-4H4z M16.5 9.5v5 M19.5 7v10"; val off = "M4 9h4l5-4v14l-5-4H4z M16 9l6 6 M22 9l-6 6"
-        val muteIcon = IconView(c, on).apply { tint = Color.WHITE }
-        row.addView(FrameLayout(c).apply { background = context.glass(22, 0x1affffff); isClickable = true; glassTouch(); contentDescription = "ปิดเสียง"
-            addView(muteIcon, LayoutParams(context.dp(22), context.dp(22), Gravity.CENTER))
-            setOnClickListener { Glass.tick(this); muted = !muted; player?.setVolume(if (muted) 0f else 1f, if (muted) 0f else 1f); muteIcon.path = if (muted) off else on; contentDescription = if (muted) "เปิดเสียง" else "ปิดเสียง" } },
-            LinearLayout.LayoutParams(c.dp(44), c.dp(44)))
-        bottom.addView(row, -1, -2)
-        addView(bottom, LayoutParams(-1, -2, Gravity.BOTTOM).apply { setMargins(c.dp(12), 0, c.dp(12), c.dp(10)) })
+        val muteIcon = IconView(c, if (muted) off else on, 2f)
+        controls.addView(round(muteIcon, if (muted) "เปิดเสียง" else "ปิดเสียง") { v ->
+            muted = !muted; applyVolume(); muteIcon.path = if (muted) off else on; v.contentDescription = if (muted) "เปิดเสียง" else "ปิดเสียง" }, c.dp(44), c.dp(44))
+        addView(controls, LayoutParams(-1, -2, Gravity.BOTTOM).apply { setMargins(c.dp(14), 0, c.dp(14), c.dp(12)) })
 
-        val gestures = GestureDetector(c, object : GestureDetector.SimpleOnGestureListener() {
-            override fun onDown(e: MotionEvent) = true
-            override fun onSingleTapUp(e: MotionEvent): Boolean { showChrome(!shown); return true }
-            override fun onFling(a: MotionEvent?, b: MotionEvent, vx: Float, vy: Float): Boolean {
-                if (abs(vx) > abs(vy) * 1.4f && abs(vx) > context.dp(300)) { pause(); onSwipe(if (vx < 0) 1 else -1); return true }
-                return false
-            }
-        })
-        video.setOnTouchListener { _, e -> gestures.onTouchEvent(e) }
-        poster.setOnTouchListener { _, e -> gestures.onTouchEvent(e) }
+        // The length is read once in the background so the time shows before the clip is ever played.
+        Thread { val d = runCatching { android.media.MediaMetadataRetriever().run { try { setDataSource(context, uri); extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toInt() ?: 0 } finally { release() } } }.getOrDefault(0)
+            post { if (durationMs == 0 && d > 0) { durationMs = d; update() } } }.apply { name = "lumora-video-length"; isDaemon = true }.start()
+        if (prefs.getBoolean("video_autoplay", false)) post { start() }
     }
 
-    /** First frame shown until playback starts. */
-    fun poster(b: Bitmap?) { if (poster.visibility == View.VISIBLE && b != null) poster.setImageBitmap(b) }
+    private val gestures = GestureDetector(c, object : GestureDetector.SimpleOnGestureListener() {
+        override fun onDown(e: MotionEvent) = true
+        override fun onSingleTapUp(e: MotionEvent): Boolean { showChrome(!shown); return true }
+        override fun onDoubleTap(e: MotionEvent): Boolean { toggle(); return true }
+        override fun onFling(a: MotionEvent?, b: MotionEvent, vx: Float, vy: Float): Boolean {
+            if (abs(vx) > abs(vy) * 1.4f && abs(vx) > context.dp(300)) { pause(); onSwipe(if (vx < 0) 1 else -1); return true }
+            return false
+        }
+    })
+    override fun onTouchEvent(e: MotionEvent): Boolean = gestures.onTouchEvent(e) || super.onTouchEvent(e)
+
+    private fun round(icon: IconView, desc: String, click: (View) -> Unit) = FrameLayout(context).apply {
+        isClickable = true; contentDescription = desc; glassTouch()
+        addView(icon, LayoutParams(context.dp(20), context.dp(20), Gravity.CENTER)); setOnClickListener { Glass.tick(this); click(this) }
+    }
+
+    /** First frame (and its blurred glow) shown until playback starts. */
+    fun poster(b: Bitmap?) { if (b != null && !playing) setStill(b) }
+    private fun setStill(b: Bitmap?) {
+        poster.setImageBitmap(b)
+        if (glowOn && b != null && !b.isRecycled) glow.setImageBitmap(runCatching {
+            val w = 24; val h = (24f * b.height / b.width).toInt().coerceIn(4, 64)
+            val small = Bitmap.createScaledBitmap(b, w, h, true); val tiny = Bitmap.createScaledBitmap(small, 6, (h / 4).coerceAtLeast(2), true)
+            Bitmap.createScaledBitmap(tiny, w, h, true).also { if (it !== small) small.recycle(); if (it !== tiny) tiny.recycle() }
+        }.getOrNull())
+    }
+
+    /** Lifts the controls above the gallery's own action row. */
+    fun controlsInset(px: Int) { controls.layoutParams = (controls.layoutParams as LayoutParams).apply { bottomMargin = px + context.dp(10) } }
+
     fun start() {
-        if (!prepared) { startWhenReady = true; return }
-        poster.animate().alpha(0f).setDuration(160).withEndAction { poster.visibility = View.GONE }.start()
-        video.start(); applySpeed(); refresh(); removeCallbacks(tick); post(tick); scheduleHide()
+        if (player == null) { open(); return }
+        if (!prepared) return
+        player?.start(); playing = true; applySpeed(); refresh(); removeCallbacks(tick); post(tick); scheduleHide()
     }
-    fun pause() { if (video.isPlaying) video.pause(); refresh() }
-    private fun toggle() { if (video.isPlaying) pause() else start() }
-    private fun refresh() { play.path = if (video.isPlaying) VideoPlayerActivity.PAUSE else VideoPlayerActivity.PLAY }
-    private fun applySpeed() { val p = player ?: return; runCatching { val was = video.isPlaying; p.playbackParams = p.playbackParams.setSpeed(speed); if (!was) p.pause() } }
-    private fun update() {
-        val d = video.duration.coerceAtLeast(0); val p = video.currentPosition
-        if (seek.max != d && d > 0) seek.max = d
-        seek.progress = p; time.text = "${fmt(p)} / ${fmt(d)}"
+    fun pause() { if (playing) { runCatching { player?.pause() }; playing = false; refresh(); showChrome(true) } }
+    private fun toggle() { if (playing) pause() else start() }
+
+    /** Creates the surface and the decoder only now, on the first play. */
+    private fun open() {
+        val tv = TextureView(context).apply { alpha = 0f; importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }
+        texture = tv
+        addView(tv, indexOfChild(poster) + 1, LayoutParams(-1, -1, Gravity.CENTER))
+        tv.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+            override fun onSurfaceTextureAvailable(st: SurfaceTexture, w: Int, h: Int) {
+                val mp = MediaPlayer(); player = mp
+                runCatching {
+                    mp.setDataSource(context, uri); mp.setSurface(Surface(st))
+                    mp.setOnVideoSizeChangedListener { _, vw, vh -> videoW = vw; videoH = vh; fit() }
+                    mp.setOnInfoListener { _, what, _ -> if (what == MediaPlayer.MEDIA_INFO_VIDEO_RENDERING_START) { tv.animate().alpha(1f).setDuration(160).withEndAction { poster.visibility = View.INVISIBLE }.start() }; false }
+                    mp.setOnCompletionListener { playing = false; refresh(); update(); showChrome(true) }
+                    mp.setOnErrorListener { _, _, _ -> context.notice("เล่นไฟล์นี้ไม่ได้"); playing = false; refresh(); true }
+                    mp.setOnPreparedListener {
+                        if (player !== it) return@setOnPreparedListener
+                        prepared = true; durationMs = it.duration.coerceAtLeast(durationMs); applyVolume()
+                        if (pendingSeek >= 0) { seekPlayer(pendingSeek); pendingSeek = -1 }
+                        start()
+                    }
+                    mp.prepareAsync()
+                }.onFailure { context.notice("เล่นไฟล์นี้ไม่ได้"); release() }
+            }
+            override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) {}
+            override fun onSurfaceTextureDestroyed(st: SurfaceTexture): Boolean { release(); return true }
+            override fun onSurfaceTextureUpdated(st: SurfaceTexture) {}
+        }
+    }
+    /** The surface takes the clip's shape, centred, like the poster (FIT_CENTER). */
+    private fun fit() {
+        val tv = texture ?: return; if (videoW <= 0 || videoH <= 0 || width <= 0) return
+        val sc = minOf(width.toFloat() / videoW, height.toFloat() / videoH)
+        tv.layoutParams = LayoutParams((videoW * sc).toInt(), (videoH * sc).toInt(), Gravity.CENTER)
+    }
+    override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) { super.onSizeChanged(w, h, ow, oh); fit() }
+
+    private fun seekTo(ms: Int) {
+        if (!prepared) { pendingSeek = ms; update(ms); return }
+        seekPlayer(ms); update(ms)
+    }
+    private fun seekPlayer(ms: Int) { val p = player ?: return; runCatching { if (Build.VERSION.SDK_INT >= 26) p.seekTo(ms.toLong(), MediaPlayer.SEEK_CLOSEST) else p.seekTo(ms) } }
+    private fun applyVolume() { val v = if (muted) 0f else 1f; runCatching { player?.setVolume(v, v) } }
+    private fun applySpeed() { val p = player ?: return; if (!prepared || Build.VERSION.SDK_INT < 23) return
+        runCatching { p.playbackParams = p.playbackParams.setSpeed(speed); if (!playing) p.pause() } }
+    private fun refresh() { val path = if (playing) VideoPlayerActivity.PAUSE else VideoPlayerActivity.PLAY; bigPlay.path = path; smallPlay.path = path }
+    private fun update(at: Int = -1) {
+        val d = durationMs; val p = if (at >= 0) at else runCatching { if (prepared) player?.currentPosition ?: 0 else 0 }.getOrDefault(0)
+        scrub.set(p, d); now.text = fmt(p); total.text = fmt(d)
     }
     private fun fmt(ms: Int) = (ms / 1000).let { String.format(Locale.US, "%d:%02d", it / 60, it % 60) }
-    private fun scheduleHide() { removeCallbacks(hide); if (video.isPlaying) postDelayed(hide, 2800) }
+    private fun scheduleHide() { removeCallbacks(hide); if (playing) postDelayed(hide, 2800) }
     private fun showChrome(on: Boolean) {
-        shown = on
-        listOf(center, bottom).forEach { v -> v.animate().alpha(if (on) 1f else 0f).setDuration(if (Glass.reduced(context)) 0 else 220).withEndAction { v.visibility = if (shown) View.VISIBLE else View.INVISIBLE }.start(); if (on) v.visibility = View.VISIBLE }
+        if (shown == on) { if (on) scheduleHide(); return }
+        shown = on; onChrome(on)
+        listOf(center, controls).forEach { v -> v.animate().alpha(if (on) 1f else 0f).translationY(if (on || v === center) 0f else context.dp(12).toFloat())
+            .setDuration(if (Glass.reduced(context)) 0 else 240).setInterpolator(Glass.EASE).withEndAction { v.visibility = if (shown) View.VISIBLE else View.INVISIBLE }.start(); if (on) v.visibility = View.VISIBLE }
         if (on) scheduleHide()
     }
-    override fun onDetachedFromWindow() { removeCallbacks(tick); removeCallbacks(hide); runCatching { video.stopPlayback() }; super.onDetachedFromWindow() }
+    private fun release() { val p = player ?: return; player = null; prepared = false; playing = false; runCatching { p.stop() }; runCatching { p.release() } }
+    override fun onDetachedFromWindow() { removeCallbacks(tick); removeCallbacks(hide); release(); super.onDetachedFromWindow() }
+
+    /**
+     * Slim rounded scrubber: a soft track, an accent fill that fades from blue to orange, and a knob that grows
+     * under the finger. Dragging seeks as it goes; a tick marks the start and the end.
+     */
+    private class Scrubber(c: Context) : View(c) {
+        var onSeek: (Int, Boolean) -> Unit = { _, _ -> }
+        private var pos = 0; private var len = 0; private var dragging = false
+        private var grow = 0f
+        private val d = c.resources.displayMetrics.density
+        private val track = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x33ffffff }
+        private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val knob = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; setShadowLayer(4 * d, 0f, 1 * d, 0x55000000) }
+        private val r = RectF()
+        init { contentDescription = "ตำแหน่งในคลิป"; isClickable = true }
+        fun set(p: Int, l: Int) { if (dragging) return; pos = p; len = l; invalidate() }
+        private fun frac() = if (len > 0) (pos.toFloat() / len).coerceIn(0f, 1f) else 0f
+        override fun onDraw(cv: Canvas) {
+            val pad = 9 * d; val w = width - 2 * pad; val cy = height / 2f; val th = (3 + 2 * grow) * d
+            r.set(pad, cy - th / 2, pad + w, cy + th / 2); cv.drawRoundRect(r, th, th, track)
+            val x = pad + w * frac()
+            fill.shader = LinearGradient(pad, 0f, pad + w, 0f, intArrayOf(0xff7db8ff.toInt(), Color.WHITE, Glass.ACCENT), null, Shader.TileMode.CLAMP)
+            r.set(pad, cy - th / 2, x, cy + th / 2); cv.drawRoundRect(r, th, th, fill)
+            cv.drawCircle(x, cy, (6 + 3 * grow) * d, knob)
+        }
+        override fun onTouchEvent(e: MotionEvent): Boolean {
+            if (len <= 0) return false
+            val pad = 9 * d; val f = ((e.x - pad) / (width - 2 * pad)).coerceIn(0f, 1f)
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> { dragging = true; parent?.requestDisallowInterceptTouchEvent(true); animateGrow(1f); performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { dragging = false; animateGrow(0f) }
+            }
+            val before = pos; pos = (f * len).toInt()
+            if ((pos == 0 || pos == len) && before != pos) performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+            onSeek(pos, !dragging); invalidate(); return true
+        }
+        private fun animateGrow(to: Float) { android.animation.ValueAnimator.ofFloat(grow, to).apply { duration = 160; addUpdateListener { grow = it.animatedValue as Float; invalidate() } }.start() }
+    }
 }

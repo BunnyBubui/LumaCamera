@@ -32,16 +32,11 @@ object ExportSheet {
 
     class Source(val shortSide: Int, val longSide: Int, val fps: Float, val durationMs: Long, val thumb: Bitmap?)
 
-    fun show(a: Activity, src: Source, onExport: (ExportChoice) -> Unit) {
-        val root = a.window.decorView as FrameLayout
-        val dim = FrameLayout(a).apply { setBackgroundColor(0x99000000.toInt()); isClickable = true; alpha = 0f }
-        val card = LinearLayout(a).apply {
-            orientation = LinearLayout.VERTICAL; isClickable = true
-            background = GradientDrawable().apply { setColor(0xff151a2e.toInt()); cornerRadii = FloatArray(8) { i -> if (i < 4) a.dp(28).toFloat() else 0f } }
-            setPadding(a.dp(20), a.dp(10), a.dp(20), a.dp(24))
-        }
-        fun close() { card.animate().translationY(card.height.toFloat()).setDuration(220).start(); dim.animate().alpha(0f).setDuration(220).withEndAction { root.removeView(dim) }.start() }
-        card.addView(View(a).apply { background = GradientDrawable().apply { setColor(0x40ffffff); cornerRadius = a.dp(3).toFloat() } }, LinearLayout.LayoutParams(a.dp(40), a.dp(5)).apply { gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = a.dp(14) })
+    fun show(a: androidx.activity.ComponentActivity, src: Source, onExport: (ExportChoice) -> Unit) {
+        // The camera's glass sheet: rises with the same animation and sound, follows the finger down to close.
+        val sheet = a.screenSheet()
+        val card = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; setPadding(a.dp(4), 0, a.dp(4), a.dp(4)) }
+        fun close() = sheet.close()
 
         // The clip and what it is now.
         val head = LinearLayout(a).apply { gravity = Gravity.CENTER_VERTICAL }
@@ -110,12 +105,7 @@ object ExportSheet {
         card.addView(go, LinearLayout.LayoutParams(-1, a.dp(52)).apply { topMargin = a.dp(12) })
         card.addView(a.text("ยกเลิก", 14f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; isClickable = true; setPadding(0, a.dp(12), 0, 0); setOnClickListener { close() } }, -1, a.dp(44))
         refresh()
-
-        dim.setOnClickListener { close() }
-        dim.addView(card, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
-        root.addView(dim, -1, -1)
-        dim.animate().alpha(1f).setDuration(200).start()
-        card.translationY = a.dp(500).toFloat(); card.animate().translationY(0f).setInterpolator(Glass.SPRING).setDuration(420).start()
+        sheet.open { body, _ -> body.addView(card, -1, -2) }
     }
 
     /** Rough time on a recent phone: AI tiles (about 45 ms each on the GPU) plus in-between frames. */
@@ -228,7 +218,7 @@ class ExportProgress(private val a: Activity, thumb: Bitmap?, private val steps:
     }
 
     /**
-     * Background that always moves and changes with the step: EDIT soft colour clouds turning, FLOW light streaks
+     * Background that always moves and changes with the step: EDIT soft colour clouds turning, FLOW cool lights streaming sideways
      * racing sideways (new frames), AI a pixel grid lighting up under a scanning band (new pixels), SAVE sparks
      * rising. Modes cross-fade.
      */
@@ -240,7 +230,6 @@ class ExportProgress(private val a: Activity, thumb: Bitmap?, private val steps:
         private val p = Paint(Paint.ANTI_ALIAS_FLAG)
         private val d = c.resources.displayMetrics.density
         private val rnd = java.util.Random(7)
-        private val streaks = List(26) { floatArrayOf(rnd.nextFloat(), rnd.nextFloat(), 0.3f + rnd.nextFloat(), 0.2f + rnd.nextFloat() * 0.6f) }
         private val sparks = List(40) { floatArrayOf(rnd.nextFloat(), rnd.nextFloat(), 0.4f + rnd.nextFloat(), 1f + rnd.nextFloat() * 3f) }
         private val anim = android.animation.ValueAnimator.ofFloat(0f, 1f).apply { duration = 1000; repeatCount = android.animation.ValueAnimator.INFINITE
             interpolator = android.view.animation.LinearInterpolator(); addUpdateListener { t += 0.016f; fade = (fade + 0.03f).coerceAtMost(1f); invalidate() } }
@@ -251,40 +240,48 @@ class ExportProgress(private val a: Activity, thumb: Bitmap?, private val steps:
             if (fade < 1f) draw(cv, previous, 1f - fade)
             draw(cv, mode, fade)
         }
+        // One soft gradient per colour, made once and only moved and scaled each frame.
+        private val clouds = HashMap<Int, android.graphics.RadialGradient>()
+        private val cm = android.graphics.Matrix()
+        private fun cloud(cv: Canvas, col: Int, x: Float, y: Float, rx: Float, ry: Float, alpha: Float) {
+            val g = clouds.getOrPut(col) { android.graphics.RadialGradient(0f, 0f, 100f, intArrayOf(col or (0xff shl 24), (col and 0x00ffffff) or (0x66 shl 24), col and 0x00ffffff), floatArrayOf(0f, 0.45f, 1f), android.graphics.Shader.TileMode.CLAMP) }
+            cm.setScale(ry / 100f, ry / 100f); g.setLocalMatrix(cm)
+            p.shader = g; p.alpha = (alpha * 255).toInt().coerceIn(0, 255)
+            cv.save(); cv.translate(x, y); cv.scale(rx / ry, 1f); cv.drawCircle(0f, 0f, ry, p); cv.restore()
+        }
         private fun draw(cv: Canvas, m: Int, a: Float) {
             val w = width.toFloat(); val h = height.toFloat(); if (w <= 0f || a <= 0f) return
-            p.shader = null; p.style = Paint.Style.FILL
+            p.shader = null; p.style = Paint.Style.FILL; p.alpha = 255
+            // Every step is the same kind of soft moving light; only the colours and the way it moves change.
             when (m) {
                 EDIT -> listOf(Glass.ACCENT, 0xff8e7dff.toInt(), 0xffff5e8a.toInt()).forEachIndexed { i, col ->
                     val ang = t * 0.5f + i * 2.1f
                     val x = w * (0.5f + 0.35f * kotlin.math.cos(ang)); val y = h * (0.45f + 0.28f * kotlin.math.sin(ang * 1.2f)); val r = w * 0.6f
-                    p.shader = android.graphics.RadialGradient(x, y, r, (col and 0x00ffffff) or ((0x50 * a).toInt() shl 24), 0, android.graphics.Shader.TileMode.CLAMP)
-                    cv.drawCircle(x, y, r, p)
+                    cloud(cv, col and 0x00ffffff, x, y, r, r, 0.31f * a)
                 }
-                FLOW -> streaks.forEach { s ->
-                    val x = ((s[0] + t * 0.25f * s[2]) % 1.3f - 0.15f) * w; val y = s[1] * h; val len = w * 0.25f * s[2]
-                    p.shader = android.graphics.LinearGradient(x - len, y, x, y, 0, (0x64d2ff or ((0xb0 * a * s[3]).toInt() shl 24)), android.graphics.Shader.TileMode.CLAMP)
-                    p.strokeWidth = 2.5f * d * s[2]; p.style = Paint.Style.STROKE; p.strokeCap = Paint.Cap.ROUND
-                    cv.drawLine(x - len, y, x, y, p)
+                // New frames between frames: cool lights stream sideways in long, gentle waves.
+                FLOW -> listOf(0x64d2ff, 0x8e7dff, 0x5ac8fa, 0xbf9bff).forEachIndexed { i, col ->
+                    val x = w * (((t * 0.07f + i * 0.31f) % 1.4f) - 0.2f)
+                    val y = h * (0.22f + 0.19f * i + 0.06f * kotlin.math.sin(t * 0.9f + i * 1.7f))
+                    cloud(cv, col, x, y, w * 0.75f, w * 0.38f, 0.32f * a)
                 }
+                // New pixels: warm and cyan lights breathe in place while a wide, soft glow passes down the screen.
                 AI -> {
-                    val cell = 22 * d; val cols = (w / cell).toInt() + 1; val rows = (h / cell).toInt() + 1
-                    val band = ((t * 0.18f) % 1.2f - 0.1f) * h
-                    for (gy in 0 until rows) for (gx in 0 until cols) {
-                        val cy = gy * cell; val near = (1f - kotlin.math.abs(cy - band) / (h * 0.18f)).coerceIn(0f, 1f)
-                        val twinkle = ((kotlin.math.sin(t * 3f + gx * 1.7f + gy * 2.3f) + 1f) / 2f)
-                        val alpha = (a * (0.05f + 0.35f * near * twinkle + if (cy < band) 0.06f else 0f) * 255).toInt().coerceIn(0, 255)
-                        p.color = (if ((gx + gy) % 3 == 0) 0x64d2ff else Glass.ACCENT and 0x00ffffff) or (alpha shl 24)
-                        cv.drawRect(gx * cell + 2 * d, cy + 2 * d, gx * cell + cell - 2 * d, cy + cell - 2 * d, p)
+                    listOf(Glass.ACCENT and 0x00ffffff, 0x64d2ff, 0xffd6a5, 0x8e7dff).forEachIndexed { i, col ->
+                        val ang = t * 0.35f + i * 1.6f
+                        val breathe = 0.85f + 0.2f * kotlin.math.sin(t * 1.4f + i * 1.3f)
+                        val x = w * (0.5f + 0.32f * kotlin.math.cos(ang)); val y = h * (0.5f + 0.3f * kotlin.math.sin(ang * 0.8f)); val r = w * 0.55f * breathe
+                        cloud(cv, col, x, y, r, r, 0.28f * a)
                     }
-                    p.shader = android.graphics.LinearGradient(0f, band - 40 * d, 0f, band + 4 * d, 0, (Glass.ACCENT and 0x00ffffff) or ((0x80 * a).toInt() shl 24), android.graphics.Shader.TileMode.CLAMP)
-                    cv.drawRect(0f, band - 40 * d, w, band + 4 * d, p)
+                    val band = ((t * 0.12f) % 1.4f - 0.2f) * h
+                    cloud(cv, 0xffffff, w / 2f, band, w * 0.9f, h * 0.12f, 0.10f * a)
                 }
-                else -> sparks.forEach { s ->
+                else -> { listOf(0x30d158, 0x64d2ff).forEachIndexed { i, col -> val x = w * (0.35f + 0.3f * i); val y = h * (0.75f - ((t * 0.05f + i * 0.4f) % 0.6f)); cloud(cv, col, x, y, w * 0.6f, w * 0.6f, 0.22f * a) }
+                    p.shader = null; p.alpha = 255; sparks.forEach { s ->
                     val y = h * (1.1f - ((s[1] + t * 0.12f * s[2]) % 1.2f)); val x = w * s[0] + 10 * d * kotlin.math.sin(t * 2 + s[1] * 9)
                     p.color = 0x30d158 or ((a * 200 * (y / h).coerceIn(0f, 1f)).toInt().coerceIn(0, 255) shl 24)
                     cv.drawCircle(x, y, s[3] * d, p)
-                }
+                } }
             }
         }
     }

@@ -119,6 +119,14 @@ class PhotoEditorActivity : ComponentActivity() {
             }; true }
             setOnClickListener { }
         }, LinearLayout.LayoutParams(dp(48), dp(48)).apply { rightMargin = dp(8) })
+        // AI detail for this picture: a sparkle pill in the accent colour, like the AI buttons elsewhere.
+        bar.addView(LinearLayout(this).apply {
+            gravity = Gravity.CENTER; background = glass(24, Glass.ACCENT_SOFT); isClickable = true; contentDescription = "ปรับด้วย AI"; glassTouch()
+            setPadding(dp(12), 0, dp(14), 0)
+            addView(IconView(this@PhotoEditorActivity, Icons.AI, 1.9f).apply { tint = Glass.ACCENT }, LinearLayout.LayoutParams(dp(20), dp(20)))
+            addView(text("AI", 14f, Glass.ACCENT, true).apply { setPadding(dp(6), 0, 0, 0) })
+            setOnClickListener { Glass.tick(this); enhance() }
+        }, LinearLayout.LayoutParams(-2, dp(48)).apply { rightMargin = dp(8) })
         saveButton = EditorKit.roundAccent(this, Icons.CHECK, "บันทึก") { save() }
         bar.addView(saveButton, LinearLayout.LayoutParams(dp(48), dp(48)))
         root.addView(bar, -1, -2)
@@ -392,7 +400,20 @@ class PhotoEditorActivity : ComponentActivity() {
         return out
     }
 
-    private fun save() {
+    /**
+     * AI detail from the editor. Unchanged: the picture itself goes to the AI panel. Edited: the edit is saved as a
+     * new picture first and that one is enhanced, so the AI works on what is on screen. Once the job is queued the
+     * editor closes and the gallery shows its progress.
+     */
+    private fun enhance() {
+        if (canvasView.bitmap == null) return
+        val done: (Shot) -> Unit = { shot -> setResult(RESULT_OK, Intent().putExtra(RESULT_ID, shot.id)); finish() }
+        if (!changed()) { th.ogay.luma.ai.EnhanceUi.showForUri(this, source, done); return }
+        save { id -> setResult(RESULT_OK, Intent().putExtra(RESULT_ID, id))
+            luma.readIo.execute { val shot = luma.shots.get(id); runOnUiThread { if (!isDestroyed && shot != null) th.ogay.luma.ai.EnhanceUi.show(this, shot) { done(shot) } } } }
+    }
+
+    private fun save(then: ((String) -> Unit)? = null) {
         val uri = source
         if (saving || canvasView.bitmap == null) return
         if (!changed()) { notice("ยังไม่มีการแก้ไข"); return }
@@ -414,7 +435,7 @@ class PhotoEditorActivity : ComponentActivity() {
             file.delete()
             runOnUiThread {
                 saving = false; saveButton.alpha = 1f
-                result.onSuccess { notice("บันทึกเป็นภาพใหม่แล้ว · ต้นฉบับยังอยู่"); setResult(RESULT_OK, Intent().putExtra(RESULT_ID, it)); finish() }
+                result.onSuccess { if (then != null) { notice("บันทึกการแก้ไขแล้ว"); then(it) } else { notice("บันทึกเป็นภาพใหม่แล้ว · ต้นฉบับยังอยู่"); setResult(RESULT_OK, Intent().putExtra(RESULT_ID, it)); finish() } }
                     .onFailure { notice("บันทึกไม่สำเร็จ · ${it.localizedMessage}") }
             }
         }
