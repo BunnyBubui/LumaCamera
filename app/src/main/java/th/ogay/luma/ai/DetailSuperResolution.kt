@@ -34,6 +34,10 @@ class DetailSuperResolution(private val context: Context) {
             try {
                 val source = Dimensions(decoder.width, decoder.height)
                 val output = spec.output(source)
+                // Scan once per image; restore text conservatively without redrawing glyphs.
+                // Detection is optional: OCR failures fall back to the original Natural guard.
+                val textScan = if (spec.profile == EnhanceProfile.NATURAL)
+                    DetailTextGuard.scan(context, shot.uri, source, stopped) else null
                 // Budget for a large, noisy, high-quality JPEG and its MediaStore copy.
                 if (context.cacheDir.usableSpace < maxOf(64L*1024*1024, output.pixels*6))
                     throw IOException("พื้นที่ว่างไม่พอสำหรับภาพ ×${spec.scale} กรุณาเลือกสเกลเล็กลง")
@@ -58,7 +62,9 @@ class DetailSuperResolution(private val context: Context) {
                                 inferMs += SystemClock.elapsedRealtime()-t
                                 checkpoint()
                                 t = SystemClock.elapsedRealtime()
-                                DetailResampler.copyCore(enhanced,pixels,spec.scale,spec.strength,w,h,stripe,output.w,left*spec.scale,spec.profile)
+                                val textMask = textScan?.mask?.forCore(left,top,w,h)
+                                DetailResampler.copyCore(enhanced,pixels,spec.scale,spec.strength,w,h,
+                                    stripe,output.w,left*spec.scale,spec.profile,textMask)
                                 renderMs += SystemClock.elapsedRealtime()-t
                                 count++
                                 val percent = (count*99/(columns*rows)).coerceAtMost(99)
@@ -80,6 +86,9 @@ class DetailSuperResolution(private val context: Context) {
                     val report = JSONObject().put("model",EnhanceSpec.MODEL).put("scale",spec.scale)
                         .put("nativeScale",4).put("strength",spec.strength)
                         .put("profile",spec.profile.name).put("outputModel",spec.modelId)
+                        .put("textGuardStatus",textScan?.status ?: "not-requested")
+                        .put("textGuardRegions",textScan?.boxCount ?: 0)
+                        .put("textGuardScanMs",textScan?.elapsedMs ?: 0)
                         .put("backend",runtime.backend)
                         .put("fallback",runtime.fallbackReason ?: JSONObject.NULL)
                         .put("inputWidth",source.w).put("inputHeight",source.h)
