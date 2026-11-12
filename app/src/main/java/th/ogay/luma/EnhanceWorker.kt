@@ -13,6 +13,7 @@ import androidx.work.*
 import org.json.JSONObject
 import th.ogay.luma.ai.DetailSuperResolution
 import th.ogay.luma.ai.EnhanceSpec
+import th.ogay.luma.ai.EnhanceProfile
 import java.io.File
 import java.io.IOException
 import java.util.concurrent.CancellationException
@@ -67,9 +68,11 @@ class EnhanceWorker(context: Context, params: WorkerParameters) : Worker(context
                     SuperResolution(context).process(input,temp) { stopped() }
                     scaledSize(input.size,TARGET_PIXELS)
                 }
-                EnhanceSpec.MODEL -> {
+                EnhanceSpec.MODEL, EnhanceSpec.NATURAL_MODEL -> {
                     val result = DetailSuperResolution(context).process(input,temp,
-                        EnhanceSpec(shot.aiScale,shot.aiStrength),{ stopped() }) { percent ->
+                        EnhanceSpec(shot.aiScale,shot.aiStrength,
+                            if (shot.aiModel == EnhanceSpec.NATURAL_MODEL) EnhanceProfile.NATURAL else EnhanceProfile.CLASSIC),
+                            { stopped() }) { percent ->
                         db.aiState(key,shot.aiToken,Stage.RUNNING,percent)
                         val now = SystemClock.elapsedRealtime()
                         if (now-lastNotification > 1000) {
@@ -114,7 +117,7 @@ class EnhanceWorker(context: Context, params: WorkerParameters) : Worker(context
 
     private fun foreground(shot: Shot, progress: Int): ForegroundInfo {
         val context = applicationContext
-        val scale = if (shot.aiModel == EnhanceSpec.MODEL) "×${shot.aiScale}" else "SR1"
+        val scale = when (shot.aiModel) { EnhanceSpec.NATURAL_MODEL -> "Natural ×${shot.aiScale}"; EnhanceSpec.MODEL -> "Classic ×${shot.aiScale}"; else -> "SR1" }
         val notification = LiveNotice.progress(context, "Lumora · กำลังเพิ่มรายละเอียดภาพ $scale",
             if (progress == 0) "กำลังเตรียมภาพ" else "ทำไปแล้ว $progress% · แตะเพื่อดู", if (progress == 0) -1 else progress,
             openGallery(shot), WorkManager.getInstance(context).createCancelPendingIntent(id))

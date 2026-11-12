@@ -69,6 +69,18 @@ class ThaiOcrDeviceTest {
     @Test fun photoWithSkewBlurNoiseAndJpeg() = assertCer("photo_skewed", 0.03)
     @Test fun tiltedFifteenDegrees() = assertCer("tilted_15deg", 0.03)
 
+    @Test fun detectionOnlyTextBoxesStayInsideSourceImage() {
+        val bitmap = fixture("english_ui")
+        try {
+            val boxes = engine.detectTextBoxes(app, bitmap, 10000L) { false }
+            assertTrue("Expected at least one detected region", boxes.isNotEmpty())
+            assertTrue("Detector coordinates must refer to the unrotated source bitmap",
+                boxes.all { it.left >= 0f && it.top >= 0f &&
+                    it.right <= bitmap.width.toFloat() && it.bottom <= bitmap.height.toFloat() &&
+                    it.right > it.left && it.bottom > it.top })
+        } finally { bitmap.recycle() }
+    }
+
     @Test fun pageWithoutTextReturnsEmpty() = assertEquals("", read("blank_paper"))
 
     @Test fun pooledCharacterErrorRate() {
