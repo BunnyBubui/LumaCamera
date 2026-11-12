@@ -102,14 +102,57 @@ class VideoEditorActivity : ComponentActivity() {
         val e = extras.getOrNull(playIndex - 1)
         if (e == null) { trim.duration = duration; trim.end = end; trim.start = start; trim.end = end; trim.split = split; trim.frames = mainFrames; return }
         trim.duration = e.duration; trim.end = e.to; trim.start = e.from; trim.end = e.to; trim.split = -1
+        ensureFrames(e); trim.frames = framesOf(e)
+    }
+    private val framesLoading = HashSet<String>()
+    private fun framesOf(e: Extra): List<Bitmap> = if (e.uri == source && mainFrames.isNotEmpty()) mainFrames else clipFrames[e.uri.toString()] ?: listOfNotNull(e.thumb)
+    private fun ensureFrames(e: Extra) {
         val key = e.uri.toString()
-        trim.frames = clipFrames[key] ?: emptyList()
-        if (key !in clipFrames) luma.readIo.execute {
+        if (e.uri == source || key in clipFrames || !framesLoading.add(key)) return
+        luma.readIo.execute {
             val list = runCatching { val r = MediaMetadataRetriever(); try { r.setDataSource(this, e.uri)
                 (0 until 10).mapNotNull { i -> val t = e.duration * 1000 * (2 * i + 1) / 20
                     if (android.os.Build.VERSION.SDK_INT >= 27) r.getScaledFrameAtTime(t, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 160, 160) else r.getFrameAtTime(t, MediaMetadataRetriever.OPTION_CLOSEST_SYNC) } } finally { runCatching { r.release() } } }.getOrDefault(emptyList())
-            runOnUiThread { if (!isDestroyed) { clipFrames[key] = list; if (extras.getOrNull(playIndex - 1)?.uri == e.uri) trim.frames = list } }
+            runOnUiThread { if (!isDestroyed) { framesLoading.remove(key); if (list.isNotEmpty()) clipFrames[key] = list; if (extras.getOrNull(playIndex - 1)?.uri == e.uri) trim.frames = framesOf(e); refreshTimeline() } }
         }
+    }
+
+    // ---------- Timeline ----------
+    private lateinit var timeline: StudioTimeline
+    private var laneCount = -1
+    private var pendingSeek = -1L; private var lastSeekAt = 0L
+    private fun mainLen() = ((end - start - cutMs()) / speed).toLong()
+    private fun refreshTimeline() {
+        if (!::timeline.isInitialized) return
+        val list = ArrayList<StudioTimeline.Clip>(extras.size + 1)
+        list += StudioTimeline.Clip(mainLen().coerceAtLeast(1), start, end, duration, speed, mainFrames.ifEmpty { listOfNotNull(firstFrame) }, false)
+        extras.forEach { e -> ensureFrames(e); list += StudioTimeline.Clip(e.len.coerceAtLeast(1), e.from, e.to, e.duration, 1f, framesOf(e), true) }
+        val lanes = ArrayList<List<StudioTimeline.Bar>>()
+        if (music != null) lanes += listOf(StudioTimeline.Bar(0, list.sumOf { it.len }, 0xff34d399.toInt(), musicName))
+        layers.forEach { l -> if (lanes.size < 4) lanes += listOf(StudioTimeline.Bar(l.at, l.length, when (l.kind) { VideoLayer.VIDEO -> 0xff4dc3ff.toInt(); VideoLayer.IMAGE -> 0xffff6fb5.toInt(); else -> 0xffa78bfa.toInt() }, layerName(l))) }
+        timeline.clips = list; timeline.lanes = lanes; timeline.selected = playIndex.coerceIn(0, list.size - 1); timeline.joined = transition != 0
+        if (lanes.size != laneCount) { laneCount = lanes.size; timeline.layoutParams = timeline.layoutParams.apply { height = dp(68 + 12 * lanes.size) } }
+        timeline.playhead = outNow()
+        timeline.invalidate()
+    }
+    /** Which clip, and where in its source file, a moment of the finished video falls. */
+    private fun locate(t: Long): Pair<Int, Long> {
+        var r = t.coerceAtLeast(0); val m = mainLen()
+        if (r < m || extras.isEmpty()) { var at = start + (r.coerceAtMost(m) * speed).toLong(); if (cutValid() && at >= cutFrom) at += cutMs(); return 0 to at.coerceIn(start, end) }
+        r -= m
+        extras.forEachIndexed { i, e -> if (r < e.len || i == extras.size - 1) return (i + 1) to (e.from + r).coerceIn(e.from, e.to); r -= e.len }
+        return 0 to start
+    }
+    /** Shows clip [k] at [at] ms of its source, without the transition animation: used while scrubbing and picking on the timeline. */
+    private fun jumpTo(k: Int, at: Long, exact: Boolean = true) {
+        if (k != playIndex || player == null) { playIndex = k.coerceIn(0, extras.size); pendingSeek = at; showClipOnBar(); trim.playhead = at.coerceIn(trim.start, trim.end); openPlayer() }
+        else {
+            trim.playhead = at.coerceIn(trim.start, trim.end)
+            val now = android.os.SystemClock.uptimeMillis()
+            if (!prepared) pendingSeek = at
+            else if (exact || now - lastSeekAt > 70) { lastSeekAt = now; player?.runCatching { if (android.os.Build.VERSION.SDK_INT >= 26) seekTo(at, if (exact) MediaPlayer.SEEK_CLOSEST else MediaPlayer.SEEK_CLOSEST_SYNC) else seekTo(at.toInt()) } }
+        }
+        showTime()
     }
 
     // ---- Source ----
@@ -283,6 +326,21 @@ class VideoEditorActivity : ComponentActivity() {
         transport.addView(timeLabel, LinearLayout.LayoutParams(0, -2, 1f))
         transport.addView(EditorKit.chip(this, "เพิ่มคลิป", ADD) { pickClip.launch(arrayOf("video/*")) }, LinearLayout.LayoutParams(-2, dp(44)))
         root.addView(transport, -1, -2)
+        timeline = StudioTimeline(this).apply { contentDescription = "ไทม์ไลน์ ลากเพื่อเลื่อนเวลา แตะคลิปเพื่อเลือก ลากขอบคลิปที่เลือกเพื่อตัด กดค้างแล้วลากเพื่อสลับลำดับ" }
+        timeline.onSeek = { t -> if (player?.isPlaying == true) togglePlay(); val (k, at) = locate(t); jumpTo(k, at, false) }
+        timeline.onSelect = { i -> if (i != playIndex) jumpTo(i, if (i == 0) start else extras[i - 1].from); if (tool == 10) showTool(10, false) }
+        timeline.onTrim = { i, f, t, done ->
+            if (i == 0) { start = f; end = t; if (split !in (f + 300)..(t - 300)) split = -1; if (cutValid() && (cutFrom < f + 100 || cutTo > t - 100)) { cutFrom = -1; cutTo = -1 } }
+            else extras.getOrNull(i - 1)?.let { it.from = f; it.to = t }
+            if (playIndex == i) { showClipOnBar(); trim.playhead = trim.playhead.coerceIn(f, t); if (done) jumpTo(i, trim.playhead) }
+            showTime()
+        }
+        timeline.onMove = { i, j ->
+            val playing = extras.getOrNull(playIndex - 1)
+            if (i - 1 in extras.indices && j - 1 in extras.indices) { extras.add(j - 1, extras.removeAt(i - 1)); if (playing != null) playIndex = extras.indexOf(playing) + 1 }
+            showTime(); if (tool == 10) showTool(10, false)
+        }
+        root.addView(timeline, LinearLayout.LayoutParams(-1, dp(68)).apply { topMargin = dp(2) })
         trim = TrimBar(this).apply {
             contentDescription = "ช่วงคลิป ลากขอบซ้ายขวาเพื่อตัด"
         }
@@ -372,7 +430,7 @@ class VideoEditorActivity : ComponentActivity() {
             runCatching {
                 setDataSource(this@VideoEditorActivity, clip); setSurface(s); isLooping = false
                 setOnPreparedListener { mp ->
-                    prepared = true; if (playIndex == 0) seekTo(this@VideoEditorActivity.start.toInt()) else extras.getOrNull(playIndex - 1)?.let { if (it.from > 0) seekTo(it.from.toInt()) }; applySound(); layoutVideo(); arrived()
+                    prepared = true; if (playIndex == 0) seekTo(this@VideoEditorActivity.start.toInt()) else extras.getOrNull(playIndex - 1)?.let { if (it.from > 0) seekTo(it.from.toInt()) }; if (pendingSeek >= 0) { seekTo(pendingSeek.toInt()); pendingSeek = -1 }; applySound(); layoutVideo(); arrived()
                     if (autoPlay) { autoPlay = false; if (playIndex == 0) runCatching { mp.playbackParams = mp.playbackParams.setSpeed(speed) }; mp.start(); musicPlayer?.runCatching { start() }; playIcon.path = "M8 6v12 M16 6v12" }
                 }
                 setOnCompletionListener { if (playIndex == 0) seekTo(this@VideoEditorActivity.start.toInt()) else playClip(if (playIndex < extras.size) playIndex + 1 else 0) }
@@ -434,6 +492,7 @@ class VideoEditorActivity : ComponentActivity() {
     }
     private fun clock(ms: Long) = String.format(Locale.US, "%d:%02d.%d", ms / 60000, ms / 1000 % 60, ms / 100 % 10)
     private fun showTime() {
+        refreshTimeline()
         val length = ((end - start) / speed).toLong()
         val more = extras.sumOf { it.len }
         timeLabel.text = (if (playIndex > 0) "คลิป ${playIndex + 1}/${extras.size + 1}  ·  ${clock(trim.playhead - trim.start)} / ${clock(trim.end - trim.start)}" else "${clock(trim.playhead - start)} / ${clock(end - start)}") +
@@ -768,7 +827,7 @@ class VideoEditorActivity : ComponentActivity() {
     /** Where the preview is, in ms of the finished video. */
     private fun outNow(): Long {
         val main = ((end - start - cutMs()) / speed).toLong()
-        if (playIndex > 0) return main + extras.take(playIndex - 1).sumOf { it.len } + ((player?.currentPosition?.toLong() ?: 0L) - extras[playIndex - 1].from).coerceAtLeast(0)
+        if (playIndex > 0) return main + extras.take(playIndex - 1).sumOf { it.len } + (trim.playhead - extras[playIndex - 1].from).coerceAtLeast(0)
         var t = trim.playhead - start
         if (cutValid() && trim.playhead >= cutTo) t -= cutMs()
         return (t.coerceAtLeast(0) / speed).toLong()
