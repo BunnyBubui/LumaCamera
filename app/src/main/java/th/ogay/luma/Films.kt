@@ -8,6 +8,26 @@ import java.util.Random
 class Film(val id: String, val name: String, val group: String, val sat: Float, val con: Float, val r: Float, val g: Float, val b: Float, val lift: Float, val grain: Float, val vignette: Float, val note: String = "")
 
 /**
+ * Per-film settings that only exist for film mode: how strong the colour is, how much grain and dark edge,
+ * a soft glow around highlights, a light leak, a frame and a date stamp. Each film remembers its own,
+ * so a saved film comes back exactly as it was tuned.
+ */
+class FilmFx(val strength: Float = 1f, val grain: Float = 1f, val vignette: Float = 1f, val glow: Float = 0f, val leak: Int = 0, val frame: Int = 0, val date: Boolean = false) {
+    fun encode() = "$strength,$grain,$vignette,$glow,$leak,$frame,${if (date) 1 else 0}"
+    fun copy(strength: Float = this.strength, grain: Float = this.grain, vignette: Float = this.vignette, glow: Float = this.glow, leak: Int = this.leak, frame: Int = this.frame, date: Boolean = this.date) =
+        FilmFx(strength, grain, vignette, glow, leak, frame, date)
+    companion object {
+        val LEAKS = listOf("ปิด", "อ่อน", "กลาง", "แรง")
+        val FRAMES = listOf("ไม่มี", "ขอบขาว", "โพลารอยด์", "ขอบดำ")
+        fun decode(v: String?): FilmFx {
+            val p = v?.split(',') ?: return FilmFx()
+            if (p.size < 7) return FilmFx()
+            return runCatching { FilmFx(p[0].toFloat().coerceIn(0f, 1f), p[1].toFloat().coerceIn(0f, 2f), p[2].toFloat().coerceIn(0f, 2f), p[3].toFloat().coerceIn(0f, 1f), p[4].toInt().coerceIn(0, 3), p[5].toInt().coerceIn(0, 3), p[6] == "1") }.getOrDefault(FilmFx())
+        }
+    }
+}
+
+/**
  * Looks named after the old cameras and film stocks they imitate. The numbers are tuned by hand from how each one is
  * usually described (warmth, contrast, saturation, grain); they are an imitation, not a measured profile of the device.
  */
@@ -178,38 +198,103 @@ Lumora Noir|8|0.0|1.24|1.0|1.0|1.0|0.0|0.34|0.36|ขาวดำคอนทร�
         return m
     }
 
-    /** What is active now: a film (when [filmOn]) or a basic look, plus the brightness and warmth sliders; null = nothing to apply. */
-    fun active(p: SharedPreferences, forceFilm: Boolean = false): Pair<ColorMatrix, Film?>? {
-        val filmMode = forceFilm
-        val film = if (filmMode) byId(p.getString("film", "")) ?: if (forceFilm) default else null else null
-        val look = if (film == null) p.getInt("look", 0) else 0
-        val b = p.getInt("look_bright", 0); val w = p.getInt("look_warm", 0)
-        if (film == null && look == 0 && b == 0 && w == 0) return null
-        val m = if (film != null) matrix(film) else basic(look)
-        m.postConcat(ColorMatrix(floatArrayOf(1f, 0f, 0f, 0f, b * 0.6f + w * 0.12f, 0f, 1f, 0f, 0f, b * 0.6f, 0f, 0f, 1f, 0f, b * 0.6f - w * 0.12f, 0f, 0f, 0f, 1f, 0f)))
-        return m to film
+    fun fx(p: SharedPreferences, f: Film) = FilmFx.decode(p.getString("ff_" + f.id, null))
+    fun saveFx(p: SharedPreferences, f: Film, x: FilmFx) { p.edit().putString("ff_" + f.id, x.encode()).apply() }
+    fun resetFx(p: SharedPreferences, f: Film) { p.edit().remove("ff_" + f.id).apply() }
+    /** Films the user has saved (hearted); they show in the "saved" list of the film sheet. */
+    fun saved(p: SharedPreferences): Set<String> = p.getStringSet("film_saved", emptySet()) ?: emptySet()
+    fun toggleSaved(p: SharedPreferences, f: Film): Boolean {
+        val set = saved(p).toMutableSet(); val on = set.add(f.id); if (!on) set.remove(f.id)
+        p.edit().putStringSet("film_saved", set).apply(); return on
     }
 
-    /** Burns the look (colour, grain, vignette) into [src] and returns a new bitmap. */
-    fun render(src: Bitmap, m: ColorMatrix, film: Film?): Bitmap {
-        val out = Bitmap.createBitmap(src.width, src.height, Bitmap.Config.ARGB_8888)
-        val c = Canvas(out)
+    /** The film colour at [strength] (1 = full, 0 = no change). */
+    fun matrix(f: Film, strength: Float): ColorMatrix {
+        if (strength >= 0.999f) return matrix(f)
+        val a = matrix(f).array; val id = ColorMatrix().array
+        return ColorMatrix(FloatArray(20) { id[it] + (a[it] - id[it]) * strength })
+    }
+
+    /** What is active now: a film (when [forceFilm]) or a basic look, plus the brightness and warmth sliders for the basic looks; null = nothing to apply. */
+    fun active(p: SharedPreferences, forceFilm: Boolean = false): Pair<ColorMatrix, Film?>? {
+        val film = if (forceFilm) byId(p.getString("film", "")) ?: default else null
+        if (film != null) return matrix(film, fx(p, film).strength) to film
+        val look = p.getInt("look", 0)
+        val b = p.getInt("look_bright", 0); val w = p.getInt("look_warm", 0)
+        if (look == 0 && b == 0 && w == 0) return null
+        val m = basic(look)
+        m.postConcat(ColorMatrix(floatArrayOf(1f, 0f, 0f, 0f, b * 0.6f + w * 0.12f, 0f, 1f, 0f, 0f, b * 0.6f, 0f, 0f, 1f, 0f, b * 0.6f - w * 0.12f, 0f, 0f, 0f, 1f, 0f)))
+        return m to null
+    }
+
+    /** Burns the look (colour, grain, vignette, glow, light leak, frame, date) into [src] and returns a new bitmap. */
+    fun render(src: Bitmap, m: ColorMatrix, film: Film?, fx: FilmFx? = null): Bitmap {
+        val x = fx ?: FilmFx()
+        val w = src.width; val h = src.height
+        val styled = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val c = Canvas(styled)
         c.drawBitmap(src, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG).apply { colorFilter = ColorMatrixColorFilter(m) })
         if (film != null) {
-            val w = src.width; val h = src.height
-            if (film.vignette > 0.01f) {
-                val rad = Math.hypot(w.toDouble(), h.toDouble()).toFloat() / 2f
-                c.drawRect(0f, 0f, w.toFloat(), h.toFloat(), Paint().apply { shader = RadialGradient(w / 2f, h / 2f, rad, intArrayOf(Color.TRANSPARENT, Color.TRANSPARENT, Color.argb((film.vignette * 255).toInt().coerceIn(0, 200), 0, 0, 0)), floatArrayOf(0f, 0.55f, 1f), Shader.TileMode.CLAMP) })
+            if (x.glow > 0.01f) {
+                // Halation: the bright parts are blurred wide and laid back on top, warm and soft, like light bleeding in film.
+                val sw = (w / 8).coerceAtLeast(32); val sh = (h / 8).coerceAtLeast(32)
+                val small = Bitmap.createScaledBitmap(styled, sw, sh, true)
+                val hi = Bitmap.createBitmap(sw, sh, Bitmap.Config.ARGB_8888)
+                val th = ColorMatrix(floatArrayOf(1.6f, 0f, 0f, 0f, -300f, 0f, 1.3f, 0f, 0f, -300f, 0f, 0f, 1.0f, 0f, -300f, 0f, 0f, 0f, 1f, 0f))
+                Canvas(hi).drawBitmap(small, 0f, 0f, Paint().apply { colorFilter = ColorMatrixColorFilter(th) })
+                small.recycle()
+                val soft = Bitmap.createScaledBitmap(hi, (sw / 4).coerceAtLeast(8), (sh / 4).coerceAtLeast(8), true)
+                hi.recycle()
+                c.drawBitmap(soft, null, Rect(0, 0, w, h), Paint(Paint.FILTER_BITMAP_FLAG).apply { alpha = (x.glow * 230).toInt().coerceIn(0, 255); xfermode = PorterDuffXfermode(PorterDuff.Mode.SCREEN) })
+                soft.recycle()
             }
-            if (film.grain > 0.01f) {
+            val vig = film.vignette * x.vignette
+            if (vig > 0.01f) {
+                val rad = Math.hypot(w.toDouble(), h.toDouble()).toFloat() / 2f
+                c.drawRect(0f, 0f, w.toFloat(), h.toFloat(), Paint().apply { shader = RadialGradient(w / 2f, h / 2f, rad, intArrayOf(Color.TRANSPARENT, Color.TRANSPARENT, Color.argb((vig * 255).toInt().coerceIn(0, 230), 0, 0, 0)), floatArrayOf(0f, 0.55f, 1f), Shader.TileMode.CLAMP) })
+            }
+            val gr = film.grain * x.grain
+            if (gr > 0.01f) {
                 // One small noise tile repeated over the picture: cheap and looks like fine grain.
                 val t = 256; val noise = Bitmap.createBitmap(t, t, Bitmap.Config.ARGB_8888); val rnd = Random(7); val px = IntArray(t * t)
-                for (i in px.indices) { val v = 128 + (rnd.nextGaussian() * 38).toInt().coerceIn(-120, 120); px[i] = Color.argb((film.grain * 46).toInt().coerceIn(0, 120), v, v, v) }
+                for (i in px.indices) { val v = 128 + (rnd.nextGaussian() * 38).toInt().coerceIn(-120, 120); px[i] = Color.argb((gr * 46).toInt().coerceIn(0, 140), v, v, v) }
                 noise.setPixels(px, 0, t, 0, 0, t, t)
                 c.drawRect(0f, 0f, w.toFloat(), h.toFloat(), Paint().apply { shader = BitmapShader(noise, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT) })
                 noise.recycle()
             }
+            if (x.leak > 0) {
+                // A warm streak of light from one side. The side and spread change on every photo, like a real leaky back.
+                val rnd = Random(System.nanoTime()); val side = rnd.nextInt(4); val k = 0.22f + 0.2f * x.leak
+                val horizontal = side < 2
+                val len = (if (horizontal) w else h) * (0.35f + 0.25f * rnd.nextFloat())
+                val pos = (if (horizontal) h else w) * (0.2f + 0.6f * rnd.nextFloat())
+                val cx = if (horizontal) (if (side == 0) 0f else w.toFloat()) else pos
+                val cy = if (horizontal) pos else (if (side == 2) 0f else h.toFloat())
+                val warm = Color.argb((k * 255).toInt(), 255, 120 + rnd.nextInt(60), 40)
+                c.drawRect(0f, 0f, w.toFloat(), h.toFloat(), Paint().apply { shader = RadialGradient(cx, cy, len, intArrayOf(warm, Color.argb((k * 90).toInt(), 255, 60, 30), Color.TRANSPARENT), floatArrayOf(0f, 0.5f, 1f), Shader.TileMode.CLAMP); xfermode = PorterDuffXfermode(PorterDuff.Mode.SCREEN) })
+            }
+            if (x.date) {
+                val stamp = java.text.SimpleDateFormat("''yy  M  d", java.util.Locale.US).format(java.util.Date())
+                val size = h * 0.034f
+                val t = Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = Typeface.MONOSPACE; textSize = size; color = Color.rgb(255, 150, 40); textAlign = Paint.Align.RIGHT; setShadowLayer(size * 0.35f, 0f, 0f, Color.argb(200, 255, 110, 20)) }
+                c.drawText(stamp, w - size * 1.2f, h - size * 1.2f, t)
+            }
         }
+        if (x.frame == 0 || film == null) return styled
+        // Frames shrink the picture into a border so the file keeps its size.
+        val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        val oc = Canvas(out)
+        val side = (w * 0.045f).toInt(); val top = side; val bottom = if (x.frame == 2) (w * 0.16f).toInt() else side
+        oc.drawColor(if (x.frame == 3) Color.rgb(12, 10, 9) else Color.rgb(244, 240, 230))
+        val inner = Rect(side, top, w - side, h - bottom)
+        oc.drawBitmap(styled, null, inner, Paint(Paint.FILTER_BITMAP_FLAG))
+        if (x.frame == 3) {
+            // Film edge: small light sprocket holes top and bottom.
+            val hole = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(60, 52, 46) }
+            val hw = side * 0.45f; val step = hw * 2.6f; var xx = step / 2f
+            while (xx < w) { oc.drawRoundRect(xx, side * 0.25f, xx + hw, side * 0.75f, 3f, 3f, hole); oc.drawRoundRect(xx, h - side * 0.75f, xx + hw, h - side * 0.25f, 3f, 3f, hole); xx += step }
+        }
+        styled.recycle()
         return out
     }
 }
