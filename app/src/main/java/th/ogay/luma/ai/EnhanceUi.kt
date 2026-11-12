@@ -17,13 +17,25 @@ object EnhanceUi {
     fun show(activity: ComponentActivity, shot: Shot) {
         val prefs = activity.getSharedPreferences("enhance",0)
         var scale = prefs.getInt("scale",2).coerceIn(2,4)
-        var strength = prefs.getInt("strength",100).coerceIn(0,100)
+        var strength = prefs.getInt("strength",70).coerceIn(0,100)
+        var profile = runCatching { EnhanceProfile.valueOf(prefs.getString("profile","NATURAL") ?: "NATURAL") }
+            .getOrDefault(EnhanceProfile.NATURAL)
+        fun spec() = EnhanceSpec(scale,strength,profile)
         val column = LinearLayout(activity).apply { orientation=LinearLayout.VERTICAL; setPadding(24,16,24,16) }
         fun label(value: String) = TextView(activity).apply { text=value; textSize=15f; setPadding(0,12,0,12) }
-        column.addView(label("เน้นรายละเอียด · ประมวลผลออฟไลน์\nรายละเอียดบางส่วนเป็นการคาดเดาของ AI"))
+        column.addView(label("เพิ่มรายละเอียดอย่างเป็นธรรมชาติ · ประมวลผลออฟไลน์\nAI ไม่สามารถยืนยันตัวหนังสือหรือรายละเอียดที่หายไปจากต้นฉบับได้"))
+        val profiles = RadioGroup(activity).apply { orientation=RadioGroup.HORIZONTAL }
+        for ((id,name) in listOf(1 to "Natural · แนะนำ",2 to "Classic SR2")) {
+            profiles.addView(RadioButton(activity).apply {
+                this.id=id; text=name; minimumHeight=activity.dp(48)
+                isChecked=(id==1 && profile==EnhanceProfile.NATURAL) || (id==2 && profile==EnhanceProfile.CLASSIC)
+            },LinearLayout.LayoutParams(0,-2,1f))
+        }
+        profiles.setOnCheckedChangeListener { _,id -> profile=if(id==1) EnhanceProfile.NATURAL else EnhanceProfile.CLASSIC }
+        column.addView(profiles)
         val size = label(""); column.addView(size)
         fun updateSize() {
-            size.text = runCatching { EnhanceSpec(scale,strength).output(shot.size).let {
+            size.text = runCatching { spec().output(shot.size).let {
                 "×$scale · ${it.w} × ${it.h} px · ${pixelsText(it.pixels)}\nขยายทั้งความกว้างและความสูง" }
             }.getOrElse { it.message ?: "ขนาดเกินขีดจำกัด" }
         }
@@ -48,12 +60,13 @@ object EnhanceUi {
             .setView(ScrollView(activity).apply { addView(column) })
             .setNegativeButton("ปิด",null).setNeutralButton("ดูตัวอย่าง",null).setPositiveButton("สร้างภาพ",null).create()
         dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener { preview(activity,shot,EnhanceSpec(scale,strength)) }
+            dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener { preview(activity,shot,spec()) }
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 try { EnhanceSpec(scale,strength).output(shot.size) }
                 catch (e: IllegalArgumentException) { activity.notice(e.message ?: "ขนาดภาพเกินขีดจำกัด"); return@setOnClickListener }
-                prefs.edit().putInt("scale",scale).putInt("strength",strength).apply()
-                val spec = EnhanceSpec(scale,strength)
+                prefs.edit().putInt("scale",scale).putInt("strength",strength)
+                    .putString("profile",profile.name).apply()
+                val spec = spec()
                 activity.luma.fileIo.execute {
                     if (activity.luma.shots.queueEnhancement(shot.id,spec)) EnhanceWorker.enqueue(activity.applicationContext,shot.id,true)
                 }
@@ -93,7 +106,7 @@ object EnhanceUi {
                             DetailRuntime(activity.applicationContext).use { runtime ->
                                 val result = runtime.run(input)
                                 val output=IntArray(w*spec.scale*h*spec.scale)
-                                DetailResampler.copyCore(result,input,spec.scale,spec.strength,w,h,output,w*spec.scale,0)
+                                DetailResampler.copyCore(result,input,spec.scale,spec.strength,w,h,output,w*spec.scale,0,spec.profile)
                                 b=Bitmap.createBitmap(output,w*spec.scale,h*spec.scale,Bitmap.Config.ARGB_8888)
                             }
                             if(rotation!=0) {
