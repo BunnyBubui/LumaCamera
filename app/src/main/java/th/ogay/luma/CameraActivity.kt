@@ -386,9 +386,15 @@ class CameraActivity : ComponentActivity() {
         lockButton = glassButton(lockIcon, 48, "ล็อกความสว่าง") { toggleAeLock() }.apply { alpha = 0f; visibility = View.GONE }
         stage.addView(lockButton, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.START or Gravity.BOTTOM).apply { leftMargin = dp(8); bottomMargin = dp(140) })
 
-        // Top left: Home, where every part of Lumora can be opened.
-        stage.addView(glassButton(IconView(this, HomeActivity.HOME_ICON, 2f).apply { tag = IconTurner.TAG }, 48, "หน้าหลัก ฟีเจอร์ทั้งหมดของ Lumora") { openHome() },
-            FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP or Gravity.START).apply { setMargins(dp(10), dp(6), 0, 0) })
+        // Top left: Home ("‹ ⌂ หน้าหลัก"), where the main parts of Lumora can be opened.
+        stage.addView(LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL; background = glass(24, Glass.FILL); setPadding(dp(8), 0, dp(16), 0)
+            isClickable = true; contentDescription = "หน้าหลัก"; glassTouch()
+            addView(IconView(this@CameraActivity, HomeActivity.BACK_SMALL, 2.2f).apply { alpha = 0.7f }, dp(14), dp(14))
+            addView(IconView(this@CameraActivity, HomeActivity.HOUSE, 2f).apply { tag = IconTurner.TAG }, LinearLayout.LayoutParams(dp(21), dp(21)).apply { leftMargin = dp(3) })
+            addView(text("หน้าหลัก", 13.5f, Color.WHITE, true).apply { setPadding(dp(7), 0, 0, 0) })
+            setOnClickListener { Glass.tick(this); openHome() }
+        }, FrameLayout.LayoutParams(-2, dp(48), Gravity.TOP or Gravity.START).apply { setMargins(dp(10), dp(6), 0, 0) })
         statusRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL or Gravity.END; contentDescription = "สิ่งที่เปิดอยู่"; minimumWidth = dp(48); isClickable = true; setOnClickListener { openPanel() } }
         stage.addView(statusRow, FrameLayout.LayoutParams(-2, dp(48), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(6), dp(12), 0) })
         banner = text("ล็อก AE/AF", 13f, Glass.ACCENT, true).apply { background = glass(16); setPadding(dp(14), dp(6), dp(14), dp(6)); visibility = View.GONE }

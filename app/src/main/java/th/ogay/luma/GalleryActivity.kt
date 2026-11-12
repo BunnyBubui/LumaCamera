@@ -53,6 +53,9 @@ class GalleryActivity : ComponentActivity() {
     }
     class Album(val name: String, val count: Int, val cover: Item)
     private var selected: String? = null
+    /** The viewer was opened by the camera's thumbnail; leaving it for the grid clears this. */
+    private var viewerFromCamera = false
+    private val launchAlbum: String? by lazy { if (intent.getStringExtra("tab") == "luma") "lumora" else null }
     private var useAi = false
     private var showingId: String? = null
     private var device = false
@@ -143,8 +146,12 @@ class GalleryActivity : ComponentActivity() {
                     sortMenu.showing -> sortMenu.dismiss(true)
                     selecting -> endSelection()
                     peek != null -> closePeek()
+                    // The newest photo opened straight from the camera: Back returns to the camera, not to the grid.
+                    selected != null && viewerFromCamera -> finish()
                     selected != null -> { selected = null; useAi = false; reload() }
                     managing -> { managing = false; reload() }
+                    // An album opened directly (Home's "AI pictures"): Back returns to where it was opened from.
+                    albumKind != null && albumKind == launchAlbum -> finish()
                     albumKind != null -> closeAlbum()
                     else -> finish()
                 }
@@ -159,16 +166,17 @@ class GalleryActivity : ComponentActivity() {
             aiRunning = id; if (aiBusy && selected != id) aiBadge.update(percent.toFloat()) else aiBadge.done()
         }
         checkAi()
-        // Opened from the camera's thumbnail: show the newest photo first; the grid is one tap (or Back) away.
-        if (state == null && !device && intent.getStringExtra("tab") == null && selected == null) {
+        // Opened from the camera's thumbnail: show the newest photo first. Choosing media (pick mode) or coming from
+        // Home always starts at the grid.
+        if (state == null && !device && intent.getStringExtra("tab") == null && selected == null && pickKind == null && intent.getStringExtra("from") == null) {
             luma.fileIo.execute {
                 val first = luma.shots.latest()?.id
-                runOnUiThread { if (!isDestroyed) { selected = first; reload() } }
+                runOnUiThread { if (!isDestroyed) { selected = first; viewerFromCamera = first != null; reload() } }
             }
         } else reload()
     }
     override fun onSaveInstanceState(out: Bundle) { super.onSaveInstanceState(out); out.putString("id", selected); out.putBoolean("ai", useAi); out.putInt("section", section); out.putString("albumKind", albumKind); out.putString("album", album) }
-    override fun onPause() { th.ogay.luma.ai.AiPace.watching = false; super.onPause() }
+    override fun onPause() { th.ogay.luma.ai.AiPace.watching = false; inlineVideo?.pause(); super.onPause() }
     override fun onDestroy() { thumbs.shutdownNow(); super.onDestroy() }
     private fun mediaGranted() = mediaPermissions.any { ContextCompat.checkSelfPermission(this, it) == PackageManager.PERMISSION_GRANTED }
     /** Android 14+: the person allowed only some photos. */
@@ -374,13 +382,56 @@ class GalleryActivity : ComponentActivity() {
             }
         }
     }
+    /** The details panel for any photo or video, from Lumora or from other apps. */
     private fun itemInfo(item: Item) {
         item.shot?.let { details(it); return }
         luma.fileIo.execute {
-            var size = 0L; var w = 0; var h = 0
-            runCatching { contentResolver.query(item.uri, arrayOf(MediaStore.MediaColumns.SIZE, MediaStore.MediaColumns.WIDTH, MediaStore.MediaColumns.HEIGHT), null, null, null)?.use { c -> if (c.moveToFirst()) { size = c.getLong(0); w = c.getInt(1); h = c.getInt(2) } } }
-            val lines = listOfNotNull(formatTime(item.time), item.album.takeIf { it.isNotBlank() }?.let { "อัลบั้ม $it" }, if (w > 0 && h > 0) "$w × $h" else null, if (size > 0) String.format(Locale.US, "%.1f MB", size / 1048576.0) else null)
-            runOnUiThread { if (!isDestroyed) GlassDialog.show(this, item.name.ifBlank { if (item.video) "วิดีโอ" else "รูปภาพ" }, lines.joinToString("\n")) }
+            var size = 0L; var name = item.name
+            runCatching { contentResolver.query(item.uri, arrayOf(MediaStore.MediaColumns.SIZE, MediaStore.MediaColumns.DISPLAY_NAME), null, null, null)?.use { c -> if (c.moveToFirst()) { size = c.getLong(0); if (name.isBlank()) name = c.getString(1) ?: "" } } }
+            if (size <= 0 && item.uri.scheme == "file") size = File(item.uri.path ?: "").length()
+            val rows = ArrayList<Triple<String, String, String>>(); val tech = ArrayList<Pair<String, String>>()
+            if (item.video) {
+                val m = android.media.MediaMetadataRetriever()
+                runCatching {
+                    m.setDataSource(this, item.uri)
+                    fun k(key: Int) = m.extractMetadata(key)
+                    val w = k(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0; val h = k(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
+                    val turn = k(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
+                    val ms = k(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
+                    val frames = if (android.os.Build.VERSION.SDK_INT >= 28) k(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_FRAME_COUNT)?.toLongOrNull() else null
+                    val fps = if (frames != null && ms > 0) frames * 1000.0 / ms else null
+                    val sw = if (turn % 180 == 90) h else w; val sh = if (turn % 180 == 90) w else h
+                    rows += Triple(Icons.VIDEO, "$sw × $sh", listOfNotNull(fps?.let { String.format(Locale.US, "%.1f fps", it) }, String.format(Locale.US, "%d:%02d", ms / 60000, ms / 1000 % 60)).joinToString(" · "))
+                    rows += Triple(Icons.FILE, name.ifBlank { "วิดีโอ" }, listOfNotNull(if (size > 0) String.format(Locale.US, "%.1f MB", size / 1_048_576.0) else null, k(android.media.MediaMetadataRetriever.METADATA_KEY_BITRATE)?.toLongOrNull()?.let { "${it / 1_000_000} Mbps" }).joinToString(" · "))
+                    rows += Triple(Icons.SOUND, if (k(android.media.MediaMetadataRetriever.METADATA_KEY_HAS_AUDIO) == "yes") "มีเสียง" else "ไม่มีเสียง", "")
+                    frames?.let { tech += Icons.STACK to "$it เฟรม" }
+                    k(android.media.MediaMetadataRetriever.METADATA_KEY_MIMETYPE)?.let { tech += Icons.INFO to it }
+                }
+                m.release()
+                // What Lumora checked after recording, if this is its own clip.
+                runCatching { JSONObject(File(filesDir, "reports/${item.name}.json").readText()) }.getOrNull()?.let { j ->
+                    j.optString("codec").takeIf { it.isNotEmpty() }?.let { tech += Icons.INFO to "Codec $it" }
+                    j.optJSONObject("capture")?.optJSONObject("lens")?.let { l -> tech += Icons.SEARCH to String.format(Locale.US, "เลนส์ %s · %.1f มม. · f/%.1f", l.optString("lens"), l.optDouble("focalLengthMm"), l.optDouble("aperture")) }
+                }
+            } else {
+                val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                runCatching { contentResolver.openInputStream(item.uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, o) } }
+                val exif = runCatching { contentResolver.openInputStream(item.uri)?.use { androidx.exifinterface.media.ExifInterface(it) } }.getOrNull()
+                fun e(t: String) = exif?.getAttribute(t)?.takeIf { it.isNotBlank() }
+                val px = o.outWidth.toLong() * o.outHeight
+                rows += Triple(Icons.PHOTO, "${o.outWidth} × ${o.outHeight}", if (px > 0) pixelsText(px) else "")
+                val camera = listOfNotNull(e(androidx.exifinterface.media.ExifInterface.TAG_MAKE), e(androidx.exifinterface.media.ExifInterface.TAG_MODEL)).distinct().joinToString(" ")
+                val shutter = exif?.getAttributeDouble(androidx.exifinterface.media.ExifInterface.TAG_EXPOSURE_TIME, 0.0)?.takeIf { it > 0 }?.let { if (it < 1) "1/${(1 / it).toInt()} วิ" else String.format(Locale.US, "%.1f วิ", it) }
+                val fn = exif?.getAttributeDouble(androidx.exifinterface.media.ExifInterface.TAG_F_NUMBER, 0.0)?.takeIf { it > 0 }?.let { String.format(Locale.US, "f/%.1f", it) }
+                val iso = e(androidx.exifinterface.media.ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY)?.let { "ISO $it" }
+                val focal = e(androidx.exifinterface.media.ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM)?.let { "$it มม." }
+                if (camera.isNotBlank() || shutter != null) rows += Triple(Icons.FLIP, camera.ifBlank { "กล้อง" }, listOfNotNull(focal, fn, shutter, iso).joinToString(" · "))
+                rows += Triple(Icons.FILE, name.ifBlank { "รูปภาพ" }, listOfNotNull(if (size > 0) String.format(Locale.US, "%.1f MB", size / 1_048_576.0) else null, item.album.takeIf { it.isNotBlank() }).joinToString(" · "))
+                e(androidx.exifinterface.media.ExifInterface.TAG_LENS_MODEL)?.let { tech += Icons.SEARCH to it }
+                e(androidx.exifinterface.media.ExifInterface.TAG_SOFTWARE)?.let { tech += Icons.INFO to "ซอฟต์แวร์ $it" }
+                e(androidx.exifinterface.media.ExifInterface.TAG_WHITE_BALANCE)?.let { tech += Icons.INFO to "สมดุลแสงขาว ${if (it == "0") "อัตโนมัติ" else "กำหนดเอง"}" }
+            }
+            runOnUiThread { if (!isDestroyed) infoPanel({ thumbnail(item, 540) }, formatTime(item.time), rows, tech) }
         }
     }
 
@@ -935,8 +986,8 @@ class GalleryActivity : ComponentActivity() {
     }
     /** Viewer top bar: back to the grid, plus a grid button so the full library is always one tap away. */
     private fun viewerBar(title: String): LinearLayout {
-        val bar = topBar(title) { selected = null; useAi = false; reload() }
-        bar.addView(roundButton(Icons.LIBRARY, "ดูรูปทั้งหมด") { selected = null; useAi = false; reload() }, LinearLayout.LayoutParams(dp(48), dp(48)).apply { rightMargin = dp(8) })
+        val bar = topBar(title) { if (viewerFromCamera) finish() else { selected = null; useAi = false; reload() } }
+        bar.addView(roundButton(Icons.LIBRARY, "ดูรูปทั้งหมด") { viewerFromCamera = false; selected = null; useAi = false; reload() }, LinearLayout.LayoutParams(dp(48), dp(48)).apply { rightMargin = dp(8) })
         return bar
     }
     private fun viewer(): InspectView = InspectView(this).also { v ->
@@ -972,7 +1023,7 @@ class GalleryActivity : ComponentActivity() {
         viewerTop = top; viewerBottom = bottom
         inspect.shadeTop = (bars.top + dp(84)).toFloat(); inspect.shadeBottom = (bars.bottom + dp(130)).toFloat()
         inspect.onDismissDrag = { p -> val a = 1f - p * 2.2f; viewerTop?.alpha = a.coerceIn(0f, 1f); viewerBottom?.alpha = a.coerceIn(0f, 1f) }
-        inspect.onDismiss = if (!prefs.getBoolean("gallery_swipe_close", true)) null else ({ selected = null; useAi = false; closingViewer = true; reload() })
+        inspect.onDismiss = if (!prefs.getBoolean("gallery_swipe_close", true)) null else ({ if (viewerFromCamera) finish() else { selected = null; useAi = false; closingViewer = true; reload() } })
         inspect.reflections = prefs.getBoolean("gallery_reflect", true)
     }
     private var viewerTop: View? = null; private var viewerBottom: View? = null
@@ -1091,11 +1142,12 @@ class GalleryActivity : ComponentActivity() {
     // ---------- Device item ----------
     private fun showDeviceItem(uri: Uri) {
         val video = contentResolver.getType(uri)?.startsWith("video") == true
+        if (video) { showVideoItem(lastItems.firstOrNull { it.uri == uri } ?: Item("device:$uri", uri, System.currentTimeMillis(), true, "", "", null)); return }
         val reuse = !video && viewerKind == "device" && ::inspect.isInitialized && inspect.isAttachedToWindow
         showingId = uri.toString()
         if (!reuse) {
             root.removeAllViews()
-            viewerBar("ในเครื่อง")
+            viewerBar("ในเครื่อง").addView(roundButton(Icons.INFO, "ข้อมูลภาพ") { itemInfo(lastItems.firstOrNull { it.uri.toString() == showingId } ?: Item("device:$showingId", Uri.parse(showingId), System.currentTimeMillis(), false, "", "", null)) }, dp(48), dp(48))
             inspect = viewer(); viewerKind = if (video) "" else "device"
             toggle = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(dp(6), dp(6), dp(6), dp(10)) }
             root.addView(toggle, -1, -2)
@@ -1133,6 +1185,7 @@ class GalleryActivity : ComponentActivity() {
     // ---------- Lumora video or file from the ledger ----------
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     private fun showLedgerItem(item: Item) {
+        if (item.video) { showVideoItem(item); return }
         showingId = item.key; viewerKind = ""; immersive(false); root.removeAllViews()
         viewerBar(if (item.video) "วิดีโอ" else "ไฟล์")
         val frame = FrameLayout(this).apply { setBackgroundColor(Glass.NAVY_DEEP) }
@@ -1154,12 +1207,29 @@ class GalleryActivity : ComponentActivity() {
         toggle = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(dp(6), dp(2), dp(6), dp(10)) }
         root.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; isFillViewport = true; addView(toggle) }, -1, -2)
         chip("แชร์", false, Icons.SHARE) { MediaLedger.share(this, item.uri, item.mime) }
-        if (item.video) {
-            chip("ตัดต่อ", false, EditorKit.SCISSORS) { startActivity(VideoEditorActivity.intent(this, item.uri)) }
-            chip("AI / LUT", false, Icons.AI) { startActivity(Intent(this, ClipEditorActivity::class.java).setData(item.uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)) }
-            val report = File(filesDir, "reports/${item.name}.json")
-            if (report.exists()) chip("ผลตรวจไฟล์", false, Icons.INFO) { clipReport(report) }
-        }
+        chip("รายละเอียด", false, Icons.INFO) { itemInfo(item) }
+        chip("ลบ", false, TRASH) { confirmDelete(listOf(item)) }
+    }
+
+    // ---------- Any video (Lumora's or the phone's): the player in the viewer, swipe for the next item ----------
+    private var inlineVideo: InlineVideo? = null
+    private fun showVideoItem(item: Item) {
+        showingId = item.key; viewerKind = ""; immersive(false); root.removeAllViews()
+        viewerBar("วิดีโอ").addView(roundButton(Icons.INFO, "รายละเอียด") { itemInfo(item) }, dp(48), dp(48))
+        val player = InlineVideo(this, item.uri, cache.get(item.key)).apply { onSwipe = { step(it) } }
+        inlineVideo = player
+        root.addView(player, LinearLayout.LayoutParams(-1, 0, 1f))
+        if (!Glass.reduced(this)) { player.alpha = 0f; player.animate().alpha(1f).setDuration(240).start() }
+        thumbs.execute { val b = thumbnail(item, 1080); runOnUiThread { if (showingId == item.key) player.poster(b) } }
+        status = text(listOf(item.name, formatTime(item.time)).filter { it.isNotBlank() }.joinToString(" · "), 12.5f, Glass.TEXT2).apply { gravity = Gravity.CENTER; maxLines = 2; setPadding(dp(16), dp(8), dp(16), dp(2)) }
+        root.addView(status, -1, -2)
+        toggle = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(dp(6), dp(2), dp(6), dp(10)) }
+        root.addView(toggle, -1, -2)
+        chip("แชร์", false, Icons.SHARE) { if (item.key.startsWith("device:")) share(item) else MediaLedger.share(this, item.uri, item.mime.ifEmpty { "video/mp4" }) }
+        chip("ตัดต่อ", false, EditorKit.SCISSORS) { startActivity(VideoEditorActivity.intent(this, item.uri)) }
+        chip("รายละเอียด", false, Icons.INFO) { itemInfo(item) }
+        chip("ลบ", false, TRASH) { confirmDelete(listOf(item)) }
+        preloadNear()
     }
     /** The file check written after recording, in plain words rather than raw JSON. */
     private fun clipReport(file: File) {
@@ -1273,12 +1343,12 @@ class GalleryActivity : ComponentActivity() {
         chip("แชร์", false, Icons.SHARE) { startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("image/jpeg").putExtra(Intent.EXTRA_STREAM, if (useAi) s.ai else s.uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), "แชร์")) }
         chip("ลบ", false, TRASH) { confirmDelete(listOf(Item(s.id, s.uri, s.time, false, "", "Lumora", s))) }
     }
-    private fun infoPanel(s: Shot, time: String, rows: List<Triple<String, String, String>>, tech: List<Pair<String, String>>) {
+    private fun infoPanel(preview: () -> Bitmap?, time: String, rows: List<Triple<String, String, String>>, tech: List<Pair<String, String>>) {
         GlassDialog.panel(this, time) { col, d ->
             // A small preview on top, then one row per fact: icon, value, quiet detail.
             val pic = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP; setBackgroundColor(0x14ffffff); outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: android.graphics.Outline) { o.setRoundRect(0, 0, v.width, v.height, dp(18).toFloat()) } }; clipToOutline = true }
             col.addView(pic, LinearLayout.LayoutParams(-1, dp(150)).apply { topMargin = dp(4); bottomMargin = dp(10) })
-            thumbs.execute { val b = runCatching { PhotoMedia.thumbnail(this, s.ai ?: s.uri, 540) }.getOrNull(); runOnUiThread { if (b != null) pic.setImageBitmap(b) } }
+            thumbs.execute { val b = runCatching { preview() }.getOrNull(); runOnUiThread { if (b != null) pic.setImageBitmap(b) } }
             rows.forEach { (icon, value, note) ->
                 val r = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(7), 0, dp(7)) }
                 r.addView(FrameLayout(this).apply { background = glass(14, 0x1affffff); addView(IconView(this@GalleryActivity, icon).apply { tint = Glass.ACCENT }, FrameLayout.LayoutParams(dp(18), dp(18), Gravity.CENTER)) }, dp(36), dp(36))
@@ -1329,7 +1399,7 @@ class GalleryActivity : ComponentActivity() {
                 report?.takeIf { it.has("totalMs") }?.let { j -> add(Icons.TIMER to "เวลา AI ${j.optLong("inferenceMs")} · อ่าน ${j.optLong("decodeMs")} · ผสาน ${j.optLong("renderMs")} · บันทึก ${j.optLong("encodeMs")} · รวม ${j.optLong("totalMs")} ms") }
                 if (s.ai != null) add(Icons.AI to "รายละเอียดบางส่วนเป็นการคาดเดาของ AI")
             }
-            runOnUiThread { if (!isDestroyed) infoPanel(s, formatTime(s.time), rows, tech) }
+            runOnUiThread { if (!isDestroyed) infoPanel({ PhotoMedia.thumbnail(this, s.ai ?: s.uri, 540) }, formatTime(s.time), rows, tech) }
         }
     }
 }

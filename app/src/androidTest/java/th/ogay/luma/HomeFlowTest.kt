@@ -26,7 +26,7 @@ class HomeFlowTest {
         Thread.sleep(1500)
         scenario.onActivity { a ->
             val root = a.window.decorView
-            for (name in listOf("ถ่ายภาพ", "บุคคล", "วิดีโอ", "แกลเลอรี", "แก้ภาพ", "ตัดต่อวิดีโอ")) assertNotNull("Card $name", find(root, name))
+            for (name in listOf("ถ่ายภาพ", "บุคคล", "วิดีโอ", "แกลเลอรี", "ตัดต่อภาพ", "ตัดต่อวิดีโอ", "ฟิล์ม")) assertNotNull("Card $name", find(root, name))
             find(root, "โปร")!!.performClick()
         }
         InstrumentationRegistry.getInstrumentation().waitForIdleSync()
