@@ -103,6 +103,14 @@ object ExportSheet {
         }
         row("ความละเอียด", sideValue, sideNote, sides.map { sideName(it) }, side) { side = it }
         row("อัตราเฟรม", rateValue, rateNote, rates.map { fpsName(it) }, rate) { rate = it }
+        // H.265 makes a smaller file at the same quality; it is offered only when this phone can encode it.
+        val hevcOk = runCatching { android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS).codecInfos.any { it.isEncoder && it.supportedTypes.any { t -> t.equals("video/hevc", true) } } }.getOrDefault(false)
+        if (hevcOk && !upscale) {
+            val codecValue = a.text("", 14f, Color.WHITE, true); val codecNote = a.text("", 12f, Glass.TEXT3)
+            fun paintCodec(k: Int) { codecValue.text = if (k == 1) "H.265" else "H.264"; codecNote.text = if (k == 1) "ไฟล์เล็กกว่าที่คุณภาพเท่ากัน · เครื่องหรือแอปรุ่นเก่าบางตัวเปิดไม่ได้" else "เปิดได้ทุกเครื่อง" }
+            val k0 = if (prefs.getBoolean("export_hevc", false)) 1 else 0; paintCodec(k0)
+            row("การบีบอัด", codecValue, codecNote, listOf("H.264", "H.265"), k0) { prefs.edit().putBoolean("export_hevc", it == 1).apply(); paintCodec(it) }
+        } else if (!hevcOk && prefs.getBoolean("export_hevc", false)) prefs.edit().putBoolean("export_hevc", false).apply()
         val names = listOf("ไม่ใช้ AI · เร็วที่สุด", "Natural SR3 · แนะนำ", "Classic SR2 · คมชัด")
         val notes = listOf("ขยายภาพแบบปกติ เร็วที่สุด", "คน ใบหน้า ตัวหนังสือ · เนียนตา", "วิว ตึก ใบไม้ · คมเต็มที่")
         val icons = listOf(Icons.PHOTO, th.ogay.luma.ai.EnhanceUi.LEAF, th.ogay.luma.ai.EnhanceUi.GEM)

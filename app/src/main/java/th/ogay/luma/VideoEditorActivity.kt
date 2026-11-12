@@ -112,6 +112,56 @@ class VideoEditorActivity : ComponentActivity() {
     private fun lenOf(k: Int) = if (k == 0) mainLen() else extras.getOrNull(k - 1)?.len ?: 0L
     /** Markers: moments of the finished video the user flagged; shown on the ruler, and edges snap to them. */
     private val markers = mutableListOf<Long>()
+    /** Finishing effects, each 0..1: dark edges, film grain, sharpening. */
+    private val fx = FloatArray(3)
+    private var fxView: FxView? = null
+    private var comparing = false
+    /** Shows the dark edges and the grain over the preview, inside the part of the picture that is kept. */
+    private class FxView(c: Context) : View(c) {
+        private val area = RectF(); private var vig = 0f; private var grain = 0f
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG); private val m = android.graphics.Matrix()
+        private val edge = android.graphics.RadialGradient(0f, 0f, 1f, intArrayOf(0, 0, Color.BLACK), floatArrayOf(0f, 0.41f, 1f), android.graphics.Shader.TileMode.CLAMP)
+        private val noise: android.graphics.BitmapShader by lazy { val n = 128; val px = IntArray(n * n); val r = java.util.Random(11)
+            for (i in px.indices) { val v = 128 + (r.nextGaussian() * 60).toInt().coerceIn(-127, 127); px[i] = Color.rgb(v, v, v) }
+            android.graphics.BitmapShader(Bitmap.createBitmap(px, n, n, Bitmap.Config.ARGB_8888), android.graphics.Shader.TileMode.REPEAT, android.graphics.Shader.TileMode.REPEAT) }
+        init { importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }
+        fun sync(r: RectF, v: Float, g: Float) { if (r != area || v != vig || g != grain) { area.set(r); vig = v; grain = g; invalidate() } }
+        override fun onDraw(c: Canvas) {
+            if (area.isEmpty || (vig <= 0f && grain <= 0f)) return
+            c.save(); c.clipRect(area)
+            if (vig > 0f) { m.setScale(area.width() * 0.85f, area.height() * 0.85f); m.postTranslate(area.centerX(), area.centerY()); edge.setLocalMatrix(m)
+                paint.shader = edge; paint.alpha = (vig * 0.85f * 255).toInt().coerceIn(0, 255); c.drawRect(area, paint) }
+            if (grain > 0f) { paint.shader = noise; paint.alpha = (grain * 70).toInt().coerceIn(0, 255); c.drawRect(area, paint) }
+            paint.shader = null; c.restore()
+        }
+    }
+    // ---- Voice recording ----
+    private var recorder: android.media.MediaRecorder? = null
+    private var recFile: java.io.File? = null
+    private var recAt = 0L
+    /** Starts recording the microphone while the video plays; a second tap stops and puts the recording on the timeline where it began. */
+    private fun toggleRecord() {
+        val r = recorder
+        if (r != null) {
+            val ok = runCatching { r.stop() }.isSuccess; runCatching { r.release() }; recorder = null
+            if (player?.isPlaying == true) togglePlay(); applySound()
+            val f = recFile; recFile = null
+            if (ok && f != null && f.length() > 0) addLayers(listOf(Uri.fromFile(f)), VideoLayer.SOUND, recAt) else { notice("อัดเสียงไม่สำเร็จ"); showTool(LAYER_TOOL, false) }
+            return
+        }
+        if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(android.Manifest.permission.RECORD_AUDIO), 71); notice("อนุญาตให้ใช้ไมโครโฟนก่อน แล้วแตะอัดเสียงอีกครั้ง"); return }
+        val f = java.io.File(java.io.File(filesDir, "studio").apply { mkdirs() }, "voice_${System.currentTimeMillis()}.m4a")
+        val rec = if (android.os.Build.VERSION.SDK_INT >= 31) android.media.MediaRecorder(this) else @Suppress("DEPRECATION") android.media.MediaRecorder()
+        val started = runCatching { rec.setAudioSource(android.media.MediaRecorder.AudioSource.MIC); rec.setOutputFormat(android.media.MediaRecorder.OutputFormat.MPEG_4)
+            rec.setAudioEncoder(android.media.MediaRecorder.AudioEncoder.AAC); rec.setAudioSamplingRate(48000); rec.setAudioEncodingBitRate(128_000); rec.setOutputFile(f.path); rec.prepare(); rec.start() }.isSuccess
+        if (!started) { runCatching { rec.release() }; notice("เปิดไมโครโฟนไม่ได้"); return }
+        recorder = rec; recFile = f; recAt = outNow()
+        // The video plays silently while recording, so its own sound does not leak into the microphone.
+        if (player?.isPlaying != true) togglePlay()
+        player?.runCatching { setVolume(0f, 0f) }; musicPlayer?.runCatching { setVolume(0f, 0f) }
+        notice("กำลังอัดเสียง · แตะ \"หยุดอัด\" เมื่อพูดจบ"); showTool(LAYER_TOOL, false)
+    }
     /** The film strip under the preview shows the clip that is on screen: the first clip, or the added clip that was picked. */
     private fun showClipOnBar() {
         val e = extras.getOrNull(playIndex - 1)
@@ -372,6 +422,7 @@ class VideoEditorActivity : ComponentActivity() {
         stage = FrameLayout(this).apply { clipChildren = true }
         texture = TextureView(this)
         stage.addView(texture, FrameLayout.LayoutParams(0, 0, Gravity.CENTER))
+        fxView = FxView(this).also { stage.addView(it, -1, -1) }
         mask = CropMask(this); stage.addView(mask, -1, -1)
         captionView = text("", 20f, Color.WHITE, true).apply { gravity = Gravity.CENTER; maxLines = 3; setShadowLayer(6f, 0f, 2f, 0x99000000.toInt()); importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
         stage.addView(captionView, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
@@ -580,6 +631,7 @@ class VideoEditorActivity : ComponentActivity() {
     }
     private fun clock(ms: Long) = String.format(Locale.US, "%d:%02d.%d", ms / 60000, ms / 1000 % 60, ms / 100 % 10)
     private fun showTime() {
+        fxView?.sync(visible, if (comparing) 0f else fx[0], if (comparing) 0f else fx[1])
         refreshTimeline()
         val length = ((end - start) / speed).toLong()
         val more = extras.sumOf { it.len }
@@ -631,7 +683,7 @@ class VideoEditorActivity : ComponentActivity() {
     private fun colour(): ColorMatrix = EditorKit.film(film, filmStrength).apply { postConcat(EditorKit.adjust(adjust)) }
     private fun looked() = film != null || adjust.any { it != 0f }
     private fun applyLook() {
-        texture.setLayerPaint(if (!looked()) null else Paint().apply { colorFilter = ColorMatrixColorFilter(colour()) })
+        texture.setLayerPaint(if (!looked() || comparing) null else Paint().apply { colorFilter = ColorMatrixColorFilter(colour()) })
         captionView.setBackgroundColor(if (textBox) 0x99000000.toInt() else 0); captionView.setPadding(if (textBox) dp(8) else 0, 0, if (textBox) dp(8) else 0, 0)
         captionView.text = caption; captionView.setTextColor(textColor); captionView.visibility = if (caption.isBlank()) View.GONE else View.VISIBLE
         layoutVideo(); if (::timeLabel.isInitialized) showTime()
@@ -783,14 +835,25 @@ class VideoEditorActivity : ComponentActivity() {
     /** Light and colour for the whole clip: dials to choose, a slider to set (shown live on the preview). */
     private fun adjustTools(col: LinearLayout) {
         val value = text("", 13f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER }
-        val names = EditorKit.ADJUSTMENTS.dropLast(1)
-        val dials = names.mapIndexed { k, n -> EditorKit.Dial(this, EditorKit.ADJUST_ICONS[k], n).apply { amount = adjust[k] } }
+        // The six colour adjustments run from -100 to +100; the three finishing effects (dark edges, grain, sharpening) from 0 to 100.
+        val names = EditorKit.ADJUSTMENTS.dropLast(1) + listOf("ขอบมืด", "เกรนฟิล์ม", "คมชัด")
+        val icons = EditorKit.ADJUST_ICONS.take(6) + listOf(EditorKit.ADJUST_ICONS[6], "M6 7h.01 M12 5h.01 M18 8h.01 M8 13h.01 M15 12h.01 M6 18h.01 M12 17h.01 M18 16h.01", "M12 4l8 16H4z")
+        fun get(k: Int) = if (k < 6) adjust[k] else fx[k - 6]
+        fun set(k: Int, v: Float) { if (k < 6) adjust[k] = v else fx[k - 6] = v.coerceAtLeast(0f) }
+        val dials = names.mapIndexed { k, n -> EditorKit.Dial(this, icons[k], n).apply { amount = get(k) } }
         val slider = GlassSlider(this).apply { values = (-100..100).map { if (it > 0) "+$it" else "$it" }; grad = intArrayOf(0xff8e8e93.toInt(), Color.WHITE, Glass.ACCENT) }
-        fun show(k: Int) { adjustIndex = k; dials.forEachIndexed { j, d -> d.lit = j == k }; value.text = "${names[k]}  ${sign(adjust[k])}"; slider.index = (adjust[k] * 100).roundToInt() + 100; slider.contentDescription = names[k] }
-        col.addView(value, -1, -2)
+        fun show(k: Int) { adjustIndex = k; dials.forEachIndexed { j, d -> d.lit = j == k }; value.text = "${names[k]}  ${sign(get(k))}"; slider.index = (get(k) * 100).roundToInt() + 100; slider.contentDescription = names[k] }
+        val head = FrameLayout(this)
+        head.addView(value, FrameLayout.LayoutParams(-1, -2, Gravity.CENTER))
+        // Hold to see the picture without any adjustment, let go to see it with them again.
+        head.addView(text("กดค้างดูต้นฉบับ", 11f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; background = glass(14, 0x26ffffff); setPadding(dp(10), 0, dp(10), 0); contentDescription = "กดค้างเพื่อดูภาพก่อนปรับ"
+            setOnTouchListener { v, e -> when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> { comparing = true; applyLook(); v.alpha = 0.6f }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { comparing = false; applyLook(); v.alpha = 1f } }; true } }, FrameLayout.LayoutParams(-2, dp(28), Gravity.END or Gravity.CENTER_VERTICAL).apply { rightMargin = dp(12) })
+        col.addView(head, -1, -2)
         col.addView(EditorKit.strip(this, dials.map { it to 58 }, adjustIndex.coerceIn(0, names.size - 1), 0, { k -> show(k) },
-            tapAgain = { k -> adjust[k] = 0f; dials[k].amount = 0f; show(k); applyLook() }) { k -> show(k) }, LinearLayout.LayoutParams(-1, dp(56)))
-        slider.onChange = { i -> adjust[adjustIndex] = (i - 100) / 100f; dials[adjustIndex].amount = adjust[adjustIndex]; value.text = "${names[adjustIndex]}  ${sign(adjust[adjustIndex])}"; applyLook() }
+            tapAgain = { k -> set(k, 0f); dials[k].amount = 0f; show(k); applyLook() }) { k -> show(k) }, LinearLayout.LayoutParams(-1, dp(56)))
+        slider.onChange = { i -> set(adjustIndex, (i - 100) / 100f); dials[adjustIndex].amount = get(adjustIndex); value.text = "${names[adjustIndex]}  ${sign(get(adjustIndex))}"; applyLook() }
         col.addView(slider, LinearLayout.LayoutParams(-1, dp(40)).apply { setMargins(dp(12), 0, dp(12), 0) })
         show(adjustIndex.coerceIn(0, names.size - 1))
     }
@@ -816,7 +879,7 @@ class VideoEditorActivity : ComponentActivity() {
         col.addView(EditorKit.actions(this, items), -1, -2)
     }
 
-    private fun changed() = start != 0L || end != duration || split >= 0 || speed != 1f || cropIndex != 0 || caption.isNotBlank() || film != null || music != null || !keepSound || looked() || turns != 0 || mirror || volume != 1f || cutValid() || extras.isNotEmpty() || stickers.isNotEmpty() || layers.isNotEmpty() || markers.isNotEmpty()
+    private fun changed() = start != 0L || end != duration || split >= 0 || speed != 1f || cropIndex != 0 || caption.isNotBlank() || film != null || music != null || !keepSound || looked() || turns != 0 || mirror || volume != 1f || cutValid() || extras.isNotEmpty() || stickers.isNotEmpty() || layers.isNotEmpty() || markers.isNotEmpty() || fx.any { it > 0f }
 
     // ---------- Clips, transitions, stickers ----------
     /** The clips in playing order: the main one, then the added ones, which can be moved or removed. */
@@ -974,7 +1037,7 @@ class VideoEditorActivity : ComponentActivity() {
         rebuildLayers(); showTool(LAYER_TOOL, false)
     }
 
-    private fun addLayers(uris: List<Uri>, kind: Int) {
+    private fun addLayers(uris: List<Uri>, kind: Int, startAt: Long? = null) {
         luma.readIo.execute {
             val found = uris.mapNotNull { uri -> runCatching {
                 val visual = kind != VideoLayer.SOUND
@@ -986,7 +1049,7 @@ class VideoEditorActivity : ComponentActivity() {
             runOnUiThread {
                 if (isDestroyed) return@runOnUiThread
                 if (found.isEmpty()) { notice("เปิดไฟล์นี้ไม่ได้"); return@runOnUiThread }
-                val total = totalOut(); val now = outNow()
+                val total = totalOut(); val now = startAt ?: outNow()
                 found.forEach { (uri, d, aspect) ->
                     val len = d.coerceAtMost(total).coerceAtLeast(200)
                     val at = now.coerceAtMost((total - len).coerceAtLeast(0))
@@ -1084,6 +1147,7 @@ class VideoEditorActivity : ComponentActivity() {
         chip("วิดีโอ", Icons.VIDEO) { pendingKind = VideoLayer.VIDEO; pickFromGallery.launch(Intent(this, GalleryActivity::class.java).putExtra(GalleryActivity.EXTRA_PICK, "video")) }
         chip("รูป", ADD) { pendingKind = VideoLayer.IMAGE; pickFromGallery.launch(Intent(this, GalleryActivity::class.java).putExtra(GalleryActivity.EXTRA_PICK, "image")) }
         chip("เพลง / เสียง", EditorKit.MUSIC) { pickSound.launch(arrayOf("audio/*")) }
+        add.addView(EditorKit.chip(this, if (recorder != null) "หยุดอัด" else "อัดเสียงพูด", "M12 4a3 3 0 0 0-3 3v5a3 3 0 0 0 6 0V7a3 3 0 0 0-3-3z M6 11a6 6 0 0 0 12 0 M12 17v3", recorder != null) { toggleRecord() }, LinearLayout.LayoutParams(-2, dp(36)).apply { setMargins(dp(4), 0, dp(4), 0) })
         // SRT is the common subtitle file: numbered lines of text, each with a start and an end time.
         chip("นำเข้าซับ SRT", EditorKit.START) { pickSrt.launch(arrayOf("*/*")) }
         if (layers.any { it.kind == VideoLayer.TEXT }) chip("ส่งออกซับ SRT", EditorKit.END) { saveSrt.launch("subtitles.srt") }
@@ -1341,7 +1405,7 @@ class VideoEditorActivity : ComponentActivity() {
         return VideoEdit.composition(VideoEditSpec(f?.let { Uri.fromFile(it.file) } ?: source, at(from), at(to), if (turns % 2 == 1) vh else vw, if (turns % 2 == 1) vw else vh,
         speed * n, CROPS[cropIndex].second, caption, place, textColor, textBig, if (looked()) colour() else null, music, f == null && hasAudio && keepSound && speed in SOUND_MIN..SOUND_MAX,
         turns, mirror, volume, musicVolume, if (cut) at(cutFrom) else -1L, if (cut) at(cutTo) else -1L, textBox,
-        extras.map { VideoPart(it.uri, it.from, it.to, it.speed) }, if (extras.isEmpty()) 0 else transition, stickers.toList(), clampedLayers(), shrinkShort, shrinkFps, mainPos()), applicationContext)
+        extras.map { VideoPart(it.uri, it.from, it.to, it.speed) }, if (extras.isEmpty()) 0 else transition, stickers.toList(), clampedLayers(), shrinkShort, shrinkFps, mainPos(), fx[0], fx[1], fx[2]), applicationContext)
     }
 
     /** Export problems stay on screen until dismissed, so the reason can be read (and reported). */
@@ -1352,7 +1416,7 @@ class VideoEditorActivity : ComponentActivity() {
     // ---------- Lifecycle ----------
     override fun onPause() { player?.let { if (it.isPlaying) togglePlay() }; if (prog != null) th.ogay.luma.ai.AiPace.watching = false; super.onPause(); if (::trim.isInitialized && overlay == null) saveProject() }
     override fun onResume() { super.onResume(); if (prog != null) th.ogay.luma.ai.AiPace.watching = true }
-    override fun onDestroy() { handler.removeCallbacksAndMessages(null); releasePlayer(); musicPlayer?.runCatching { release() }; releaseLayerSound(); super.onDestroy() }
+    override fun onDestroy() { recorder?.runCatching { stop() }; recorder?.runCatching { release() }; recorder = null; handler.removeCallbacksAndMessages(null); releasePlayer(); musicPlayer?.runCatching { release() }; releaseLayerSound(); super.onDestroy() }
     override fun onSaveInstanceState(out: Bundle) {
         super.onSaveInstanceState(out); writeState(out)
         out.putString("projectId", projectId); out.putString("projectName", projectName)
@@ -1363,7 +1427,7 @@ class VideoEditorActivity : ComponentActivity() {
         out.putString("caption", caption); out.putInt("place", place); out.putInt("textColor", textColor); out.putBoolean("big", textBig)
         out.putString("film", film?.id); out.putFloat("strength", filmStrength); out.putString("music", music?.toString()); out.putString("musicName", musicName)
         out.putBoolean("sound", keepSound); out.putInt("tool", tool)
-        out.putFloatArray("adjust", adjust); out.putInt("turns", turns); out.putBoolean("mirror", mirror); out.putFloat("volume", volume); out.putFloat("musicVolume", musicVolume)
+        out.putFloatArray("adjust", adjust); out.putFloatArray("fx", fx); out.putInt("turns", turns); out.putBoolean("mirror", mirror); out.putFloat("volume", volume); out.putFloat("musicVolume", musicVolume)
         out.putLong("cutFrom", cutFrom); out.putLong("cutTo", cutTo); out.putBoolean("textBox", textBox)
         out.putStringArrayList("extras", ArrayList(extras.map { it.uri.toString() })); out.putStringArrayList("extraRanges", ArrayList(extras.map { "${it.from},${it.to},${it.speed}" })); out.putInt("mainAt", mainAt); out.putStringArrayList("markers", ArrayList(markers.map { it.toString() })); out.putInt("transition", transition)
         out.putStringArrayList("stickers", ArrayList(stickers.map { "${it.x}|${it.y}|${it.big}|${it.text}" }))
@@ -1374,7 +1438,7 @@ class VideoEditorActivity : ComponentActivity() {
         caption = s.getString("caption") ?: ""; place = s.getInt("place", 2); textColor = s.getInt("textColor", Color.WHITE); textBig = s.getBoolean("big")
         film = Films.byId(s.getString("film")); filmStrength = s.getFloat("strength", 1f); music = s.getString("music")?.let { Uri.parse(it) }; musicName = s.getString("musicName") ?: ""
         keepSound = s.getBoolean("sound", true); tool = s.getInt("tool")
-        s.getFloatArray("adjust")?.takeIf { it.size == adjust.size }?.copyInto(adjust); turns = s.getInt("turns"); mirror = s.getBoolean("mirror"); volume = s.getFloat("volume", 1f); musicVolume = s.getFloat("musicVolume", 1f)
+        s.getFloatArray("adjust")?.takeIf { it.size == adjust.size }?.copyInto(adjust); fx.fill(0f); s.getFloatArray("fx")?.takeIf { it.size == fx.size }?.copyInto(fx); turns = s.getInt("turns"); mirror = s.getBoolean("mirror"); volume = s.getFloat("volume", 1f); musicVolume = s.getFloat("musicVolume", 1f)
         cutFrom = s.getLong("cutFrom", -1L); cutTo = s.getLong("cutTo", -1L); textBox = s.getBoolean("textBox")
         transition = s.getInt("transition"); stickers.clear(); mainAt = s.getInt("mainAt")
         markers.clear(); s.getStringArrayList("markers")?.mapNotNullTo(markers) { it.toLongOrNull() }

@@ -66,7 +66,9 @@ data class VideoEditSpec(
     /** Smaller output: short side in pixels (0 = as edited) and a lower frame rate (0 = as recorded). */
     val outShort: Int = 0, val outFps: Float = 0f,
     /** How many of [extras] play before the main clip (0 = the main clip is first). */
-    val mainAt: Int = 0)
+    val mainAt: Int = 0,
+    /** Finishing effects over the whole picture, each 0..1. */
+    val vignette: Float = 0f, val grain: Float = 0f, val sharpen: Float = 0f)
 
 /** A clip appended after the main one. [from]/[to] in ms of that clip. */
 data class VideoPart(val source: Uri, val from: Long, val to: Long, val speed: Float = 1f)
@@ -153,6 +155,8 @@ object VideoEdit {
         // run across the joins and every clip is brought to the first clip's frame.
         if (!multi) s.look?.let { effects += SingleColorLut.createFromCube(EditorKit.cube(it)) }
         if (s.crop > 0f) effects += Presentation.createForAspectRatio(s.crop, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP)
+        val finishing = s.vignette > 0f || s.grain > 0f || s.sharpen > 0f
+        if (!multi && finishing) effects += StudioFx(s.vignette, s.grain, s.sharpen)
         val texts = overlays(s)
         if (!multi && texts.isNotEmpty()) effects += OverlayEffect(texts)
         val sound = if (s.keepAudio && s.volume != 1f) listOf(gain(s.volume)) else emptyList()
@@ -184,6 +188,7 @@ object VideoEdit {
             val (w, h) = frameSize(s)
             whole += Presentation.createForWidthAndHeight(w / 2 * 2, h / 2 * 2, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP)
             s.look?.let { whole += SingleColorLut.createFromCube(EditorKit.cube(it)) }
+            if (finishing) whole += StudioFx(s.vignette, s.grain, s.sharpen)
             if (texts.isNotEmpty()) whole += OverlayEffect(texts)
         }
         if (layerOverlays.isNotEmpty()) whole += OverlayEffect(layerOverlays)
@@ -222,7 +227,7 @@ object VideoEdit {
             }
         }
         return Transformer.Builder(c).setAssetLoaderFactory(DefaultAssetLoaderFactory(c, decoder, Clock.DEFAULT, null))
-            .setMaxDelayBetweenMuxerSamplesMs(90_000).setVideoMimeType(MimeTypes.VIDEO_H264).setPortraitEncodingEnabled(true).addListener(listener)
+            .setMaxDelayBetweenMuxerSamplesMs(90_000).setVideoMimeType(if (c.getSharedPreferences("camera", Context.MODE_PRIVATE).getBoolean("export_hevc", false)) MimeTypes.VIDEO_H265 else MimeTypes.VIDEO_H264).setPortraitEncodingEnabled(true).addListener(listener)
             .apply { if (looper != null) setLooper(looper) }.build()
     }
 }
