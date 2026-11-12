@@ -98,7 +98,13 @@ object EnhanceUi {
                         val decoder = BitmapRegionDecoder.newInstance(stream,false) ?: error("อ่านภาพไม่ได้")
                         try {
                             val w=minOf(EnhanceSpec.CORE,decoder.width); val h=minOf(EnhanceSpec.CORE,decoder.height)
-                            val input = DetailSuperResolution.readInput(decoder,((decoder.width-w)/2),((decoder.height-h)/2))
+                            val centerLeft = (decoder.width-w)/2
+                            val centerTop = (decoder.height-h)/2
+                            val textScan = if (spec.profile == EnhanceProfile.NATURAL)
+                                DetailTextGuard.scan(activity.applicationContext,shot.uri,
+                                    Dimensions(decoder.width,decoder.height)) { stopped.get() }
+                                else null
+                            val input = DetailSuperResolution.readInput(decoder,centerLeft,centerTop)
                             val before = IntArray(w*h) { i -> input[(i/w+EnhanceSpec.HALO)*EnhanceSpec.INPUT+i%w+EnhanceSpec.HALO] }
                             val raw = Bitmap.createBitmap(before,w,h,Bitmap.Config.ARGB_8888)
                             a=Bitmap.createScaledBitmap(raw,w*spec.scale,h*spec.scale,true)
@@ -106,7 +112,8 @@ object EnhanceUi {
                             DetailRuntime(activity.applicationContext).use { runtime ->
                                 val result = runtime.run(input)
                                 val output=IntArray(w*spec.scale*h*spec.scale)
-                                DetailResampler.copyCore(result,input,spec.scale,spec.strength,w,h,output,w*spec.scale,0,spec.profile)
+                                DetailResampler.copyCore(result,input,spec.scale,spec.strength,w,h,output,
+                                    w*spec.scale,0,spec.profile,textScan?.mask?.forCore(centerLeft,centerTop,w,h))
                                 b=Bitmap.createBitmap(output,w*spec.scale,h*spec.scale,Bitmap.Config.ARGB_8888)
                             }
                             if(rotation!=0) {
