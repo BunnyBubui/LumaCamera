@@ -40,7 +40,7 @@ class StudioMathTest {
     }
 
     @Test fun srtIsReadAndWrittenBack() {
-        val file = "﻿1\r\n00:00:01,000 --> 00:00:02,500\r\nสวัสดี\r\n\r\n2\r\n00:01:00.250 --> 00:01:03.000\r\n<i>two</i>\r\nlines\r\n\r\nbroken block\r\n\r\n4\r\n00:00:05,000 --> 00:00:04,000\r\nends before it starts\r\n"
+        val file = 0xFEFF.toChar().toString() + "1\r\n00:00:01,000 --> 00:00:02,500\r\nสวัสดี\r\n\r\n2\r\n00:01:00.250 --> 00:01:03.000\r\n<i>two</i>\r\nlines\r\n\r\nbroken block\r\n\r\n4\r\n00:00:05,000 --> 00:00:04,000\r\nends before it starts\r\n"
         val cues = StudioMath.parseSrt(file)
         assertEquals(listOf(StudioMath.Cue(1000, 2500, "สวัสดี"), StudioMath.Cue(60250, 63000, "two\nlines")), cues)
         assertEquals(cues, StudioMath.parseSrt(StudioMath.writeSrt(cues)))

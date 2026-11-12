@@ -45,7 +45,7 @@ object StudioMath {
     data class Cue(val from: Long, val to: Long, val text: String)
     private val srtTime = Regex("""(\d+):(\d+):(\d+)[,.](\d+)\s*-->\s*(\d+):(\d+):(\d+)[,.](\d+)""")
     /** Reads the text of an .srt file. Lines without a valid time or without words are skipped; formatting tags are removed. */
-    fun parseSrt(text: String): List<Cue> = text.removePrefix("﻿").replace("\r", "").split(Regex("""\n\s*\n""")).mapNotNull { block ->
+    fun parseSrt(text: String): List<Cue> = text.removePrefix(0xFEFF.toChar().toString()).replace("\r", "").split(Regex("""\n\s*\n""")).mapNotNull { block ->
         val rows = block.trim().lines(); val ti = rows.indexOfFirst { srtTime.containsMatchIn(it) }; if (ti < 0) return@mapNotNull null
         val g = srtTime.find(rows[ti])!!.groupValues.drop(1).map { it.toLong() }
         // Milliseconds may be written with fewer than three digits ("1,5" means 500 ms).
