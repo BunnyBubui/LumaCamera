@@ -56,7 +56,7 @@ jobs:
             adb shell screencap -p /sdcard/Download/camera-screen.png
             adb pull /sdcard/Download/camera-screen.png app/build/reports/camera-screen.png
             adb shell am force-stop th.ogay.luma.dev
-            bash gradlew --no-daemon -Pkotlin.compiler.execution.strategy=in-process :app:connectedDebugAndroidTest
+            bash gradlew --no-daemon -Pkotlin.compiler.execution.strategy=in-process :app:connectedDebugAndroidTest || (echo "=== crash buffer ==="; adb logcat -d -b crash | tail -150; echo "=== errors ==="; adb logcat -d "*:E" | tail -150; exit 1)
       - uses: actions/upload-artifact@v4
         if: always()
         with:
