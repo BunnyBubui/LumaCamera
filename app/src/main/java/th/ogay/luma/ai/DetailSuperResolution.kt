@@ -58,6 +58,7 @@ class DetailSuperResolution(private val context: Context) {
                         val renderExec = java.util.concurrent.Executors.newSingleThreadExecutor()
                         val encodeExec = java.util.concurrent.Executors.newSingleThreadExecutor()
                         val decodeT = java.util.concurrent.atomic.AtomicLong(); val renderT = java.util.concurrent.atomic.AtomicLong(); val encodeT = java.util.concurrent.atomic.AtomicLong()
+                        val reuse = Row.Reuse()
                         fun timed(acc: java.util.concurrent.atomic.AtomicLong, f: () -> Unit) { val t = SystemClock.elapsedRealtime(); f(); acc.addAndGet(SystemClock.elapsedRealtime()-t) }
                         try {
                             val stripeLen = output.w*minOf(EnhanceSpec.CORE,source.h)*spec.scale
@@ -68,7 +69,7 @@ class DetailSuperResolution(private val context: Context) {
                             // Two strip buffers take turns (one being read while the next is decoded) and one bitmap is
                             // reused for every decode: no multi-megabyte allocation per row, so no garbage collection
                             // pause about once a second that made the whole phone hitch.
-                            val rowData = arrayOfNulls<IntArray>(2); var rowTurn = 0; val reuse = Row.Reuse()
+                            val rowData = arrayOfNulls<IntArray>(2); var rowTurn = 0
                             fun decodeRow(top: Int): java.util.concurrent.Future<Row> { val turn = rowTurn; rowTurn = 1-rowTurn
                                 return decodeExec.submit(java.util.concurrent.Callable { AiPace.helperPriority(context); var r: Row? = null; timed(decodeT) { r = Row.decode(decoder,top,rowData,turn,reuse) }; r!! }) }
                             var nextRow = decodeRow(0)
