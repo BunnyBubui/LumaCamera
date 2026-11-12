@@ -60,7 +60,9 @@ data class VideoEditSpec(
     /** Between two different clips: 0 cut, 1 fade through black, 2 flash of white, 3 zoom in. */
     val transition: Int = 0,
     /** Emoji stickers over the whole video. */
-    val stickers: List<VideoSticker> = emptyList())
+    val stickers: List<VideoSticker> = emptyList(),
+    /** Video, picture and sound layers on top, timed in ms of the finished video. */
+    val layers: List<VideoLayer> = emptyList())
 
 /** A clip appended after the main one. [from]/[to] in ms of that clip. */
 data class VideoPart(val source: Uri, val from: Long, val to: Long)
@@ -133,7 +135,8 @@ object VideoEdit {
         }
     }
 
-    fun composition(s: VideoEditSpec): Composition {
+    /** [context] is needed only when the spec has picture or video layers (to decode them). */
+    fun composition(s: VideoEditSpec, context: Context? = null): Composition {
         val cut = s.cutFrom in (s.from + 1) until s.cutTo && s.cutTo < s.to
         val ranges = if (cut) listOf(s.from to s.cutFrom, s.cutTo to s.to) else listOf(s.from to s.to)
         val multi = s.extras.isNotEmpty()
@@ -168,17 +171,23 @@ object VideoEdit {
         }
         val main = if (s.keepAudio) EditedMediaItemSequence.withAudioAndVideoFrom(items) else EditedMediaItemSequence.withVideoFrom(items)
         val whole = mutableListOf<Effect>()
+        // Layers are measured on the finished frame, so they go last, over everything else.
+        val layerOverlays = if (s.layers.any { it.visual }) VideoLayers.overlays(requireNotNull(context) { "layers need a context" }, s.layers) else emptyList()
         if (multi) {
             val (w, h) = frameSize(s)
             whole += Presentation.createForWidthAndHeight(w / 2 * 2, h / 2 * 2, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP)
             s.look?.let { whole += SingleColorLut.createFromCube(EditorKit.cube(it)) }
             if (texts.isNotEmpty()) whole += OverlayEffect(texts)
         }
+        if (layerOverlays.isNotEmpty()) whole += OverlayEffect(layerOverlays)
         val song = s.music
-        val builder = if (song == null) Composition.Builder(main) else {
+        val sequences = mutableListOf(main)
+        if (song != null) {
             val track = EditedMediaItem.Builder(MediaItem.fromUri(song)).setRemoveVideo(true).setEffects(Effects(if (s.musicVolume != 1f) listOf(gain(s.musicVolume)) else emptyList(), emptyList())).build()
-            Composition.Builder(main, EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_AUDIO)).addItem(track).setIsLooping(true).build())
+            sequences += EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_AUDIO)).addItem(track).setIsLooping(true).build()
         }
+        sequences += VideoLayers.sounds(s.layers) { gain(it) }
+        val builder = Composition.Builder(sequences)
         if (whole.isNotEmpty()) builder.setEffects(Effects(emptyList(), whole))
         return builder.build()
     }

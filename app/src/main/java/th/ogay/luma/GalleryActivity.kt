@@ -39,6 +39,12 @@ import th.ogay.luma.ai.EnhanceUi
  * Long-press peeks; the viewer swipes between items and always has a button back to the full grid.
  */
 class GalleryActivity : ComponentActivity() {
+    companion object {
+        /** Extra for opening the gallery as a chooser: "video", "image" or "media". */
+        const val EXTRA_PICK = "pick"
+        /** Result extra: the chosen content URIs. */
+        const val RESULT_URIS = "uris"
+    }
     /** One grid cell: a Lumora shot, a Lumora video/file from the media ledger, or a device photo/video. */
     class Item(val key: String, val uri: Uri, val time: Long, val video: Boolean, val name: String, val album: String, val shot: Shot?, val mime: String = "", val note: String = "", val taken: Long = 0L, val size: Long = 0L) {
         /** When the picture was taken (falls back to when it was added). */
@@ -124,6 +130,7 @@ class GalleryActivity : ComponentActivity() {
         aiBadge = AiBadge(this).apply { setOnClickListener { aiRunning?.let { selected = it; useAi = false; reload() } } }
         host.addView(aiBadge, FrameLayout.LayoutParams(dp(46), dp(46), Gravity.TOP or Gravity.END).apply { topMargin = dp(76); rightMargin = dp(14) })
         intent.getStringExtra("open")?.let { if (state == null) selected = it }
+        if (pickKind != null) host.post { startSelection(null) }
         installRoot(host)
         // The photo viewer runs under the status bar (its bars float over the picture); every other page keeps clear of it.
         androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(host) { v, insets ->
@@ -226,10 +233,20 @@ class GalleryActivity : ComponentActivity() {
         read(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, false); read(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, true)
         return (shots + ledger + earlier).sortedByDescending { it.time }
     }
+    /** Set when another screen opens the gallery to choose media: "video", "image" or "media". */
+    private val pickKind: String? by lazy { intent.getStringExtra(EXTRA_PICK) }
+    private fun pickAllows(item: Item) = when (pickKind) { "video" -> item.video; "image" -> !item.video; else -> true }
+    private fun returnPicked() {
+        val uris = ArrayList(pickedItems().map { it.shot?.ai ?: it.uri })
+        if (uris.isEmpty()) { notice("แตะรายการที่ต้องการก่อน"); return }
+        setResult(RESULT_OK, Intent().putParcelableArrayListExtra(RESULT_URIS, uris).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+        finish()
+    }
     private fun startSelection(first: Item?) {
         selecting = true; first?.let { picked += it.key }; refreshCells(); updateSelectBar()
     }
     private fun endSelection() {
+        if (pickKind != null) { finish(); return }
         selecting = false; picked.clear(); refreshCells()
         selectBar?.let { b -> b.animate().translationY(b.height.toFloat() + dp(40)).alpha(0f).setDuration(200).withEndAction { (b.parent as? ViewGroup)?.removeView(b) }.start() }; selectBar = null
     }
@@ -247,15 +264,22 @@ class GalleryActivity : ComponentActivity() {
             addView(text("", 15f, Color.WHITE, true), LinearLayout.LayoutParams(0, -2, 1f))
             fun act(icon: String, desc: String, f: () -> Unit) = addView(FrameLayout(this@GalleryActivity).apply { isClickable = true; glassTouch(); contentDescription = desc
                 addView(IconView(this@GalleryActivity, icon), FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER)); setOnClickListener { Glass.tick(this); f() } }, dp(52), dp(52))
+            if (pickKind != null) {
+                // Choosing for the editor: one accent "add" button and a close button.
+                addView(text("เพิ่ม", 14.5f, Glass.ON_ACCENT, true).apply { gravity = Gravity.CENTER; background = glass(20, Glass.ACCENT); isClickable = true; glassTouch()
+                    contentDescription = "เพิ่มรายการที่เลือก"; setOnClickListener { Glass.tick(this); returnPicked() } }, LinearLayout.LayoutParams(dp(84), dp(44)).apply { rightMargin = dp(4) })
+                act(Icons.CLOSE, "ยกเลิก") { endSelection() }
+            } else {
             act(Icons.SHARE, "แชร์") { shareSelected() }
             act("M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z", "ใส่รายการโปรด") { favouriteSelected() }
             act("M5 7h14 M9 7V4h6v3 M7 7l1 13h8l1-13 M10 11v6 M14 11v6", "ลบ") { deleteSelected() }
             act(Icons.CLOSE, "เสร็จ") { endSelection() }
+            }
             content.addView(this, FrameLayout.LayoutParams(-1, dp(64), Gravity.BOTTOM).apply { setMargins(dp(14), 0, dp(14), dp(28)) })
             translationY = dp(100).toFloat(); animate().translationY(0f).setInterpolator(Glass.SPRING).setDuration(380).start()
             selectBar = this
         }
-        (bar.getChildAt(0) as TextView).text = if (picked.isEmpty()) "เลือกรายการ" else "เลือก ${picked.size}"
+        (bar.getChildAt(0) as TextView).text = if (picked.isEmpty()) (if (pickKind == "video") "เลือกวิดีโอ" else if (pickKind == "image") "เลือกรูป" else "เลือกรายการ") else "เลือก ${picked.size}"
     }
     private fun shareSelected() {
         val uris = ArrayList(pickedItems().map { it.shot?.ai ?: it.uri }); if (uris.isEmpty()) return
@@ -526,7 +550,7 @@ class GalleryActivity : ComponentActivity() {
         grid.adapter = adapter
         fun apply() {
             val q = queryText.trim().lowercase()
-            val picked = all.filter(cats[category].second).filter { inAlbum(it) }
+            val picked = all.filter(cats[category].second).filter { inAlbum(it) }.filter { pickAllows(it) }
                 .filter { q.isEmpty() || q in "${it.name} ${it.album} ${formatTime(it.time)} ${it.note} ${it.shot?.captureNote ?: ""} ${it.shot?.reason?.description ?: ""}".lowercase() }
             shown = when (sortOrder) {
                 0 -> picked.sortedByDescending { it.shotAt }

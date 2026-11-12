@@ -54,6 +54,24 @@ class VideoEditDeviceTest {
         assertTrue("Joined length · $joined", ms in 3000..4000)
     }
 
+    /** Video, picture and sound layers export on top of the clip, and the file keeps the main clip's length. */
+    @Test(timeout = 600_000) fun layersExport() {
+        val c = inst.targetContext
+        val clip = Uri.fromFile(TestMedia.clip(inst)); val tall = Uri.fromFile(TestMedia.clip(inst, 1500, 360, 640)); val song = Uri.fromFile(TestMedia.tone(c))
+        val png = File(c.cacheDir, "layer-test.png").apply { outputStream().use { o ->
+            android.graphics.Bitmap.createBitmap(200, 120, android.graphics.Bitmap.Config.ARGB_8888).apply { eraseColor(0xffff9f0a.toInt()) }.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, o) } }
+        val base = VideoEditSpec(clip, 0, 2000, 640, 360, keepAudio = false)
+        val picture = VideoLayer(VideoLayer.IMAGE, Uri.fromFile(png), 300, 1200, x = 0.3f, y = 0.3f, size = 0.3f, aspect = 200 / 120f)
+        val video = VideoLayer(VideoLayer.VIDEO, tall, 500, 1200, x = 0.7f, y = 0.6f, size = 0.3f, aspect = 360 / 640f)
+        val sound = VideoLayer(VideoLayer.SOUND, song, 400, 1000)
+        val cases = listOf("picture" to base.copy(layers = listOf(picture)), "video" to base.copy(layers = listOf(video)),
+            "sound" to base.copy(layers = listOf(sound)), "all" to base.copy(layers = listOf(picture, video, sound), speed = 2f, stickers = listOf(VideoSticker("😀", 0.5f, 0.5f))))
+        val results = cases.map { (name, spec) -> name to export(spec) }
+        assertTrue("Layer exports · " + results.joinToString(" | ") { "${it.first}: ${it.second}" }, results.all { it.second.startsWith("ok") })
+        val ms = Regex("(\\d+)ms").find(results.first { it.first == "picture" }.second)?.groupValues?.get(1)?.toLong() ?: 0
+        assertTrue("Layer keeps clip length · ${results.first().second}", ms in 1700..2400)
+    }
+
     private fun export(spec: VideoEditSpec): String {
         val out = File(inst.targetContext.cacheDir, "edit-test-${System.nanoTime()}.mp4")
         val done = CountDownLatch(1); var result = "timeout"; var t: Transformer? = null
@@ -62,7 +80,7 @@ class VideoEditDeviceTest {
                 override fun onCompleted(composition: Composition, r: ExportResult) { result = "ok ${r.videoFrameCount}f ${r.durationMs}ms"; done.countDown() }
                 override fun onError(composition: Composition, r: ExportResult, e: ExportException) { result = "${e.errorCodeName} ${e.cause?.message ?: e.message}"; done.countDown() }
             })
-            runCatching { t!!.start(VideoEdit.composition(spec), out.path) }.onFailure { result = "start: $it"; done.countDown() }
+            runCatching { t!!.start(VideoEdit.composition(spec, inst.targetContext), out.path) }.onFailure { result = "start: $it"; done.countDown() }
         }
         if (!done.await(60, TimeUnit.SECONDS)) inst.runOnMainSync { runCatching { t?.cancel() } }
         out.delete(); return result

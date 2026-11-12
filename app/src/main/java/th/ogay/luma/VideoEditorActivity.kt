@@ -78,6 +78,8 @@ class VideoEditorActivity : ComponentActivity() {
         private const val JOIN = "M3 5h6v14H3z M15 5h6v14h-6z M10 12h4 M12.5 10l1.5 2-1.5 2"
         private const val STICKER = "M12 3a9 9 0 1 0 0.01 0 M8.5 14q3.5 3 7 0 M9 9.5v1 M15 9.5v1"
         private const val ADD = "M12 5v14 M5 12h14"
+        private const val LAYERS = "M12 3l9 5-9 5-9-5z M3 12.5l9 5 9-5 M3 17l9 5 9-5"
+        private const val LAYER_TOOL = 13
         private const val LEFT = "M15 6l-6 6 6 6"
         private const val RIGHT = "M9 6l6 6-6 6"
     }
@@ -103,6 +105,14 @@ class VideoEditorActivity : ComponentActivity() {
     private val extras = mutableListOf<Extra>()
     private var transition = 0
     private val stickers = mutableListOf<VideoSticker>()
+    // ---- Layers (video, picture, sound on top) ----
+    private val layers = mutableListOf<VideoLayer>()
+    private val layerThumbs = HashMap<Uri, Bitmap>()
+    private val layerViews = mutableListOf<ImageView>()
+    private val layerSound = HashMap<Int, MediaPlayer>()
+    private var layerPick = -1
+    private var lanes: LayerLanes? = null
+    private var pendingKind = VideoLayer.VIDEO
     private fun cutValid() = cutFrom >= 0 && cutTo > cutFrom
 
     // ---- Views ----
@@ -138,7 +148,7 @@ class VideoEditorActivity : ComponentActivity() {
                 else if (cutValid() && pos in cutFrom until cutTo) p.seekTo(cutTo.toInt())
                 trim.playhead = pos.coerceIn(start, end)
             }
-            showTime()
+            showTime(); syncLayerSound(true)
         }
         handler.postDelayed(this, 33)
     } }
@@ -158,6 +168,14 @@ class VideoEditorActivity : ComponentActivity() {
                 if (extra == null) notice("เปิดวิดีโอนี้ไม่ได้") else { extras += extra; showTime(); showTool(10, false); notice("เพิ่มคลิปแล้ว · ส่งออกรวมเป็นไฟล์เดียว") }
             }
         }
+    }
+    /** Our own gallery as the chooser for video and picture layers. */
+    private val pickFromGallery = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
+        @Suppress("DEPRECATION") val uris = r.data?.getParcelableArrayListExtra<Uri>(GalleryActivity.RESULT_URIS)
+        if (r.resultCode == RESULT_OK && !uris.isNullOrEmpty()) addLayers(uris, pendingKind)
+    }
+    private val pickSound = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) { runCatching { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }; addLayers(listOf(uri), VideoLayer.SOUND) }
     }
     private val pickMusic = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -222,7 +240,7 @@ class VideoEditorActivity : ComponentActivity() {
         root.addView(trim, LinearLayout.LayoutParams(-1, dp(64)).apply { setMargins(dp(12), dp(4), dp(12), dp(4)) })
         tools = FrameLayout(this).apply { clipChildren = false }
         root.addView(tools, LinearLayout.LayoutParams(-1, dp(124)))
-        toolBar = EditorKit.ToolBar(this, listOf(EditorKit.SCISSORS to "ตัด", EditorKit.SPLIT to "แยก", EditorKit.SPEED to "ความเร็ว", EditorKit.CROP to "ครอบ", EditorKit.TEXT to "ข้อความ", Icons.FILM to "ฟิลเตอร์", EditorKit.MUSIC to "เพลง", EditorKit.ADJUST to "ปรับ", EditorKit.ROTATE to "หมุน", Icons.SOUND to "เสียง", CLIPS to "คลิป", JOIN to "ทรานซิชัน", STICKER to "สติกเกอร์")) { showTool(it) }
+        toolBar = EditorKit.ToolBar(this, listOf(EditorKit.SCISSORS to "ตัด", EditorKit.SPLIT to "แยก", EditorKit.SPEED to "ความเร็ว", EditorKit.CROP to "ครอบ", EditorKit.TEXT to "ข้อความ", Icons.FILM to "ฟิลเตอร์", EditorKit.MUSIC to "เพลง", EditorKit.ADJUST to "ปรับ", EditorKit.ROTATE to "หมุน", Icons.SOUND to "เสียง", CLIPS to "คลิป", JOIN to "ทรานซิชัน", STICKER to "สติกเกอร์", LAYERS to "เลเยอร์")) { showTool(it) }
         root.addView(toolBar, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(4), 0, dp(4), dp(8)) })
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) { override fun handleOnBackPressed() = leave() })
 
@@ -240,7 +258,7 @@ class VideoEditorActivity : ComponentActivity() {
         applyLook(); showTool(tool, false); showTime()
         if (music != null) prepareMusic()
         state?.let { restoreExtras(it) }
-        rebuildStickers()
+        rebuildStickers(); loadLayerThumbs()
     }
     private fun readExtra(uri: Uri): Extra? = runCatching {
         val r = MediaMetadataRetriever()
@@ -343,7 +361,7 @@ class VideoEditorActivity : ComponentActivity() {
     private fun applySound() { val v = if (keepSound) volume.coerceAtMost(1f) else 0f; if (playIndex > 0) player?.runCatching { playbackParams = playbackParams.setSpeed(1f) }; player?.runCatching { setVolume(v, v) }; musicPlayer?.runCatching { setVolume(musicVolume.coerceAtMost(1f), musicVolume.coerceAtMost(1f)) } }
     private fun togglePlay() {
         val p = player ?: return; if (!prepared) return
-        if (p.isPlaying) { p.pause(); musicPlayer?.pause(); playIcon.path = "M9 6.5v11l9-5.5z" }
+        if (p.isPlaying) { p.pause(); musicPlayer?.pause(); syncLayerSound(false); playIcon.path = "M9 6.5v11l9-5.5z" }
         else {
             if (playIndex == 0 && p.currentPosition >= end - 60) p.seekTo(start.toInt())
             runCatching { p.playbackParams = p.playbackParams.setSpeed(if (playIndex == 0) speed else 1f) }
@@ -364,7 +382,8 @@ class VideoEditorActivity : ComponentActivity() {
         val length = ((end - start) / speed).toLong()
         val more = extras.sumOf { it.duration }
         timeLabel.text = (if (playIndex > 0) "คลิป ${playIndex + 1}/${extras.size + 1}  ·  " else "${clock(trim.playhead - start)} / ${clock(end - start)}") +
-            (if (extras.isNotEmpty()) "  ·  รวม ${clock(length + more)}" else if (speed != 1f) "  ·  ได้คลิป ${clock(length)}" else "") + (if (split >= 0 && extras.isEmpty()) "  ·  แยกเป็น 2 คลิป" else "")
+            (if (extras.isNotEmpty()) "  ·  รวม ${clock(length + more)}" else if (speed != 1f) "  ·  ได้คลิป ${clock(length)}" else "") + (if (split >= 0 && extras.isEmpty() && layers.isEmpty()) "  ·  แยกเป็น 2 คลิป" else "")
+        if (layers.isNotEmpty()) { placeLayers(); lanes?.playhead = outNow() }
     }
 
     /** Fits the video in the stage and places the crop frame and caption over it. */
@@ -392,7 +411,7 @@ class VideoEditorActivity : ComponentActivity() {
             val cx = (tw - visible.width()) / 2f; val cy = (th - visible.height()) / 2f
             texture.clipBounds = Rect(cx.toInt(), cy.toInt(), (cx + visible.width()).toInt(), (cy + visible.height()).toInt())
         }
-        placeStickers()
+        placeStickers(); placeLayers()
         captionView.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, (if (textBig) 0.11f else 0.07f) * visible.height())
         val widest = visible.width().toInt() - dp(16); if (captionView.maxWidth != widest) captionView.maxWidth = widest
         captionView.post {
@@ -420,6 +439,14 @@ class VideoEditorActivity : ComponentActivity() {
     private fun showTool(i: Int, animate: Boolean = true) {
         val dir = if (animate) i.compareTo(tool) else 0
         tool = i; toolBar.select(i, animate)
+        // The layer lanes need room; the preview gives way smoothly.
+        val want = dp(if (i == LAYER_TOOL) 276 else 124)
+        if (tools.layoutParams.height != want) {
+            if (!animate || Glass.reduced(this)) { tools.layoutParams.height = want; tools.requestLayout() }
+            else android.animation.ValueAnimator.ofInt(tools.layoutParams.height, want).apply { duration = 260; interpolator = Glass.EASE
+                addUpdateListener { tools.layoutParams.height = it.animatedValue as Int; tools.requestLayout() } }.start()
+        }
+        if (i != LAYER_TOOL) lanes = null
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_VERTICAL }
         fun note(s: String) = col.addView(text(s, 12f, Glass.TEXT2, true).apply { maxLines = 1; gravity = Gravity.CENTER; setPadding(dp(16), 0, dp(16), dp(6)) }, -1, -2)
         when (i) {
@@ -454,7 +481,8 @@ class VideoEditorActivity : ComponentActivity() {
             9 -> soundTools(col)
             10 -> clipTools(col)
             11 -> transitionTools(col)
-            else -> stickerTools(col)
+            12 -> stickerTools(col)
+            else -> layerTools(col)
         }
         EditorKit.swap(tools, col, dir)
     }
@@ -579,7 +607,7 @@ class VideoEditorActivity : ComponentActivity() {
         col.addView(EditorKit.actions(this, items), -1, -2)
     }
 
-    private fun changed() = start != 0L || end != duration || split >= 0 || speed != 1f || cropIndex != 0 || caption.isNotBlank() || film != null || music != null || !keepSound || looked() || turns != 0 || mirror || volume != 1f || cutValid() || extras.isNotEmpty() || stickers.isNotEmpty()
+    private fun changed() = start != 0L || end != duration || split >= 0 || speed != 1f || cropIndex != 0 || caption.isNotBlank() || film != null || music != null || !keepSound || looked() || turns != 0 || mirror || volume != 1f || cutValid() || extras.isNotEmpty() || stickers.isNotEmpty() || layers.isNotEmpty()
 
     // ---------- Clips, transitions, stickers ----------
     /** The clips in playing order: the main one, then the added ones, which can be moved or removed. */
@@ -653,6 +681,167 @@ class VideoEditorActivity : ComponentActivity() {
             v.post { v.translationX = visible.left + k.x * visible.width() - v.width / 2f; v.translationY = visible.top + k.y * visible.height() - v.height / 2f }
         }
     }
+    // ---------- Layers ----------
+    private fun cutMs() = if (cutValid()) cutTo - cutFrom else 0L
+    /** Length of the finished video in ms (main clip after cut and speed, then the added clips). */
+    private fun totalOut() = ((end - start - cutMs()) / speed).toLong() + extras.sumOf { it.duration }
+    /** Where the preview is, in ms of the finished video. */
+    private fun outNow(): Long {
+        val main = ((end - start - cutMs()) / speed).toLong()
+        if (playIndex > 0) return main + extras.take(playIndex - 1).sumOf { it.duration } + (player?.currentPosition?.toLong() ?: 0L)
+        var t = trim.playhead - start
+        if (cutValid() && trim.playhead >= cutTo) t -= cutMs()
+        return (t.coerceAtLeast(0) / speed).toLong()
+    }
+    private fun clampedLayers(): List<VideoLayer> { val total = totalOut()
+        return layers.mapNotNull { l -> val at = l.at.coerceIn(0, (total - 200).coerceAtLeast(0)); val len = l.length.coerceAtMost(total - at); if (len < 200) null else l.copy(at = at, length = len) } }
+    private fun layerName(l: VideoLayer) = when (l.kind) { VideoLayer.VIDEO -> "วิดีโอ"; VideoLayer.IMAGE -> "รูป"; else -> "เสียง" } + " · " + clock(l.length)
+
+    private fun addLayers(uris: List<Uri>, kind: Int) {
+        luma.readIo.execute {
+            val found = uris.mapNotNull { uri -> runCatching {
+                val visual = kind != VideoLayer.SOUND
+                val d = if (kind == VideoLayer.IMAGE) 3000L else VideoLayers.duration(this, uri)
+                if (d <= 0) return@runCatching null
+                if (visual) layerThumb(uri, kind)?.let { layerThumbs[uri] = it }
+                Triple(uri, d, if (visual) VideoLayers.aspect(this, uri, kind == VideoLayer.VIDEO) else 1f)
+            }.getOrNull() }
+            runOnUiThread {
+                if (isDestroyed) return@runOnUiThread
+                if (found.isEmpty()) { notice("เปิดไฟล์นี้ไม่ได้"); return@runOnUiThread }
+                val total = totalOut(); val now = outNow()
+                found.forEach { (uri, d, aspect) ->
+                    val len = d.coerceAtMost(total).coerceAtLeast(200)
+                    val at = now.coerceAtMost((total - len).coerceAtLeast(0))
+                    val n = layers.count { it.visual }
+                    layers += VideoLayer(kind, uri, at, len, 0L, 0.5f + (n % 3 - 1) * 0.15f, 0.42f + (n % 2) * 0.12f, if (kind == VideoLayer.IMAGE) 0.4f else 0.45f, aspect)
+                }
+                layerPick = layers.size - 1
+                rebuildLayers(); showTool(LAYER_TOOL, false)
+                notice(when (kind) { VideoLayer.VIDEO -> "เพิ่มวิดีโอซ้อนแล้ว · ลากบนภาพเพื่อย้าย"; VideoLayer.IMAGE -> "เพิ่มรูปแล้ว · ลากบนภาพเพื่อย้าย"; else -> "เพิ่มเสียงแล้ว" })
+            }
+        }
+    }
+    private fun layerThumb(uri: Uri, kind: Int): Bitmap? = runCatching {
+        if (kind == VideoLayer.IMAGE) VideoLayers.picture(this, uri, 480) else MediaMetadataRetriever().run {
+            try { setDataSource(this@VideoEditorActivity, uri)
+                if (android.os.Build.VERSION.SDK_INT >= 27) getScaledFrameAtTime(0, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 480, 480) else getFrameAtTime(0)
+            } finally { release() } }
+    }.getOrNull()
+    private fun loadLayerThumbs() {
+        if (layers.isEmpty()) return
+        val need = layers.filter { it.visual && it.source !in layerThumbs }
+        luma.readIo.execute {
+            need.forEach { l -> layerThumb(l.source, l.kind)?.let { layerThumbs[l.source] = it } }
+            runOnUiThread { if (!isDestroyed) rebuildLayers() }
+        }
+    }
+    /** One picture per visual layer on the preview: drag it to move, tap it to select it. */
+    private fun rebuildLayers() {
+        releaseLayerSound()
+        layerViews.forEach { stage.removeView(it) }; layerViews.clear()
+        layers.forEachIndexed { i, l ->
+            if (!l.visual) return@forEachIndexed
+            val v = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP; setImageBitmap(layerThumbs[l.source]); setBackgroundColor(0x33ffffff); tag = i
+                contentDescription = "เลเยอร์${layerName(l)} ลากเพื่อย้าย"; clipToOutline = true
+                outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(view: View, o: android.graphics.Outline) = o.setRoundRect(0, 0, view.width, view.height, dp(4).toFloat()) } }
+            var dx = 0f; var dy = 0f; var moved = false
+            v.setOnTouchListener { view, e ->
+                when (e.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> { dx = e.rawX; dy = e.rawY; moved = false; view.parent?.requestDisallowInterceptTouchEvent(true) }
+                    MotionEvent.ACTION_MOVE -> {
+                        if (abs(e.rawX - dx) + abs(e.rawY - dy) > dp(6)) moved = true
+                        if (moved && visible.width() > 0) {
+                            val k = layers[i]
+                            layers[i] = k.copy(x = (k.x + (e.rawX - dx) / visible.width()).coerceIn(0f, 1f), y = (k.y + (e.rawY - dy) / visible.height()).coerceIn(0f, 1f))
+                            dx = e.rawX; dy = e.rawY; placeLayers()
+                        }
+                    }
+                    MotionEvent.ACTION_UP -> if (!moved) { layerPick = i; Glass.tick(view); showTool(LAYER_TOOL, tool != LAYER_TOOL) }
+                }
+                true
+            }
+            stage.addView(v, FrameLayout.LayoutParams(1, 1, Gravity.TOP or Gravity.START)); layerViews += v
+        }
+        stage.post { placeLayers() }
+    }
+    /** Same place and size as the export; shown only during the layer's time (faint while it is being edited). */
+    private fun placeLayers() {
+        if (visible.isEmpty || layerViews.isEmpty()) return
+        val now = outNow()
+        layerViews.forEach { v ->
+            val i = v.tag as Int; val l = layers.getOrNull(i) ?: return@forEach
+            val w = (l.size * visible.width()).toInt().coerceAtLeast(dp(12)); val h = (w / l.aspect).toInt().coerceAtLeast(dp(12))
+            (v.layoutParams as FrameLayout.LayoutParams).let { if (it.width != w || it.height != h) { it.width = w; it.height = h; v.layoutParams = it } }
+            v.translationX = visible.left + l.x * visible.width() - w / 2f; v.translationY = visible.top + l.y * visible.height() - h / 2f
+            v.alpha = when { now in l.at until l.end -> 1f; tool == LAYER_TOOL && i == layerPick -> 0.4f; else -> 0f }
+            v.isEnabled = v.alpha > 0f
+        }
+    }
+    /** Plays layer sounds along with the preview. */
+    private fun syncLayerSound(playing: Boolean) {
+        if (layers.none { it.audible }) return
+        val now = outNow()
+        layers.forEachIndexed { i, l ->
+            if (!l.audible) return@forEachIndexed
+            val mp = layerSound[i]
+            if (playing && now in l.at until l.end) {
+                val p = mp ?: runCatching { MediaPlayer().apply { setDataSource(this@VideoEditorActivity, l.source); prepare() } }.getOrNull()?.also { layerSound[i] = it } ?: return@forEachIndexed
+                if (!p.isPlaying) runCatching { val v = l.volume.coerceAtMost(1f); p.setVolume(v, v); p.seekTo((l.from + now - l.at).toInt()); p.start() }
+            } else if (mp?.isPlaying == true) mp.pause()
+        }
+    }
+    private fun releaseLayerSound() { layerSound.values.forEach { it.runCatching { release() } }; layerSound.clear() }
+
+    /** Add video, picture and sound layers (video and pictures from Lumora's own gallery), then edit the chosen one. */
+    private fun layerTools(col: LinearLayout) {
+        val add = LinearLayout(this).apply { gravity = Gravity.CENTER }
+        fun chip(label: String, icon: String, f: () -> Unit) = add.addView(EditorKit.chip(this, label, icon) { f() }, LinearLayout.LayoutParams(-2, dp(36)).apply { setMargins(dp(4), 0, dp(4), 0) })
+        chip("วิดีโอ", Icons.VIDEO) { pendingKind = VideoLayer.VIDEO; pickFromGallery.launch(Intent(this, GalleryActivity::class.java).putExtra(GalleryActivity.EXTRA_PICK, "video")) }
+        chip("รูป", ADD) { pendingKind = VideoLayer.IMAGE; pickFromGallery.launch(Intent(this, GalleryActivity::class.java).putExtra(GalleryActivity.EXTRA_PICK, "image")) }
+        chip("เพลง / เสียง", EditorKit.MUSIC) { pickSound.launch(arrayOf("audio/*")) }
+        col.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(add) }, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = dp(6) })
+        if (layers.isEmpty()) {
+            col.addView(text("ซ้อนวิดีโอ รูป หรือเสียงบนคลิป\nวิดีโอและรูปเลือกจากแกลเลอรีของ Lumora", 12f, Glass.TEXT3).apply { gravity = Gravity.CENTER }, -1, -2)
+            return
+        }
+        if (layerPick !in layers.indices) layerPick = layers.size - 1
+        val controls = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val lane = LayerLanes(this).apply {
+            layers = this@VideoEditorActivity.layers.toList(); total = totalOut(); playhead = outNow(); selected = layerPick; names = { layerName(it) }
+            setPadding(dp(12), 0, dp(12), 0)
+            onSelect = { k -> layerPick = k; placeLayers(); layerControls(controls) }
+            onMove = { k, at -> this@VideoEditorActivity.layers[k] = this@VideoEditorActivity.layers[k].copy(at = at); layers = this@VideoEditorActivity.layers.toList(); placeLayers() }
+        }
+        lanes = lane
+        col.addView(android.widget.ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(lane) }, LinearLayout.LayoutParams(-1, dp(minOf(3, layers.size) * 30 + 4)))
+        col.addView(controls, -1, -2)
+        layerControls(controls)
+    }
+    private fun layerControls(box: LinearLayout) {
+        box.removeAllViews()
+        val i = layerPick; val l = layers.getOrNull(i) ?: return
+        fun refresh() { lanes?.let { it.layers = layers.toList(); it.total = totalOut() }; placeLayers() }
+        box.addView(EditorKit.actionRow(this, listOf(
+            EditorKit.action(this, EditorKit.START, "เริ่มที่นี่") { val now = outNow(); val total = totalOut()
+                layers[i] = layers[i].copy(at = now.coerceAtMost((total - 200).coerceAtLeast(0)), length = layers[i].length.coerceAtMost(total - now).coerceAtLeast(200)); refresh() },
+            EditorKit.action(this, EditorKit.END, "จบที่นี่") { val now = outNow()
+                if (now - layers[i].at < 300) notice("เลื่อนไปหลังจุดเริ่มของเลเยอร์ก่อน") else { layers[i] = layers[i].copy(length = now - layers[i].at); refresh() } },
+            EditorKit.action(this, "M5 12h14 M15 8l4 4-4 4 M9 8l-4 4 4 4", "ยาวสุด") { val total = totalOut(); val cap = if (l.kind == VideoLayer.IMAGE) total else VideoLayers.duration(this, l.source) - l.from
+                layers[i] = layers[i].copy(length = cap.coerceAtMost(total - layers[i].at).coerceAtLeast(200)); refresh() },
+            EditorKit.action(this, "M5 7h14 M9 7V4h6v3 M7 7l1 13h8l1-13", "ลบ") { layers.removeAt(i); layerPick = (i - 1).coerceAtLeast(if (layers.isEmpty()) -1 else 0); rebuildLayers(); showTool(LAYER_TOOL, false) })), -1, -2)
+        fun slider(name: String, steps: List<Int>, now: Int, unit: String, set: (Int) -> Unit) {
+            val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), 0, dp(10), 0) }
+            val label = text("$name $now$unit", 12f, Glass.TEXT2, true).apply { minWidth = dp(96) }
+            row.addView(label)
+            row.addView(GlassSlider(this).apply { values = steps.map { "$it$unit" }; index = steps.indexOfFirst { it >= now }.coerceAtLeast(0); contentDescription = name
+                onChange = { k -> label.text = "$name ${steps[k]}$unit"; set(steps[k]) } }, LinearLayout.LayoutParams(0, dp(40), 1f))
+            box.addView(row, -1, -2)
+        }
+        if (l.visual) slider("ขนาด", (10..100 step 5).toList(), (l.size * 100).toInt(), "%") { v -> layers[i] = layers[i].copy(size = v / 100f); placeLayers() }
+        if (l.audible) slider("เสียง", (0..200 step 10).toList(), (l.volume * 100).toInt(), "%") { v -> layers[i] = layers[i].copy(volume = v / 100f); layerSound[i]?.runCatching { val x = (v / 100f).coerceAtMost(1f); setVolume(x, x) } }
+    }
+
     private fun leave() {
         if (transformer != null) { cancelExport(); return }
         if (!changed()) { finish(); return }
@@ -666,8 +855,9 @@ class VideoEditorActivity : ComponentActivity() {
         if (filesDir.usableSpace < 200L * 1024 * 1024) { notice("พื้นที่ว่างไม่พอส่งออก"); return }
         player?.let { if (it.isPlaying) togglePlay() }
         // Several clips become one file, so the split (which makes two files of the main clip) is left out then.
-        if (split >= 0 && extras.isNotEmpty()) notice("มีหลายคลิป · ส่งออกรวมเป็นไฟล์เดียว ไม่แยก")
-        val parts = if (split >= 0 && extras.isEmpty()) listOf(start to split, split to end) else listOf(start to end)
+        val whole = extras.isNotEmpty() || layers.isNotEmpty()
+        if (split >= 0 && whole) notice("มีหลายคลิปหรือเลเยอร์ · ส่งออกรวมเป็นไฟล์เดียว ไม่แยก")
+        val parts = if (split >= 0 && !whole) listOf(start to split, split to end) else listOf(start to end)
         showProgress()
         exportPart(parts, 0, System.currentTimeMillis(), mutableListOf())
     }
@@ -709,7 +899,7 @@ class VideoEditorActivity : ComponentActivity() {
     private fun composition(from: Long, to: Long): Composition = VideoEdit.composition(VideoEditSpec(source, from, to, if (turns % 2 == 1) videoH else videoW, if (turns % 2 == 1) videoW else videoH,
         speed, CROPS[cropIndex].second, caption, place, textColor, textBig, if (looked()) colour() else null, music, hasAudio && keepSound && speed in SOUND_MIN..SOUND_MAX,
         turns, mirror, volume, musicVolume, if (cutValid() && cutFrom >= from && cutTo <= to) cutFrom else -1L, cutTo, textBox,
-        extras.map { VideoPart(it.uri, 0, it.duration) }, if (extras.isEmpty()) 0 else transition, stickers.toList()))
+        extras.map { VideoPart(it.uri, 0, it.duration) }, if (extras.isEmpty()) 0 else transition, stickers.toList(), clampedLayers()), this)
 
     /** Export problems stay on screen until dismissed, so the reason can be read (and reported). */
     private fun failed(reason: String) { if (!isFinishing) GlassDialog.show(this, "ส่งออกไม่ได้", "$reason\nวิดีโอต้นฉบับยังอยู่ครบ ลองปิดฟิลเตอร์หรือข้อความแล้วส่งออกอีกครั้ง") }
@@ -731,7 +921,7 @@ class VideoEditorActivity : ComponentActivity() {
     // ---------- Lifecycle ----------
     override fun onPause() { player?.let { if (it.isPlaying) togglePlay() }; super.onPause() }
     override fun onStop() { if (transformer != null) cancelExport(); super.onStop() }
-    override fun onDestroy() { handler.removeCallbacksAndMessages(null); releasePlayer(); musicPlayer?.runCatching { release() }; super.onDestroy() }
+    override fun onDestroy() { handler.removeCallbacksAndMessages(null); releasePlayer(); musicPlayer?.runCatching { release() }; releaseLayerSound(); super.onDestroy() }
     override fun onSaveInstanceState(out: Bundle) {
         super.onSaveInstanceState(out)
         out.putLong("start", start); out.putLong("end", end); out.putLong("split", split); out.putFloat("speed", speed); out.putInt("crop", cropIndex)
@@ -742,6 +932,7 @@ class VideoEditorActivity : ComponentActivity() {
         out.putLong("cutFrom", cutFrom); out.putLong("cutTo", cutTo); out.putBoolean("textBox", textBox)
         out.putStringArrayList("extras", ArrayList(extras.map { it.uri.toString() })); out.putInt("transition", transition)
         out.putStringArrayList("stickers", ArrayList(stickers.map { "${it.x}|${it.y}|${it.big}|${it.text}" }))
+        out.putString("layers", VideoLayer.save(layers)); out.putInt("layerPick", layerPick)
     }
     private fun restore(s: Bundle) {
         start = s.getLong("start"); end = s.getLong("end", duration).coerceIn(start, duration); split = s.getLong("split", -1); speed = s.getFloat("speed", 1f); cropIndex = s.getInt("crop")
@@ -752,6 +943,7 @@ class VideoEditorActivity : ComponentActivity() {
         cutFrom = s.getLong("cutFrom", -1L); cutTo = s.getLong("cutTo", -1L); textBox = s.getBoolean("textBox")
         transition = s.getInt("transition"); stickers.clear()
         s.getStringArrayList("stickers")?.forEach { line -> val p = line.split("|", limit = 4); if (p.size == 4) stickers += VideoSticker(p[3], p[0].toFloatOrNull() ?: 0.5f, p[1].toFloatOrNull() ?: 0.5f, p[2] == "true") }
+        layers.clear(); layers += VideoLayer.load(s.getString("layers")); layerPick = s.getInt("layerPick", -1)
     }
 
     /** Darkens what the crop removes and outlines what stays. */
