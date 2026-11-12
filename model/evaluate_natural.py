@@ -59,7 +59,10 @@ def measure(original, candidate, reference=None):
         ref = np.asarray(reference, dtype=np.float32)
         out = np.asarray(candidate, dtype=np.float32)
         mse = float(np.square(ref - out).mean())
-        report["PSNR_dB"] = round(float("inf") if mse == 0 else 10.0 * np.log10(255.0**2 / mse), 4)
+        # A perfect reference produces mathematical +infinity, which is not valid JSON.
+        # Emit null plus an explicit exact-match flag for reproducible machine-readable reports.
+        report["PSNR_dB"] = None if mse == 0 else round(10.0 * np.log10(255.0**2 / mse), 4)
+        report["referenceExactMatch"] = bool(mse == 0)
         report["referenceMAE"] = round(float(np.abs(ref - out).mean()), 4)
     return report
 
