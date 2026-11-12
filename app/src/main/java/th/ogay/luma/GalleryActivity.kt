@@ -609,7 +609,7 @@ class GalleryActivity : ComponentActivity() {
         status.text = when (s.stage) {
             Stage.CAPTURING -> "กำลังถ่าย ${s.frames}/${s.requestedFrames} เฟรม"
             Stage.QUEUED -> "รอประมวลผล AI"
-            Stage.RUNNING -> "กำลังเพิ่มรายละเอียด AI ×${s.aiScale.coerceAtLeast(1)} · ${s.aiProgress}%"
+            Stage.RUNNING -> "AI ×${s.aiScale.coerceAtLeast(1)} · ${s.aiProgress}%"
             Stage.FAILED -> "AI ยังไม่สำเร็จ · ${s.error}"
             Stage.DONE -> if (useAi) "AI ${s.aiModel}   ·   ${pixelsText(s.aiSize.pixels)}" else "ต้นฉบับ   ·   ${pixelsText(s.size.pixels)}"
             Stage.ORIGINAL -> if (s.output.rawOnly) "ภาพตัวอย่าง RAW · DNG เก็บแยก" else "${pixelsText(s.size.pixels)}   ·   ${s.reason.description}"
