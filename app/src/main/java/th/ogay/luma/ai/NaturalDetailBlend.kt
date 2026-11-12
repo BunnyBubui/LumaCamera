@@ -40,6 +40,10 @@ internal object NaturalDetailBlend {
         val maximumShift = (3f + 16f * (localContrast / 25f).coerceIn(0f, 1f) * edgeGate)
             .coerceAtMost(18f) * protectionFactor
         val correction = ((neuralY - baseY) * gain).coerceIn(-maximumShift, maximumShift)
+        // Keep all three channels in gamut BEFORE adding the equal shift. Without
+        // this clamp, separately clipping R/G/B can shift hue in saturated colours.
+        val chromaSafeCorrection = correction.coerceIn(
+            -minOf(baseR,baseG,baseB),255f-maxOf(baseR,baseG,baseB))
 
         // An equal RGB adjustment preserves the source chroma difference instead
         // of inventing colour in foliage, clothes or faces.
