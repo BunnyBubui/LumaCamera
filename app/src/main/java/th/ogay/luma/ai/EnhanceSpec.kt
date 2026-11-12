@@ -3,7 +3,11 @@ package th.ogay.luma.ai
 import th.ogay.luma.Dimensions
 
 /** A scale multiplies both axes. Never silently downsample a requested export. */
-data class EnhanceSpec(val scale: Int = 2, val strength: Int = 100) {
+enum class EnhanceProfile { NATURAL, CLASSIC }
+
+data class EnhanceSpec(val scale: Int = 2, val strength: Int = 100,
+                       val profile: EnhanceProfile = EnhanceProfile.CLASSIC) {
+    val modelId: String get() = if (profile == EnhanceProfile.NATURAL) NATURAL_MODEL else MODEL
     init {
         require(scale in 2..4) { "เลือกขนาด ×2, ×3 หรือ ×4" }
         require(strength in 0..100) { "ความแรงต้องอยู่ระหว่าง 0–100" }
@@ -19,6 +23,8 @@ data class EnhanceSpec(val scale: Int = 2, val strength: Int = 100) {
     }
     companion object {
         const val MODEL = "DetailSR2"
+        // Phase 1 is a conservative profile over the existing SR2 model, not new trained weights.
+        const val NATURAL_MODEL = "NaturalSR3P1"
         const val CORE = 128
         // SRVGG: 34 consecutive 3x3 convolutions => radius 34, plus resize gutter.
         const val HALO = 36
