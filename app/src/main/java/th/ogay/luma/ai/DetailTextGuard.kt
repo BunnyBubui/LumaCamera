@@ -43,6 +43,10 @@ internal object DetailTextGuard {
         } catch (e: Exception) {
             if (cancelled()) throw CancellationException()
             return done(emptyList(), "decode-unavailable:${e.javaClass.simpleName}")
+        } catch (_: OutOfMemoryError) {
+            // Optional text detection must not fail the main SR export under memory pressure.
+            if (cancelled()) throw CancellationException()
+            return done(emptyList(), "decode-memory-unavailable")
         } ?: return done(emptyList(), "decode-unavailable")
         try {
             if (cancelled()) throw CancellationException()
