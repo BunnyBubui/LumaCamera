@@ -172,7 +172,7 @@ class VideoEditorActivity : ComponentActivity() {
             val extra = readExtra(uri)
             runOnUiThread {
                 if (isDestroyed) return@runOnUiThread
-                if (extra == null) notice("เปิดวิดีโอนี้ไม่ได้") else { extras += extra; showTime(); showTool(10, false); notice("เพิ่มคลิปแล้ว · ส่งออกรวมเป็นไฟล์เดียว") }
+                if (extra == null) notice("เปิดวิดีโอนี้ไม่ได้") else { extraCache[uri.toString()] = extra; extras += extra; showTime(); showTool(10, false); notice("เพิ่มคลิปแล้ว · ส่งออกรวมเป็นไฟล์เดียว") }
             }
         }
     }
@@ -201,7 +201,7 @@ class VideoEditorActivity : ComponentActivity() {
         // runs it waits. The photo editor is not affected.
         if (ExportJob.running()) { notice("กำลังส่งออกวิดีโออยู่ · ตัดต่อคลิปอื่นได้เมื่อเสร็จแล้ว"); startActivity(Intent(this, ExportActivity::class.java)); finish(); return }
         if (luma.shots.upscaling()) { notice("กำลังเพิ่มรายละเอียดภาพด้วย AI อยู่ · ตัดต่อวิดีโอได้เมื่อเสร็จแล้ว"); finish(); return }
-        if (!readSource()) { notice("เปิดวิดีโอนี้ไม่ได้"); finish(); return }
+        if (!readSource()) { notice(if (intent.hasExtra("project")) "ไม่พบไฟล์วิดีโอต้นฉบับของโปรเจกต์นี้" else "เปิดวิดีโอนี้ไม่ได้"); finish(); return }
         end = duration
         // From Home "แต่งวิดีโอชัด AI": open the export sheet at once with an AI model chosen.
         if (state == null && intent.getBooleanExtra("ai_export", false)) {
@@ -210,6 +210,11 @@ class VideoEditorActivity : ComponentActivity() {
             android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ if (!isDestroyed && !isFinishing) export() }, 700)
         }
         state?.let { restore(it) }
+        var reopened: Bundle? = null
+        projectId = state?.getString("projectId") ?: intent.getStringExtra("project") ?: StudioProjects.newId()
+        projectName = state?.getString("projectName") ?: ""
+        if (state == null && intent.hasExtra("project")) StudioProjects.load(this, projectId)?.let { p -> projectName = p.name; reopened = p.state; restore(p.state); tool = 0; layerPick = -1 }
+        if (projectName.isEmpty()) projectName = "โปรเจกต์ " + android.text.format.DateFormat.format("d MMM HH:mm", System.currentTimeMillis())
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         installRoot(root)
         // The caption field sits low on the screen: the page shrinks above the keyboard instead of hiding under it.
@@ -221,6 +226,11 @@ class VideoEditorActivity : ComponentActivity() {
         val bar = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(10), dp(14), dp(6)) }
         bar.addView(EditorKit.round(this, Icons.CLOSE, "ปิดตัวตัดต่อ") { leave() }, dp(48), dp(48))
         bar.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+        undoButton = EditorKit.round(this, "M9 14L4 9l5-5 M4 9h10a6 6 0 0 1 0 12h-3", "ย้อนกลับ") { stepHistory(true) }
+        redoButton = EditorKit.round(this, "M15 14l5-5-5-5 M20 9H10a6 6 0 0 0 0 12h3", "ทำซ้ำ") { stepHistory(false) }
+        bar.addView(undoButton, LinearLayout.LayoutParams(dp(48), dp(48)).apply { rightMargin = dp(8) })
+        bar.addView(redoButton, LinearLayout.LayoutParams(dp(48), dp(48)).apply { rightMargin = dp(10) })
+        paintHistory()
         exportButton = EditorKit.primary(this, "ส่งออก") { export() }
         bar.addView(exportButton, LinearLayout.LayoutParams(-2, dp(48)))
         root.addView(bar, -1, -2)
@@ -274,9 +284,13 @@ class VideoEditorActivity : ComponentActivity() {
         }
         applyLook(); showTool(tool, false); showTime()
         if (music != null) prepareMusic()
-        state?.let { restoreExtras(it) }
+        // Undo starts watching only after the saved clips are back, or their return would count as an edit.
+        val saved = state ?: reopened
+        if (saved?.getStringArrayList("extras").isNullOrEmpty()) handler.postDelayed(watcher, 600)
+        else { applying = true; restoreExtras(saved!!) { applying = false; handler.postDelayed(watcher, 600) } }
         rebuildStickers(); loadLayerThumbs()
     }
+    override fun onPause() { super.onPause(); if (::trim.isInitialized && overlay == null) saveProject() }
     private fun readExtra(uri: Uri): Extra? = runCatching {
         val r = MediaMetadataRetriever()
         try {
@@ -291,11 +305,11 @@ class VideoEditorActivity : ComponentActivity() {
             Extra(uri, d, if (rot % 180 != 0) h else w, if (rot % 180 != 0) w else h, name, thumb)
         } finally { runCatching { r.release() } }
     }.getOrNull()
-    private fun restoreExtras(s: Bundle) {
-        val uris = s.getStringArrayList("extras") ?: return
+    private fun restoreExtras(s: Bundle, done: () -> Unit = {}) {
+        val uris = s.getStringArrayList("extras") ?: run { done(); return }
         luma.readIo.execute {
-            val list = uris.mapNotNull { readExtra(Uri.parse(it)) }
-            runOnUiThread { if (!isDestroyed) { extras.clear(); extras += list; showTime(); if (tool == 10) showTool(10, false) } }
+            val list = uris.mapNotNull { u -> extraCache[u] ?: readExtra(Uri.parse(u)) }
+            runOnUiThread { if (!isDestroyed) { list.forEach { extraCache[it.uri.toString()] = it }; extras.clear(); extras += list; showTime(); if (tool == 10) showTool(10, false); done() } }
         }
     }
 
@@ -864,10 +878,61 @@ class VideoEditorActivity : ComponentActivity() {
         if (l.audible) slider("เสียง", (0..200 step 10).toList(), (l.volume * 100).toInt(), "%") { v -> layers[i] = layers[i].copy(volume = v / 100f); layerSound[i]?.runCatching { val x = (v / 100f).coerceAtMost(1f); setVolume(x, x) } }
     }
 
+    // ---------- Undo, redo and the saved project ----------
+    private var projectId = ""; private var projectName = ""
+    private val undo = ArrayDeque<Bundle>(); private val redo = ArrayDeque<Bundle>()
+    private var committed: Bundle? = null; private var committedKey = ""; private var pendingKey = ""
+    private var applying = false
+    private val extraCache = HashMap<String, Extra>()
+    private var undoButton: View? = null; private var redoButton: View? = null
+    /**
+     * Looks at the edit a few times a second. When it has changed and then stayed the same for one look (so a slider
+     * being dragged counts as one change, not fifty), the state before the change goes on the undo list and the
+     * project file is rewritten.
+     */
+    private val watcher = object : Runnable { override fun run() {
+        if (isDestroyed) return
+        if (!applying && overlay == null) {
+            val now = state(); val k = StudioProjects.key(now)
+            if (committed == null) { committed = now; committedKey = k }
+            else if (k != committedKey) {
+                if (k == pendingKey) { undo.addLast(committed!!); while (undo.size > 80) undo.removeFirst(); redo.clear(); committed = now; committedKey = k; paintHistory(); saveProject() }
+                else pendingKey = k
+            }
+        }
+        handler.postDelayed(this, 350)
+    } }
+    private fun paintHistory() { undoButton?.let { it.alpha = if (undo.isEmpty()) 0.35f else 1f }; redoButton?.let { it.alpha = if (redo.isEmpty()) 0.35f else 1f } }
+    private fun stepHistory(back: Boolean) {
+        val from = if (back) undo else redo; val to = if (back) redo else undo
+        if (from.isEmpty()) { notice(if (back) "ไม่มีอะไรให้ย้อนกลับ" else "ไม่มีอะไรให้ทำซ้ำ"); return }
+        to.addLast(state()); applyState(from.removeLast()); paintHistory(); saveProject()
+    }
+    /** Puts a saved state back on screen: every value, then every view that shows one. */
+    private fun applyState(b: Bundle) {
+        applying = true
+        val keepTool = tool; val keepPick = layerPick
+        restore(b); tool = keepTool; layerPick = keepPick.coerceAtMost(layers.size - 1)
+        trim.start = start; trim.end = end; trim.split = split
+        prepareMusic(); applySound(); applyLook(); layoutVideo(); rebuildStickers(); rebuildLayers(); loadLayerThumbs()
+        val uris = b.getStringArrayList("extras") ?: arrayListOf()
+        fun done() { if (playIndex > extras.size) playClip(0, false); showTool(tool, false); showTime(); committed = state(); committedKey = StudioProjects.key(committed!!); pendingKey = committedKey; applying = false }
+        if (uris.all { it in extraCache }) { extras.clear(); extras += uris.map { extraCache[it]!! }; done() } else restoreExtras(b) { done() }
+        if (playIndex == 0) seek(trim.playhead.coerceIn(start, end))
+    }
+    private fun saveProject() {
+        if (projectId.isEmpty()) return
+        // A project file appears only once something was really edited; just opening a video leaves no trace.
+        if (!changed() && !StudioProjects.exists(this, projectId)) return
+        val snap = state(); val pic = firstFrame; val id = projectId; val name = projectName
+        luma.readIo.execute { runCatching { StudioProjects.save(applicationContext, id, name, source, snap, pic) } }
+    }
+
     private fun leave() {
         if (overlay != null) { goBackground(); return }
         if (!changed()) { finish(); return }
-        EditorKit.askSave(this, "บันทึกการตัดต่อไหม", "ส่งออกเป็นคลิปใหม่ วิดีโอต้นฉบับยังอยู่ครบ", "ส่งออก", { export() }, { finish() })
+        saveProject()
+        EditorKit.askSave(this, "ส่งออกเป็นคลิปใหม่ไหม", "งานตัดต่อถูกเก็บเป็นโปรเจกต์แล้ว กลับมาแก้ต่อได้จากหน้าหลัก · วิดีโอต้นฉบับยังอยู่ครบ", "ส่งออก", { export() }, { finish() })
     }
 
     // ---------- Export ----------
@@ -1002,7 +1067,11 @@ class VideoEditorActivity : ComponentActivity() {
     override fun onResume() { super.onResume(); if (prog != null) th.ogay.luma.ai.AiPace.watching = true }
     override fun onDestroy() { handler.removeCallbacksAndMessages(null); releasePlayer(); musicPlayer?.runCatching { release() }; releaseLayerSound(); super.onDestroy() }
     override fun onSaveInstanceState(out: Bundle) {
-        super.onSaveInstanceState(out)
+        super.onSaveInstanceState(out); writeState(out)
+        out.putString("projectId", projectId); out.putString("projectName", projectName)
+    }
+    private fun state() = Bundle().also { writeState(it) }
+    private fun writeState(out: Bundle) {
         out.putLong("start", start); out.putLong("end", end); out.putLong("split", split); out.putFloat("speed", speed); out.putInt("crop", cropIndex)
         out.putString("caption", caption); out.putInt("place", place); out.putInt("textColor", textColor); out.putBoolean("big", textBig)
         out.putString("film", film?.id); out.putFloat("strength", filmStrength); out.putString("music", music?.toString()); out.putString("musicName", musicName)

@@ -41,6 +41,7 @@
         </provider>
         <activity android:name=".GalleryActivity" android:exported="false"/>
         <activity android:name=".HomeActivity" android:exported="false"/>
+        <activity android:name=".StudioProjectsActivity" android:exported="false"/>
         <service android:name="androidx.work.impl.foreground.SystemForegroundService"
             android:foregroundServiceType="dataSync" tools:node="merge"/>
         <activity android:name=".VideoPlayerActivity" android:exported="false"/>

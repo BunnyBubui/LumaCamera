@@ -101,7 +101,8 @@ class HomeActivity : ComponentActivity() {
             Tile(EditorKit.SCISSORS, "ตัดต่อวิดีโอ", "เลเยอร์ สโลว์ 4K", 0xff4dc3ff.toInt()) { pickFor("video", "video") },
             Tile(Icons.AI, "แต่งภาพชัด AI", "×2 ถึง ×4", 0xff2dd4bf.toInt()) { pickFor("image", "ai_image") },
             Tile(Icons.AI, "แต่งวิดีโอชัด AI", "เลือกโมเดล ส่งออก", 0xffa78bfa.toInt()) { pickFor("video", "ai_video") },
-            Tile(Icons.FILM, "ฟิล์ม", "โทนสีและเกรนฟิล์ม", 0xffffb020.toInt()) { setResult(RESULT_OK, Intent().putExtra(RESULT_MODE, PhotoMode.FILM.name)); close() }))
+            Tile(Icons.FILM, "ฟิล์ม", "โทนสีและเกรนฟิล์ม", 0xffffb020.toInt()) { setResult(RESULT_OK, Intent().putExtra(RESULT_MODE, PhotoMode.FILM.name)); close() },
+            Tile(Icons.STACK, "โปรเจกต์วิดีโอ", "งานตัดต่อที่ทำค้างไว้", 0xff4dc3ff.toInt()) { startActivity(Intent(this, StudioProjectsActivity::class.java)) }))
 
         section(col, "โหมดถ่าย")
         grid(col, cards, listOf(
