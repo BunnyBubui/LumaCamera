@@ -117,7 +117,7 @@ object PhotoEffects {
             val image=Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888);val canvas=Canvas(image)
             if(mirror){canvas.save();canvas.scale(-1f,1f,w/2f,h/2f)}
             canvas.drawBitmap(cropped,0f,0f,null);if(mirror)canvas.restore()
-            if(look!=null){val styled=Films.render(image,look.first,look.second);canvas.drawBitmap(styled,0f,0f,null);styled.recycle()}
+            if(look!=null){val styled=Films.render(image,look.first,look.second,look.second?.let{Films.fx(p,it)});canvas.drawBitmap(styled,0f,0f,null);styled.recycle()}
             if(watermark)drawWatermark(c,canvas,w,h,runCatching{ExifInterface(file)}.getOrNull())
             rewrite(image,file,p.getString("jpeg_quality","95")!!.toInt());image.recycle();if(cropped!==source)cropped.recycle();source.recycle();PhotoMedia.tag(file,0)
         }
