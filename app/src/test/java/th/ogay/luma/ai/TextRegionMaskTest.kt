@@ -53,6 +53,15 @@ class TextRegionMaskTest {
         assertTrue(((guarded[0] ushr 16) and 255) <= ((normal[0] ushr 16) and 255))
     }
 
+    @Test fun saturatedColoursNeverShiftHueViaChannelClipping() {
+        val result=NaturalDetailBlend.blend(250f,80f,20f,255f,255f,255f,10f,100)
+        val r=(result ushr 16) and 255
+        val g=(result ushr 8) and 255
+        val b=result and 255
+        assertEquals(230,r-b)
+        assertEquals(60,g-b)
+    }
+
     @Test fun rejectsMismatchedMaskOrIllegalProtection() {
         val n=EnhanceSpec.INPUT
         assertThrows(IllegalArgumentException::class.java) {
