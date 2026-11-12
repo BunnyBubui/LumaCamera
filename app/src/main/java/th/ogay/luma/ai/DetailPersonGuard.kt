@@ -70,10 +70,12 @@ internal object DetailPersonGuard {
                 if (stopped()) throw CancellationException()
                 val count=mask.width.toLong()*mask.height
                 if (count<=0 || count>5_000_000) return result(null, "invalid-mask")
-                val buffer=mask.buffer.asFloatBuffer()
-                buffer.rewind()
+                val byteBuffer = mask.buffer
+                byteBuffer.rewind()
+                val buffer = byteBuffer.asFloatBuffer()
                 if (buffer.remaining()<count) return result(null, "invalid-mask-buffer")
-                val weights=FloatArray(count.toInt())
+                val weights=try { FloatArray(count.toInt()) }
+                    catch (_: OutOfMemoryError) { return result(null, "mask-memory-unavailable") }
                 buffer.get(weights)
                 return result(
                     PersonRegionMask(source.w,source.h,mask.width,mask.height,weights),
