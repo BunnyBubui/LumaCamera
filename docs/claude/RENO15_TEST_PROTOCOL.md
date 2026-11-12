@@ -8,7 +8,7 @@
 
 เครื่องมือที่ต้องมีคือ Reno15 ที่เปิด USB debugging, คอมพิวเตอร์ที่มี `adb`, FFmpeg (`ffprobe`), ExifTool, ขาตั้งกล้อง, ป้ายตัวหนังสือไทยพิมพ์หลายขนาด (เช่น 8, 12, 24 และ 48 pt บนกระดาษ A4) และอุปกรณ์ที่ให้แสงกะพริบพร้อมเสียงบี๊บในเวลาเดียวกัน (เช่น มือถืออีกเครื่องที่เปิดวิดีโอทดสอบ A/V sync)
 
-บันทึกข้อมูลรุ่นที่ทดสอบทุกครั้ง ได้แก่ commit จาก `commit.txt` ใน artifact ของ GitHub Actions, SHA-256 ของ APK, ชื่อแพ็กเกจ (`th.ogay.luma.dev` สำหรับ debug หรือ `th.ogay.luma.beta` สำหรับ beta) และ build fingerprint ของเครื่อง
+บันทึกข้อมูลรุ่นที่ทดสอบทุกครั้ง ได้แก่ commit จาก `commit.txt` ใน artifact ของ GitHub Actions, SHA-256 ของ APK, ชื่อแพ็กเกจ (`com.lumora` สำหรับ debug หรือ `com.lumora.beta` สำหรับ beta) และ build fingerprint ของเครื่อง
 
 ```bash
 adb shell getprop ro.build.fingerprint > device/fingerprint.txt
