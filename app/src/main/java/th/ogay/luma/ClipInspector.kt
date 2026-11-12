@@ -3,6 +3,7 @@ package th.ogay.luma
 import android.content.Context
 import android.media.MediaExtractor
 import android.media.MediaFormat
+import android.media.MediaMetadataRetriever
 import android.net.Uri
 import org.json.JSONObject
 import java.io.File
@@ -15,12 +16,19 @@ object ClipInspector{
             check(video>=0){"ไม่มี video track"};ex.selectTrack(video)
             var count=0L;var first=-1L;var last=-1L
             while(ex.sampleTime>=0){if(first<0)first=ex.sampleTime;last=ex.sampleTime;count++;if(!ex.advance())break}
+            val meta=MediaMetadataRetriever()
+            val rotation=try{meta.setDataSource(c,uri);meta.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull()?:0}catch(_:Exception){0}finally{meta.release()}
+            val w=json.optInt("width");val h=json.optInt("height")
+            json.put("rotationDegrees",rotation).put("displayWidth",if(rotation%180==0)w else h).put("displayHeight",if(rotation%180==0)h else w)
             json.put("frames",count).put("audio",audio).put("firstSampleUs",first).put("lastSampleUs",last).put("measuredFps",if(last>first)(count-1)*1_000_000.0/(last-first)else 0.0)
             return json
         }finally{ex.release()}
     }
-    fun record(c:Context,uri:Uri,name:String){runCatching{
-        val report=inspect(c,uri);val file=File(c.filesDir,"reports/$name.json");file.parentFile?.mkdirs();file.writeText(report.toString(2));MediaLedger.rememberFile(c,file,"application/json","ผลตรวจไฟล์วิดีโอจริง")
+    fun record(c:Context,uri:Uri,name:String,requestedFps:Int?=null,sensor:JSONObject?=null,playbackFps:Int?=requestedFps){runCatching{
+        val report=inspect(c,uri)
+        if(requestedFps!=null){report.put("requestedCaptureFps",requestedFps).put("expectedPlaybackFps",playbackFps);report.put("matchesRequestedPlaybackRate",playbackFps!=null&&kotlin.math.abs(report.optDouble("measuredFps")-playbackFps)<playbackFps*0.1)}
+        if(sensor!=null)report.put("sensorTiming",sensor)
+        val file=File(c.filesDir,"reports/$name.json");file.parentFile?.mkdirs();file.writeText(report.toString(2));MediaLedger.rememberFile(c,file,"application/json","ผลตรวจไฟล์วิดีโอจริง")
         MediaLedger.add(c,uri,name,"video/mp4","${report.optInt("width")}×${report.optInt("height")} · %.1f fps · %s".format(java.util.Locale.US,report.optDouble("measuredFps"),if(report.optBoolean("audio"))"มีเสียง" else "ไม่มีเสียง"))
     }}
 }
