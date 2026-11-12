@@ -31,18 +31,56 @@ import androidx.media3.transformer.Effects
 data class VideoLayer(
     val kind: Int, val source: Uri, val at: Long, val length: Long, val from: Long = 0L,
     val x: Float = 0.5f, val y: Float = 0.5f, val size: Float = 0.45f, val aspect: Float = 1f, val volume: Float = 1f,
+    /** How solid the layer is (1 = fully), and how long it takes to fade in and out, in ms. */
+    val opacity: Float = 1f, val fadeIn: Long = 0L, val fadeOut: Long = 0L,
+    /** For a [TEXT] layer: the words, their colour and [style] (1 = dark box behind, 2 = outline, 4 = light weight). */
+    val text: String = "", val color: Int = Color.WHITE, val style: Int = 0,
+    /** Keyframes, "ms,x,y,size,opacity" joined by ';'. ms counts from the layer's start. Between two keyframes the layer glides from one to the other. */
+    val keys: String = "",
 ) {
     val end get() = at + length
     val visual get() = kind != SOUND
-    val audible get() = kind != IMAGE
+    val audible get() = kind == VIDEO || kind == SOUND
+    val still get() = kind == IMAGE || kind == TEXT
+    val animated get() = keys.isNotEmpty() || fadeIn > 0 || fadeOut > 0
+
+    class Key(val t: Long, val x: Float, val y: Float, val size: Float, val opacity: Float)
+    val keyList: List<Key> by lazy { keys.split(';').mapNotNull { k -> val p = k.split(','); if (p.size < 5) null else runCatching { Key(p[0].toLong(), p[1].toFloat(), p[2].toFloat(), p[3].toFloat(), p[4].toFloat()) }.getOrNull() }.sortedBy { it.t } }
+    fun withKeys(list: List<Key>) = copy(keys = list.sortedBy { it.t }.joinToString(";") { "${it.t},${it.x},${it.y},${it.size},${it.opacity}" })
+
+    /** Centre x, centre y, size and opacity at [outMs] of the finished video, from the keyframes (without the fades). */
+    fun rawPose(outMs: Long): FloatArray {
+        val k = keyList
+        if (k.isEmpty()) return floatArrayOf(x, y, size, opacity)
+        val t = outMs - at
+        if (t <= k.first().t) return k.first().let { floatArrayOf(it.x, it.y, it.size, it.opacity) }
+        if (t >= k.last().t) return k.last().let { floatArrayOf(it.x, it.y, it.size, it.opacity) }
+        val i = k.indexOfLast { it.t <= t }; val a = k[i]; val b = k[i + 1]
+        // Ease in and out, so a move starts and stops softly instead of at once.
+        var f = ((t - a.t).toFloat() / (b.t - a.t).coerceAtLeast(1)).coerceIn(0f, 1f); f = f * f * (3 - 2 * f)
+        return floatArrayOf(a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f, a.size + (b.size - a.size) * f, a.opacity + (b.opacity - a.opacity) * f)
+    }
+    /** As [rawPose], with the fade in and fade out applied to the opacity. The preview and the export both draw from this. */
+    fun pose(outMs: Long): FloatArray {
+        val p = rawPose(outMs); val t = outMs - at; var fade = 1f
+        if (fadeIn > 0 && t < fadeIn) fade = (t.toFloat() / fadeIn).coerceIn(0f, 1f)
+        if (fadeOut > 0 && t > length - fadeOut) fade = minOf(fade, ((length - t).toFloat() / fadeOut).coerceIn(0f, 1f))
+        p[3] = (p[3] * fade).coerceIn(0f, 1f); return p
+    }
 
     companion object {
-        const val VIDEO = 0; const val IMAGE = 1; const val SOUND = 2
+        const val VIDEO = 0; const val IMAGE = 1; const val SOUND = 2; const val TEXT = 3
+        /** A text layer has no file; its "address" is made from its words and look, so a changed text is a new picture. */
+        fun textSource(text: String, color: Int, style: Int): Uri = Uri.parse("lumoratext:" + Uri.encode("$color/$style/$text"))
         /** Packs a list of layers into a Bundle-friendly string (one line per layer). */
-        fun save(list: List<VideoLayer>) = list.joinToString("\n") { l -> listOf(l.kind, l.source, l.at, l.length, l.from, l.x, l.y, l.size, l.aspect, l.volume).joinToString("\t") }
+        fun save(list: List<VideoLayer>) = list.joinToString("\n") { l -> listOf(l.kind, l.source, l.at, l.length, l.from, l.x, l.y, l.size, l.aspect, l.volume,
+            l.opacity, l.fadeIn, l.fadeOut, Uri.encode(l.text).ifEmpty { "-" }, l.color, l.style, l.keys.ifEmpty { "-" }).joinToString("\t") }
         fun load(text: String?): List<VideoLayer> = text.orEmpty().lines().filter { it.isNotBlank() }.mapNotNull { line ->
             val p = line.split("\t"); if (p.size < 10) return@mapNotNull null
-            runCatching { VideoLayer(p[0].toInt(), Uri.parse(p[1]), p[2].toLong(), p[3].toLong(), p[4].toLong(), p[5].toFloat(), p[6].toFloat(), p[7].toFloat(), p[8].toFloat(), p[9].toFloat()) }.getOrNull()
+            runCatching { VideoLayer(p[0].toInt(), Uri.parse(p[1]), p[2].toLong(), p[3].toLong(), p[4].toLong(), p[5].toFloat(), p[6].toFloat(), p[7].toFloat(), p[8].toFloat(), p[9].toFloat(),
+                p.getOrNull(10)?.toFloatOrNull() ?: 1f, p.getOrNull(11)?.toLongOrNull() ?: 0L, p.getOrNull(12)?.toLongOrNull() ?: 0L,
+                p.getOrNull(13)?.takeIf { it != "-" }?.let { Uri.decode(it) } ?: "", p.getOrNull(14)?.toIntOrNull() ?: Color.WHITE, p.getOrNull(15)?.toIntOrNull() ?: 0,
+                p.getOrNull(16)?.takeIf { it != "-" } ?: "") }.getOrNull()
         }
     }
 }
@@ -51,7 +89,27 @@ data class VideoLayer(
 object VideoLayers {
     /** Picture layers as overlays for the whole video (their times are times of the finished video). */
     fun overlays(c: Context, layers: List<VideoLayer>): List<BitmapOverlay> = layers.filter { it.visual }.map { l ->
-        if (l.kind == VideoLayer.IMAGE) TimedOverlay(l, picture(c, l.source, 1280)) else MovingOverlay(c, l)
+        when (l.kind) { VideoLayer.IMAGE -> TimedOverlay(l, picture(c, l.source, 1280)); VideoLayer.TEXT -> TimedOverlay(l, textPicture(l)); else -> MovingOverlay(c, l) }
+    }
+
+    /** The words of a text layer drawn on a clear picture: centred lines, with a soft shadow, a dark box or an outline. */
+    fun textPicture(l: VideoLayer, width: Int = 1080): Bitmap {
+        val words = l.text.ifBlank { " " }
+        val paint = android.text.TextPaint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = width * 0.105f; color = l.color; typeface = if (l.style and 4 != 0) android.graphics.Typeface.DEFAULT else android.graphics.Typeface.DEFAULT_BOLD
+            if (l.style and 3 == 0) setShadowLayer(textSize * 0.14f, 0f, textSize * 0.04f, 0xb0000000.toInt()) }
+        val pad = (paint.textSize * 0.4f).toInt(); val room = width - pad * 2
+        fun layout(p: android.text.TextPaint) = android.text.StaticLayout.Builder.obtain(words, 0, words.length, p, room).setAlignment(android.text.Layout.Alignment.ALIGN_CENTER).setIncludePad(true).build()
+        val lay = layout(paint)
+        val wide = (0 until lay.lineCount).maxOf { lay.getLineWidth(it) }
+        val bw = (wide + pad * 2).toInt().coerceIn(pad * 2 + 2, width); val bh = lay.height + pad * 2
+        val out = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888); val cv = android.graphics.Canvas(out)
+        val dark = Color.red(l.color) * 0.3f + Color.green(l.color) * 0.59f + Color.blue(l.color) * 0.11f < 110
+        if (l.style and 1 != 0) cv.drawRoundRect(0f, 0f, bw.toFloat(), bh.toFloat(), pad * 0.6f, pad * 0.6f, android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = if (dark) 0xd9ffffff.toInt() else 0xb3000000.toInt() })
+        cv.translate((bw - room) / 2f, pad.toFloat())
+        if (l.style and 2 != 0) layout(android.text.TextPaint(paint).apply { style = android.graphics.Paint.Style.STROKE; strokeWidth = textSize * 0.16f; strokeJoin = android.graphics.Paint.Join.ROUND; color = if (dark) Color.WHITE else Color.BLACK; clearShadowLayer() }).draw(cv)
+        lay.draw(cv)
+        return out
     }
 
     /** One audio sequence per layer with sound: silence until the layer starts, then its sound. */
@@ -105,16 +163,25 @@ object VideoLayers {
     private abstract class Placed(private val layer: VideoLayer) : BitmapOverlay() {
         private var shown: OverlaySettings = StaticOverlaySettings.Builder().build()
         private var hidden: OverlaySettings = StaticOverlaySettings.Builder().setAlphaScale(0f).build()
+        private var frameW = 0
         abstract val pixelWidth: Int
+        private fun settings(x: Float, y: Float, size: Float, alpha: Float): OverlaySettings {
+            val scale = size * frameW / pixelWidth.coerceAtLeast(1)
+            return StaticOverlaySettings.Builder().setScale(scale, scale).setAlphaScale(alpha)
+                .setBackgroundFrameAnchor((x * 2 - 1).coerceIn(-1f, 1f), (1 - y * 2).coerceIn(-1f, 1f)).setOverlayFrameAnchor(0f, 0f).build()
+        }
         override fun configure(videoSize: Size) {
             super.configure(videoSize)
-            val scale = layer.size * videoSize.width / pixelWidth.coerceAtLeast(1)
-            fun settings(alpha: Float) = StaticOverlaySettings.Builder().setScale(scale, scale).setAlphaScale(alpha)
-                .setBackgroundFrameAnchor((layer.x * 2 - 1).coerceIn(-1f, 1f), (1 - layer.y * 2).coerceIn(-1f, 1f)).setOverlayFrameAnchor(0f, 0f).build()
-            shown = settings(1f); hidden = settings(0f)
+            frameW = videoSize.width
+            shown = settings(layer.x, layer.y, layer.size, layer.opacity); hidden = settings(layer.x, layer.y, layer.size, 0f)
         }
         fun inside(us: Long) = us / 1000 in layer.at until layer.end
-        override fun getOverlaySettings(presentationTimeUs: Long) = if (inside(presentationTimeUs)) shown else hidden
+        /** A layer that moves or fades gets its place worked out for every frame, from the same numbers the preview uses. */
+        override fun getOverlaySettings(presentationTimeUs: Long): OverlaySettings {
+            if (!inside(presentationTimeUs)) return hidden
+            if (!layer.animated) return shown
+            val p = layer.pose(presentationTimeUs / 1000); return settings(p[0], p[1], p[2], p[3])
+        }
     }
 
     private class TimedOverlay(layer: VideoLayer, private val bitmap: Bitmap) : Placed(layer) {
