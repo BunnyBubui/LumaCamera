@@ -290,7 +290,6 @@ class VideoEditorActivity : ComponentActivity() {
         else { applying = true; restoreExtras(saved!!) { applying = false; handler.postDelayed(watcher, 600) } }
         rebuildStickers(); loadLayerThumbs()
     }
-    override fun onPause() { super.onPause(); if (::trim.isInitialized && overlay == null) saveProject() }
     private fun readExtra(uri: Uri): Extra? = runCatching {
         val r = MediaMetadataRetriever()
         try {
@@ -1063,7 +1062,7 @@ class VideoEditorActivity : ComponentActivity() {
     private fun cancelExport() { ExportJob.cancel() }
 
     // ---------- Lifecycle ----------
-    override fun onPause() { player?.let { if (it.isPlaying) togglePlay() }; if (prog != null) th.ogay.luma.ai.AiPace.watching = false; super.onPause() }
+    override fun onPause() { player?.let { if (it.isPlaying) togglePlay() }; if (prog != null) th.ogay.luma.ai.AiPace.watching = false; super.onPause(); if (::trim.isInitialized && overlay == null) saveProject() }
     override fun onResume() { super.onResume(); if (prog != null) th.ogay.luma.ai.AiPace.watching = true }
     override fun onDestroy() { handler.removeCallbacksAndMessages(null); releasePlayer(); musicPlayer?.runCatching { release() }; releaseLayerSound(); super.onDestroy() }
     override fun onSaveInstanceState(out: Bundle) {
