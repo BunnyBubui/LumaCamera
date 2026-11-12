@@ -91,30 +91,17 @@ class HomeActivity : ComponentActivity() {
         col.addView(brand, -1, -2)
 
         val cards = ArrayList<View>()
-        // Level 1: the camera.
-        col.addView(big(Icons.PHOTO, "ถ่ายภาพ", "กลับไปที่กล้อง", intArrayOf(0xffffb020.toInt(), 0xffff7a00.toInt()), 122, 24f) {
-            setResult(RESULT_OK, Intent().putExtra(RESULT_MODE, PhotoMode.PHOTO.name)); close() }.also { cards += it }, LinearLayout.LayoutParams(-1, dp(122)).apply { topMargin = dp(14) })
-        // Level 2: the two editors side by side.
-        val editors = LinearLayout(this)
-        editors.addView(big(EditorKit.ADJUST, "ตัดต่อภาพ", "สี เส้นโค้ง ครอป วาด", intArrayOf(0xffff4d9d.toInt(), 0xffc026d3.toInt()), 132, 18f, stacked = true) {
-            editKind = "image"; pick.launch(Intent(this, GalleryActivity::class.java).putExtra(GalleryActivity.EXTRA_PICK, "image")) }.also { cards += it },
-            LinearLayout.LayoutParams(0, dp(132), 1f).apply { rightMargin = dp(6) })
-        editors.addView(big(EditorKit.SCISSORS, "ตัดต่อวิดีโอ", "เลเยอร์ สโลว์ลื่น 4K", intArrayOf(0xff3b82f6.toInt(), 0xff22d3ee.toInt()), 132, 18f, stacked = true) {
-            editKind = "video"; pick.launch(Intent(this, GalleryActivity::class.java).putExtra(GalleryActivity.EXTRA_PICK, "video")) }.also { cards += it },
-            LinearLayout.LayoutParams(0, dp(132), 1f).apply { leftMargin = dp(6) })
-        col.addView(editors, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
-        // Level 3: film, as wide as the camera.
-        col.addView(big(Icons.FILM, "ฟิล์ม", "โทนสีและเกรนแบบฟิล์ม", intArrayOf(0xffffd60a.toInt(), 0xffff7a45.toInt(), 0xffd6336c.toInt()), 96, 20f) {
-            setResult(RESULT_OK, Intent().putExtra(RESULT_MODE, PhotoMode.FILM.name)); close() }.also { cards += it }, LinearLayout.LayoutParams(-1, dp(96)).apply { topMargin = dp(12) })
-        // Level 4: the two AI sharpeners. Each is a short flow: pick the file, choose the model (with a preview), done.
-        val sharpen = LinearLayout(this)
-        sharpen.addView(big(Icons.AI, "แต่งภาพชัด AI", "เลือกรูป · ดูตัวอย่าง · ×2 ถึง ×4", intArrayOf(0xff0fd1c0.toInt(), 0xff2ecc71.toInt()), 132, 18f, stacked = true) {
-            editKind = "ai_image"; pick.launch(Intent(this, GalleryActivity::class.java).putExtra(GalleryActivity.EXTRA_PICK, "image")) }.also { cards += it },
-            LinearLayout.LayoutParams(0, dp(132), 1f).apply { rightMargin = dp(6) })
-        sharpen.addView(big(Icons.AI, "แต่งวิดีโอชัด AI", "เลือกคลิป · เลือกโมเดล · ส่งออก", intArrayOf(0xff6366f1.toInt(), 0xffa855f7.toInt()), 132, 18f, stacked = true) {
-            editKind = "ai_video"; pick.launch(Intent(this, GalleryActivity::class.java).putExtra(GalleryActivity.EXTRA_PICK, "video")) }.also { cards += it },
-            LinearLayout.LayoutParams(0, dp(132), 1f).apply { leftMargin = dp(6) })
-        col.addView(sharpen, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
+        // One orange card for the camera; everything else is the same quiet glass card.
+        col.addView(big(Icons.PHOTO, "ถ่ายภาพ", "กลับไปที่กล้อง", intArrayOf(0xffffb020.toInt(), 0xffff8a1f.toInt()), 104, 24f) {
+            setResult(RESULT_OK, Intent().putExtra(RESULT_MODE, PhotoMode.PHOTO.name)); close() }.also { cards += it }, LinearLayout.LayoutParams(-1, dp(104)).apply { topMargin = dp(14) })
+        fun pickFor(kind: String, ek: String) { editKind = ek; pick.launch(Intent(this, GalleryActivity::class.java).putExtra(GalleryActivity.EXTRA_PICK, kind)) }
+        section(col, "ตัดต่อ")
+        grid(col, cards, listOf(
+            Tile(EditorKit.ADJUST, "ตัดต่อภาพ", "สี เส้นโค้ง ครอป", 0xffff6fb5.toInt()) { pickFor("image", "image") },
+            Tile(EditorKit.SCISSORS, "ตัดต่อวิดีโอ", "เลเยอร์ สโลว์ 4K", 0xff4dc3ff.toInt()) { pickFor("video", "video") },
+            Tile(Icons.AI, "แต่งภาพชัด AI", "×2 ถึง ×4", 0xff2dd4bf.toInt()) { pickFor("image", "ai_image") },
+            Tile(Icons.AI, "แต่งวิดีโอชัด AI", "เลือกโมเดล ส่งออก", 0xffa78bfa.toInt()) { pickFor("video", "ai_video") },
+            Tile(Icons.FILM, "ฟิล์ม", "โทนสีและเกรนฟิล์ม", 0xffffb020.toInt()) { setResult(RESULT_OK, Intent().putExtra(RESULT_MODE, PhotoMode.FILM.name)); close() }))
 
         section(col, "โหมดถ่าย")
         grid(col, cards, listOf(
@@ -150,7 +137,6 @@ class HomeActivity : ComponentActivity() {
         background = GradientDrawable(GradientDrawable.Orientation.TL_BR, colors).apply { cornerRadius = dp(26).toFloat() }
         isClickable = true; contentDescription = "$title $note"; glassTouch(); clipToOutline = true
         outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: android.graphics.Outline) = o.setRoundRect(0, 0, v.width, v.height, dp(26).toFloat()) }
-        addView(Sheen(this@HomeActivity), -1, -1)
         val badge = FrameLayout(this@HomeActivity).apply { background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0x38ffffff) }
             addView(IconView(this@HomeActivity, icon, 2.2f), FrameLayout.LayoutParams(dp(if (stacked) 24 else 28), dp(if (stacked) 24 else 28), Gravity.CENTER)) }
         val words = LinearLayout(this@HomeActivity).apply { orientation = LinearLayout.VERTICAL }
@@ -178,27 +164,25 @@ class HomeActivity : ComponentActivity() {
             val row = LinearLayout(this)
             pair.forEachIndexed { i, tile ->
                 val card = card(tile); cards += card
-                row.addView(card, LinearLayout.LayoutParams(0, dp(104), 1f).apply { if (i == 0) rightMargin = dp(6) else leftMargin = dp(6) })
+                row.addView(card, LinearLayout.LayoutParams(0, dp(96), 1f).apply { if (i == 0) rightMargin = dp(6) else leftMargin = dp(6) })
             }
             if (pair.size == 1) row.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f).apply { leftMargin = dp(6) })
             col.addView(row, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12) })
         }
     }
 
-    /** Glass card: tinted top edge, a glowing rounded icon tile, title, one line of note and a small arrow. */
+    /** Quiet glass card: a faint tinted icon chip, title, one line of note and a small arrow. */
     private fun card(t: Tile): View = FrameLayout(this).apply {
-        background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf((t.color and 0x00ffffff) or 0x66000000, (t.color and 0x00ffffff) or 0x1f000000)).apply {
-            cornerRadius = dp(22).toFloat(); setStroke(dp(1), (t.color and 0x00ffffff) or 0x8c000000.toInt()) }
+        background = GradientDrawable().apply { cornerRadius = dp(22).toFloat(); setColor(0x14ffffff); setStroke(dp(1), 0x1fffffff) }
         isClickable = true; contentDescription = "${t.title} ${t.note}"; glassTouch()
         val c = LinearLayout(this@HomeActivity).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), dp(13), dp(12), dp(12)) }
         val top = LinearLayout(this@HomeActivity).apply { gravity = Gravity.CENTER_VERTICAL }
         top.addView(FrameLayout(this@HomeActivity).apply {
-            background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(t.color, (t.color and 0x00ffffff) or 0x99000000.toInt())).apply { cornerRadius = dp(13).toFloat() }
-            elevation = dp(6).toFloat(); outlineAmbientShadowColor(t.color)
-            addView(IconView(this@HomeActivity, t.icon, 2f).apply { tint = Color.WHITE }, FrameLayout.LayoutParams(dp(21), dp(21), Gravity.CENTER))
-        }, dp(40), dp(40))
+            background = GradientDrawable().apply { cornerRadius = dp(12).toFloat(); setColor((t.color and 0x00ffffff) or 0x2e000000) }
+            addView(IconView(this@HomeActivity, t.icon, 2f).apply { tint = t.color }, FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER))
+        }, dp(38), dp(38))
         top.addView(View(this@HomeActivity), LinearLayout.LayoutParams(0, 1, 1f))
-        top.addView(IconView(this@HomeActivity, "M9.5 6l6 6-6 6", 2f).apply { tint = 0x66ffffff }, dp(16), dp(16))
+        top.addView(IconView(this@HomeActivity, "M9.5 6l6 6-6 6", 2f).apply { tint = 0x55ffffff }, dp(16), dp(16))
         c.addView(top, -1, -2)
         c.addView(View(this@HomeActivity), LinearLayout.LayoutParams(1, 0, 1f))
         c.addView(text(t.title, 15f, Color.WHITE, true).apply { maxLines = 1 })
@@ -217,7 +201,7 @@ class HomeActivity : ComponentActivity() {
     private class Aurora(c: Context) : View(c) {
         private val p = Paint(Paint.ANTI_ALIAS_FLAG)
         private var t = 0f
-        private val colors = intArrayOf(0x55ff9f0a, 0x558e7dff, 0x4064d2ff, 0x40ff5e8a)
+        private val colors = intArrayOf(0x30ff9f0a, 0x308e7dff, 0x2064d2ff, 0x20ff5e8a)
         private val shaders = colors.map { RadialGradient(0f, 0f, 100f, it, 0x00000000, Shader.TileMode.CLAMP) }
         private val m = android.graphics.Matrix()
         private var lastFrame = 0L

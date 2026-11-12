@@ -1431,22 +1431,29 @@ class CameraActivity : ComponentActivity() {
         val delay=if(Build.VERSION.SDK_INT>=29)(getSystemService(ACCESSIBILITY_SERVICE) as android.view.accessibility.AccessibilityManager).getRecommendedTimeoutMillis(ms.toInt(),android.view.accessibility.AccessibilityManager.FLAG_CONTENT_TEXT).toLong()else ms
         viewfinderNotice.postDelayed({if(version==hintVersion) Liquid.hide(viewfinderNotice, viewfinderNotice.width / 2f, viewfinderNotice.height / 2f, false)},delay)
     }
+    /** The same orange button as the gallery's permission card, centred under a centred message. */
+    private fun permissionButton(value: String, action: () -> Unit): View = text(value, 15f, Glass.ON_ACCENT, true).apply {
+        gravity = Gravity.CENTER; minHeight = dp(52); minWidth = dp(200); setPadding(dp(28), dp(4), dp(28), dp(4))
+        background = glass(24, Glass.ACCENT); isClickable = true; isFocusable = true; contentDescription = value; glassTouch(); setOnClickListener { action() }
+    }
+    private fun permissionMessage(value: String, sp: Float): View = label(value, sp).apply { gravity = Gravity.CENTER; textAlignment = View.TEXT_ALIGNMENT_CENTER; setPadding(dp(8), dp(6), dp(8), dp(16)) }
     private fun showPermission() {
         permissionPanel.removeAllViews();permissionPanel.visibility=View.VISIBLE
-        permissionPanel.addView(label("อนุญาตให้ใช้กล้องเพื่อเริ่มถ่ายภาพ",17f).apply{setPadding(dp(8),dp(6),dp(8),dp(14))})
+        permissionPanel.addView(permissionMessage("อนุญาตให้ใช้กล้องเพื่อเริ่มถ่ายภาพ",17f), LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.CENTER_HORIZONTAL })
         val needSettings = prefs.getBoolean("asked",false) && permissions.any {
             ContextCompat.checkSelfPermission(this,it)!=PackageManager.PERMISSION_GRANTED && !shouldShowRequestPermissionRationale(it)
         }
-        permissionPanel.addView(pill(if(needSettings) "เปิดการตั้งค่า" else "อนุญาต") {
+        permissionPanel.addView(permissionButton(if(needSettings) "เปิดการตั้งค่า" else "อนุญาต") {
             if(needSettings) startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName")))
             else { prefs.edit().putBoolean("asked",true).apply();permissionRequest.launch(permissions) }
-        })
+        }, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.CENTER_HORIZONTAL })
         refresh()
     }
     private fun cameraError(msg: String) {
         capture=null
         permissionPanel.removeAllViews();permissionPanel.visibility=View.VISIBLE
-        permissionPanel.addView(label(msg,15f));permissionPanel.addView(pill("ลองเปิดกล้องอีกครั้ง",::bind));refresh()
+        permissionPanel.addView(permissionMessage(msg,15f), LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.CENTER_HORIZONTAL })
+        permissionPanel.addView(permissionButton("ลองเปิดกล้องอีกครั้ง",::bind), LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.CENTER_HORIZONTAL }); refresh()
     }
 
     // ---------- Camera binding (logic unchanged) ----------
