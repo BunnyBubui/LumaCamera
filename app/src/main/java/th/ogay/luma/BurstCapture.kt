@@ -171,6 +171,7 @@ class BurstCapture(
             val date = SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US).format(Date(time))
             val exif = androidx.exifinterface.media.ExifInterface(complete)
             PhotoMedia.tag(complete, exif.rotationDegrees, date)
+            PhotoEffects.decorate(context, complete, rear)
             captured++
             if (!inserted) {
                 val size = PhotoMedia.dimensions(complete)

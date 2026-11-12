@@ -12,9 +12,15 @@ android {
         minSdk = 23
         targetSdk = 35
         versionCode = providers.environmentVariable("LUMA_BUILD_NUMBER").orNull?.toIntOrNull() ?: 100
-        versionName = "0.2.0"
+        versionName = "0.3.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // Native HDR EF2 links the OpenCV AAR's libopencv_java4.so, which is built against c++_shared.
+        externalNativeBuild { cmake { arguments += listOf("-DANDROID_STL=c++_shared") } }
     }
+    externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" } }
+    buildFeatures { prefab = true }
+    // Both the OpenCV AAR and this app's CMake build ship libc++_shared.so; keep one copy.
+    packaging { jniLibs { pickFirsts += "**/libc++_shared.so" } }
     val keyFile = providers.environmentVariable("LUMA_KEYSTORE").orNull
     signingConfigs {
         if (keyFile != null) {
@@ -49,6 +55,12 @@ dependencies {
     implementation("androidx.camera:camera-camera2:1.6.2")
     implementation("androidx.camera:camera-lifecycle:1.6.2")
     implementation("androidx.camera:camera-view:1.6.2")
+    implementation("androidx.camera:camera-video:1.6.2")
+    implementation("androidx.camera:camera-extensions:1.6.2")
+    implementation("androidx.media3:media3-transformer:1.9.0")
+    implementation("androidx.media3:media3-effect:1.9.0")
+    implementation("com.google.mlkit:segmentation-selfie:16.0.0-beta6")
+    implementation("org.opencv:opencv:4.12.0")
     implementation("androidx.exifinterface:exifinterface:1.3.7")
     implementation("androidx.work:work-runtime:2.9.1")
 testImplementation("junit:junit:4.13.2")

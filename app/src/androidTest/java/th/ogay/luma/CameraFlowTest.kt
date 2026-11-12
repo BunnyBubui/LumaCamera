@@ -28,6 +28,9 @@ class CameraFlowTest {
         while(SystemClock.elapsedRealtime()<end){if(check())return;SystemClock.sleep(250)}
         assertTrue("Timed out after $ms ms",check())
     }
+    @org.junit.Before fun resetStudioMode(){
+        context.getSharedPreferences("camera",Context.MODE_PRIVATE).edit().putString("photo_mode","PHOTO").putString("timer","0").putString("aspect","4:3").putBoolean("watermark",false).putBoolean("gps",false).commit()
+    }
     @Test fun multiFrameAiCapturesFourRealImages() = multiFrameFlow(4)
     @Test fun multiFrameAiCapturesThirtyTwoRealImages() = multiFrameFlow(32)
 
@@ -78,8 +81,8 @@ class CameraFlowTest {
             .contains(androidx.camera.core.ImageCapture.OUTPUT_FORMAT_RAW_JPEG)
         ActivityScenario.launch(CameraActivity::class.java).use {
             until(35000) { device.findObject(By.desc("ถ่ายภาพ"))?.isEnabled == true }
-            device.findObject(By.desc("รูปแบบ RAW")).click()
             if (supportsRaw) {
+                device.findObject(By.desc("รูปแบบ RAW")).click()
                 until(25000) { device.findObject(By.desc("ถ่ายภาพ"))?.isEnabled == true }
                 device.findObject(By.desc("ถ่ายภาพ")).click()
                 var shot: Shot? = null
@@ -94,6 +97,7 @@ class CameraFlowTest {
                     assertTrue(header[0] == 'I'.code.toByte() || header[0] == 'M'.code.toByte())
                 }
             } else {
+                assertNull(device.findObject(By.desc("รูปแบบ RAW")))
                 assertEquals("JPEG", context.getSharedPreferences("camera", Context.MODE_PRIVATE).getString("output", ""))
             }
         }

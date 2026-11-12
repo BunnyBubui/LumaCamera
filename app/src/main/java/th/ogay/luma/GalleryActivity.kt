@@ -53,9 +53,10 @@ class GalleryActivity : ComponentActivity() {
     }
     private fun header(title:String, back:()->Unit):LinearLayout {
         val bar=LinearLayout(this).apply {gravity=Gravity.CENTER_VERTICAL;setPadding(dp(8),0,dp(12),0)}
-        bar.addView(Glyph(this,"back","ย้อนกลับ",back),dp(46),dp(46))
-        bar.addView(label(title,21f).apply {setPadding(dp(8),0,0,0)})
-        bar.space();root.addView(bar,-1,dp(60));return bar
+        bar.addView(Glyph(this,"back","ย้อนกลับ",back),dp(48),dp(48))
+        // The title takes the free width and wraps, so a button added to the right stays on screen at large font.
+        bar.addView(label(title,21f).apply {setPadding(dp(8),0,0,0)},LinearLayout.LayoutParams(0,-2,1f))
+        bar.minimumHeight=dp(60);root.addView(bar,-1,-2);return bar
     }
     private fun showGrid(rows:List<Shot>) {
         showingId=null;root.removeAllViews()
@@ -110,7 +111,7 @@ class GalleryActivity : ComponentActivity() {
         }
         toggle.removeAllViews()
         fun chip(text:String,active:Boolean=false,click:()->Unit) {
-            toggle.addView(pill(text,click).apply {if(active)setTextColor(LIME)},LinearLayout.LayoutParams(-2,dp(44)).apply{setMargins(dp(2),0,dp(2),0)})
+            toggle.addView(pill(text,click).apply {selectionStyle(active)},LinearLayout.LayoutParams(-2,dp(48)).apply{setMargins(dp(2),0,dp(2),0)})
         }
         if (s.raw != null) {
             chip("เปิด DNG") {

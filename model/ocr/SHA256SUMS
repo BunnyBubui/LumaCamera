@@ -1,0 +1,3 @@
+1eb7b4f7ab657ebd1c66d5f79bca7497f29768a2e3c15e52daecbba1a8e4a039  app/src/main/assets/ocr/ppocrv5_mobile_det.onnx
+57f5406f94bb6688fb7077f7be65f08bbd71cecf48c01ea26c522cb5c4836b7a  app/src/main/assets/ocr/ppocrv5_th_dict.txt
+94675f51905954d6521c463335316c9ca854756d3491773b06041bdbec0a2eb7  app/src/main/assets/ocr/th_ppocrv5_mobile_rec_w640.onnx
