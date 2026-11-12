@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<title>Luma Camera แกลเลอรี</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;600&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#000}
+a{color:#FFD447}a:hover{color:#ffe28a}
+button,a.btn{font:inherit;color:inherit;background:none;border:0;padding:0;margin:0;cursor:pointer;text-decoration:none;-webkit-tap-highlight-color:transparent}
+button:focus-visible,a:focus-visible{outline:2px solid #FFD447;outline-offset:2px}
+.glass{background:rgba(30,30,32,0.6);-webkit-backdrop-filter:blur(22px) saturate(170%);backdrop-filter:blur(22px) saturate(170%);border:1px solid rgba(255,255,255,0.12);box-shadow:inset 0 1px 0 rgba(255,255,255,0.1)}
+.press{transition:transform 220ms cubic-bezier(0.34,1.56,0.64,1),background-color 180ms ease,color 180ms ease}
+.press:active{transform:scale(0.95);transition:transform 90ms ease-out}
+.lg{position:relative;overflow:hidden;isolation:isolate;translate:var(--tx,0px) var(--ty,0px);scale:var(--s,1);transition:translate 560ms cubic-bezier(0.34,1.56,0.64,1),scale 560ms cubic-bezier(0.34,1.56,0.64,1),background-color 200ms ease}
+.lg.lg-on{--s:1.05;-webkit-backdrop-filter:blur(34px) saturate(200%);backdrop-filter:blur(34px) saturate(200%);transition:translate 120ms ease-out,scale 200ms cubic-bezier(0.2,0.8,0.2,1),background-color 200ms ease}
+.lg::after{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;background:radial-gradient(110px circle at var(--lx,50%) var(--ly,50%),rgba(255,255,255,0.3),rgba(255,255,255,0) 62%);opacity:0;transition:opacity 480ms ease}
+.lg.lg-on::after{opacity:1;transition:opacity 100ms ease}
+input::placeholder{color:rgba(255,255,255,0.6)}input[type=search]::-webkit-search-cancel-button{-webkit-appearance:none}
+@keyframes liquidInA{0.0%{scale:0.1400 0.0660;border-radius:999px;opacity:0.90}3.3%{scale:0.1795 0.0660;border-radius:965px;opacity:0.91}6.7%{scale:0.2770 0.0712;border-radius:883px;opacity:0.93}10.0%{scale:0.4054 0.1388;border-radius:779px;opacity:0.94}13.3%{scale:0.5437 0.2588;border-radius:669px;opacity:0.95}16.7%{scale:0.6768 0.4041;border-radius:562px;opacity:0.97}20.0%{scale:0.7949 0.5539;border-radius:464px;opacity:0.98}23.3%{scale:0.8927 0.6940;border-radius:377px;opacity:0.99}26.7%{scale:0.9682 0.8153;border-radius:304px;opacity:1.00}30.0%{scale:1.0221 0.9135;border-radius:243px;opacity:1.00}33.3%{scale:1.0567 0.9875;border-radius:193px;opacity:1.00}36.7%{scale:1.0753 1.0387;border-radius:153px;opacity:1.00}40.0%{scale:1.0814 1.0701;border-radius:121px;opacity:1.00}43.3%{scale:1.0786 1.0853;border-radius:97px;opacity:1.00}46.7%{scale:1.0698 1.0883;border-radius:78px;opacity:1.00}50.0%{scale:1.0579 1.0827;border-radius:65px;opacity:1.00}53.3%{scale:1.0448 1.0718;border-radius:54px;opacity:1.00}56.7%{scale:1.0321 1.0582;border-radius:47px;opacity:1.00}60.0%{scale:1.0207 1.0440;border-radius:42px;opacity:1.00}63.3%{scale:1.0112 1.0305;border-radius:38px;opacity:1.00}66.7%{scale:1.0038 1.0188;border-radius:36px;opacity:1.00}70.0%{scale:0.9984 1.0092;border-radius:34px;opacity:1.00}73.3%{scale:0.9949 1.0019;border-radius:34px;opacity:1.00}76.7%{scale:0.9930 0.9968;border-radius:34px;opacity:1.00}80.0%{scale:0.9923 0.9936;border-radius:34px;opacity:1.00}83.3%{scale:0.9925 0.9920;border-radius:34px;opacity:1.00}86.7%{scale:0.9933 0.9916;border-radius:34px;opacity:1.00}90.0%{scale:0.9944 0.9921;border-radius:34px;opacity:1.00}93.3%{scale:0.9956 0.9931;border-radius:34px;opacity:1.00}96.7%{scale:0.9968 0.9943;border-radius:34px;opacity:1.00}100.0%{scale:0.9979 0.9957;opacity:1.00}}
+@keyframes liquidInB{0.0%{scale:0.1400 0.0660;border-radius:999px;opacity:0.90}3.3%{scale:0.1795 0.0660;border-radius:965px;opacity:0.91}6.7%{scale:0.2770 0.0712;border-radius:883px;opacity:0.93}10.0%{scale:0.4054 0.1388;border-radius:779px;opacity:0.94}13.3%{scale:0.5437 0.2588;border-radius:669px;opacity:0.95}16.7%{scale:0.6768 0.4041;border-radius:562px;opacity:0.97}20.0%{scale:0.7949 0.5539;border-radius:464px;opacity:0.98}23.3%{scale:0.8927 0.6940;border-radius:377px;opacity:0.99}26.7%{scale:0.9682 0.8153;border-radius:304px;opacity:1.00}30.0%{scale:1.0221 0.9135;border-radius:243px;opacity:1.00}33.3%{scale:1.0567 0.9875;border-radius:193px;opacity:1.00}36.7%{scale:1.0753 1.0387;border-radius:153px;opacity:1.00}40.0%{scale:1.0814 1.0701;border-radius:121px;opacity:1.00}43.3%{scale:1.0786 1.0853;border-radius:97px;opacity:1.00}46.7%{scale:1.0698 1.0883;border-radius:78px;opacity:1.00}50.0%{scale:1.0579 1.0827;border-radius:65px;opacity:1.00}53.3%{scale:1.0448 1.0718;border-radius:54px;opacity:1.00}56.7%{scale:1.0321 1.0582;border-radius:47px;opacity:1.00}60.0%{scale:1.0207 1.0440;border-radius:42px;opacity:1.00}63.3%{scale:1.0112 1.0305;border-radius:38px;opacity:1.00}66.7%{scale:1.0038 1.0188;border-radius:36px;opacity:1.00}70.0%{scale:0.9984 1.0092;border-radius:34px;opacity:1.00}73.3%{scale:0.9949 1.0019;border-radius:34px;opacity:1.00}76.7%{scale:0.9930 0.9968;border-radius:34px;opacity:1.00}80.0%{scale:0.9923 0.9936;border-radius:34px;opacity:1.00}83.3%{scale:0.9925 0.9920;border-radius:34px;opacity:1.00}86.7%{scale:0.9933 0.9916;border-radius:34px;opacity:1.00}90.0%{scale:0.9944 0.9921;border-radius:34px;opacity:1.00}93.3%{scale:0.9956 0.9931;border-radius:34px;opacity:1.00}96.7%{scale:0.9968 0.9943;border-radius:34px;opacity:1.00}100.0%{scale:0.9979 0.9957;opacity:1.00}}
+@keyframes liquidOut{0.0%{transform:translateY(calc(var(--dy,0px) * 1.000));scale:1.0000 1.0000;border-radius:34px;opacity:1.00}7.1%{transform:translateY(calc(var(--dy,0px) * 0.989));scale:0.9903 0.9886;border-radius:45px;opacity:1.00}14.3%{transform:translateY(calc(var(--dy,0px) * 0.963));scale:0.9685 0.9631;border-radius:69px;opacity:1.00}21.4%{transform:translateY(calc(var(--dy,0px) * 0.927));scale:0.9373 0.9265;border-radius:104px;opacity:1.00}28.6%{transform:translateY(calc(var(--dy,0px) * 0.881));scale:0.8978 0.8801;border-radius:149px;opacity:1.00}35.7%{transform:translateY(calc(var(--dy,0px) * 0.826));scale:0.8506 0.8248;border-radius:202px;opacity:1.00}42.9%{transform:translateY(calc(var(--dy,0px) * 0.763));scale:0.7963 0.7611;border-radius:263px;opacity:1.00}50.0%{transform:translateY(calc(var(--dy,0px) * 0.692));scale:0.7353 0.6895;border-radius:331px;opacity:1.00}57.1%{transform:translateY(calc(var(--dy,0px) * 0.614));scale:0.6679 0.6104;border-radius:407px;opacity:1.00}64.3%{transform:translateY(calc(var(--dy,0px) * 0.528));scale:0.5942 0.5240;border-radius:489px;opacity:0.89}71.4%{transform:translateY(calc(var(--dy,0px) * 0.436));scale:0.5146 0.4307;border-radius:579px;opacity:0.71}78.6%{transform:translateY(calc(var(--dy,0px) * 0.336));scale:0.4292 0.3305;border-radius:674px;opacity:0.54}85.7%{transform:translateY(calc(var(--dy,0px) * 0.231));scale:0.3383 0.2238;border-radius:777px;opacity:0.36}92.9%{transform:translateY(calc(var(--dy,0px) * 0.118));scale:0.2418 0.1107;border-radius:885px;opacity:0.18}100.0%{transform:translateY(calc(var(--dy,0px) * 0.000));scale:0.1400 0.0660;border-radius:999px;opacity:0.00}}
+@keyframes popInA{0.0%{scale:0.3000 0.2000;border-radius:calc(var(--r,20px) * 15.000);opacity:0.00}4.2%{scale:0.3372 0.2000;border-radius:calc(var(--r,20px) * 13.413);opacity:0.21}8.3%{scale:0.4255 0.2282;border-radius:calc(var(--r,20px) * 10.063);opacity:0.42}12.5%{scale:0.5367 0.3203;border-radius:calc(var(--r,20px) * 6.647);opacity:0.62}16.7%{scale:0.6510 0.4442;border-radius:calc(var(--r,20px) * 4.028);opacity:0.83}20.8%{scale:0.7560 0.5755;border-radius:calc(var(--r,20px) * 2.378);opacity:1.00}25.0%{scale:0.8449 0.6984;border-radius:calc(var(--r,20px) * 1.509);opacity:1.00}29.2%{scale:0.9151 0.8041;border-radius:calc(var(--r,20px) * 1.135);opacity:1.00}33.3%{scale:0.9668 0.8886;border-radius:calc(var(--r,20px) * 1.017);opacity:1.00}37.5%{scale:1.0020 0.9518;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}41.7%{scale:1.0236 0.9956;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}45.8%{scale:1.0346 1.0231;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}50.0%{scale:1.0380 1.0378;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}54.2%{scale:1.0363 1.0432;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}58.3%{scale:1.0317 1.0422;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}62.5%{scale:1.0258 1.0375;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}66.7%{scale:1.0195 1.0309;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}70.8%{scale:1.0138 1.0237;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}75.0%{scale:1.0088 1.0170;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}79.2%{scale:1.0049 1.0111;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}83.3%{scale:1.0020 1.0064;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}87.5%{scale:1.0000 1.0029;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}91.7%{scale:0.9988 1.0004;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}95.8%{scale:0.9982 0.9989;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}100.0%{scale:0.9979 0.9980;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}}
+@keyframes popInB{0.0%{scale:0.3000 0.2000;border-radius:calc(var(--r,20px) * 15.000);opacity:0.00}4.2%{scale:0.3372 0.2000;border-radius:calc(var(--r,20px) * 13.413);opacity:0.21}8.3%{scale:0.4255 0.2282;border-radius:calc(var(--r,20px) * 10.063);opacity:0.42}12.5%{scale:0.5367 0.3203;border-radius:calc(var(--r,20px) * 6.647);opacity:0.62}16.7%{scale:0.6510 0.4442;border-radius:calc(var(--r,20px) * 4.028);opacity:0.83}20.8%{scale:0.7560 0.5755;border-radius:calc(var(--r,20px) * 2.378);opacity:1.00}25.0%{scale:0.8449 0.6984;border-radius:calc(var(--r,20px) * 1.509);opacity:1.00}29.2%{scale:0.9151 0.8041;border-radius:calc(var(--r,20px) * 1.135);opacity:1.00}33.3%{scale:0.9668 0.8886;border-radius:calc(var(--r,20px) * 1.017);opacity:1.00}37.5%{scale:1.0020 0.9518;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}41.7%{scale:1.0236 0.9956;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}45.8%{scale:1.0346 1.0231;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}50.0%{scale:1.0380 1.0378;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}54.2%{scale:1.0363 1.0432;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}58.3%{scale:1.0317 1.0422;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}62.5%{scale:1.0258 1.0375;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}66.7%{scale:1.0195 1.0309;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}70.8%{scale:1.0138 1.0237;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}75.0%{scale:1.0088 1.0170;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}79.2%{scale:1.0049 1.0111;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}83.3%{scale:1.0020 1.0064;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}87.5%{scale:1.0000 1.0029;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}91.7%{scale:0.9988 1.0004;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}95.8%{scale:0.9982 0.9989;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}100.0%{scale:0.9979 0.9980;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}}
+@keyframes popOut{0.0%{scale:1.0000 1.0000;border-radius:calc(var(--r,20px) * 1.000);opacity:1.00}8.3%{scale:0.9869 0.9835;border-radius:calc(var(--r,20px) * 1.004);opacity:1.00}16.7%{scale:0.9602 0.9499;border-radius:calc(var(--r,20px) * 1.039);opacity:1.00}25.0%{scale:0.9238 0.9042;border-radius:calc(var(--r,20px) * 1.142);opacity:1.00}33.3%{scale:0.8793 0.8483;border-radius:calc(var(--r,20px) * 1.357);opacity:1.00}41.7%{scale:0.8275 0.7832;border-radius:calc(var(--r,20px) * 1.729);opacity:1.00}50.0%{scale:0.7691 0.7097;border-radius:calc(var(--r,20px) * 2.306);opacity:1.00}58.3%{scale:0.7045 0.6285;border-radius:calc(var(--r,20px) * 3.139);opacity:0.93}66.7%{scale:0.6341 0.5400;border-radius:calc(var(--r,20px) * 4.279);opacity:0.74}75.0%{scale:0.5582 0.4446;border-radius:calc(var(--r,20px) * 5.779);opacity:0.56}83.3%{scale:0.4771 0.3427;border-radius:calc(var(--r,20px) * 7.696);opacity:0.37}91.7%{scale:0.3910 0.2344;border-radius:calc(var(--r,20px) * 10.084);opacity:0.19}100.0%{scale:0.3000 0.2000;border-radius:calc(var(--r,20px) * 13.000);opacity:0.00}}
+@keyframes viewInA{0.0%{scale:0.3000 0.2000;border-radius:60px;opacity:0.00}4.2%{scale:0.3412 0.2000;border-radius:57px;opacity:0.17}8.3%{scale:0.4368 0.2312;border-radius:51px;opacity:0.33}12.5%{scale:0.5542 0.3314;border-radius:43px;opacity:0.50}16.7%{scale:0.6719 0.4630;border-radius:35px;opacity:0.67}20.8%{scale:0.7770 0.5989;border-radius:28px;opacity:0.83}25.0%{scale:0.8633 0.7227;border-radius:22px;opacity:1.00}29.2%{scale:0.9291 0.8259;border-radius:16px;opacity:1.00}33.3%{scale:0.9757 0.9058;border-radius:12px;opacity:1.00}37.5%{scale:1.0059 0.9632;border-radius:9px;opacity:1.00}41.7%{scale:1.0231 1.0012;border-radius:6px;opacity:1.00}45.8%{scale:1.0308 1.0235;border-radius:4px;opacity:1.00}50.0%{scale:1.0320 1.0342;border-radius:3px;opacity:1.00}54.2%{scale:1.0293 1.0368;border-radius:2px;opacity:1.00}58.3%{scale:1.0245 1.0343;border-radius:1px;opacity:1.00}62.5%{scale:1.0190 1.0292;border-radius:1px;opacity:1.00}66.7%{scale:1.0137 1.0230;border-radius:0px;opacity:1.00}70.8%{scale:1.0091 1.0168;border-radius:0px;opacity:1.00}75.0%{scale:1.0054 1.0114;border-radius:0px;opacity:1.00}79.2%{scale:1.0026 1.0069;border-radius:0px;opacity:1.00}83.3%{scale:1.0007 1.0035;border-radius:0px;opacity:1.00}87.5%{scale:0.9995 1.0011;border-radius:0px;opacity:1.00}91.7%{scale:0.9988 0.9996;border-radius:0px;opacity:1.00}95.8%{scale:0.9985 0.9987;border-radius:0px;opacity:1.00}100.0%{scale:0.9985 0.9984;opacity:1.00}}
+@keyframes viewInB{0.0%{scale:0.3000 0.2000;border-radius:60px;opacity:0.00}4.2%{scale:0.3412 0.2000;border-radius:57px;opacity:0.17}8.3%{scale:0.4368 0.2312;border-radius:51px;opacity:0.33}12.5%{scale:0.5542 0.3314;border-radius:43px;opacity:0.50}16.7%{scale:0.6719 0.4630;border-radius:35px;opacity:0.67}20.8%{scale:0.7770 0.5989;border-radius:28px;opacity:0.83}25.0%{scale:0.8633 0.7227;border-radius:22px;opacity:1.00}29.2%{scale:0.9291 0.8259;border-radius:16px;opacity:1.00}33.3%{scale:0.9757 0.9058;border-radius:12px;opacity:1.00}37.5%{scale:1.0059 0.9632;border-radius:9px;opacity:1.00}41.7%{scale:1.0231 1.0012;border-radius:6px;opacity:1.00}45.8%{scale:1.0308 1.0235;border-radius:4px;opacity:1.00}50.0%{scale:1.0320 1.0342;border-radius:3px;opacity:1.00}54.2%{scale:1.0293 1.0368;border-radius:2px;opacity:1.00}58.3%{scale:1.0245 1.0343;border-radius:1px;opacity:1.00}62.5%{scale:1.0190 1.0292;border-radius:1px;opacity:1.00}66.7%{scale:1.0137 1.0230;border-radius:0px;opacity:1.00}70.8%{scale:1.0091 1.0168;border-radius:0px;opacity:1.00}75.0%{scale:1.0054 1.0114;border-radius:0px;opacity:1.00}79.2%{scale:1.0026 1.0069;border-radius:0px;opacity:1.00}83.3%{scale:1.0007 1.0035;border-radius:0px;opacity:1.00}87.5%{scale:0.9995 1.0011;border-radius:0px;opacity:1.00}91.7%{scale:0.9988 0.9996;border-radius:0px;opacity:1.00}95.8%{scale:0.9985 0.9987;border-radius:0px;opacity:1.00}100.0%{scale:0.9985 0.9984;opacity:1.00}}
+@keyframes viewOut{0.0%{scale:1.0000 1.0000;border-radius:0px;opacity:1.00}7.1%{scale:0.9921 0.9903;border-radius:1px;opacity:1.00}14.3%{scale:0.9744 0.9684;border-radius:2px;opacity:1.00}21.4%{scale:0.9490 0.9370;border-radius:4px;opacity:1.00}28.6%{scale:0.9168 0.8973;border-radius:7px;opacity:1.00}35.7%{scale:0.8784 0.8499;border-radius:10px;opacity:1.00}42.9%{scale:0.8342 0.7954;border-radius:14px;opacity:1.00}50.0%{scale:0.7845 0.7341;border-radius:18px;opacity:1.00}57.1%{scale:0.7296 0.6663;border-radius:23px;opacity:1.00}64.3%{scale:0.6697 0.5923;border-radius:28px;opacity:0.89}71.4%{scale:0.6049 0.5124;border-radius:34px;opacity:0.71}78.6%{scale:0.5354 0.4266;border-radius:40px;opacity:0.54}85.7%{scale:0.4614 0.3352;border-radius:46px;opacity:0.36}92.9%{scale:0.3829 0.2383;border-radius:53px;opacity:0.18}100.0%{scale:0.3000 0.2000;border-radius:60px;opacity:0.00}}
+@keyframes contentIn{0%,30%{opacity:0;translate:0 8px}100%{opacity:1;translate:0 0}}
+@keyframes contentOut{0%{opacity:1}100%{opacity:0}}
+.glass-pop{background:rgba(32,32,35,0.9);-webkit-backdrop-filter:blur(14px) saturate(160%);backdrop-filter:blur(14px) saturate(160%);border:1px solid rgba(255,255,255,0.12);box-shadow:inset 0 1px 0 rgba(255,255,255,0.12),0 18px 40px rgba(0,0,0,0.45)}
+.liquid-in,.liquid-out{will-change:scale,opacity}
+.liquid-in>*{animation:contentIn 520ms cubic-bezier(0.2,0.8,0.2,1) both}
+.liquid-out>*{animation:contentOut 160ms ease both}
+.scroll{overflow-y:auto;scrollbar-width:none}.scroll::-webkit-scrollbar{display:none}
+.scroll-x{overflow-x:auto;scrollbar-width:none}.scroll-x::-webkit-scrollbar{display:none}
+@keyframes rise{0%{opacity:0;transform:translateY(10px) scale(0.98)}100%{opacity:1;transform:none}}
+</style>
+</helmet>
+<div data-root="1" onPointerDown="{{lgDown}}" onPointerMove="{{lgMove}}" onPointerUp="{{lgUp}}" onPointerCancel="{{lgUp}}" onPointerLeave="{{lgUp}}" style="width: 390px; height: 844px; position: relative; overflow: hidden; background: #000; color: #fff; font-family: 'IBM Plex Sans Thai', system-ui, sans-serif">
+
+  <div class="scroll" style="position: absolute; inset: 0; padding: 230px 0 32px; box-sizing: border-box; filter: {{gridBlur}}; transition: filter 320ms ease">
+    <sc-if value="{{device}}" hint-placeholder-val="{{ false }}">
+      <div style="display: flex; flex-direction: column; gap: 16px; padding: 0 16px 16px">
+        <sc-if value="{{partial}}" hint-placeholder-val="{{ true }}">
+          <div class="glass" style="border-radius: 20px; padding: 14px; display: flex; flex-direction: column; gap: 10px">
+            <div style="display: flex; gap: 10px; align-items: flex-start">
+              <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="{{accent}}" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="flex: 0 0 auto"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z M9 12l2 2 4-4"></path></svg>
+              <p style="margin: 0; font-size: 13px; line-height: 1.55">Luma เห็นเฉพาะรูปที่คุณเลือกให้ อนุญาตทั้งหมดเพื่อดูทุกอัลบั้มในเครื่อง</p>
+            </div>
+            <div style="display: flex; gap: 8px">
+              <button class="lg" onClick="{{pickMore}}" style="flex: 1; height: 44px; border-radius: 14px; background: rgba(255,255,255,0.1); font-size: 13.5px; font-weight: 500">เลือกรูปเพิ่ม</button>
+              <button class="lg" onClick="{{allowAll}}" style="flex: 1; height: 44px; border-radius: 14px; background: {{accent}}; color: #1a1400; font-size: 13.5px; font-weight: 600">อนุญาตทั้งหมด</button>
+            </div>
+          </div>
+        </sc-if>
+        <h2 style="margin: 0; font-size: 15px; font-weight: 600">อัลบั้มในเครื่อง</h2>
+        <div class="scroll-x" style="display: flex; gap: 10px; margin: -8px -16px -4px; padding: 8px 16px 8px; scroll-snap-type: x proximity; scroll-padding: 0 16px">
+          <sc-for list="{{albums}}" as="al" hint-placeholder-count="5">
+            <button aria-pressed="{{al.on}}" onClick="{{al.pick}}" style="flex: 0 0 auto; scroll-snap-align: start; width: 104px; display: flex; flex-direction: column; gap: 6px; text-align: left">
+              <span class="lg" style="width: 104px; height: 104px; border-radius: 20px; display: block; outline: 2.5px solid {{al.outline}}; outline-offset: -2.5px; transition: outline-color 200ms ease, translate 560ms cubic-bezier(0.34,1.56,0.64,1), scale 560ms cubic-bezier(0.34,1.56,0.64,1)">
+                <span style="position: absolute; inset: 0; background: {{al.bg}}"></span>
+                <span style="position: absolute; left: 0; top: 64px; width: 104px; height: 40px; background: {{al.ground}}"></span>
+                <span class="glass" style="position: absolute; left: 8px; top: 8px; width: 32px; height: 32px; border-radius: 10px; display: flex; align-items: center; justify-content: center">
+                  <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="{{al.d}}"></path></svg>
+                </span>
+              </span>
+              <span style="font-size: 13px; font-weight: 500; color: {{al.color}}">{{al.name}}</span>
+              <span style="font-size: 12px; color: rgba(255,255,255,0.72); margin-top: -6px">{{al.count}}</span>
+            </button>
+          </sc-for>
+        </div>
+      </div>
+    </sc-if>
+
+    <div style="display: flex; align-items: baseline; justify-content: space-between; padding: 0 16px 10px">
+      <h2 style="margin: 0; font-size: 15px; font-weight: 600">{{gridTitle}}</h2>
+      <span style="font-size: 12.5px; color: rgba(255,255,255,0.72)">{{gridCount}}</span>
+    </div>
+    <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 3px; padding: 0 3px">
+      <sc-for list="{{tiles}}" as="t" hint-placeholder-count="12">
+        <button class="lg" aria-label="{{t.label}} กดค้างเพื่อดูตัวอย่าง" onClick="{{t.open}}" onPointerDown="{{t.down}}" onPointerMove="{{t.move}}" onPointerUp="{{t.up}}" onPointerCancel="{{t.up}}" onContextMenu="{{noMenu}}" style="aspect-ratio: 1 / 1; border-radius: 6px; touch-action: pan-y; -webkit-touch-callout: none; animation: {{t.anim}}">
+          <span style="position: absolute; inset: 0; background: {{t.bg}}"></span>
+          <span style="position: absolute; left: {{t.sunX}}%; top: 14%; width: 22%; height: 22%; border-radius: 50%; background: {{t.sun}}"></span>
+          <span style="position: absolute; left: 0; top: {{t.horizon}}%; width: 100%; height: 50%; background: {{t.ground}}"></span>
+          <sc-if value="{{t.hasBadge}}" hint-placeholder-val="{{ false }}">
+            <span class="glass" style="position: absolute; left: 6px; bottom: 6px; height: 22px; padding: 0 7px; border-radius: 11px; display: flex; align-items: center; gap: 4px; font-size: 10.5px; font-weight: 600">
+              <svg aria-hidden="true" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="{{t.badgeIcon}}"></path></svg>
+              {{t.badge}}
+            </span>
+          </sc-if>
+        </button>
+      </sc-for>
+    </div>
+    <sc-if value="{{noTiles}}" hint-placeholder-val="{{ false }}">
+      <p style="margin: 32px 16px; text-align: center; font-size: 14px; color: rgba(255,255,255,0.72)">ยังไม่มีรูปในหมวดนี้</p>
+    </sc-if>
+  </div>
+
+  <header class="glass" style="position: absolute; left: 0; right: 0; top: 0; padding: 48px 16px 12px; border-width: 0 0 1px 0; border-radius: 0; display: flex; flex-direction: column; gap: 12px">
+    <div style="position: relative; height: 44px">
+      <a class="btn lg" href="Main.dc.html" aria-label="กลับไปหน้ากล้อง" style="position: absolute; left: 0; top: 0; height: 44px; padding: 0 14px 0 8px; border-radius: 22px; background: rgba(255,255,255,0.08); display: flex; align-items: center; gap: 4px; color: #fff; font-size: 14px; opacity: {{headOpacity}}; transform: translateX({{headShift}}px); pointer-events: {{headEvents}}; transition: opacity 360ms ease, transform 640ms cubic-bezier(0.32, 0.72, 0, 1), translate 560ms cubic-bezier(0.34,1.56,0.64,1), scale 560ms cubic-bezier(0.34,1.56,0.64,1)">
+        <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"></path></svg>
+        กล้อง
+      </a>
+      <h1 style="position: absolute; left: 0; right: 0; top: 0; margin: 0; height: 44px; line-height: 44px; text-align: center; font-size: 18px; font-weight: 600; pointer-events: none; opacity: {{headOpacity}}; transform: translateX({{titleShift}}px); transition: opacity 360ms ease, transform 640ms cubic-bezier(0.32, 0.72, 0, 1)">แกลเลอรี</h1>
+      <div role="search" style="position: absolute; right: 0; top: 0; width: {{searchW}}px; height: 44px; border-radius: 22px; background: {{searchBg}}; box-shadow: {{searchShadow}}; display: flex; align-items: center; overflow: hidden; transition: width 680ms cubic-bezier(0.32, 0.72, 0, 1), background-color 400ms ease, box-shadow 400ms ease">
+        <button class="lg" aria-label="ค้นหารูป" onClick="{{openSearch}}" style="flex: 0 0 44px; width: 44px; height: 44px; border-radius: 22px; display: flex; align-items: center; justify-content: center">
+          <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14z M20 20l-4-4"></path></svg>
+        </button>
+        <input ref="{{inputRef}}" type="search" aria-label="ค้นหารูป" placeholder="ข้อความในภาพ หมวด หรืออัลบั้ม" value="{{query}}" onInput="{{onQuery}}" onChange="{{onQuery}}" tabindex="{{inputTab}}" style="flex: 1; min-width: 0; height: 40px; border: 0; background: transparent; color: #fff; font: inherit; font-size: 15px; outline: none; opacity: {{inputOpacity}}; transform: translateX({{inputShift}}px); transition: opacity 420ms ease {{inputDelay}}ms, transform 620ms cubic-bezier(0.32, 0.72, 0, 1) {{inputDelay}}ms">
+        <button class="lg" aria-label="ยกเลิกการค้นหา" onClick="{{closeSearch}}" tabindex="{{inputTab}}" style="flex: 0 0 auto; height: 36px; margin-right: 4px; padding: 0 12px; border-radius: 18px; font-size: 13.5px; font-weight: 500; color: {{accent}}; opacity: {{inputOpacity}}; transition: opacity 420ms ease {{inputDelay}}ms">ยกเลิก</button>
+      </div>
+    </div>
+    <div role="tablist" aria-label="แหล่งรูป" style="position: relative; height: 40px; border-radius: 14px; background: rgba(255,255,255,0.08); display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 3px; box-sizing: border-box">
+      <span aria-hidden="true" style="position: absolute; top: 3px; left: 3px; width: calc(50% - 3px); height: 34px; border-radius: 11px; background: rgba(255,255,255,0.18); transform: translateX({{segX}}); transition: transform 320ms cubic-bezier(0.32, 0.72, 0, 1)"></span>
+      <button role="tab" aria-selected="{{tabLuma}}" onClick="{{showLuma}}" style="position: relative; display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 13.5px; font-weight: 600">
+        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h3l2-2.5h6L17 8h3v11H4z M12 16.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z"></path></svg>
+        ใน Luma
+      </button>
+      <button role="tab" aria-selected="{{tabDevice}}" onClick="{{showDevice}}" style="position: relative; display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 13.5px; font-weight: 600">
+        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h10v18H7z M11 18h2"></path></svg>
+        ทั้งเครื่อง
+      </button>
+    </div>
+    <div onPointerDown="{{catDown}}" onPointerMove="{{catMove}}" onPointerUp="{{catUp}}" onPointerCancel="{{catUp}}" onPointerLeave="{{catUp}}" style="position: relative; height: 36px; margin: 0 -16px; overflow: hidden; touch-action: none; -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 40px, #000 calc(100% - 40px), transparent 100%); mask-image: linear-gradient(90deg, transparent 0, #000 40px, #000 calc(100% - 40px), transparent 100%)">
+      <div style="position: absolute; top: 0; left: 0; height: 36px; transform: translateX({{catX}}px); transition: {{catMotion}}">
+      <sc-for list="{{chips}}" as="c" hint-placeholder-count="7">
+        <button class="lg" aria-pressed="{{c.on}}" onClick="{{c.pick}}" style="position: absolute; top: 0; left: {{c.x}}px; width: {{c.w}}px; justify-content: center; box-sizing: border-box; height: 36px; padding: 0 12px; border-radius: 18px; background: {{c.bg}}; color: {{c.color}}; display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; white-space: nowrap">
+          <svg aria-hidden="true" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="{{c.d}}"></path></svg>
+          {{c.label}}
+        </button>
+      </sc-for>
+      </div>
+    </div>
+  </header>
+
+  <div aria-hidden="{{viewerHidden}}" class="{{viewerL.cls}}" style="position: absolute; z-index: 4; inset: 0; overflow: hidden; background: #000; opacity: {{viewerL.opacity}}; transform-origin: {{viewerOrigin}}; pointer-events: {{viewerEvents}}; animation: {{viewerL.anim}}; display: flex; flex-direction: column">
+    <div style="height: 100px; display: flex; align-items: flex-end; justify-content: space-between; padding: 0 16px 8px">
+      <button class="lg glass" aria-label="ปิด" onClick="{{closeViewer}}" style="width: 44px; height: 44px; border-radius: 22px; display: flex; align-items: center; justify-content: center">
+        <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 6l12 12 M18 6L6 18"></path></svg>
+      </button>
+      <span style="font-size: 13px; color: rgba(255,255,255,0.72)">{{viewerTitle}}</span>
+      <button class="lg glass" aria-label="แชร์" onClick="{{share}}" style="width: 44px; height: 44px; border-radius: 22px; display: flex; align-items: center; justify-content: center">
+        <svg aria-hidden="true" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3 M8 7l4-4 4 4 M5 12v8h14v-8"></path></svg>
+      </button>
+    </div>
+    <div style="flex: 1; position: relative; overflow: hidden; transform: none">
+      <div style="position: absolute; inset: 0; background: {{v.bg}}; filter: {{viewerFilter}}; transition: filter 240ms ease"></div>
+      <div style="position: absolute; left: {{v.sunX}}%; top: 16%; width: 20%; aspect-ratio: 1 / 1; border-radius: 50%; background: {{v.sun}}; filter: {{viewerFilter}}"></div>
+      <div style="position: absolute; left: 0; top: {{v.horizon}}%; width: 100%; height: 50%; background: {{v.ground}}; filter: {{viewerFilter}}"></div>
+    </div>
+    <div style="padding: 12px 16px 32px; display: flex; justify-content: center; gap: 8px">
+      <sc-if value="{{v.hasAi}}" hint-placeholder-val="{{ false }}">
+        <div class="glass" role="radiogroup" aria-label="เลือกภาพ" style="display: flex; gap: 2px; padding: 3px; border-radius: 22px">
+          <button class="lg" role="radio" aria-checked="{{origOn}}" onClick="{{showOrig}}" style="height: 40px; padding: 0 14px; border-radius: 19px; background: {{origBg}}; font-size: 13px; font-weight: 600">ต้นฉบับ</button>
+          <button class="lg" role="radio" aria-checked="{{aiOn}}" onClick="{{showAi}}" style="height: 40px; padding: 0 14px; border-radius: 19px; background: {{aiBg}}; color: {{aiColor}}; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 4px">
+            <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 3l1.7 4.6L17.3 9.3l-4.6 1.7L11 15.6 9.3 11 4.7 9.3 9.3 7.6z"></path></svg>
+            ภาพ AI
+          </button>
+        </div>
+      </sc-if>
+      <button class="lg glass" onClick="{{info}}" style="height: 46px; padding: 0 16px; border-radius: 23px; display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600">
+        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M12 11v5 M12 8h.01"></path></svg>
+        ข้อมูล
+      </button>
+    </div>
+  </div>
+
+  <div aria-hidden="true" style="position: absolute; inset: 0; z-index: 5; background: rgba(0,0,0,0.38); -webkit-backdrop-filter: blur(18px) saturate(150%); backdrop-filter: blur(18px) saturate(150%); opacity: {{peekDim}}; pointer-events: none; transition: opacity 360ms ease"></div>
+  <div aria-hidden="{{peekHidden}}" class="glass" style="position: absolute; z-index: 6; left: 20px; top: 150px; width: 350px; height: 512px; border-radius: 30px; padding: 8px; box-sizing: border-box; display: flex; flex-direction: column; gap: 8px; transform-origin: 0 0; transform: {{peekTransform}}; opacity: {{peekOpacity}}; transition: {{peekMotion}}; pointer-events: none; box-shadow: inset 0 1px 0 rgba(255,255,255,0.18), 0 30px 60px rgba(0,0,0,0.5)">
+    <div style="position: relative; flex: 1; border-radius: 23px; overflow: hidden">
+      <div style="position: absolute; inset: 0; transform: translateX({{peekDx}}px) scale({{peekInner}}); transition: {{peekSlide}}">
+        <div style="position: absolute; inset: 0; background: {{pk.bg}}"></div>
+        <div style="position: absolute; left: {{pk.sunX}}%; top: 14%; width: 22%; aspect-ratio: 1 / 1; border-radius: 50%; background: {{pk.sun}}"></div>
+        <div style="position: absolute; left: 0; top: {{pk.horizon}}%; width: 100%; height: 50%; background: {{pk.ground}}"></div>
+      </div>
+      <sc-if value="{{pk.hasBadge}}" hint-placeholder-val="{{ false }}">
+        <span class="glass" style="position: absolute; left: 10px; top: 10px; height: 26px; padding: 0 10px; border-radius: 13px; display: flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600">
+          <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="{{pk.badgeIcon}}"></path></svg>
+          {{pk.badge}}
+        </span>
+      </sc-if>
+    </div>
+    <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 8px 4px">
+      <span style="font-size: 13px; font-weight: 600">{{pk.title}}</span>
+      <span style="font-size: 12px; color: rgba(255,255,255,0.72); font-variant-numeric: tabular-nums">{{peekPos}}</span>
+    </div>
+    <span style="padding: 0 8px 4px; font-size: 11.5px; color: rgba(255,255,255,0.72)">ปล่อยนิ้วเพื่อปิด · ลากซ้ายขวาเพื่อดูรูปถัดไป</span>
+  </div>
+
+  <div class="glass" role="status" aria-live="polite" style="--r: 18px; position: absolute; left: 50%; bottom: 40px; z-index: 7; transform: translateX(-50%); transform-origin: 50% 50%; opacity: {{toastL.opacity}}; animation: {{toastL.anim}}; padding: 10px 16px; border-radius: 18px; font-size: 13px; white-space: nowrap; pointer-events: none">{{toast}}</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"accent":{"editor":"color","default":"#FFD447","options":["#FFD447","#34C759","#0A84FF","#FF9F0A"]},"$preview":{"width":390,"height":844}}'>
+const IC = {
+  all: 'M4 4h7v7H4z M13 4h7v7h-7z M4 13h7v7H4z M13 13h7v7h-7z',
+  ai: 'M11 3l1.7 4.6L17.3 9.3l-4.6 1.7L11 15.6 9.3 11 4.7 9.3 9.3 7.6z M18 14l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z',
+  raw: 'M4 6h16v12H4z M8 15v-6h2.5a1.5 1.5 0 0 1 0 3H8 M10.5 12l1.5 3',
+  hdr: 'M12 3v2 M12 19v2 M3 12h2 M19 12h2 M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8z',
+  pano: 'M3 7c6 2 12 2 18 0v10c-6-2-12-2-18 0z',
+  doc: 'M7 3h7l5 5v13H7z M14 3v5h5 M10 13h6 M10 17h6',
+  video: 'M3.5 7h11v10h-11z M14.5 10.5 20.5 7v10l-6-3.5',
+  camera: 'M4 8h3l2-2.5h6L17 8h3v11H4z M12 16.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z',
+  shot: 'M7 3h10v18H7z M10 7h4',
+  down: 'M12 4v11 M7 10l5 5 5-5 M5 20h14',
+  chat: 'M4 5h16v11H9l-5 4z',
+  luma: 'M12 3a9 9 0 1 0 9 9 M12 8a4 4 0 1 0 4 4'
+};
+const CAT_W = { all: 86, ai: 62, raw: 72, hdr: 70, pano: 102, doc: 84, video: 80 };
+const CATS = [
+  { k: 'all', label: 'ทั้งหมด' }, { k: 'ai', label: 'AI' }, { k: 'raw', label: 'RAW' }, { k: 'hdr', label: 'HDR' },
+  { k: 'pano', label: 'พาโนรามา' }, { k: 'doc', label: 'เอกสาร' }, { k: 'video', label: 'วิดีโอ' }
+];
+const ALBUMS = [
+  { k: 'all', name: 'ทั้งหมด', d: IC.all, count: '1,286 รายการ', bg: '#3b4a5c', ground: '#1e2731' },
+  { k: 'camera', name: 'กล้อง', d: IC.camera, count: '942 รายการ', bg: '#5a4a35', ground: '#2a2117' },
+  { k: 'luma', name: 'Luma', d: IC.luma, count: '48 รายการ', bg: '#34506a', ground: '#1a2631' },
+  { k: 'shot', name: 'ภาพหน้าจอ', d: IC.shot, count: '213 รายการ', bg: '#3e3e48', ground: '#24242b' },
+  { k: 'down', name: 'ดาวน์โหลด', d: IC.down, count: '57 รายการ', bg: '#2f4d43', ground: '#18271f' },
+  { k: 'chat', name: 'แชต', d: IC.chat, count: '26 รายการ', bg: '#553a4a', ground: '#2a1c24' }
+];
+const PALETTE = [
+  ['#34506a', '#1a2631', '#f3c66d'], ['#6a5034', '#2b2014', '#f6d58a'], ['#2f5a4e', '#142a24', '#e8e1a8'],
+  ['#4b3f6a', '#1f1a31', '#f1b4c8'], ['#6a3434', '#2a1414', '#f3a66d'], ['#38464f', '#1b2228', '#dfe6ea'],
+  ['#55603a', '#262b17', '#f2e08a'], ['#2e4766', '#121d2b', '#9fd0ff']
+];
+function seedItems() {
+  const lumaTags = ['ai', '', 'raw', 'hdr', 'ai', 'video', '', 'pano', 'doc', 'ai', 'raw', '', 'hdr', 'ai', 'video', '', 'ai', 'doc'];
+  const luma = lumaTags.map((tag, i) => ({ id: 'L' + i, src: 'luma', tag, album: 'luma', p: PALETTE[i % 8], sunX: 12 + (i * 23) % 62, horizon: 52 + (i * 7) % 22 }));
+  const albums = ['camera', 'camera', 'shot', 'camera', 'chat', 'down', 'camera', 'luma', 'camera', 'shot', 'camera', 'down', 'chat', 'camera', 'camera', 'shot', 'luma', 'camera', 'camera', 'down', 'camera'];
+  const dev = albums.map((album, i) => ({ id: 'D' + i, src: 'device', tag: album === 'luma' ? 'ai' : '', album, p: PALETTE[(i * 3 + 1) % 8], sunX: 8 + (i * 31) % 66, horizon: 48 + (i * 11) % 26 }));
+  return { luma, dev };
+}
+const DATA = seedItems();
+const BADGE = { ai: ['AI', IC.ai], raw: ['RAW', IC.raw], hdr: ['HDR', IC.hdr], pano: ['พาโนรามา', IC.pano], doc: ['เอกสาร', IC.doc], video: ['0:12', IC.video] };
+const ALBUM_NAME = { all: 'ล่าสุดในเครื่อง', camera: 'กล้อง', luma: 'Luma', shot: 'ภาพหน้าจอ', down: 'ดาวน์โหลด', chat: 'แชต' };
+
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.state = { tab: 'luma', cat: 'all', album: 'all', partial: true, open: null, ai: true, toast: '', toastOn: false, gen: 0, searching: false, query: '', sdKey: '', sdX: 0, pulse: false, peek: null, peekStage: 'idle', peekIdx: 0, peekDx: 0, peekSwitch: false };
+  }
+  componentWillUnmount() { [this.tt, this.lpT, this.pkT, this.pkT2, this.sT].forEach(clearTimeout); }
+  rectOf(el) { const root = el.closest('[data-root]'); const r = el.getBoundingClientRect(), rr = root.getBoundingClientRect(); const k = rr.width / 390; return { x: (r.left - rr.left) / k, y: (r.top - rr.top) / k, w: r.width / k, h: r.height / k, k }; }
+  openPeek(i, el) {
+    const rect = this.rectOf(el);
+    clearTimeout(this.pkT2); this.setState({ peek: rect, peekIdx: i, peekStage: 'pre', peekDx: 0 });
+    this.pkT = setTimeout(() => this.setState({ peekStage: 'open' }), 30);
+  }
+  closePeek() {
+    if (this.state.peekStage === 'idle') return;
+    this.setState({ peekStage: 'close', peekDx: 0 });
+    this.pkT2 = setTimeout(() => this.setState({ peekStage: 'idle', peek: null }), 520);
+  }
+  lgPos(e) {
+    const el = this.lgEl; if (!el) return; const r = el.getBoundingClientRect();
+    const x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
+    el.style.setProperty('--lx', (x * 100).toFixed(1) + '%'); el.style.setProperty('--ly', (y * 100).toFixed(1) + '%');
+    el.style.setProperty('--tx', ((x - 0.5) * Math.min(12, el.offsetWidth * 0.1)).toFixed(1) + 'px');
+    el.style.setProperty('--ty', ((y - 0.5) * Math.min(9, el.offsetHeight * 0.1)).toFixed(1) + 'px');
+  }
+  textOf(it) { const b = BADGE[it.tag]; return [b ? b[0] : '', it.tag, ALBUM_NAME[it.album] || '', it.tag === 'doc' || it.id === 'L1' ? 'ร้านกาแฟ ลูมา ป้าย' : '', it.src === 'luma' ? 'Luma' : 'เครื่อง'].join(' '); }
+  say(msg) { clearTimeout(this.tt); this.setState({ toast: msg, toastOn: true }); this.tt = setTimeout(() => this.setState({ toastOn: false }), 1600); }
+  blurPulse() { clearTimeout(this.bpT); this.setState({ pulse: true }); this.bpT = setTimeout(() => this.setState({ pulse: false }), 220); }
+  liquid(key, val, kind) {
+    this.lq = this.lq || {}; const st = this.lq[key] || (this.lq[key] = { prev: null, n: 0, ever: false });
+    if (val && val !== st.prev) st.n++;
+    if (val) st.ever = true; st.prev = val || null;
+    const P = st.n % 2 ? 'A' : 'B'; const view = kind === 'view';
+    if (val) return { anim: (view ? 'viewIn' + P + ' 600ms' : 'popIn' + P + ' 520ms') + ' linear both', cls: 'liquid-in', opacity: 1 };
+    return { anim: st.ever ? (view ? 'viewOut 360ms' : 'popOut 280ms') + ' linear forwards' : 'none', cls: st.ever ? 'liquid-out' : '', opacity: 0 };
+  }
+  renderVals() {
+    const s = this.state;
+    const accent = this.props.accent ?? '#FFD447';
+    const device = s.tab === 'device';
+    let items;
+    if (device) {
+      items = DATA.dev.filter((it) => s.album === 'all' || it.album === s.album);
+      if (s.partial) items = items.slice(0, 6);
+      if (s.cat !== 'all') items = items.filter((it) => it.tag === s.cat);
+    } else {
+      items = DATA.luma.filter((it) => s.cat === 'all' || it.tag === s.cat);
+    }
+    const q = s.query.trim().toLowerCase();
+    if (q) items = items.filter((it) => this.textOf(it).toLowerCase().includes(q));
+    this.items = items;
+    const anim = 'rise 360ms cubic-bezier(0.32, 0.72, 0, 1) both';
+    const catPos = []; CATS.reduce((x, c) => { catPos.push(x); return x + CAT_W[c.k] + 6; }, 0);
+    const catCenter = (i) => catPos[i] + CAT_W[CATS[i].k] / 2;
+    const nearestCat = (pos) => CATS.reduce((b, c, i) => (Math.abs(catCenter(i) - pos) < Math.abs(catCenter(b) - pos) ? i : b), 0);
+    const catIdx = Math.max(0, CATS.findIndex((c) => c.k === s.cat));
+    const catDx = s.sdKey === 'cat' ? s.sdX : 0;
+    const catLive = s.sdKey === 'cat' ? nearestCat(catCenter(catIdx) - catDx) : catIdx;
+    const tiles = items.map((it, i) => {
+      const b = BADGE[it.tag];
+      return {
+        bg: it.p[0], ground: it.p[1], sun: it.p[2], sunX: it.sunX, horizon: it.horizon,
+        hasBadge: !!b, badge: b ? b[0] : '', badgeIcon: b ? b[1] : '',
+        label: 'รูปที่ ' + (i + 1) + (b ? ' ' + b[0] : ''),
+        anim,
+        open: (e) => { if (this.suppress) { this.suppress = false; return; } if (e && e.currentTarget) this.vRect = this.rectOf(e.currentTarget); this.setState({ open: it, ai: it.tag === 'ai' }); },
+        down: (e) => {
+          this.suppress = false; const el = e.currentTarget; this.lp = { x: e.clientX, y: e.clientY, i, el, id: e.pointerId, open: false };
+          clearTimeout(this.lpT); this.lpT = setTimeout(() => { const l = this.lp; if (!l) return; l.open = true; l.x = l.lastX ?? l.x; try { l.el.setPointerCapture(l.id); } catch (_) {} this.openPeek(i, l.el); }, 420);
+        },
+        move: (e) => {
+          const l = this.lp; if (!l) return; l.lastX = e.clientX;
+          if (!l.open) { if (Math.hypot(e.clientX - l.x, e.clientY - l.y) > 8) { clearTimeout(this.lpT); this.lp = null; } return; }
+          const k = (this.state.peek && this.state.peek.k) || 1; const dx = (e.clientX - l.x) / k; const n = this.items.length;
+          if (Math.abs(dx) > 70) {
+            const ni = this.state.peekIdx + (dx < 0 ? 1 : -1);
+            if (ni >= 0 && ni < n) { l.x = e.clientX; this.setState({ peekIdx: ni, peekDx: dx < 0 ? 60 : -60, peekSwitch: true }); clearTimeout(this.sT); this.sT = setTimeout(() => this.setState({ peekDx: 0, peekSwitch: false }), 20); return; }
+          }
+          const edge = (this.state.peekIdx === 0 && dx > 0) || (this.state.peekIdx === n - 1 && dx < 0);
+          this.setState({ peekDx: edge ? dx * 0.3 : dx * 0.6 });
+        },
+        up: () => { clearTimeout(this.lpT); const l = this.lp; this.lp = null; if (l && l.open) { this.suppress = true; this.closePeek(); } }
+      };
+    });
+    const v = s.open || DATA.luma[0];
+    const showAiCopy = s.open && s.open.tag === 'ai' && s.ai;
+    return {
+      accent, device, partial: s.partial,
+      lgDown: (e) => { const el = e.target.closest && e.target.closest('.lg'); if (!el) return; this.lgEl = el; this.lgStart = { x: e.clientX, y: e.clientY }; el.classList.add('lg-on'); this.lgPos(e); },
+      lgMove: (e) => { const st = this.lgStart; if (this.lgEl && st && Math.hypot(e.clientX - st.x, e.clientY - st.y) > 10) { const el = this.lgEl; el.classList.remove('lg-on'); el.style.setProperty('--tx', '0px'); el.style.setProperty('--ty', '0px'); this.lgEl = null; return; } this.lgPos(e); },
+      lgUp: () => { const el = this.lgEl; if (!el) return; el.classList.remove('lg-on'); el.style.setProperty('--tx', '0px'); el.style.setProperty('--ty', '0px'); this.lgEl = null; },
+      segX: device ? '100%' : '0%', tabLuma: device ? 'false' : 'true', tabDevice: device ? 'true' : 'false',
+      showLuma: () => { if (device) { this.setState({ tab: 'luma', cat: 'all', gen: s.gen + 1 }); this.blurPulse(); } },
+      showDevice: () => { if (!device) { this.setState({ tab: 'device', cat: 'all', gen: s.gen + 1 }); this.blurPulse(); } },
+      chips: CATS.map((c, i) => ({
+        label: c.label, d: IC[c.k], on: s.cat === c.k ? 'true' : 'false', x: catPos[i], w: CAT_W[c.k],
+        bg: i === catLive ? accent : 'rgba(255,255,255,0.08)', color: i === catLive ? '#1a1400' : '#fff',
+        pick: () => { if (this.sdSwallow) { this.sdSwallow = false; return; } this.setState({ cat: c.k, gen: s.gen + 1 }); this.blurPulse(); }
+      })),
+      catX: (195 - catPos[catIdx] - CAT_W[CATS[catIdx].k] / 2 + catDx).toFixed(1), catMotion: s.sdKey === 'cat' ? 'none' : 'transform 440ms cubic-bezier(0.2, 0.9, 0.25, 1.15)',
+      catDown: (e) => { this.sdSwallow = false; const k = e.currentTarget.getBoundingClientRect().width / e.currentTarget.offsetWidth || 1; this.sd = { x: e.clientX, k, moved: false, lx: e.clientX, lt: Date.now(), vx: 0 }; },
+      catMove: (e) => {
+        const d = this.sd; if (!d) return; const mx = (e.clientX - d.x) / d.k; if (!d.moved && Math.abs(mx) < 6) return; d.moved = true;
+        const now = Date.now(); d.vx = d.vx * 0.6 + ((e.clientX - d.lx) / d.k / Math.max(1, now - d.lt)) * 0.4; d.lx = e.clientX; d.lt = now;
+        const lo = catCenter(catIdx) - catCenter(CATS.length - 1), hi = catCenter(catIdx) - catCenter(0);
+        this.setState({ sdKey: 'cat', sdX: mx > hi ? hi + (mx - hi) * 0.35 : mx < lo ? lo + (mx - lo) * 0.35 : mx });
+      },
+      catUp: () => {
+        const d = this.sd; this.sd = null; if (!d || !d.moved) return; this.sdSwallow = true; setTimeout(() => { this.sdSwallow = false; }, 60);
+        const target = nearestCat(catCenter(catIdx) - this.state.sdX - d.vx * 160);
+        this.setState({ sdKey: '', sdX: 0 }); if (target !== catIdx) { this.setState({ cat: CATS[target].k, gen: this.state.gen + 1 }); this.blurPulse(); }
+      },
+      gridBlur: s.pulse ? 'blur(6px)' : s.searching && !s.query ? 'blur(5px) brightness(0.7)' : 'none',
+      albums: ALBUMS.map((a) => ({
+        name: a.name, d: a.d, count: s.partial ? 'บางรูป' : a.count, bg: a.bg, ground: a.ground,
+        on: s.album === a.k ? 'true' : 'false', outline: s.album === a.k ? accent : 'transparent',
+        color: s.album === a.k ? accent : '#fff',
+        pick: () => this.setState({ album: a.k, gen: s.gen + 1 })
+      })),
+      pickMore: () => this.say('เปิดหน้าต่างเลือกรูปของระบบ'),
+      allowAll: () => { this.setState({ partial: false }); this.say('เข้าถึงรูปทั้งหมดในเครื่องแล้ว'); },
+      gridTitle: q ? 'ผลการค้นหา' : device ? ALBUM_NAME[s.album] : 'ถ่ายด้วย Luma',
+      gridCount: items.length + ' รายการ',
+      tiles, noTiles: tiles.length === 0,
+      openSearch: () => { if (s.searching) { if (this.inputEl) this.inputEl.focus(); return; } this.setState({ searching: true }); clearTimeout(this.sT); this.sT = setTimeout(() => { if (this.inputEl) try { this.inputEl.focus({ preventScroll: true }); } catch (_) {} }, 420); },
+      closeSearch: () => { this.setState({ searching: false, query: '' }); if (this.inputEl) this.inputEl.blur(); },
+      onQuery: (e) => this.setState({ query: e.target.value }),
+      inputRef: (el) => { this.inputEl = el; }, query: s.query, inputTab: s.searching ? '0' : '-1',
+      searchW: s.searching ? 358 : 44, searchBg: s.searching ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.08)',
+      searchShadow: s.searching ? 'inset 0 1px 0 rgba(255,255,255,0.16), 0 8px 24px rgba(0,0,0,0.3)' : 'none',
+      inputOpacity: s.searching ? 1 : 0, inputShift: s.searching ? 0 : 24, inputDelay: s.searching ? 260 : 0,
+      headOpacity: s.searching ? 0 : 1, headShift: s.searching ? -24 : 0, titleShift: s.searching ? -40 : 0, headEvents: s.searching ? 'none' : 'auto',
+      noMenu: (e) => e.preventDefault(),
+      peekDim: s.peekStage === 'open' || s.peekStage === 'pre' ? 1 : 0, peekHidden: s.peekStage === 'idle' ? 'true' : 'false',
+      peekTransform: s.peek && s.peekStage !== 'open' ? 'translate(' + (s.peek.x - 20).toFixed(1) + 'px, ' + (s.peek.y - 150).toFixed(1) + 'px) scale(' + (s.peek.w / 350).toFixed(3) + ', ' + (s.peek.h / 512).toFixed(3) + ')' : 'translate(0px, 0px) scale(1)',
+      peekOpacity: s.peekStage === 'idle' ? 0 : s.peekStage === 'close' ? 0 : 1,
+      peekMotion: s.peekStage === 'open' ? 'transform 480ms cubic-bezier(0.2, 0.9, 0.25, 1.12), opacity 160ms ease' : s.peekStage === 'close' ? 'transform 420ms cubic-bezier(0.32, 0.72, 0, 1), opacity 180ms ease 260ms' : 'none',
+      peekDx: s.peekDx.toFixed(1), peekInner: s.peekStage === 'open' ? 1 : 1.04,
+      peekSlide: s.peekSwitch ? 'none' : (this.lp && this.lp.open ? 'transform 90ms linear' : 'transform 360ms cubic-bezier(0.34, 1.56, 0.64, 1)'),
+      peekPos: (s.peekIdx + 1) + ' / ' + (this.items ? this.items.length : 0),
+      pk: (() => { const it = (this.items || [])[s.peekIdx] || DATA.luma[0]; const b = BADGE[it.tag]; return { bg: it.p[0], ground: it.p[1], sun: it.p[2], sunX: it.sunX, horizon: it.horizon, hasBadge: !!b, badge: b ? b[0] : '', badgeIcon: b ? b[1] : '', title: it.src === 'luma' ? 'ถ่ายด้วย Luma' : ALBUM_NAME[it.album] }; })(),
+      viewerL: this.liquid('viewer', s.open ? s.open.id : '', 'view'), viewerEvents: s.open ? 'auto' : 'none', viewerHidden: s.open ? 'false' : 'true',
+      viewerOrigin: this.vRect ? ((this.vRect.x + this.vRect.w / 2) / 3.9).toFixed(1) + '% ' + ((this.vRect.y + this.vRect.h / 2) / 8.44).toFixed(1) + '%' : '50% 50%',
+      viewerTitle: s.open ? (s.open.src === 'luma' ? 'ถ่ายด้วย Luma' : ALBUM_NAME[s.open.album]) : '',
+      v: { bg: v.p[0], ground: v.p[1], sun: v.p[2], sunX: v.sunX, horizon: v.horizon, hasAi: !!(s.open && s.open.tag === 'ai') },
+      viewerFilter: showAiCopy ? 'contrast(1.08) saturate(1.08)' : s.open && s.open.tag === 'ai' ? 'blur(1.2px)' : 'none',
+      origOn: s.ai ? 'false' : 'true', aiOn: s.ai ? 'true' : 'false',
+      origBg: s.ai ? 'transparent' : 'rgba(255,255,255,0.18)', aiBg: s.ai ? 'rgba(255,255,255,0.18)' : 'transparent', aiColor: s.ai ? accent : '#fff',
+      showOrig: () => this.setState({ ai: false }), showAi: () => this.setState({ ai: true }),
+      closeViewer: () => this.setState({ open: null }),
+      share: () => this.say('เปิดเมนูแชร์ของระบบ'),
+      info: () => this.say(s.open && s.open.src === 'luma' ? 'ข้อมูลภาพ: ขนาด เวลา และเหตุผลที่ใช้ AI' : 'ข้อมูลภาพจาก MediaStore'),
+      toast: s.toast, toastL: this.liquid('toast', s.toastOn ? s.toast : '', 'pop')
+    };
+  }
+}
+</script>
+</body>
+</html>
