@@ -17,7 +17,7 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "th.ogay.luma"
+        applicationId = "com.lumora"
         minSdk = 23
         targetSdk = 35
         versionCode = providers.environmentVariable("LUMA_BUILD_NUMBER").orNull?.toIntOrNull() ?: 100
@@ -47,7 +47,6 @@ android {
         }
     }
     buildTypes {
-        debug { applicationIdSuffix = ".preview" }
         create("beta") {
             initWith(getByName("release"))
             applicationIdSuffix = ".beta"
