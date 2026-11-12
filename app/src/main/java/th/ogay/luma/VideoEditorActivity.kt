@@ -161,7 +161,7 @@ class VideoEditorActivity : ComponentActivity() {
     // ---- Export ----
     private var transformer: Transformer? = null
     private val progress = ProgressHolder()
-    private var overlay: View? = null; private var overlayText: TextView? = null
+    private var overlay: View? = null
 
     private val pickClip = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@registerForActivityResult
@@ -859,30 +859,81 @@ class VideoEditorActivity : ComponentActivity() {
     }
 
     // ---------- Export ----------
+    private var prog: ExportProgress? = null
+    /** Bigger or smoother than the edit itself: done after the edit by [VideoEnhancer]. */
+    private var enhance: VideoEnhancer.Plan? = null
+    /** Smaller or fewer frames than the edit: done inside the edit export. */
+    private var shrinkShort = 0; private var shrinkFps = 0f
+    private val enhanceCancel = java.util.concurrent.atomic.AtomicBoolean(false)
+    private var stageEdit = 0; private var stageEnhance = -1; private var stageSave = 1
+    private var cachedFps = 0f
+
+    /** Short and long side of the finished frame (after the turn and the crop). */
+    private fun frameSides(): Pair<Int, Int> {
+        var w = (flow?.width ?: videoW).toFloat(); var h = (flow?.height ?: videoH).toFloat()
+        if (turns % 2 == 1) { val t = w; w = h; h = t }
+        val r = CROPS[cropIndex].second
+        if (r > 0f) { if (r > w / h) h = w / r else w = h * r }
+        return minOf(w, h).toInt() to maxOf(w, h).toInt()
+    }
+    private fun sourceFps(): Float {
+        if (cachedFps > 0f) return cachedFps
+        cachedFps = runCatching {
+            MediaMetadataRetriever().run { try { setDataSource(this@VideoEditorActivity, source)
+                val n = if (android.os.Build.VERSION.SDK_INT >= 28) extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_FRAME_COUNT)?.toFloatOrNull() else null
+                val d = extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toFloatOrNull() ?: 0f
+                if (n != null && n > 1 && d > 0) n * 1000f / d else null } finally { release() } }
+        }.getOrNull()?.coerceIn(5f, 240f) ?: 30f
+        return cachedFps
+    }
+    /** Opens the export sheet (resolution and frame rate); the export starts from there. */
     private fun export() {
-        if (transformer != null) return
-        if (!changed()) { notice("ยังไม่มีการแก้ไข"); return }
+        if (transformer != null || prog != null) return
         if (filesDir.usableSpace < 200L * 1024 * 1024) { notice("พื้นที่ว่างไม่พอส่งออก"); return }
         player?.let { if (it.isPlaying) togglePlay() }
-        // Several clips become one file, so the split (which makes two files of the main clip) is left out then.
-        val whole = extras.isNotEmpty() || layers.isNotEmpty()
-        if (split >= 0 && whole) notice("มีหลายคลิปหรือเลเยอร์ · ส่งออกรวมเป็นไฟล์เดียว ไม่แยก")
+        val (short, long) = frameSides()
+        val src = ExportSheet.Source(short, long, sourceFps(), totalOut(), firstFrame)
+        ExportSheet.show(this, src) { c -> startExport(c, src) }
+    }
+    private fun startExport(c: ExportChoice, src: ExportSheet.Source) {
+        val bigger = c.shortSide > src.shortSide * 1.05f; val smoother = c.fps > src.fps * 1.05f
+        if (!changed() && !bigger && !smoother && c.shortSide >= src.shortSide - 8 && c.fps >= src.fps - 0.6f) { notice("ยังไม่มีการแก้ไข"); return }
+        enhance = if (bigger || smoother) VideoEnhancer.Plan(c.shortSide, c.fps, c.ai) else null
+        shrinkShort = if (enhance == null && c.shortSide < src.shortSide - 8) c.shortSide else 0
+        shrinkFps = if (enhance == null && c.fps < src.fps - 0.6f) c.fps else 0f
+        // Several clips or layers become one file, so the split (two files of the main clip) is left out then.
+        val whole = extras.isNotEmpty() || layers.isNotEmpty() || enhance != null
+        if (split >= 0 && whole) notice("ส่งออกรวมเป็นไฟล์เดียว ไม่แยก")
         val parts = if (split >= 0 && !whole) listOf(start to split, split to end) else listOf(start to end)
-        showProgress()
+        val steps = ArrayList<String>(); val weights = ArrayList<Float>()
+        val slow = smooth && speed < 1f
+        if (slow) { steps += "สร้างเฟรมสโลว์ลื่น (Optical flow)"; weights += 3f }
+        stageEdit = steps.size; steps += "ตัดต่อและใส่เอฟเฟกต์"; weights += 1f
+        stageEnhance = -1
+        enhance?.let { e ->
+            stageEnhance = steps.size
+            steps += listOfNotNull(if (bigger) (if (e.ai) "AI สร้างพิกเซลเพิ่ม → ${ExportSheet.sideName(c.shortSide)}" else "ขยายเป็น ${ExportSheet.sideName(c.shortSide)}") else null,
+                if (smoother) "สร้างเฟรมแทรก → ${ExportSheet.fpsName(c.fps)} fps" else null).joinToString(" + ")
+            weights += (ExportSheet.minutes(src, c.shortSide, c.fps, e.ai) * 4).toFloat().coerceAtLeast(2f)
+        }
+        stageSave = steps.size; steps += "บันทึกลงแกลเลอรี"; weights += 0.3f
+        exportButton.alpha = 0.5f
+        prog = ExportProgress(this, firstFrame, steps, weights) { cancelExport() }
+        overlay = prog?.view
         val id = System.currentTimeMillis()
-        if (smooth && speed < 1f) { renderFlow(id); return }
+        if (slow) { renderFlow(id); return }
         exportPart(parts, 0, id, mutableListOf())
     }
     /** Builds the in-between frames first (on its own thread), then exports the smooth clip like any other. */
     private fun renderFlow(id: Long) {
         flowCancel.set(false)
         val n = SlowFlow.factor(speed)
-        overlayText?.text = "กำลังสร้างเฟรมลื่น · 0%"
+        prog?.update(0, 0f, "สร้าง ${n - 1} เฟรมแทรกต่อเฟรม")
         val out = File(cacheDir, "slowflow-$id.mp4")
         Thread {
             var shown = -1
             val r = runCatching { SlowFlow.render(this, source, start, end, n, out, flowCancel) { f ->
-                val pc = (f * 100).toInt(); if (pc != shown) { shown = pc; runOnUiThread { overlayText?.text = "กำลังสร้างเฟรมลื่น · $pc%" } } } }
+                val pc = (f * 100).toInt(); if (pc != shown) { shown = pc; runOnUiThread { prog?.update(0, f, "") } } } }
             runOnUiThread {
                 if (isDestroyed) { out.delete(); return@runOnUiThread }
                 r.onSuccess { flow = it; exportPart(listOf(start to end), 0, id, mutableListOf()) }
@@ -892,7 +943,7 @@ class VideoEditorActivity : ComponentActivity() {
     }
     private fun exportPart(parts: List<Pair<Long, Long>>, index: Int, id: Long, done: MutableList<File>) {
         val dir = File(filesDir, "video-exports/$id").apply { mkdirs() }
-        val file = File(dir, "Lumora_EDIT_${id}${if (parts.size > 1) "_${index + 1}" else ""}.mp4")
+        val file = File(dir, "Lumora_EDIT_${id}${if (parts.size > 1) "_${index + 1}" else ""}${if (enhance != null) "_edit" else ""}.mp4")
         val (from, to) = parts[index]
         try {
             val composition = composition(from, to)
@@ -900,28 +951,54 @@ class VideoEditorActivity : ComponentActivity() {
                 override fun onCompleted(composition: Composition, result: ExportResult) {
                     done += file
                     if (index + 1 < parts.size) { exportPart(parts, index + 1, id, done); return }
-                    transformer = null; overlayText?.text = "กำลังบันทึกไฟล์…"
-                    luma.fileIo.execute {
-                        val ok = runCatching { done.forEach { f -> MediaLedger.publishVideo(this@VideoEditorActivity, f, f.name, "ตัดต่อใน Lumora") } }
-                        runOnUiThread {
-                            hideProgress()
-                            ok.onSuccess { notice(if (done.size > 1) "ส่งออก ${done.size} คลิปแล้ว · ต้นฉบับยังอยู่" else "ส่งออกคลิปใหม่แล้ว · ต้นฉบับยังอยู่"); setResult(RESULT_OK); finish() }
-                                .onFailure { failed("บันทึกไฟล์ไม่ได้ · ${it.localizedMessage}") }
-                        }
-                    }
+                    transformer = null
+                    val plan = enhance
+                    if (plan != null) runEnhance(file, File(dir, "Lumora_EDIT_${id}.mp4"), plan) else publish(done)
                 }
                 override fun onError(composition: Composition, result: ExportResult, e: ExportException) {
                     transformer = null; file.delete(); hideProgress(); failed("${e.errorCodeName} · ${e.cause?.message ?: e.localizedMessage}")
                 }
             })
             transformer = t; t.start(composition, file.path)
-            overlayText?.text = if (parts.size > 1) "กำลังส่งออกคลิป ${index + 1}/${parts.size}" else "กำลังส่งออก"
+            prog?.update(stageEdit, 0f, if (parts.size > 1) "คลิป ${index + 1}/${parts.size}" else "ใส่การแก้ไขทั้งหมดลงคลิป")
             handler.post(poll)
         } catch (e: Exception) { transformer = null; file.delete(); hideProgress(); failed("เริ่มไม่ได้ · ${e.localizedMessage}") }
     }
+    /** More pixels (AI) and/or more frames (optical flow) on the edited clip, on its own thread. */
+    private fun runEnhance(edited: File, out: File, plan: VideoEnhancer.Plan) {
+        enhanceCancel.set(false)
+        prog?.update(stageEnhance, 0f, if (plan.ai) "กำลังเปิดโมเดล AI" else "กำลังเริ่ม")
+        Thread {
+            var last = 0L
+            val r = runCatching { VideoEnhancer.run(this, edited, out, plan, enhanceCancel) { p ->
+                val now = android.os.SystemClock.elapsedRealtime()
+                if (now - last > 250) { last = now; runOnUiThread { prog?.update(stageEnhance, p.fraction, "${p.frames} เฟรม" + (if (p.backend.isNotEmpty()) " · AI บน ${p.backend}" else "")); prog?.eta(p.etaMs) } }
+            } }
+            edited.delete()
+            runOnUiThread {
+                if (isDestroyed) { out.delete(); return@runOnUiThread }
+                r.onSuccess { prog?.eta(0); publish(listOf(out)) }
+                    .onFailure { out.delete(); if (!enhanceCancel.get()) { hideProgress(); failed("เพิ่มความละเอียด/เฟรมไม่ได้ · ${it.message ?: it.javaClass.simpleName}") } }
+            }
+        }.apply { name = "enhance"; priority = Thread.NORM_PRIORITY - 1 }.start()
+    }
+    private fun publish(done: List<File>) {
+        prog?.update(stageSave, 0.3f, "กำลังบันทึกไฟล์")
+        luma.fileIo.execute {
+            val ok = runCatching { done.forEach { f -> MediaLedger.publishVideo(this@VideoEditorActivity, f, f.name, "ตัดต่อใน Lumora") } }
+            runOnUiThread {
+                prog?.update(stageSave + 1, 0f, "เสร็จแล้ว")
+                handler.postDelayed({
+                    hideProgress()
+                    ok.onSuccess { notice(if (done.size > 1) "ส่งออก ${done.size} คลิปแล้ว · ต้นฉบับยังอยู่" else "ส่งออกคลิปใหม่แล้ว · ต้นฉบับยังอยู่"); setResult(RESULT_OK); finish() }
+                        .onFailure { failed("บันทึกไฟล์ไม่ได้ · ${it.localizedMessage}") }
+                }, 450)
+            }
+        }
+    }
     private val poll = object : Runnable { override fun run() {
         val t = transformer ?: return
-        if (t.getProgress(progress) == Transformer.PROGRESS_STATE_AVAILABLE) overlayText?.text = (overlayText?.text?.toString()?.substringBefore(" · ") ?: "กำลังส่งออก") + " · ${progress.progress}%"
+        if (t.getProgress(progress) == Transformer.PROGRESS_STATE_AVAILABLE) prog?.update(stageEdit, progress.progress / 100f, "")
         handler.postDelayed(this, 300)
     } }
 
@@ -935,25 +1012,13 @@ class VideoEditorActivity : ComponentActivity() {
         return VideoEdit.composition(VideoEditSpec(f?.let { Uri.fromFile(it.file) } ?: source, at(from), at(to), if (turns % 2 == 1) vh else vw, if (turns % 2 == 1) vw else vh,
         speed * n, CROPS[cropIndex].second, caption, place, textColor, textBig, if (looked()) colour() else null, music, f == null && hasAudio && keepSound && speed in SOUND_MIN..SOUND_MAX,
         turns, mirror, volume, musicVolume, if (cut) at(cutFrom) else -1L, if (cut) at(cutTo) else -1L, textBox,
-        extras.map { VideoPart(it.uri, 0, it.duration) }, if (extras.isEmpty()) 0 else transition, stickers.toList(), clampedLayers()), this)
+        extras.map { VideoPart(it.uri, 0, it.duration) }, if (extras.isEmpty()) 0 else transition, stickers.toList(), clampedLayers(), shrinkShort, shrinkFps), this)
     }
 
     /** Export problems stay on screen until dismissed, so the reason can be read (and reported). */
     private fun failed(reason: String) { if (!isFinishing) GlassDialog.show(this, "ส่งออกไม่ได้", "$reason\nวิดีโอต้นฉบับยังอยู่ครบ ลองปิดฟิลเตอร์หรือข้อความแล้วส่งออกอีกครั้ง") }
-    private fun showProgress() {
-        exportButton.alpha = 0.5f
-        val layer = FrameLayout(this).apply { setBackgroundColor(0x99000000.toInt()); isClickable = true }
-        val card = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; background = glass(24, Glass.FILL_POP); setPadding(dp(24), dp(22), dp(24), dp(18)) }
-        card.addView(ProcessingSpinner(this), dp(40), dp(40))
-        overlayText = text("กำลังส่งออก", 15f, Color.WHITE, true).apply { gravity = Gravity.CENTER; setPadding(0, dp(12), 0, dp(4)) }
-        card.addView(overlayText, -2, -2)
-        card.addView(text("เปิดหน้านี้ไว้จนเสร็จ", 12.5f, Glass.TEXT2), -2, -2)
-        card.addView(EditorKit.chip(this, "ยกเลิก", Icons.CLOSE) { cancelExport() }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(14) })
-        layer.addView(card, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
-        (window.decorView as FrameLayout).addView(layer, -1, -1); overlay = layer
-    }
-    private fun hideProgress() { flow?.file?.delete(); flow = null; handler.removeCallbacks(poll); overlay?.let { (it.parent as? FrameLayout)?.removeView(it) }; overlay = null; overlayText = null; exportButton.alpha = 1f }
-    private fun cancelExport() { flowCancel.set(true); transformer?.cancel(); transformer = null; hideProgress(); notice("ยกเลิกการส่งออกแล้ว") }
+    private fun hideProgress() { flow?.file?.delete(); flow = null; handler.removeCallbacks(poll); prog?.remove(); prog = null; overlay = null; exportButton.alpha = 1f }
+    private fun cancelExport() { flowCancel.set(true); enhanceCancel.set(true); transformer?.cancel(); transformer = null; hideProgress(); notice("ยกเลิกการส่งออกแล้ว") }
 
     // ---------- Lifecycle ----------
     override fun onPause() { player?.let { if (it.isPlaying) togglePlay() }; super.onPause() }

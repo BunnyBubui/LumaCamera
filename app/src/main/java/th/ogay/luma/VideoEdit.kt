@@ -62,7 +62,9 @@ data class VideoEditSpec(
     /** Emoji stickers over the whole video. */
     val stickers: List<VideoSticker> = emptyList(),
     /** Video, picture and sound layers on top, timed in ms of the finished video. */
-    val layers: List<VideoLayer> = emptyList())
+    val layers: List<VideoLayer> = emptyList(),
+    /** Smaller output: short side in pixels (0 = as edited) and a lower frame rate (0 = as recorded). */
+    val outShort: Int = 0, val outFps: Float = 0f)
 
 /** A clip appended after the main one. [from]/[to] in ms of that clip. */
 data class VideoPart(val source: Uri, val from: Long, val to: Long)
@@ -180,6 +182,8 @@ object VideoEdit {
             if (texts.isNotEmpty()) whole += OverlayEffect(texts)
         }
         if (layerOverlays.isNotEmpty()) whole += OverlayEffect(layerOverlays)
+        if (s.outShort > 0) whole += Presentation.createForShortSide(s.outShort)
+        if (s.outFps > 0f) whole += FrameDropEffect.createDefaultFrameDropEffect(s.outFps)
         val song = s.music
         val sequences = mutableListOf(main)
         if (song != null) {

@@ -85,6 +85,23 @@ class VideoEditDeviceTest {
         assertTrue("Smooth export · $exported", exported.startsWith("ok"))
     }
 
+    /** Export above the source: AI doubles the pixels and optical flow doubles the frames; the sound is kept. */
+    @Test(timeout = 900_000) fun enhancerMakesBiggerAndSmootherClip() {
+        val c = inst.targetContext
+        val clip = TestMedia.clip(inst, 600, 256, 144)
+        val out = File(c.cacheDir, "enhance-test-${System.nanoTime()}.mp4")
+        VideoEnhancer.run(c, clip, out, VideoEnhancer.Plan(288, 60f, true), java.util.concurrent.atomic.AtomicBoolean(false))
+        val r = android.media.MediaMetadataRetriever().apply { setDataSource(out.path) }
+        val w = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)!!.toInt()
+        val h = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)!!.toInt()
+        val frames = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_FRAME_COUNT)?.toInt() ?: 0
+        val ms = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)!!.toLong()
+        r.release(); out.delete(); clip.delete()
+        assertTrue("Enhanced size · ${w}x$h", w == 512 && h == 288)
+        // 0.6 s at 60 fps is about 36 frames; the source had about half as many.
+        assertTrue("Enhanced frames · $frames in $ms ms", frames in 28..44 && ms in 450..800)
+    }
+
     private fun export(spec: VideoEditSpec): String {
         val out = File(inst.targetContext.cacheDir, "edit-test-${System.nanoTime()}.mp4")
         val done = CountDownLatch(1); var result = "timeout"; var t: Transformer? = null
