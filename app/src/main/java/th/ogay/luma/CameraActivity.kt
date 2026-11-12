@@ -247,6 +247,7 @@ class CameraActivity : ComponentActivity() {
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
+        th.ogay.luma.backend.CameraCapabilityRepository.refreshAsync(this)   // background; the camera opens on CameraX without waiting
         requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT   // the screen stays upright; only the picture and the icons turn
         output = runCatching { CaptureOutput.valueOf(prefs.getString("output", CaptureOutput.JPEG.name)!!) }.getOrDefault(CaptureOutput.JPEG)
         // RAW Log is no longer offered: anyone who had it keeps plain RAW.
@@ -332,6 +333,7 @@ class CameraActivity : ComponentActivity() {
         shutterSound.release()
         tones.release()
         portraitLive?.close(); qr?.close()
+        th.ogay.luma.backend.CameraCapabilityRepository.noteClosed()
         super.onDestroy()
     }
     override fun onSaveInstanceState(out: Bundle) { super.onSaveInstanceState(out); out.putBoolean("rear",rear); out.putFloat("zoom",ratio) }
@@ -1500,6 +1502,9 @@ class CameraActivity : ComponentActivity() {
             afterBind()
 
             boundKey=key;boundPreview=previewCase;capture=useCase;metadata=frames
+            runCatching{th.ogay.luma.backend.CameraCapabilityRepository.noteBind(rear,
+                when(mode){PhotoMode.HDR->th.ogay.luma.backend.CameraFeature.HDR;PhotoMode.NIGHT->th.ogay.luma.backend.CameraFeature.NIGHT;PhotoMode.PORTRAIT->th.ogay.luma.backend.CameraFeature.PORTRAIT;else->null},
+                cc.cameraId,th.ogay.luma.backend.CameraUnitCapabilityDetector.levelName(cc.getCameraCharacteristic(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL)))}
             useCase.flashMode=if(info.hasFlashUnit()) (if(mode==PhotoMode.FLASH_NIGHT)ImageCapture.FLASH_MODE_ON else if(mode==PhotoMode.FLASH_FAST)ImageCapture.FLASH_MODE_OFF else flash) else ImageCapture.FLASH_MODE_OFF
             val range=camera?.cameraInfo?.zoomState?.value
             ratio=range().let{(lo,hi)->ratio.coerceIn(lo,hi)}
@@ -1838,6 +1843,7 @@ class CameraActivity : ComponentActivity() {
                     }
                     if(photoMode!=PhotoMode.PANORAMA)PhotoEffects.decorate(this@CameraActivity,original,isRear)
                     val size=PhotoMedia.dimensions(original)
+                    th.ogay.luma.backend.CameraCapabilityRepository.noteCapture(camId,size.w,size.h,System.currentTimeMillis()-time)
                     if(camId!=null)LensMeta.stamp(original,LensMeta.describe(this@CameraActivity,camId,frame?.lens,zoom,hwZoom,isRear))
                     if(photoMode==PhotoMode.HIRES)runOnUiThread{hint("บันทึก ${size.w}×${size.h} · ${pixelsText(size.pixels)}${if(size.pixels<20_000_000L)" · เครื่องเปิดให้แอปได้เท่านี้" else ""}",2600)}
                     val crop=if(useSoftware && cropBy>1f) size.pixels else frame?.crop
@@ -1864,7 +1870,7 @@ class CameraActivity : ComponentActivity() {
                 catch(e:Exception) {complete("บันทึกรูปไม่สำเร็จ · ${e.localizedMessage}")}
                 finally {full.delete();cut.delete()}
             }
-            override fun onError(exception:ImageCaptureException) {runOnUiThread { manual?.longExposure(false) };complete("ถ่ายภาพไม่สำเร็จ · ${exception.localizedMessage}")}
+            override fun onError(exception:ImageCaptureException) {th.ogay.luma.backend.CameraCapabilityRepository.noteCaptureError(camId,exception.imageCaptureError,System.currentTimeMillis()-time);runOnUiThread { manual?.longExposure(false) };complete("ถ่ายภาพไม่สำเร็จ · ${exception.localizedMessage}")}
         }
         // Shutter slower than the live view allows: switch the sensor to the real time just for this picture.
         val m=manual

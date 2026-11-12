@@ -155,6 +155,11 @@ object DeepScan {
         } catch (e: Exception) {
             out.put("error", e.toString()); lines += "สแกนหยุดกลางทาง: ${e.localizedMessage}"
         } finally { thread.quitSafely() }
+        runCatching {
+            val unit = th.ogay.luma.backend.CameraCapabilityRepository.detectNow(context).cameraUnit
+            out.put("cameraBackend", th.ogay.luma.backend.CameraCapabilityRepository.report())
+            lines += "OPPO CameraUnit: ${unit.status.name} · ${unit.status.reason}" + (unit.errorCode?.let { " (code $it)" } ?: "")
+        }
         return Result(out, lines.joinToString("\n"))
     }
 
