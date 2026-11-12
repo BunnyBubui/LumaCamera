@@ -37,6 +37,8 @@ class StudioTimeline(context: Context) : View(context) {
     var lanes: List<List<Bar>> = emptyList()
     var selected = 0
     var joined = false
+    /** Markers the user set, in ms of the finished video. */
+    var marks: List<Long> = emptyList()
     /** The picked bar's [Bar.id], or -2 when none is picked. */
     var selectedBar = -2
     /** Time under the playhead, and whether the finger has lifted and the strip has stopped. */
@@ -80,6 +82,7 @@ class StudioTimeline(context: Context) : View(context) {
         fun offer(c: Long) { val g = abs(c - t); if (g < gap) { gap = g; best = c } }
         var at = 0L; offer(0); clips.forEach { at += it.len; offer(at) }
         lanes.forEach { l -> l.forEach { if (it.id != skipBar && it.id >= 0) { offer(it.at); offer(it.at + it.len) } } }
+        marks.forEach { offer(it) }
         if (withPlayhead) offer(ph)
         if (best < 0) { lastSnap = -1; return t }
         if (best != lastSnap) { lastSnap = best; performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) }
@@ -195,6 +198,8 @@ class StudioTimeline(context: Context) : View(context) {
         var t = (floor((ph - w / 2 / pxPerMs) / step.toDouble()).toLong() * step).coerceAtLeast(0)
         paint.color = 0x55ffffff
         while (t <= all && x(t) < w) { val px = x(t); c.drawRect(px, rulerH - 5 * d, px + d, rulerH - 1 * d, paint); c.drawText(label(t, step < 1000), px + 3 * d, rulerH - 5 * d, textPaint); t += step }
+        marks.forEach { m -> val mx = x(m); if (mx > -8 * d && mx < w + 8 * d) { clipPath.reset(); clipPath.moveTo(mx - 4 * d, rulerH - 9 * d); clipPath.lineTo(mx + 4 * d, rulerH - 9 * d); clipPath.lineTo(mx, rulerH - 1 * d); clipPath.close(); c.drawPath(clipPath, accent)
+            paint.color = Glass.ACCENT; paint.alpha = 120; c.drawRect(mx - 0.5f * d, rulerH, mx + 0.5f * d, rulerH + clipH, paint); paint.alpha = 255 } }
         // Clips.
         var at = 0L; val top = rulerH; val bottom = rulerH + clipH; val r = 9 * d
         clips.forEachIndexed { i, clip ->

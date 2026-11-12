@@ -64,10 +64,12 @@ data class VideoEditSpec(
     /** Video, picture and sound layers on top, timed in ms of the finished video. */
     val layers: List<VideoLayer> = emptyList(),
     /** Smaller output: short side in pixels (0 = as edited) and a lower frame rate (0 = as recorded). */
-    val outShort: Int = 0, val outFps: Float = 0f)
+    val outShort: Int = 0, val outFps: Float = 0f,
+    /** How many of [extras] play before the main clip (0 = the main clip is first). */
+    val mainAt: Int = 0)
 
 /** A clip appended after the main one. [from]/[to] in ms of that clip. */
-data class VideoPart(val source: Uri, val from: Long, val to: Long)
+data class VideoPart(val source: Uri, val from: Long, val to: Long, val speed: Float = 1f)
 
 /** An emoji on the picture: [x], [y] are 0..1 across the visible (cropped) frame, [big] doubles its size. */
 data class VideoSticker(val text: String, val x: Float, val y: Float, val big: Boolean = false)
@@ -156,10 +158,13 @@ object VideoEdit {
         val sound = if (s.keepAudio && s.volume != 1f) listOf(gain(s.volume)) else emptyList()
         // Each clip with its length after the speed change, and which clip (0 = main) it comes from.
         data class Piece(val item: MediaItem, val clip: Int, val durationUs: Long, val speed: Float)
-        val pieces = ranges.map { (a, b) -> Piece(clipped(s.source, a, b), 0, ((b - a) * 1000 / s.speed).toLong(), s.speed) } +
-            s.extras.mapIndexed { i, p -> Piece(clipped(p.source, p.from, p.to), i + 1, (p.to - p.from) * 1000, 1f) }
+        val mainPieces = ranges.map { (a, b) -> Piece(clipped(s.source, a, b), 0, ((b - a) * 1000 / s.speed).toLong(), s.speed) }
+        val extraPieces = s.extras.mapIndexed { i, p -> Piece(clipped(p.source, p.from, p.to), i + 1, ((p.to - p.from) * 1000 / p.speed).toLong(), p.speed) }
+        val lead = s.mainAt.coerceIn(0, extraPieces.size)
+        val pieces = extraPieces.take(lead) + mainPieces + extraPieces.drop(lead)
         val items = pieces.mapIndexed { i, piece ->
             val own: MutableList<Effect> = if (piece.clip == 0) effects.toMutableList() else mutableListOf()
+            if (piece.clip != 0 && piece.speed != 1f) { if (!s.keepAudio) own += SpeedChangeEffect(piece.speed); if (piece.speed > 1f) own += FrameDropEffect.createDefaultFrameDropEffect(30f) }
             if (s.transition != 0) {
                 val joinIn = i > 0 && pieces[i - 1].clip != piece.clip; val joinOut = i < pieces.size - 1 && pieces[i + 1].clip != piece.clip
                 if (s.transition == 3) { if (joinIn) own += Punch(piece.durationUs) }

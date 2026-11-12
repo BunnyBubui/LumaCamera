@@ -37,6 +37,8 @@ data class VideoLayer(
     val text: String = "", val color: Int = Color.WHITE, val style: Int = 0,
     /** Keyframes, "ms,x,y,size,opacity" joined by ';'. ms counts from the layer's start. Between two keyframes the layer glides from one to the other. */
     val keys: String = "",
+    /** Rotation of a picture layer in degrees, clockwise. */
+    val turn: Float = 0f,
 ) {
     val end get() = at + length
     val visual get() = kind != SOUND
@@ -61,11 +63,13 @@ data class VideoLayer(
         return floatArrayOf(a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f, a.size + (b.size - a.size) * f, a.opacity + (b.opacity - a.opacity) * f)
     }
     /** As [rawPose], with the fade in and fade out applied to the opacity. The preview and the export both draw from this. */
-    fun pose(outMs: Long): FloatArray {
-        val p = rawPose(outMs); val t = outMs - at; var fade = 1f
-        if (fadeIn > 0 && t < fadeIn) fade = (t.toFloat() / fadeIn).coerceIn(0f, 1f)
-        if (fadeOut > 0 && t > length - fadeOut) fade = minOf(fade, ((length - t).toFloat() / fadeOut).coerceIn(0f, 1f))
-        p[3] = (p[3] * fade).coerceIn(0f, 1f); return p
+    fun pose(outMs: Long): FloatArray { val p = rawPose(outMs); p[3] = (p[3] * fade(outMs)).coerceIn(0f, 1f); return p }
+    /** 0..1: how far the fade in or fade out has let the layer through at [outMs]. Used for the picture and for the sound. */
+    fun fade(outMs: Long): Float {
+        val t = outMs - at; var f = 1f
+        if (fadeIn > 0 && t < fadeIn) f = (t.toFloat() / fadeIn).coerceIn(0f, 1f)
+        if (fadeOut > 0 && t > length - fadeOut) f = minOf(f, ((length - t).toFloat() / fadeOut).coerceIn(0f, 1f))
+        return f
     }
 
     companion object {
@@ -74,13 +78,13 @@ data class VideoLayer(
         fun textSource(text: String, color: Int, style: Int): Uri = Uri.parse("lumoratext:" + Uri.encode("$color/$style/$text"))
         /** Packs a list of layers into a Bundle-friendly string (one line per layer). */
         fun save(list: List<VideoLayer>) = list.joinToString("\n") { l -> listOf(l.kind, l.source, l.at, l.length, l.from, l.x, l.y, l.size, l.aspect, l.volume,
-            l.opacity, l.fadeIn, l.fadeOut, Uri.encode(l.text).ifEmpty { "-" }, l.color, l.style, l.keys.ifEmpty { "-" }).joinToString("\t") }
+            l.opacity, l.fadeIn, l.fadeOut, Uri.encode(l.text).ifEmpty { "-" }, l.color, l.style, l.keys.ifEmpty { "-" }, l.turn).joinToString("\t") }
         fun load(text: String?): List<VideoLayer> = text.orEmpty().lines().filter { it.isNotBlank() }.mapNotNull { line ->
             val p = line.split("\t"); if (p.size < 10) return@mapNotNull null
             runCatching { VideoLayer(p[0].toInt(), Uri.parse(p[1]), p[2].toLong(), p[3].toLong(), p[4].toLong(), p[5].toFloat(), p[6].toFloat(), p[7].toFloat(), p[8].toFloat(), p[9].toFloat(),
                 p.getOrNull(10)?.toFloatOrNull() ?: 1f, p.getOrNull(11)?.toLongOrNull() ?: 0L, p.getOrNull(12)?.toLongOrNull() ?: 0L,
                 p.getOrNull(13)?.takeIf { it != "-" }?.let { Uri.decode(it) } ?: "", p.getOrNull(14)?.toIntOrNull() ?: Color.WHITE, p.getOrNull(15)?.toIntOrNull() ?: 0,
-                p.getOrNull(16)?.takeIf { it != "-" } ?: "") }.getOrNull()
+                p.getOrNull(16)?.takeIf { it != "-" } ?: "", p.getOrNull(17)?.toFloatOrNull() ?: 0f) }.getOrNull()
         }
     }
 }
@@ -117,10 +121,29 @@ object VideoLayers {
         val clip = MediaItem.Builder().setUri(l.source).setClippingConfiguration(
             MediaItem.ClippingConfiguration.Builder().setStartPositionMs(l.from).setEndPositionMs(l.from + l.length).build()).build()
         val item = EditedMediaItem.Builder(clip).setRemoveVideo(true)
-            .setEffects(Effects(if (l.volume != 1f) listOf(gain(l.volume)) else emptyList(), emptyList())).build()
+            .setEffects(Effects(listOfNotNull(if (l.volume != 1f) gain(l.volume) else null, if (l.fadeIn > 0 || l.fadeOut > 0) FadeAudio(l.fadeIn, l.fadeOut, l.length) else null), emptyList())).build()
         val seq = EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_AUDIO))
         if (l.at > 0) seq.addGap(l.at * 1000)
         seq.addItem(item).build()
+    }
+
+    /** Turns the sound up from silence over [inMs] at the start and down to silence over [outMs] at the end of a [lengthMs] long piece. */
+    private class FadeAudio(private val inMs: Long, private val outMs: Long, private val lengthMs: Long) : androidx.media3.common.audio.BaseAudioProcessor() {
+        private var frames = 0L
+        override fun onConfigure(f: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat = if (f.encoding == C.ENCODING_PCM_16BIT) f else AudioProcessor.AudioFormat.NOT_SET
+        override fun queueInput(input: java.nio.ByteBuffer) {
+            val n = input.remaining(); if (n == 0) return
+            val out = replaceOutputBuffer(n); val ch = inputAudioFormat.channelCount.coerceAtLeast(1); val rate = inputAudioFormat.sampleRate.coerceAtLeast(1)
+            while (input.remaining() >= 2 * ch) {
+                val ms = frames * 1000 / rate; var g = 1f
+                if (inMs > 0 && ms < inMs) g = ms.toFloat() / inMs
+                if (outMs > 0 && ms > lengthMs - outMs) g = minOf(g, ((lengthMs - ms).toFloat() / outMs).coerceIn(0f, 1f))
+                repeat(ch) { out.putShort((input.short * g).toInt().toShort()) }
+                frames++
+            }
+            while (input.hasRemaining()) out.put(input.get())
+            out.flip()
+        }
     }
 
     /** True when the file has a sound track (a silent video layer adds no sound sequence, which would fail). */
@@ -167,7 +190,7 @@ object VideoLayers {
         abstract val pixelWidth: Int
         private fun settings(x: Float, y: Float, size: Float, alpha: Float): OverlaySettings {
             val scale = size * frameW / pixelWidth.coerceAtLeast(1)
-            return StaticOverlaySettings.Builder().setScale(scale, scale).setAlphaScale(alpha)
+            return StaticOverlaySettings.Builder().setScale(scale, scale).setAlphaScale(alpha).setRotationDegrees(-layer.turn)
                 .setBackgroundFrameAnchor((x * 2 - 1).coerceIn(-1f, 1f), (1 - y * 2).coerceIn(-1f, 1f)).setOverlayFrameAnchor(0f, 0f).build()
         }
         override fun configure(videoSize: Size) {
