@@ -1144,15 +1144,25 @@ class CameraActivity : ComponentActivity() {
         lookSampleCache = grabLookSample() ?: lookSampleCache
         val film = mode == PhotoMode.FILM
         lookSheet.open { box, sheet ->
-            val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(6), 0, dp(8)) }
-            head.addView(text(if (film) "ฟิล์มและกล้องเก่า" else "ปรับแต่งภาพ", 18f, Color.WHITE, true), LinearLayout.LayoutParams(0, -2, 1f))
-            head.addView(text("คืนค่า", 12f).apply { gravity = Gravity.CENTER; background = glass(16, 0x1affffff); setPadding(dp(14), 0, dp(14), 0); minWidth = dp(48); isClickable = true; glassTouch()
-                setOnClickListener { prefs.edit().putInt("look", 0).putInt("look_bright", 0).putInt("look_warm", 0).remove("film").apply(); applyLook(); sheet.refresh() } }, -2, dp(48))
+            val head = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(4), dp(4), 0, dp(10)) }
+            if (film) head.addView(LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL
+                addView(IconView(this@CameraActivity, Icons.AI).apply { tint = Glass.ACCENT }, dp(18), dp(18)); addView(text("Lumora", 13f, Color.WHITE).apply { setPadding(dp(6), 0, 0, 0) }) })
+            head.addView(text(if (film) "ฟิล์มและกล้องเก่า" else "ปรับแต่งภาพ", 24f, Color.WHITE, true))
+            if (film) head.addView(text("จำลองโทนภาพจากกล้องฟิล์มและกล้องคลาสสิก", 12.5f, Glass.TEXT2).apply { setPadding(0, dp(2), 0, 0) })
             box.addView(head)
             val lookBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
             box.addView(lookBox, -1, -2)
             buildLookSection(lookBox)
-            // No footer paragraph: the sheet is pictures first.
+            // Footer: reset on the left, the orange "use this look" button closes the sheet (the look already applies as you pick it).
+            val foot = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(10), 0, dp(4)) }
+            foot.addView(LinearLayout(this).apply { gravity = Gravity.CENTER; background = glass(22, 0x14ffffff); setPadding(dp(18), 0, dp(20), 0); isClickable = true; glassTouch(); contentDescription = "รีเซ็ต"
+                addView(IconView(this@CameraActivity, Icons.RESET, 2f).apply { tint = Color.WHITE }, dp(18), dp(18)); addView(text("รีเซ็ต", 14f, Color.WHITE).apply { setPadding(dp(8), 0, 0, 0) })
+                setOnClickListener { prefs.edit().putInt("look", 0).putInt("look_bright", 0).putInt("look_warm", 0).remove("film").apply(); applyLook(); sheet.refresh() } }, LinearLayout.LayoutParams(-2, dp(52)))
+            foot.addView(View(this), LinearLayout.LayoutParams(dp(12), 1))
+            foot.addView(LinearLayout(this).apply { gravity = Gravity.CENTER; background = glass(22, Glass.ACCENT); isClickable = true; glassTouch(); contentDescription = "ใช้โทนนี้"
+                addView(IconView(this@CameraActivity, Icons.CHECK, 2.4f).apply { tint = Glass.ON_ACCENT }, dp(20), dp(20)); addView(text("ใช้โทนนี้", 16f, Glass.ON_ACCENT, true).apply { setPadding(dp(8), 0, 0, 0) })
+                setOnClickListener { Glass.tick(this); sheet.close() } }, LinearLayout.LayoutParams(0, dp(52), 1f))
+            box.addView(foot, -1, -2)
         }
         preview.removeCallbacks(lookTicker); preview.postDelayed(lookTicker, 400)
     }
@@ -1188,9 +1198,9 @@ class CameraActivity : ComponentActivity() {
             val strip = LinearLayout(this).apply { setPadding(dp(2), dp(12), dp(2), dp(8)); clipChildren = false; clipToPadding = false }
             val stripScroll = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; clipChildren = false; clipToPadding = false; overScrollMode = View.OVER_SCROLL_NEVER; addView(strip, -2, -2) }
             val nowName = text("", 16f, Color.WHITE, true)
-            val nowNote = text("", 12.5f, Glass.TEXT2).apply { maxLines = 2; ellipsize = null; minLines = 2 }
-            val nowTraits = FlowLayout(this).apply { gap = dp(6); setPadding(0, dp(8), 0, 0) }
-            val nowBest = text("", 12.5f, Glass.ACCENT, true).apply { setPadding(0, dp(8), 0, 0) }
+            val nowNote = text("", 12.5f, Glass.TEXT2).apply { maxLines = 2; ellipsize = null }
+            val detailIcon = IconView(this, Films.groupIcon(current().group), 1.9f).apply { tint = Glass.ACCENT }
+            val nowBest = text("", 12f, Glass.ACCENT, true)
             val familyNote = text("", 12f, Glass.TEXT3).apply { setPadding(dp(4), dp(8), dp(4), 0); maxLines = 2; minLines = 2 }
             val cards = mutableListOf<Pair<Film, FrameLayout>>()
             fun mark(animate: Boolean) {
@@ -1202,8 +1212,7 @@ class CameraActivity : ComponentActivity() {
                     if (animate) card.animate().scaleX(sc).scaleY(sc).setInterpolator(Glass.SPRING).setDuration(360).start() else { card.scaleX = sc; card.scaleY = sc } }
                 nowName.text = cur.name
                 nowNote.text = cur.note.ifEmpty { "ฟิล์มในกลุ่ม ${cur.group}" }
-                nowTraits.removeAllViews()
-                Films.traits(cur).forEach { tr -> nowTraits.addView(text(tr, 11.5f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; background = glass(12, 0x14ffffff); setPadding(dp(9), 0, dp(9), 0) }, android.view.ViewGroup.LayoutParams(-2, dp(24))) }
+                detailIcon.path = Films.groupIcon(cur.group)
                 nowBest.text = "เหมาะกับ: " + Films.bestFor(cur)
             }
             fun card(f: Film): FrameLayout = FrameLayout(this).apply {
@@ -1220,18 +1229,18 @@ class CameraActivity : ComponentActivity() {
             }
             fun fillFilms() {
                 strip.removeAllViews(); cards.clear(); lookImages.clear()
-                Films.inGroup(group).forEach { f -> val c = card(f); cards += f to c; strip.addView(c, LinearLayout.LayoutParams(dp(100), dp(134)).apply { setMargins(dp(4), 0, dp(4), 0) }) }
+                Films.inGroup(group).forEach { f -> val c = card(f); cards += f to c; strip.addView(c, LinearLayout.LayoutParams(dp(108), dp(146)).apply { setMargins(dp(4), 0, dp(4), 0) }) }
                 mark(false)
                 val at = cards.indexOfFirst { it.first.id == current().id }
-                stripScroll.post { stripScroll.smoothScrollTo(if (at < 0) 0 else (at * dp(108) - stripScroll.width / 2 + dp(54)).coerceAtLeast(0), 0) }
+                stripScroll.post { stripScroll.smoothScrollTo(if (at < 0) 0 else (at * dp(116) - stripScroll.width / 2 + dp(58)).coerceAtLeast(0), 0) }
             }
             // Each family is a rounded square with its own mark; the chosen one is lit.
             fun styleTabs() { for (i in 0 until tabRow.childCount) { val tile = tabRow.getChildAt(i) as LinearLayout; val g = tile.tag as String; val on = g == group
-                val ink = if (on) Color.BLACK else if (g == "Lumora") Glass.ACCENT else Color.WHITE
+                val ink = if (on) Glass.ACCENT else Color.WHITE
                 (tile.getChildAt(0) as IconView).tint = ink
                 (tile.getChildAt(1) as TextView).apply { setTextColor(ink); typeface = if (on) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT }
-                tile.background = glass(22, if (on) 0xebffffff.toInt() else 0x14ffffff) }
-                familyNote.text = Films.groupBlurb(group) }
+                tile.background = if (on) android.graphics.drawable.GradientDrawable().apply { cornerRadius = dp(22).toFloat(); setColor(0x33ff9f45); setStroke(dp(2), Glass.ACCENT) } else glass(22, 0x14ffffff) }
+                }
             Films.groups.forEach { g ->
                 val tile = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; tag = g; isClickable = true; glassTouch(); contentDescription = "กลุ่ม $g"
                     setOnClickListener { if (group != g) { group = g; styleTabs(); fillFilms(); Glass.tick(tabRow) } } }
@@ -1241,17 +1250,22 @@ class CameraActivity : ComponentActivity() {
             }
             styleTabs()
             host.addView(tabScroll, -1, -2)
-            host.addView(familyNote, -1, -2)
+            host.addView(text("โทนฟิล์มยอดนิยม", 16f, Color.WHITE, true).apply { setPadding(dp(4), dp(14), 0, 0) }, -1, -2)
             fillFilms()
             host.addView(stripScroll, -1, -2)
-            host.addView(LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(6), dp(4), dp(6), dp(6)); addView(nowName); addView(nowNote); addView(nowTraits); addView(nowBest) }, -1, -2)
+            // The chosen film, as one quiet card: its family mark, name, a two-line note and who it suits.
+            val detail = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; background = glass(22, 0x14ffffff); setPadding(dp(14), dp(12), dp(14), dp(12)) }
+            val badge = FrameLayout(this).apply { background = glass(16, 0x1fffffff); addView(detailIcon, FrameLayout.LayoutParams(dp(30), dp(30), Gravity.CENTER)) }
+            detail.addView(badge, dp(64), dp(64))
+            detail.addView(LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), 0, 0, 0); addView(nowName); addView(nowNote); addView(nowBest.apply { setPadding(0, dp(2), 0, 0) }) }, LinearLayout.LayoutParams(0, -2, 1f))
+            host.addView(detail, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4); bottomMargin = dp(10) })
         } else {
             LOOKS.forEachIndexed { i, name -> row.addView(lookThumb(lookMatrix(i, 0, 0), name, "$i", cells) { prefs.edit().putInt("look", i).apply(); applyLook(); markLook(cells, "$i"); Glass.tick(row) }, LinearLayout.LayoutParams(dp(94), -2)) }
             markLook(cells, "${prefs.getInt("look", 0)}")
             host.addView(scroll, -1, -2)
         }
         host.addView(lookSlider("ความสว่าง", Icons.SUN, "look_bright"))
-        host.addView(lookSlider("ความอุ่น", Icons.THERMO, "look_warm"))
+        host.addView(lookSlider("อุณหภูมิสี", Icons.THERMO, "look_warm"))
     }
     private fun sectionTitle(t: String) = text(t, 14f, 0xdbffffff.toInt(), true).apply { setPadding(dp(2), dp(4), 0, dp(8)) }
     /** One compact row: icon, slider, value. The name is only spoken (TalkBack), the icon says it on screen. */
@@ -1262,9 +1276,11 @@ class CameraActivity : ComponentActivity() {
         val s = GlassSlider(this@CameraActivity).apply { this.values = values; grad = if (key == "look_warm") intArrayOf(0xff7db8ff.toInt(), Color.WHITE, 0xffff9a3d.toInt()) else intArrayOf(0xff3a3a3c.toInt(), Color.WHITE); index = (prefs.getInt(key, 0) + 100) / 10; contentDescription = title }
         value.text = values[s.index]
         s.onChange = { i -> value.text = values[i]; prefs.edit().putInt(key, i * 10 - 100).apply(); applyLook() }
+        value.apply { gravity = Gravity.CENTER; background = glass(12, 0x14ffffff) }
         addView(IconView(this@CameraActivity, icon).apply { tint = Glass.TEXT2 }, dp(22), dp(22))
-        addView(s, LinearLayout.LayoutParams(0, dp(48), 1f).apply { leftMargin = dp(8) })
-        addView(value, dp(44), -2)
+        addView(text(title, 13.5f, Color.WHITE).apply { maxLines = 1; setPadding(dp(10), 0, 0, 0) }, dp(86), -2)
+        addView(s, LinearLayout.LayoutParams(0, dp(48), 1f))
+        addView(value, dp(48), dp(36))
     }
     private fun lookMatrix(look: Int, bright: Int, warm: Int): ColorMatrix {
         val m = ColorMatrix()
