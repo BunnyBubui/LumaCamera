@@ -12,11 +12,11 @@ class PersonRegionMaskTest {
             0f,0f,0f,0f
         )
         val person=PersonRegionMask(400,200,4,4,probabilities)
-        val tile=person.forCore(100,50,100,100)!!
-        assertEquals(10000,tile.size)
-        assertEquals(1,tile[0].toInt())
-        assertEquals(1,tile[40*100+75].toInt())
-        assertEquals(0,tile[60*100+75].toInt())
+        val tile=person.forCore(0,0,200,100)!!
+        assertEquals(20000,tile.size)
+        assertEquals(1,tile[50*200+100].toInt()) // source (100,50) -> mask (1,1)
+        assertEquals(1,tile[75*200+125].toInt()) // source (125,75) -> mask (1,1)
+        assertEquals(0,tile[40*200+175].toInt()) // source y=40 -> mask row 0
     }
 
     @Test fun returnsNullWhenNoPersonAndRejectsBadCoordinates() {
