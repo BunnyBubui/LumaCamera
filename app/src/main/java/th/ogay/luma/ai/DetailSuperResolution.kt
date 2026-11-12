@@ -38,6 +38,8 @@ class DetailSuperResolution(private val context: Context) {
                 // Detection is optional: OCR failures fall back to the original Natural guard.
                 val textScan = if (spec.profile == EnhanceProfile.NATURAL)
                     DetailTextGuard.scan(context, shot.uri, source, stopped) else null
+                val personScan = if (spec.profile == EnhanceProfile.NATURAL)
+                    DetailPersonGuard.scan(context, shot.uri, source, stopped) else null
                 // Budget for a large, noisy, high-quality JPEG and its MediaStore copy.
                 if (context.cacheDir.usableSpace < maxOf(64L*1024*1024, output.pixels*6))
                     throw IOException("พื้นที่ว่างไม่พอสำหรับภาพ ×${spec.scale} กรุณาเลือกสเกลเล็กลง")
@@ -63,8 +65,9 @@ class DetailSuperResolution(private val context: Context) {
                                 checkpoint()
                                 t = SystemClock.elapsedRealtime()
                                 val textMask = textScan?.mask?.forCore(left,top,w,h)
+                                val personMask = personScan?.mask?.forCore(left,top,w,h)
                                 DetailResampler.copyCore(enhanced,pixels,spec.scale,spec.strength,w,h,
-                                    stripe,output.w,left*spec.scale,spec.profile,textMask)
+                                    stripe,output.w,left*spec.scale,spec.profile,textMask,personMask)
                                 renderMs += SystemClock.elapsedRealtime()-t
                                 count++
                                 val percent = (count*99/(columns*rows)).coerceAtMost(99)
@@ -89,6 +92,8 @@ class DetailSuperResolution(private val context: Context) {
                         .put("textGuardStatus",textScan?.status ?: "not-requested")
                         .put("textGuardRegions",textScan?.boxCount ?: 0)
                         .put("textGuardScanMs",textScan?.elapsedMs ?: 0)
+                        .put("personGuardStatus",personScan?.status ?: "not-requested")
+                        .put("personGuardScanMs",personScan?.elapsedMs ?: 0)
                         .put("backend",runtime.backend)
                         .put("fallback",runtime.fallbackReason ?: JSONObject.NULL)
                         .put("inputWidth",source.w).put("inputHeight",source.h)
