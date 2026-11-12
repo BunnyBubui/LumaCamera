@@ -62,13 +62,13 @@ object EnhanceUi {
         dialog.setOnShowListener {
             dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener { preview(activity,shot,spec()) }
             dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                try { EnhanceSpec(scale,strength).output(shot.size) }
+                try { spec().output(shot.size) }
                 catch (e: IllegalArgumentException) { activity.notice(e.message ?: "ขนาดภาพเกินขีดจำกัด"); return@setOnClickListener }
                 prefs.edit().putInt("scale",scale).putInt("strength",strength)
                     .putString("profile",profile.name).apply()
-                val spec = spec()
+                val requested = spec()
                 activity.luma.fileIo.execute {
-                    if (activity.luma.shots.queueEnhancement(shot.id,spec)) EnhanceWorker.enqueue(activity.applicationContext,shot.id,true)
+                    if (activity.luma.shots.queueEnhancement(shot.id,requested)) EnhanceWorker.enqueue(activity.applicationContext,shot.id,true)
                 }
                 dialog.dismiss()
             }
