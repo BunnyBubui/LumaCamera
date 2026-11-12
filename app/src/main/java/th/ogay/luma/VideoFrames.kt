@@ -238,7 +238,8 @@ class FlowBlender(private val w: Int, private val h: Int) : AutoCloseable {
  * exact output size. Runs on one thread (GPU when available).
  */
 class FrameSr(c: Context) : AutoCloseable {
-    private val rt = DetailRuntime(c)
+    // The GPU delegate crashes in native code on the emulator (the Detail SR device test runs on CPU there too).
+    private val rt = DetailRuntime(c, forceCpu = emulator())
     val backend get() = rt.backend
 
     fun upscale(rgb: Mat, outW: Int, outH: Int, cancelled: () -> Boolean): Mat {
@@ -277,6 +278,10 @@ class FrameSr(c: Context) : AutoCloseable {
     }
 
     override fun close() = rt.close()
+
+    private companion object {
+        fun emulator() = android.os.Build.HARDWARE.let { it.contains("ranchu") || it.contains("goldfish") } || android.os.Build.FINGERPRINT.contains("generic")
+    }
 }
 
 /** YUV 4:2:0 images (any plane layout) to and from OpenCV RGB matrices. */
