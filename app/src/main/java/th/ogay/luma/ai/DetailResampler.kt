@@ -3,7 +3,6 @@ package th.ogay.luma.ai
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.roundToInt
-import kotlin.math.abs
 
 /** Area downsampling from native x4, on a fixed pixel lattice shared by all tiles. */
 object DetailResampler {
@@ -119,8 +118,9 @@ object DetailResampler {
                         r+=native[k]*weight;g+=native[k+1]*weight;b+=native[k+2]*weight
                     }
                 }
-                val contrast=listOf(luma(p00),luma(p10),luma(p01),luma(p11))
-                val localContrast=(contrast.maxOrNull()!!-contrast.minOrNull()!!)
+                val y00=luma(p00); val y10=luma(p10)
+                val y01=luma(p01); val y11=luma(p11)
+                val localContrast=maxOf(y00,y10,y01,y11)-minOf(y00,y10,y01,y11)
                 destination[y*stride+left+x]=NaturalDetailBlend.blend(
                     baseR,baseG,baseB,(r/area*255).toFloat(),(g/area*255).toFloat(),
                     (b/area*255).toFloat(),localContrast,strength)
