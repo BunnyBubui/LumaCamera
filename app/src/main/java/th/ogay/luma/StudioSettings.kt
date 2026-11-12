@@ -3,6 +3,7 @@ package th.ogay.luma
 import android.app.Activity
 import android.app.AlertDialog
 import android.app.Dialog
+import android.content.Intent
 import android.graphics.Color
 import android.text.Editable
 import android.text.TextWatcher
@@ -174,6 +175,10 @@ fun Activity.showStudioSettings(rawAvailable: Boolean, closed: () -> Unit = {}, 
     field("โฟลเดอร์ใน Pictures", Icons.FOLDER, "folder", "Lumora") { it.replace(Regex("[^\\p{L}\\p{N} _-]"), "").take(40).ifBlank { "Lumora" } }
     toggle("บันทึก GPS", Icons.PIN, "gps", note = "ใช้ตำแหน่งล่าสุดของระบบ เมื่อได้รับสิทธิ์เท่านั้น")
     section("เกี่ยวกับ")
+    row("ตรวจสอบและทดสอบกล้อง", Icons.FPS, "สแกน Camera2 / OPPO CameraUnit และทดสอบวิดีโอ 120/240 fps พร้อมส่งรายงาน") {
+        dialog.dismiss()
+        startActivity(Intent(this, CameraProbeActivity::class.java))
+    }
     row("คืนค่าเริ่มต้นของโหมดถ่าย", Icons.RESET, "สัดส่วน ฟิลเตอร์ ตั้งเวลา ครอปเลนส์ ค่า f และรูปแบบไฟล์ของทุกโหมด") {
         AlertDialog.Builder(this).setTitle("คืนค่าเริ่มต้นของทุกโหมด?").setMessage("เฉพาะค่าที่ปรับในโหมดถ่าย ส่วนค่าอื่นไม่เปลี่ยน")
             .setPositiveButton("คืนค่า") { _, _ -> prefs.edit().remove("aspect").remove("timer").remove("crop_from").remove("software").remove("output").remove("look").remove("look_kind").remove("film").remove("look_bright").remove("look_warm").remove("portrait_f").remove("night_frames").remove("night_toggle").remove("video_aspect").remove("video_fps").remove("video_res").apply(); changed(); dialog.dismiss() }.setNegativeButton("ยกเลิก", null).show()
