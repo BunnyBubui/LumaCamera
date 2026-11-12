@@ -104,6 +104,10 @@ object EnhanceUi {
                                 DetailTextGuard.scan(activity.applicationContext,shot.uri,
                                     Dimensions(decoder.width,decoder.height)) { stopped.get() }
                                 else null
+                            val personScan = if (spec.profile == EnhanceProfile.NATURAL)
+                                DetailPersonGuard.scan(activity.applicationContext,shot.uri,
+                                    Dimensions(decoder.width,decoder.height)) { stopped.get() }
+                                else null
                             val input = DetailSuperResolution.readInput(decoder,centerLeft,centerTop)
                             val before = IntArray(w*h) { i -> input[(i/w+EnhanceSpec.HALO)*EnhanceSpec.INPUT+i%w+EnhanceSpec.HALO] }
                             val raw = Bitmap.createBitmap(before,w,h,Bitmap.Config.ARGB_8888)
@@ -113,7 +117,8 @@ object EnhanceUi {
                                 val result = runtime.run(input)
                                 val output=IntArray(w*spec.scale*h*spec.scale)
                                 DetailResampler.copyCore(result,input,spec.scale,spec.strength,w,h,output,
-                                    w*spec.scale,0,spec.profile,textScan?.mask?.forCore(centerLeft,centerTop,w,h))
+                                    w*spec.scale,0,spec.profile,textScan?.mask?.forCore(centerLeft,centerTop,w,h),
+                                    personScan?.mask?.forCore(centerLeft,centerTop,w,h))
                                 b=Bitmap.createBitmap(output,w*spec.scale,h*spec.scale,Bitmap.Config.ARGB_8888)
                             }
                             if(rotation!=0) {
