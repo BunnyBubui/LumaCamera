@@ -1,53 +1,13 @@
-<p align="center">
-  <img src="docs/assets/readme-banner.svg" alt="Luma SR1 — Local Image Model" width="100%" />
-</p>
+# Luma SR1
 
-<h1 align="center">Luma SR1 — Local Image Model</h1>
+Local single-image luminance super-resolution. SR1 uses a bank of 17 ridge-regression filters, four 2× subpixel phases per filter, and a 5×5 neighborhood. Filter selection uses local gradient orientation and strength. The app runs the quantized weights on the CPU and interpolates chroma. No remote service or download is needed.
 
-<p align="center">Quantized local super-resolution filters, training and validation</p>
+The 3,400-byte little-endian Q12 weights are trained by this project's model/train.py. The coefficients sum to 4096 for every phase, preserving flat colors. The inference implementation is in LearnedFilter.java. The Android renderer decodes JPEG tiles with a halo, fits the learned 2× result to the 12 MP target, and conservatively blends with the camera JPEG when only an already-enlarged source is available. For very small crops the final resize can exceed the learned 2× factor. Extra output pixels are model estimates.
 
-<p align="center">
-  <img alt="Project guide" src="https://img.shields.io/badge/Project%20guide-6d28d9?style=flat-square" /> <img alt="Python" src="https://img.shields.io/badge/Python-6d28d9?style=flat-square" /> <img alt="NumPy" src="https://img.shields.io/badge/NumPy-6d28d9?style=flat-square" /> <img alt="Java" src="https://img.shields.io/badge/Java-6d28d9?style=flat-square" /> <img alt="Ridge regression" src="https://img.shields.io/badge/Ridge%20regression-6d28d9?style=flat-square" />
-</p>
+## Training and validation
 
-<p align="center"><a href="#overview">ภาพรวม</a> · <a href="#start">เริ่มใช้งาน</a> · <a href="#structure">ไฟล์สำคัญ</a></p>
+Run `OPENBLAS_NUM_THREADS=1 python3 model/train.py` with NumPy and Pillow, then `sha256sum -c model/SHA256SUMS`. The app and CI use the checked-in weights. Training pairs use box, bicubic, and Lanczos downsampling, geometric augmentation, and generated shape images. The two validation photographs are held out of training. A unit test runs the actual Java kernel on the test fixtures and compares mean square error against Pillow bicubic at the same size.
 
-<a id="overview"></a>
+Training data comes from the scikit-image v0.24.0 sample data. Astronaut is a public-domain NASA image. Coffee is CC0 by Rachel Michetti. Brick, grass and gravel textures are CC0. The camera photograph is CC0 by Lav Varshney, and the rocket photograph is public-domain SpaceX imagery. The distributions and credits are documented in the [upstream catalog](https://github.com/scikit-image/scikit-image/blob/v0.24.0/skimage/data/_fetchers.py). The generated filter coefficients may be reused with this app, including redistribution of the trained weights.
 
-## ภาพรวม
-
-โมเดล SR1 สำหรับเพิ่มรายละเอียด luminance ของภาพบนเครื่อง ใช้ชุด ridge-regression filters และ inference ใน Java แยกจากโค้ด UI ของแอปกล้อง
-
-<a id="start"></a>
-
-## ฝึกและตรวจโมเดล
-
-รันจาก root ของ LumaCamera หลังติดตั้ง NumPy และ Pillow
-
-```sh
-OPENBLAS_NUM_THREADS=1 python3 model/train.py
-sha256sum -c model/SHA256SUMS
-./gradlew :app:testDebugUnitTest
-```
-
-โมเดลที่ใช้ในแอปมี weights และ checksum อยู่ใน repo ผลจากภาพทดสอบไม่ใช่การรับรองคุณภาพบนอุปกรณ์ทุกเครื่อง
-
-<a id="structure"></a>
-
-## ไฟล์สำคัญ
-
-| ตำแหน่ง | หน้าที่ |
-|---|---|
-| [train.py](train.py) | ไฟล์ต้นฉบับ / การตั้งค่า |
-
-<a id="reading"></a>
-
-## อ่านต่อ
-
-- [รายละเอียด implementation](docs/IMPLEMENTATION_GUIDE.md)
-- [กลับ README หลัก](../README.md)
-
-
----
-
-<p align="center"><a href="https://github.com/BunnyBubui">BunnyBubui</a> · <a href="https://github.com/BunnyBubui/test">Software Portfolio</a></p>
+The full-image, grayscale 2× bicubic degradation test measured 29.89 → 30.64 dB on camera and 31.05 → 31.59 dB on rocket in the reference evaluation. It tests a controlled resize. Real-world ColorOS processing, Thai lettering, noise, and moving subjects require device evaluation.

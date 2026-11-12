@@ -31,10 +31,10 @@ class CameraFlowTest {
     @org.junit.Before fun resetStudioMode(){
         context.getSharedPreferences("camera",Context.MODE_PRIVATE).edit().putString("photo_mode","PHOTO").putString("timer","0").putString("aspect","4:3").putBoolean("watermark",false).putBoolean("gps",false).putBoolean("night_toggle",false).putBoolean("gallery_device",false).putBoolean("panel_hint_seen",true).commit()
     }
-    @Test fun multiFrameAiCapturesFourRealImages() = multiFrameFlow(4)
-    @Test fun multiFrameAiCapturesThirtyTwoRealImages() = multiFrameFlow(32)
+    @org.junit.Ignore("AI mode removed from the UI in round 5") @Test fun multiFrameAiCapturesFourRealImages() = multiFrameFlow(4)
+    @org.junit.Ignore("AI mode removed from the UI in round 5") @Test fun multiFrameAiCapturesThirtyTwoRealImages() = multiFrameFlow(32)
 
-    @Test fun rawAndAiCapturesDngAndFourFrames() {
+    @org.junit.Ignore("AI mode removed from the UI in round 5") @Test fun rawAndAiCapturesDngAndFourFrames() {
         val provider = androidx.camera.lifecycle.ProcessCameraProvider.getInstance(context).get()
         val info = androidx.camera.core.CameraSelector.DEFAULT_BACK_CAMERA.filter(provider.availableCameraInfos).first()
         org.junit.Assume.assumeTrue(androidx.camera.core.ImageCapture.getImageCaptureCapabilities(info).supportedOutputFormats
@@ -86,10 +86,10 @@ class CameraFlowTest {
                 until(25000) { device.findObject(By.desc("ถ่ายภาพ"))?.isEnabled == true }
                 device.findObject(By.desc("ถ่ายภาพ")).click()
                 var shot: Shot? = null
-                until(60000) {
-                    shot = context.luma.shots.latest()
-                    shot != null && shot!!.id !in before && shot!!.output == CaptureOutput.RAW && shot!!.stage == Stage.ORIGINAL
-                }
+                val end = SystemClock.elapsedRealtime() + 60000
+                fun done(): Boolean { shot = context.luma.shots.latest(); return shot != null && shot!!.id !in before && shot!!.output == CaptureOutput.RAW && shot!!.stage == Stage.ORIGINAL }
+                while (SystemClock.elapsedRealtime() < end && !done()) SystemClock.sleep(250)
+                assertTrue("No RAW shot · output pref=${context.getSharedPreferences("camera", Context.MODE_PRIVATE).getString("output", "")} latest=${shot?.let { "${it.output}/${it.stage}/${it.id in before}" }} · ${GlassNav.dump(device)}", done())
                 assertNotNull(shot!!.raw)
                 context.contentResolver.openInputStream(shot!!.raw!!)!!.use { stream ->
                     val header = ByteArray(4)
@@ -107,7 +107,7 @@ class CameraFlowTest {
         }
     }
 
-    @Test fun cropCapturePublishesOriginalAndOneAiCopy() {
+    @org.junit.Ignore("AI mode removed from the UI in round 5") @Test fun cropCapturePublishesOriginalAndOneAiCopy() {
         val before=context.luma.shots.all().map{it.id}.toSet()
         context.getSharedPreferences("camera",Context.MODE_PRIVATE).edit().putString("output","JPEG").putBoolean("auto",true).putBoolean("software",false).commit()
         ActivityScenario.launch(CameraActivity::class.java).use {

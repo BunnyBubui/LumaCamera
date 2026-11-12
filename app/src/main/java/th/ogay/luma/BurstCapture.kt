@@ -28,7 +28,9 @@ class BurstCapture(
     private val rotation: Int,
     private val started: () -> Unit,
     private val progress: (Int, Int) -> Unit,
-    private val finished: (String) -> Unit
+    private val finished: (String) -> Unit,
+    /** Portrait long exposure: frames stay plain so the blur is made once on the merged picture (see EnhanceWorker). */
+    private val portraitF: Float? = null
 ) {
     private val app = context.luma
     private val id = UUID.randomUUID().toString()
@@ -100,7 +102,7 @@ class BurstCapture(
                         // CameraX can emit one final callback or one per format. An early
                         // callback may precede the other file; the final one sees both.
                         if (rawFile.length() == 0L || jpegFile.length() == 0L) return
-                        rawUri = PhotoMedia.publish(context, rawFile, "LUMA_${time}_${id}.dng", time, "image/x-adobe-dng")
+                        rawUri = PhotoMedia.publish(context, rawFile, "Lumora_${time}_${id}.dng", time, "image/x-adobe-dng")
                         accept(jpegFile)
                     } catch (e: Exception) {
                         finish(e.localizedMessage ?: "บันทึก RAW ไม่สำเร็จ")
@@ -161,6 +163,7 @@ class BurstCapture(
             if (softwareCrop && zoom > 1f) {
                 val cropped = File(folder, "cropped.part")
                 PhotoMedia.crop(incoming, zoom, cropped)
+                ExifCarry.copy(incoming, cropped)
                 val degrees = androidx.exifinterface.media.ExifInterface(incoming).rotationDegrees
                 PhotoMedia.tag(cropped, degrees)
                 check(cropped.renameTo(complete)) { "บันทึกเฟรมครอปไม่ได้" }
@@ -171,12 +174,17 @@ class BurstCapture(
             val date = SimpleDateFormat("yyyy:MM:dd HH:mm:ss", Locale.US).format(Date(time))
             val exif = androidx.exifinterface.media.ExifInterface(complete)
             PhotoMedia.tag(complete, exif.rotationDegrees, date)
-            PhotoEffects.decorate(context, complete, rear)
+            // Watermark, frame shape and film look are drawn on every frame, except in portrait: there the background is
+            // blurred after merging and the watermark must stay sharp, so they are drawn once at the end.
+            if (portraitF == null) PhotoEffects.decorate(context, complete, rear)
             captured++
             if (!inserted) {
-                val size = PhotoMedia.dimensions(complete)
-                val uri = if (output == CaptureOutput.RAW) Uri.fromFile(complete)
-                    else PhotoMedia.publish(context, complete, "LUMA_${time}_${id}.jpg", time)
+                if (portraitF != null) File(folder, PORTRAIT_NOTE).writeText(portraitF.toString())
+                val shown = if (portraitF == null) complete else File(folder, "shown.part").also { complete.copyTo(it, true); PhotoEffects.decorate(context, it, rear) }
+                val size = PhotoMedia.dimensions(shown)
+                val uri = if (output.rawOnly) Uri.fromFile(complete)
+                    else PhotoMedia.publish(context, shown, "Lumora_${time}_${id}.jpg", time)
+                if (shown !== complete) shown.delete()
                 app.shots.insert(Shot(id, time, uri, size, zoom, rear, null,
                     if (softwareCrop) size.pixels else null, if (output.enhance) Decision.MANUAL_AI else Decision.RAW_CAPTURE, Stage.CAPTURING,
                     null, 0, null, softwareCrop, rawUri, output, captured, count))
@@ -211,5 +219,9 @@ class BurstCapture(
             else -> note ?: "บันทึกรูปแล้ว"
         }
         main.post { finished(message) }
+    }
+    companion object {
+        /** File in the burst folder holding the portrait f-number; its presence marks a portrait long exposure. */
+        const val PORTRAIT_NOTE = "portrait.f"
     }
 }

@@ -16,13 +16,13 @@ import androidx.core.view.WindowInsetsCompat
 import java.util.Locale
 import kotlin.math.roundToInt
 
-val BG = 0xff000000.toInt()
-val PANEL = 0xff202023.toInt()
+val BG = 0xff070b16.toInt()
+val PANEL = 0xff18213a.toInt()
 val WHITE = 0xffffffff.toInt()
 val MUTED = 0xffa7a7ad.toInt()
-val LIME = 0xffffd447.toInt()
+val LIME = 0xffff9f45.toInt()
 fun Context.dp(x: Int) = (resources.displayMetrics.density*x).roundToInt()
-fun shape(color: Int, radius: Float = 32f) = GradientDrawable().apply { setColor(color); cornerRadius = radius }
+fun shape(color: Int, radius: Float = 32f) = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(Glass.top(color), Glass.bottom(color))).apply { cornerRadius = radius * 1.2f }
 fun Context.label(value: String, sp: Float, tint: Int = WHITE) = TextView(this).apply {
     text = value; textSize = sp; setTextColor(tint); gravity = Gravity.CENTER_VERTICAL
     includeFontPadding = true
@@ -50,7 +50,9 @@ fun LinearLayout.space(weight: Float = 1f) {
 }
 fun Activity.installRoot(root: View) {
     WindowCompat.setDecorFitsSystemWindows(window,false)
-    root.setBackgroundColor(BG)
+    root.background = Glass.page()
+    preferFastestRefresh()
+    Sounds.init(this)
     ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
         val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
         v.setPadding(bars.left,bars.top,bars.right,bars.bottom)
@@ -117,3 +119,36 @@ fun View.pressFeedback() {
         false
     }
 }
+
+/** Asks for the display's fastest refresh rate at the current resolution (120 Hz on Reno-class screens). */
+fun Activity.preferFastestRefresh() {
+    if (android.os.Build.VERSION.SDK_INT < 23) return
+    val d = (if (android.os.Build.VERSION.SDK_INT >= 30) display else @Suppress("DEPRECATION") windowManager.defaultDisplay) ?: return
+    val now = d.mode
+    val best = d.supportedModes.filter { it.physicalWidth == now.physicalWidth && it.physicalHeight == now.physicalHeight }.maxByOrNull { it.refreshRate } ?: return
+    if (best.modeId != window.attributes.preferredDisplayModeId) window.attributes = window.attributes.apply { preferredDisplayModeId = best.modeId }
+    if (android.os.Build.VERSION.SDK_INT >= 30) runCatching { window.attributes = window.attributes.apply { preferredRefreshRate = best.refreshRate } }
+}
+
+/**
+ * A small copy of what the preview shows, [width] pixels wide. PreviewView.getBitmap() reads the whole frame back
+ * at full size on the main thread (tens of milliseconds); here the TextureView scales on the GPU and only the
+ * small result is read, with the view's own transform applied so it matches the screen.
+ */
+fun androidx.camera.view.PreviewView.smallFrame(width: Int): android.graphics.Bitmap? = runCatching {
+    val tv = (0 until childCount).map { getChildAt(it) }.firstOrNull { it is android.view.TextureView } as? android.view.TextureView
+    if (tv == null || !tv.isAvailable || tv.width <= 0 || tv.height <= 0 || this.width <= 0 || this.height <= 0) {
+        return@runCatching bitmap?.let { f -> android.graphics.Bitmap.createScaledBitmap(f, width, (width.toFloat() * f.height / f.width).toInt().coerceAtLeast(1), true).also { if (it !== f) f.recycle() } }
+    }
+    // CameraX sizes the TextureView to the stream and fills the PreviewView with the view's own scale/translation,
+    // plus a buffer correction in setTransform; all three are applied, as on screen.
+    val s = width.toFloat() / this.width
+    val src = tv.getBitmap((tv.width * s).toInt().coerceAtLeast(1), (tv.height * s).toInt().coerceAtLeast(1)) ?: return@runCatching null
+    val m = android.graphics.Matrix().apply {
+        setScale(tv.width.toFloat() / src.width, tv.height.toFloat() / src.height)
+        postConcat(tv.getTransform(null)); postConcat(tv.matrix); postTranslate(tv.left.toFloat(), tv.top.toFloat()); postScale(s, s)
+    }
+    val out = android.graphics.Bitmap.createBitmap(width, (this.height * s).toInt().coerceAtLeast(1), android.graphics.Bitmap.Config.ARGB_8888)
+    android.graphics.Canvas(out).drawBitmap(src, m, android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG))
+    src.recycle(); out
+}.getOrNull()

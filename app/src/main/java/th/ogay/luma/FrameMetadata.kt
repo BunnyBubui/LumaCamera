@@ -16,6 +16,7 @@ class FrameMetadata(private val singlePhysical: Boolean) : CameraCaptureSession.
     private val lock = ReentrantLock()
     private val arrival = lock.newCondition()
     override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
+        CameraState.update(result)
         val ts = result.get(CaptureResult.SENSOR_TIMESTAMP) ?: return
         val lens = if (Build.VERSION.SDK_INT >= 29) result.get(CaptureResult.LOGICAL_MULTI_CAMERA_ACTIVE_PHYSICAL_ID) else null
         val ratio = if (Build.VERSION.SDK_INT >= 30) result.get(CaptureResult.CONTROL_ZOOM_RATIO) else null

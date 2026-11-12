@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.app.AlertDialog
 import android.content.Context
 import android.content.pm.PackageManager
+import android.graphics.Color
 import android.graphics.SurfaceTexture
 import android.hardware.camera2.*
 import android.media.MediaCodecList
@@ -24,7 +25,7 @@ import kotlin.math.*
 @androidx.annotation.OptIn(androidx.camera.camera2.interop.ExperimentalCamera2Interop::class)
 class SpecialVideoActivity:ComponentActivity(){
     private val slow get()=intent.getStringExtra("mode")=="SLOW"
-    private lateinit var texture:TextureView;private lateinit var status:TextView;private lateinit var shutter:Glyph
+    private lateinit var texture:TextureView;private lateinit var status:TextView;private lateinit var shutter:Glyph;private lateinit var config:TextView
     private val manager by lazy{getSystemService(Context.CAMERA_SERVICE) as CameraManager}
     private val thread=HandlerThread("LumaSpecialVideo").apply{start()};private val handler=Handler(thread.looper)
     private var camera:CameraDevice?=null;private var session:CameraCaptureSession?=null;private var recorder:MediaRecorder?=null
@@ -34,15 +35,32 @@ class SpecialVideoActivity:ComponentActivity(){
     private val permissions=registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()){if(it[Manifest.permission.CAMERA]==true)open()else status.text="ต้องอนุญาตกล้องเพื่อใช้โหมดนี้"}
     override fun onCreate(state:Bundle?){super.onCreate(state)
         if(slow){startActivity(android.content.Intent(this,VideoActivity::class.java).putExtra("mode","SLOW"));finish();return}
+        // Same layout as the video screen: full preview, the format pill top-right, a status pill, then the mode strip
+        // and the shutter row, so time-lapse feels like one more video mode rather than a separate page.
         val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL};installRoot(root)
-        val row=LinearLayout(this);row.addView(pill("‹ กลับ"){if(!working&&!recording)finish()},LinearLayout.LayoutParams(0,-2,1f));row.addView(pill("ตัวเลือก",::settings),LinearLayout.LayoutParams(0,-2,1f));root.addView(row,-1,-2)
-        root.addView(label(if(slow)"SLOW MOTION" else "TIME-LAPSE",24f,LIME).apply{gravity=Gravity.CENTER;minHeight=dp(56)},-1,-2)
-        status=label("กำลังตรวจกล้อง…",14f,MUTED).apply{gravity=Gravity.CENTER;minHeight=dp(76)};root.addView(status,-1,-2)
-        texture=TextureView(this);root.addView(texture,LinearLayout.LayoutParams(-1,0,1f))
+        val stage=FrameLayout(this).apply{setBackgroundColor(Color.BLACK);clipChildren=true}
+        root.addView(stage,LinearLayout.LayoutParams(-1,0,1f))
+        texture=TextureView(this);stage.addView(texture,FrameLayout.LayoutParams(-1,-1,Gravity.CENTER))
+        // Keep the 16:9 stream undistorted: the preview is as wide as the screen and as tall as its aspect asks.
+        stage.addOnLayoutChangeListener{_,l,t,r,b,_,_,_,_->val w=r-l;val h=(w.toLong()*size.width/size.height.coerceAtLeast(1)).toInt().coerceAtMost(b-t);(texture.layoutParams as FrameLayout.LayoutParams).let{p->if(p.height!=h){p.height=h;texture.post{texture.layoutParams=p}}}}
         texture.surfaceTextureListener=object:TextureView.SurfaceTextureListener{override fun onSurfaceTextureAvailable(s:SurfaceTexture,w:Int,h:Int){if(visible)open()};override fun onSurfaceTextureSizeChanged(s:SurfaceTexture,w:Int,h:Int){};override fun onSurfaceTextureUpdated(s:SurfaceTexture){};override fun onSurfaceTextureDestroyed(s:SurfaceTexture):Boolean{handler.post{close()};return true}}
-        root.addView(label(if(slow)"บันทึกเงียบ · เล่นที่ 30 fps" else "บันทึกเงียบ · ส่งออก 30 fps",14f,MUTED).apply{gravity=Gravity.CENTER;minHeight=dp(44)},-1,-2)
-        shutter=Glyph(this,"shutter","เริ่มบันทึกโหมดพิเศษ"){if(!working){if(recording)stop()else start()}}.apply{video=true;isEnabled=false}
-        val actions=FrameLayout(this);actions.addView(shutter,FrameLayout.LayoutParams(dp(82),dp(82),Gravity.CENTER));root.addView(actions,-1,dp(110))
+        status=text("กำลังตรวจกล้อง…",13f).apply{gravity=Gravity.CENTER;background=glass(18);setPadding(dp(14),dp(7),dp(14),dp(7));maxLines=4}
+        stage.addView(status,FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply{topMargin=dp(62);leftMargin=dp(16);rightMargin=dp(16)})
+        config=text("ทุก 1 วิ · 30 fps",13f,Color.WHITE,true).apply{gravity=Gravity.CENTER;minHeight=dp(48);background=glass(22);setPadding(dp(14),0,dp(14),0);isClickable=true;contentDescription="ช่วงห่างเฟรม";glassTouch();setOnClickListener{settings()}}
+        stage.addView(config,FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.END).apply{setMargins(0,dp(6),dp(12),0)})
+        stage.addView(text("Time-lapse · ไม่มีเสียง",12.5f,Glass.TEXT2,true).apply{gravity=Gravity.CENTER;minHeight=dp(48);background=glass(22);setPadding(dp(14),0,dp(14),0)},FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.START).apply{setMargins(dp(12),dp(6),0,0)})
+        val dock=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setBackgroundColor(BG)}
+        val strip=CenterStrip(this).apply{contentDescription="แถบโหมด"}
+        ModeBar.fill(this,strip,"TIMELAPSE"){key->if(recording||working){notice("หยุดคลิปก่อนเปลี่ยนโหมด");false}else{ModeBar.go(this,key);true}}
+        dock.clipChildren=false
+        dock.addView(ArrowTab.wrap(this,strip,dp(58)){settings()}.first,-1,-2)
+        shutter=Glyph(this,"shutter","เริ่มบันทึก Time-lapse"){if(!working){if(recording)stop()else start()}}.apply{video=true;isEnabled=false}
+        val actions=FrameLayout(this);actions.addView(shutter,FrameLayout.LayoutParams(dp(82),dp(82),Gravity.CENTER))
+        actions.addView(FrameLayout(this).apply{background=glass(28);contentDescription="แกลเลอรีวิดีโอ Lumora";isClickable=true;glassTouch()
+            addView(IconView(this@SpecialVideoActivity,Icons.LIBRARY),FrameLayout.LayoutParams(dp(24),dp(24),Gravity.CENTER))
+            setOnClickListener{if(!recording&&!working)startActivity(android.content.Intent(this@SpecialVideoActivity,GalleryActivity::class.java).putExtra("tab","luma").putExtra("category","วิดีโอ"))}},FrameLayout.LayoutParams(dp(56),dp(56),Gravity.CENTER_VERTICAL or Gravity.START).apply{leftMargin=dp(36)})
+        dock.addView(actions,-1,dp(104))
+        root.addView(dock,-1,-2)
         cameraId=manager.cameraIdList.firstOrNull{manager.getCameraCharacteristics(it).get(CameraCharacteristics.LENS_FACING)==CameraCharacteristics.LENS_FACING_BACK}?:manager.cameraIdList.firstOrNull().orEmpty()
     }
     override fun onResume(){super.onResume();if(slow)return;visible=true;if(texture.isAvailable)open()}
@@ -51,7 +69,7 @@ class SpecialVideoActivity:ComponentActivity(){
             val choices=manager.cameraIdList.flatMap{id->Capabilities.highSpeed(this,id).map{Triple(id,it.first,it.second)}}.filter{(_,s,f)->MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.any{codec->codec.isEncoder&&codec.supportedTypes.contains("video/avc")&&runCatching{codec.getCapabilitiesForType("video/avc").videoCapabilities?.areSizeAndRateSupported(s.width,s.height,f.toDouble())==true}.getOrDefault(false)}}
             if(choices.isEmpty()){notice("Android ไม่เปิดชุด high-speed ที่ encoder รองรับบนเครื่องนี้");return}
             AlertDialog.Builder(this).setTitle("Slow-motion ที่ Android รายงาน").setItems(choices.map{"กล้อง ${it.first} · ${it.second} · ${it.third} fps"}.toTypedArray()){_,i->val x=choices[i];cameraId=x.first;size=x.second;fps=x.third;open()}.show()
-        }else AlertDialog.Builder(this).setTitle("ช่วงห่างเฟรม").setItems(arrayOf("0.5 วินาที","1 วินาที","2 วินาที","5 วินาที","10 วินาที")){_,i->interval=listOf(.5,1.0,2.0,5.0,10.0)[i];status.text="ทุก $interval วินาที · 30 เฟรมต่อ 1 วินาทีของคลิป"}.show()
+        }else AlertDialog.Builder(this).setTitle("ช่วงห่างเฟรม").setItems(arrayOf("0.5 วินาที","1 วินาที","2 วินาที","5 วินาที","10 วินาที")){_,i->interval=listOf(.5,1.0,2.0,5.0,10.0)[i];status.text="ทุก $interval วินาที · 30 เฟรมต่อ 1 วินาทีของคลิป";config.text="ทุก ${if(interval%1.0==0.0)interval.toInt().toString() else interval.toString()} วิ · 30 fps"}.show()
     }
     @SuppressLint("MissingPermission")
     private fun open(){
@@ -94,9 +112,9 @@ class SpecialVideoActivity:ComponentActivity(){
         recording=false;recorder?.release();recorder=null;session?.close();session=null
         if(output!=null&&success&&output.length()>0)luma.fileIo.execute{runCatching{val uri=MediaLedger.publishVideo(this,output,output.name,"${if(slow)"Slow-motion $fps → 30 fps" else "Time-lapse ทุก $interval วินาที"} · เวลาถ่าย ${wall/1000}s");ClipInspector.record(this,uri,output.name);output.delete()}.onSuccess{runOnUiThread{status.text="บันทึกคลิปแล้ว"}}.onFailure{runOnUiThread{status.text="ไฟล์ยังอยู่ในแอป · ${it.localizedMessage}"};MediaLedger.rememberFile(this,output,"video/mp4")}}
         else{output?.delete();runOnUiThread{status.text="คลิปสั้นเกินไปหรือ recorder ไม่ส่งไฟล์ที่สมบูรณ์"}}
-        runOnUiThread{working=false;shutter.recording=false;requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED};if(visible)preview()else close()
+        runOnUiThread{working=false;shutter.recording=false;requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT};if(visible)preview()else close()
     }}
-    private fun showError(message:String){runOnUiThread{working=false;requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;shutter.recording=false;shutter.isEnabled=false;status.text=message}}
+    private fun showError(message:String){runOnUiThread{working=false;requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;shutter.recording=false;shutter.isEnabled=false;status.text=message}}
     private fun close(){session?.close();session=null;camera?.close();camera=null;runCatching{recorder?.reset()};recorder?.release();recorder=null;previewSurface?.release();previewSurface=null}
     override fun onPause(){visible=false;if(recording&&!working)stop()else handler.post{close()};super.onPause()}
     override fun onDestroy(){handler.post{close();thread.quitSafely()};super.onDestroy()}

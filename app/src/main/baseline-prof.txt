@@ -1,0 +1,7 @@
+# Startup, camera, gallery and AI paths of Lumora, plus the CameraX and media code they call on first use.
+HSPLth/ogay/luma/**->**(**)**
+Lth/ogay/luma/**;
+HSPLandroidx/camera/**->**(**)**
+Landroidx/camera/**;
+HSPLandroidx/lifecycle/**->**(**)**
+HSPLandroidx/core/**->**(**)**

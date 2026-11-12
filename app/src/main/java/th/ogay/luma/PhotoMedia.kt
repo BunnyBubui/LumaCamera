@@ -19,7 +19,7 @@ import java.io.IOException
 import kotlin.math.roundToInt
 
 object PhotoMedia {
-    private fun folder(context:Context) = "Pictures/${context.getSharedPreferences("camera",0).getString("folder","Luma")}/"
+    private fun folder(context:Context) = "Pictures/${context.getSharedPreferences("camera",0).getString("folder","Lumora")}/"
     private val collection get() = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
 
     fun dimensions(file: File): Dimensions {
@@ -44,12 +44,13 @@ object PhotoMedia {
     fun published(context: Context, name: String): Uri? = lookup(context, name)?.takeUnless { it.pending }?.uri
 
     @Suppress("DEPRECATION")
-    private fun legacyFile(context:Context,name: String) = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "${context.getSharedPreferences("camera",0).getString("folder","Luma")}/$name")
+    private fun legacyFile(context:Context,name: String) = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "${context.getSharedPreferences("camera",0).getString("folder","Lumora")}/$name")
 
     fun publish(context: Context, file: File, name: String, taken: Long, mime: String = "image/jpeg"): Uri {
         val resolver = context.contentResolver
         val existing = lookup(context, name)
         if (existing != null && !existing.pending) return existing.uri
+        if (mime == "image/jpeg") brand(file)
         val values = ContentValues().apply {
             put(MediaStore.Images.Media.DISPLAY_NAME, name)
             put(MediaStore.Images.Media.MIME_TYPE, mime)
@@ -85,6 +86,16 @@ object PhotoMedia {
         return resolver.insert(collection, values) ?: throw IOException("เพิ่มรูปในแกลเลอรีไม่ได้")
     }
 
+    /** Every saved photo names the camera as Lumora Camera (the phone stays in Make and in the lens model). */
+    fun brand(file: File) = runCatching {
+        ExifInterface(file).apply {
+            if (getAttribute(ExifInterface.TAG_MAKE).isNullOrBlank()) setAttribute(ExifInterface.TAG_MAKE, android.os.Build.MANUFACTURER)
+            setAttribute(ExifInterface.TAG_MODEL, ExifCarry.MODEL)
+            if (getAttribute(ExifInterface.TAG_SOFTWARE).isNullOrBlank()) setAttribute(ExifInterface.TAG_SOFTWARE, "Lumora Camera")
+            saveAttributes()
+        }
+    }
+
     fun tag(file: File, degrees: Int, originalTime: String? = null, ai: Boolean = false, version: String = MODEL_VERSION) {
         ExifInterface(file).apply {
             val orientation = when ((degrees + 360) % 360) {
@@ -95,7 +106,7 @@ object PhotoMedia {
             }
             setAttribute(ExifInterface.TAG_ORIENTATION, orientation.toString())
             if (originalTime != null) setAttribute(ExifInterface.TAG_DATETIME_ORIGINAL, originalTime)
-            if (ai) setAttribute(ExifInterface.TAG_SOFTWARE, "Luma Camera • AI $version")
+            if (ai) setAttribute(ExifInterface.TAG_SOFTWARE, "Lumora • AI $version")
             saveAttributes()
         }
     }

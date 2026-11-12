@@ -147,6 +147,7 @@ class StudioAccessibilityTest {
             report += screen<VideoActivity>("Video", Intent(context, VideoActivity::class.java), font, landscape = true)
             report += screen<VideoActivity>("SlowMotion", Intent(context, VideoActivity::class.java).putExtra("mode", "SLOW"), font)
             report += screen<SpecialVideoActivity>("TimeLapse", Intent(context, SpecialVideoActivity::class.java).putExtra("mode", "TIMELAPSE"), font)
+            report += screen<CameraProbeActivity>("CameraProbe", Intent(context, CameraProbeActivity::class.java), font)
             report += screen<RawLabActivity>("RawLab", Intent(context, RawLabActivity::class.java), font)
             report += screen<DocumentActivity>("Document", documentIntent(), font)
             report += screen<ClipEditorActivity>("ClipEditor", Intent(context, ClipEditorActivity::class.java), font)
@@ -176,14 +177,24 @@ class StudioAccessibilityTest {
             }
             if (!opened) { out += "MoreSheet | font 2.0 | portrait | missing | no \"ตัวเลือกกล้อง\" handle"; return out }
             SystemClock.sleep(1500)
-            val reached = runCatching { UiScrollable(UiSelector().className("android.widget.ScrollView").scrollable(true)).scrollTextIntoView("ตั้งค่าทั้งหมด") }.getOrDefault(false) ||
-                device.hasObject(By.text("ตั้งค่าทั้งหมด"))
+            // Swipe upward only: a downward drag at the top of the sheet now pulls the sheet closed, as intended.
+            var reached = device.hasObject(By.text("ตั้งค่าทั้งหมด"))
+            var tries = 0
+            while (!reached && tries++ < 10) {
+                val w = device.displayWidth; val h = device.displayHeight
+                device.swipe(w / 2, (h * 0.8f).toInt(), w / 2, (h * 0.35f).toInt(), 20)
+                SystemClock.sleep(300)
+                reached = device.hasObject(By.text("ตั้งค่าทั้งหมด"))
+            }
             out += "MoreSheet | font 2.0 | portrait | ${if (reached) "reachable" else "unreachable"} | last action \"ตั้งค่าทั้งหมด\""
             // Items cut by the sheet's scroll edge report only their visible part, so they are skipped.
             val viewport = device.findObject(By.clazz("android.widget.ScrollView").scrollable(true))?.visibleBounds
+            // Horizontal scrollers inside the panel (style strip) cut their edge items the same way.
+            val strips = device.findObjects(By.clazz("android.widget.HorizontalScrollView")).map { it.visibleBounds }
             device.findObjects(By.clickable(true)).forEach { o ->
                 val b = o.visibleBounds
-                val clipped = viewport != null && (b.top <= viewport.top + 1 || b.bottom >= viewport.bottom - 1)
+                val clipped = viewport != null && (b.top <= viewport.top + 1 || b.bottom >= viewport.bottom - 1) ||
+                    strips.any { r -> Rect.intersects(r, b) && (b.left <= r.left + 1 || b.right >= r.right - 1) }
                 if (!clipped && (b.width() < 48 * density - 1 || b.height() < 48 * density - 1)) {
                     out += "MoreSheet | font 2.0 | portrait | small-target | \"${o.contentDescription ?: o.text}\" | %.0fx%.0f dp".format(b.width() / density, b.height() / density)
                 }

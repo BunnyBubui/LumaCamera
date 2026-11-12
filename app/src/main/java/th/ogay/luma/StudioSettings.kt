@@ -20,12 +20,17 @@ import android.widget.*
 fun Activity.showStudioSettings(rawAvailable: Boolean, changed: () -> Unit) {
     val prefs = getSharedPreferences("camera", 0)
     val dialog = Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
-    val host = FrameLayout(this).apply { setBackgroundColor(BG) }
-    val menu = GlassMenu(host)
+    val host = FrameLayout(this).apply { background = Glass.page() }
     val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+    val menu = GlassMenu(host) { on -> Glass.blur(column, if (on) 12f else 0f) }
     host.addView(column, -1, -1)
 
-    val top = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), dp(10), dp(16), dp(6)) }
+    // The dialog is full screen, so the header clears the status bar and cutout itself, with room to breathe.
+    val top = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), dp(36), dp(16), dp(10)) }
+    androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(top) { v, insets ->
+        val bars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars() or androidx.core.view.WindowInsetsCompat.Type.displayCutout())
+        v.setPadding(dp(16), maxOf(bars.top, dp(24)) + dp(16), dp(16), dp(10)); insets
+    }
     val back = FrameLayout(this).apply {
         background = glass(22); contentDescription = "กลับไปที่กล้อง"; isClickable = true; glassTouch()
         addView(IconView(this@showStudioSettings, Icons.CHEVRON_LEFT, 2.2f), FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER))
@@ -88,13 +93,13 @@ fun Activity.showStudioSettings(rawAvailable: Boolean, changed: () -> Unit) {
         sw.layoutParams = LinearLayout.LayoutParams(dp(51), dp(31))
         r.alpha = if (forced) 0.55f else 1f
     }
-    fun choose(title: String, icon: String, key: String, labels: List<String>, values: List<String>, default: String, notes: List<String> = emptyList()) {
+    fun choose(title: String, icon: String, key: String, labels: List<String>, values: List<String>, default: String, notes: List<String> = emptyList(), icons: List<String> = emptyList()) {
         val value = text("", 14f, Glass.TEXT2).apply { gravity = Gravity.END or Gravity.CENTER_VERTICAL }
         val end = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; addView(value, -2, -2); addView(IconView(this@showStudioSettings, Icons.UPDOWN, 2f).apply { tint = Glass.TEXT3 }, dp(18), dp(18)) }
         fun current() = values.indexOf(prefs.getString(key, default)).coerceAtLeast(0)
         value.text = labels[current()]
-        row(title, icon, end = end) { anchor ->
-            menu.show(anchor, title, labels.mapIndexed { i, l -> GlassMenu.Option(l, "", notes.getOrElse(i) { "" }) }, current()) { i ->
+        row(title, icon, end = end) {}.pressMenu(menu) { anchor ->
+            menu.show(anchor, title, labels.mapIndexed { i, l -> GlassMenu.Option(l, icons.getOrElse(i) { Icons.forLabel(l, icon) }, notes.getOrElse(i) { "" }) }, current()) { i ->
                 prefs.edit().putString(key, values[i]).apply(); value.text = labels[i]; changed()
             }
         }
@@ -110,32 +115,71 @@ fun Activity.showStudioSettings(rawAvailable: Boolean, changed: () -> Unit) {
     }
 
     section("ภาพถ่าย")
-    choose("สัดส่วนภาพ", Icons.FRAME, "aspect", listOf("4:3", "1:1", "16:9"), listOf("4:3", "1:1", "16:9"), "4:3", listOf("เต็มเซนเซอร์", "จัตุรัส", "จอกว้าง"))
-    choose("ตั้งเวลาถ่าย", Icons.TIMER, "timer", listOf("ปิด", "3 วินาที", "10 วินาที"), listOf("0", "3", "10"), "0")
+    choose("สัดส่วนภาพ", Icons.FRAME, "aspect", Aspects.available(prefs), Aspects.available(prefs), "4:3", Aspects.available(prefs).map { Aspects.note(it) }, Aspects.available(prefs).map { aspectIconPath(it) })
+    choose("ตั้งเวลาถ่าย", Icons.TIMER, "timer", SelfTimer.STEPS.map { SelfTimer.label(it) }, SelfTimer.STEPS.map { it.toString() }, "0")
     choose("คุณภาพ JPEG", Icons.FILE, "jpeg_quality", listOf("ประหยัด 85%", "มาตรฐาน 95%", "สูงสุด 100%"), listOf("85", "95", "100"), "95")
-    row("จำนวนเฟรม AI", Icons.STACK, "${prefs.getInt("frames", 8)} เฟรม · แตะเพื่อตั้งค่าการรวมภาพ") { showCaptureSettings(rawAvailable, changed) }
-    toggle("AI อัตโนมัติใน JPEG", Icons.AI, "auto", true, "เลือกเพิ่มรายละเอียดเมื่อซูมหรือแสงน้อย")
-    toggle("ครอปจากกล้องหลัก 1×", Icons.SEARCH, "software", note = "ซูมด้วยการครอปภาพจากเลนส์หลักแทนการสลับเลนส์ ใช้คู่กับ AI SR1")
+    choose("ครอปจากเลนส์", Icons.SEARCH, "crop_from", listOf("ปิด", "เลนส์หลัก 1×", "เลนส์ 2×", "เลนส์เทเล 3.5×"), listOf("0", "1", "2", "3.5"), if (prefs.getBoolean("software", false)) "1" else "0", listOf("สลับเลนส์ตามระยะซูม", "ซูมด้วยการครอปจากเลนส์หลัก", "ครอปจากระยะ 2×", "ครอปจากระยะ 3.5×"))
+    section("หน้าจอกล้อง")
+    toggle("ปุ่มซูม", Icons.SEARCH, "show_zoom", true)
+    toggle("สแกน QR อัตโนมัติ", Icons.SEARCH, "qr_scan", true, "หันกล้องไปที่ QR ในโหมดภาพถ่าย แล้วแตะเพื่อเปิด")
+    toggle("ปุ่มปรับแต่งภาพ", Icons.FILM, "show_look", true)
+    toggle("ไอคอนสถานะด้านบน", Icons.INFO, "show_status", true)
+    section("ตั้งค่ารายโหมด")
+    toggle("บุคคล: พรีวิวเบลอสด", Icons.PORTRAIT, "portrait_live", true, "เห็นพื้นหลังเบลอก่อนถ่าย ปิดเพื่อประหยัดแบต")
+    choose("HDR: ช่วงแสง", Icons.HDR, "hdr_spread", listOf("แคบ ±1 EV", "มาตรฐาน ±2 EV", "กว้าง ±3 EV"), listOf("1", "2", "3"), "2", listOf("ฉากแสงต่างกันน้อย", "ใช้ได้ทั่วไป", "ย้อนแสงจัด"))
+    toggle("HDR แบบ native EF2 (ทดลอง)", Icons.HDR, HdrCapture.NATIVE_KEY, note = "รวมภาพ HDR ด้วย OpenCV เพื่อเทียบกับ EF1 ยังไม่มีระบบกันเงาซ้อน")
+    toggle("ความละเอียดสูง: ขยายด้วย AI", Icons.AI, "hires_ai", true, "เครื่องไม่เปิดเซนเซอร์ 50 MP ให้แอปอื่น โหมดนี้ถ่ายขนาดสูงสุดที่เปิดให้แล้วขยาย ×2 ด้วย AI ในเครื่อง ปิดไว้ถ้าอยากได้เฉพาะต้นฉบับ")
+    choose("ถ่ายเร็ว: เริ่มต้นที่", Icons.FLASH, "quick_kind", listOf("แฟลชเร็ว", "แฟลชเร็วพิเศษ", "ถ่ายเร็ว (กีฬา)"), listOf("FLASH_NIGHT", "FLASH_FAST", "SPORT"), "FLASH_NIGHT", listOf("แฟลชเปิดทุกภาพ", "ไฟฉายค้างไว้ ถ่ายต่อได้ไว", "ชัตเตอร์สั้น ไม่ใช้แฟลช"), listOf(Icons.FLASH, Icons.FLASH, Icons.MOTION))
+    choose("ภาพถ่าย: เฟรมเรตบนจอ", Icons.FILM, "fps_lock", listOf("ตามระบบ", "ล็อก 24 fps", "ล็อก 30 fps", "ล็อก 60 fps"), listOf("off", "24", "30", "60"), "off", listOf("ระบบลดเฟรมเองในที่มืด", "จอไม่ต่ำกว่า 24", "จอคงที่ 30", "ลื่นสุด ถ้ากล้องรองรับ"))
+    toggle("ภาพถ่าย: ชัตเตอร์ตามแสงตอนกดถ่าย", Icons.TIMER, "fps_free_shot", true, "เฟรมเรตที่ล็อกใช้กับจอเท่านั้น ตอนกดถ่ายกล้องเลือกความเร็วชัตเตอร์เองตามแสง ภาพจึงไม่มืดหรือเสียรายละเอียด")
+    choose("วิดีโอ: เฟรมเรต", Icons.FPS, "video_fps_s", listOf("24 fps", "30 fps", "60 fps"), listOf("24", "30", "60"), "30", listOf("แบบภาพยนตร์", "มาตรฐาน", "ลื่น · ใช้เลนส์ 1× ขึ้นไป"))
+    toggle("วิดีโอ: พรีวิวลื่นพิเศษ", Icons.MOTION, "video_fast_preview", true, "ส่งภาพตรงไปที่จอ ลื่นและหน่วงน้อยกว่า ปิดถ้าพื้นหลังเบลอหลังแผงตั้งค่าดูแปลก")
+    toggle("ลดแถบดำจากแสงไฟ", Icons.FLASH, "anti_flicker", true, "ใต้หลอดไฟที่กะพริบ โหมดถ่ายเร็วจะไม่ใช้ชัตเตอร์สั้นกว่า 1/100 วินาที")
+    toggle("RAW: บันทึก JPEG คู่", Icons.FILE, "raw_jpeg", true, "ปิดเพื่อเก็บเฉพาะไฟล์ DNG")
+    toggle("วิดีโอ: บันทึกเสียง", Icons.MIC, "video_mic", true)
+    toggle("วิดีโอ: กันสั่น", Icons.STAB, "video_eis", false)
+    toggle("วิดีโอ: ซูมเกิน 20×", Icons.SEARCH, "video_superzoom", false, "ครอปภาพด้วย GPU ระหว่างอัด ซูมได้ถึง 500× ใช้แบตมากขึ้น ใช้กับวิดีโอ SDR")
     section("การควบคุม")
     choose("ปุ่มเสียง", Icons.SOUND, "volume_action", listOf("ถ่ายภาพ", "ซูม", "ปรับเสียงระบบ"), listOf("shutter", "zoom", "system"), "shutter")
     choose("ความเร็วซูม", Icons.SEARCH, "zoom_speed", listOf("ช้า", "ปกติ", "เร็ว"), listOf("slow", "normal", "fast"), "normal")
     toggle("แตะภาพสดเพื่อถ่าย", Icons.TAP, "tap_shutter")
+    toggle("ตรวจจับใบหน้า", Icons.PORTRAIT, "face_detect", true, "แสดงกรอบใบหน้าและให้กล้องวัดแสง/โฟกัสที่หน้าคนทุกโหมด")
+    toggle("ใช้โหมดของผู้ผลิต", Icons.GEAR, "oem_extensions", note = "ใช้โหมดบุคคลของระบบมือถือแทนของ Lumora เปิดช้ากว่าและปรับค่า f ไม่ได้ (โหมดกลางคืนใช้ของระบบอยู่แล้ว)")
     section("ช่วยจัดองค์ประกอบ")
     toggle("เส้นกริด", Icons.GRID, "grid"); toggle("ระดับน้ำ", Icons.LEVEL, "level")
     toggle("Histogram", Icons.HISTO, "histogram"); toggle("Focus peaking", Icons.PEAK, "peaking"); toggle("Zebra", Icons.ZEBRA, "zebra")
     section("เสียงและการสัมผัส")
+    toggle("เสียงทั้งหมด", Icons.SOUND, "sound_all", true, "ปิดเพื่อเงียบทุกเสียงของแอปในครั้งเดียว")
+    run {
+        // Level slider in the same glass style as the camera's adjusters; a soft click previews the level.
+        val value = text("${prefs.getInt("sound_level", 7).coerceIn(0, 10)}", 14f, Glass.TEXT2).apply { gravity = Gravity.END or Gravity.CENTER_VERTICAL; minWidth = dp(28) }
+        row("ระดับเสียง", Icons.SOUND, "ใช้กับเสียงปุ่ม ชัตเตอร์ และเสียงเลื่อน", value)
+        val slider = GlassSlider(this).apply {
+            values = (0..10).map { "$it" }; index = prefs.getInt("sound_level", 7).coerceIn(0, 10); grad = intArrayOf(0xff4b5563.toInt(), Color.WHITE, Glass.ACCENT); contentDescription = "ระดับเสียง"
+            onChange = { i -> value.text = "$i"; prefs.edit().putInt("sound_level", i).apply(); Sounds.play(context, Sounds.Kind.TAP) }
+        }
+        group.addView(slider, LinearLayout.LayoutParams(-1, dp(52)).apply { leftMargin = dp(18); rightMargin = dp(18); bottomMargin = dp(6) })
+    }
     toggle("เสียงชัตเตอร์", Icons.SOUND, "sound", true); toggle("เสียงเริ่มและจบวิดีโอ", Icons.VIDEO, "video_sound", true)
-    toggle("เสียงนับถอยหลัง", Icons.TIMER, "countdown_sound", true); toggle("เสียงโฟกัส", Icons.TAP, "focus_sound")
+    toggle("เสียงนับถอยหลัง", Icons.TIMER, "countdown_sound", true); toggle("เสียงโฟกัส", Icons.TAP, "focus_sound"); toggle("เสียงปุ่ม", Icons.SOUND, "click_sound", true, "เสียงคลิกเบา ๆ เมื่อแตะปุ่มและสวิตช์")
     toggle("สั่นเมื่อแตะ", Icons.HAPTIC, "haptic", true); toggle("ลดการเคลื่อนไหว", Icons.MOTION, "reduce_motion", note = "ปิดแอนิเมชันเด้งและเบลอ")
     section("เซลฟี่")
     toggle("กลับภาพเซลฟี่ซ้ายขวา", Icons.MIRROR, "mirror_selfie"); toggle("เติมแสงหน้าจอ", Icons.FLASH, "screen_flash")
     section("ไฟล์และตำแหน่ง")
-    toggle("ลายน้ำชื่อและวันที่", Icons.MARK, "watermark")
-    field("ชื่อลายน้ำ", Icons.MARK, "watermark_name", "Luma") { it.take(60) }
-    field("โฟลเดอร์ใน Pictures", Icons.FOLDER, "folder", "Luma") { it.replace(Regex("[^\\p{L}\\p{N} _-]"), "").take(40).ifBlank { "Luma" } }
+    toggle("ลายน้ำ", Icons.MARK, "watermark", true, "ใส่ลายน้ำบนภาพถ่ายทุกภาพ")
+    toggle("ลายน้ำ: โลโก้ Lumora", Icons.MARK, "watermark_logo", true)
+    toggle("ลายน้ำ: วันที่และเวลา", Icons.TIMER, "watermark_time", true)
+    toggle("ลายน้ำ: ข้อมูลกล้อง", Icons.SHOT, "watermark_camera", false, "ระยะเลนส์ รูรับแสง ชัตเตอร์ ISO กลางภาพ สำหรับมืออาชีพ")
+    choose("ลายน้ำ: ตำแหน่งโลโก้", Icons.FRAME, "watermark_corner", listOf("ซ้ายล่าง", "ขวาล่าง", "ซ้ายบน", "ขวาบน"), listOf("BL", "BR", "TL", "TR"), "BL",
+        listOf("วันที่อยู่ขวาล่าง", "วันที่อยู่ซ้ายล่าง", "วันที่อยู่ขวาบน", "วันที่อยู่ซ้ายบน"),
+        listOf("FRAME M6.5 16.5h5", "FRAME M12.5 16.5h5", "FRAME M6.5 7.5h5", "FRAME M12.5 7.5h5").map { it.replace("FRAME", "M3.5 4.5h17v15h-17z") })
+    field("โฟลเดอร์ใน Pictures", Icons.FOLDER, "folder", "Lumora") { it.replace(Regex("[^\\p{L}\\p{N} _-]"), "").take(40).ifBlank { "Lumora" } }
     toggle("บันทึก GPS", Icons.PIN, "gps", note = "ใช้ตำแหน่งล่าสุดของระบบ เมื่อได้รับสิทธิ์เท่านั้น")
     section("เกี่ยวกับ")
-    row("ความสามารถกล้อง", Icons.INFO, "ดูและส่งออกรายงานของเครื่องนี้") { Capabilities.show(this) }
+    row("คืนค่าเริ่มต้นของโหมดถ่าย", Icons.RESET, "สัดส่วน ฟิลเตอร์ ตั้งเวลา ครอปเลนส์ ค่า f และรูปแบบไฟล์ของทุกโหมด") {
+        AlertDialog.Builder(this).setTitle("คืนค่าเริ่มต้นของทุกโหมด?").setMessage("เฉพาะค่าที่ปรับในโหมดถ่าย ส่วนค่าอื่นไม่เปลี่ยน")
+            .setPositiveButton("คืนค่า") { _, _ -> prefs.edit().remove("aspect").remove("timer").remove("crop_from").remove("software").remove("output").remove("look").remove("look_kind").remove("film").remove("look_bright").remove("look_warm").remove("portrait_f").remove("night_frames").remove("night_toggle").remove("video_aspect").remove("video_fps").remove("video_res").apply(); changed(); dialog.dismiss() }.setNegativeButton("ยกเลิก", null).show()
+    }
     row("คืนค่าการตั้งค่า", Icons.RESET, "รูปและวิดีโอที่บันทึกไว้ยังอยู่") {
         AlertDialog.Builder(this).setTitle("คืนค่าการตั้งค่า?").setMessage("รูปและวิดีโอที่บันทึกไว้ยังอยู่")
             .setPositiveButton("คืนค่า") { _, _ -> prefs.edit().clear().apply(); changed(); dialog.dismiss() }.setNegativeButton("ยกเลิก", null).show()

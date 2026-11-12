@@ -21,6 +21,7 @@ class VideoDiagnostics : CameraCaptureSession.CaptureCallback() {
     @Synchronized fun reset() { active = false; first = 0; last = 0; frames = 0; duration = 0; intervals = 0; segmentLast = 0 }
     @Synchronized fun active(value: Boolean) { active = value; segmentLast = 0 }
     @Synchronized override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
+        CameraState.update(result)
         if (!active) return
         val time = result.get(CaptureResult.SENSOR_TIMESTAMP) ?: return
         if (last != 0L && time <= last) return

@@ -16,7 +16,7 @@ import java.nio.ByteOrder
 @UnstableApi
 class LumaVideoEffect(private val sr:Boolean):GlEffect {
     override fun toGlShaderProgram(context:Context,useHdr:Boolean):GlShaderProgram {
-        if(useHdr)throw VideoFrameProcessingException("SR1 / Luma Log รองรับ SDR เท่านั้น")
+        if(useHdr)throw VideoFrameProcessingException("SR1 / Lumora Log รองรับ SDR เท่านั้น")
         return Shader(context,sr)
     }
     private class Shader(context:Context,private val sr:Boolean):BaseGlShaderProgram(false,1){
