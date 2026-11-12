@@ -56,6 +56,9 @@ internal object DetailTextGuard {
                 return done(emptyList(), "detector-unavailable:${e.javaClass.simpleName}")
             } catch (e: LinkageError) {
                 return done(emptyList(), "detector-linkage-error")
+            } catch (_: OutOfMemoryError) {
+                // OCR must not prevent a valid photo from using the Natural fallback.
+                return done(emptyList(), "detector-memory-unavailable")
             } finally { engine.close() }
             if (cancelled()) throw CancellationException()
             val sx = source.w.toFloat() / decoded.width
