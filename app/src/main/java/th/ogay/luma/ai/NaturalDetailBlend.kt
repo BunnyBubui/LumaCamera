@@ -47,7 +47,7 @@ internal object NaturalDetailBlend {
 
         // An equal RGB adjustment preserves the source chroma difference instead
         // of inventing colour in foliage, clothes or faces.
-        return 0xff000000.toInt() or (toByte(baseR + correction) shl 16) or
-            (toByte(baseG + correction) shl 8) or toByte(baseB + correction)
+        return 0xff000000.toInt() or (toByte(baseR + chromaSafeCorrection) shl 16) or
+            (toByte(baseG + chromaSafeCorrection) shl 8) or toByte(baseB + chromaSafeCorrection)
     }
 }
