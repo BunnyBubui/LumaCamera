@@ -13,6 +13,7 @@ import androidx.work.*
 import org.json.JSONObject
 import th.ogay.luma.ai.DetailSuperResolution
 import th.ogay.luma.ai.EnhanceSpec
+import th.ogay.luma.ai.EnhanceProfile
 import java.io.File
 import java.io.IOException
 import java.util.concurrent.CancellationException
@@ -54,9 +55,11 @@ class EnhanceWorker(context: Context, params: WorkerParameters) : Worker(context
                     SuperResolution(context).process(input,temp) { stopped() }
                     scaledSize(input.size,TARGET_PIXELS)
                 }
-                EnhanceSpec.MODEL -> {
+                EnhanceSpec.MODEL, EnhanceSpec.NATURAL_MODEL -> {
                     val result = DetailSuperResolution(context).process(input,temp,
-                        EnhanceSpec(shot.aiScale,shot.aiStrength),{ stopped() }) { percent ->
+                        EnhanceSpec(shot.aiScale,shot.aiStrength,
+                            if (shot.aiModel == EnhanceSpec.NATURAL_MODEL) EnhanceProfile.NATURAL else EnhanceProfile.CLASSIC),
+                            { stopped() }) { percent ->
                         db.aiState(key,shot.aiToken,Stage.RUNNING,percent)
                         val now = SystemClock.elapsedRealtime()
                         if (now-lastNotification > 1000) {
@@ -96,7 +99,9 @@ class EnhanceWorker(context: Context, params: WorkerParameters) : Worker(context
             .createNotificationChannel(NotificationChannel("luma-ai","ประมวลผลภาพ AI",NotificationManager.IMPORTANCE_LOW))
         val notification = NotificationCompat.Builder(context,"luma-ai")
             .setSmallIcon(android.R.drawable.ic_menu_camera).setContentTitle("Luma · เพิ่มรายละเอียดภาพ")
-            .setContentText(if (shot.aiModel == EnhanceSpec.MODEL) "×${shot.aiScale} · $progress%" else "SR1 · $progress%")
+            .setContentText(if (shot.aiModel == EnhanceSpec.MODEL || shot.aiModel == EnhanceSpec.NATURAL_MODEL)
+                    "${if (shot.aiModel == EnhanceSpec.NATURAL_MODEL) "Natural" else "Classic"} ×${shot.aiScale} · $progress%"
+                else "SR1 · $progress%")
             .setOngoing(true).setOnlyAlertOnce(true).setProgress(100,progress,progress==0)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel,"ยกเลิก",
                 WorkManager.getInstance(context).createCancelPendingIntent(id)).build()
