@@ -188,6 +188,16 @@ class CameraActivity : ComponentActivity() {
     private lateinit var editor: GlassSheet
     private val modeLabels = mutableListOf<Pair<TextView, IconView>>()
     private val turner = IconTurner()
+    /** Home (every feature in one place) answers with a photo mode to switch to, if one was chosen. */
+    private val home = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.StartActivityForResult()) { r ->
+        val m = r.data?.getStringExtra(HomeActivity.RESULT_MODE)?.let { runCatching { PhotoMode.valueOf(it) }.getOrNull() } ?: return@registerForActivityResult
+        if (m != mode && ALL.any { it.key == barKey(m) }) selectMode(m)
+    }
+    private fun openHome() {
+        if (busy || timerRunning) return
+        home.launch(Intent(this, HomeActivity::class.java))
+        @Suppress("DEPRECATION") overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out)
+    }
     /** Contents that turn upright in landscape: round buttons' icons, the gallery thumb, lens pills and mode icons. */
     private fun turnables(): List<View> = listOfNotNull(thumb, flipIcon, macroButton.getChildAt(0), nightButton.getChildAt(0), apertureButton, lookButton.getChildAt(0), lockIcon, dialValue) +
         (0 until statusRow.childCount).map { statusRow.getChildAt(it) } +
@@ -254,6 +264,8 @@ class CameraActivity : ComponentActivity() {
         rear = state?.getBoolean("rear",true) ?: true
         ratio = state?.getFloat("zoom",1f) ?: 1f
         buildScreen()
+        // Opening animation on a fresh start from the launcher; the camera keeps starting underneath it.
+        if (state == null && intent?.action == Intent.ACTION_MAIN && !Glass.reduced(this) && prefs.getBoolean("intro", true)) LumoraIntro.show(host)
         onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
             override fun handleOnBackPressed() { if (!closeTopLayer()) { isEnabled = false; onBackPressedDispatcher.onBackPressed(); isEnabled = true } }
         })
@@ -374,6 +386,9 @@ class CameraActivity : ComponentActivity() {
         lockButton = glassButton(lockIcon, 48, "ล็อกความสว่าง") { toggleAeLock() }.apply { alpha = 0f; visibility = View.GONE }
         stage.addView(lockButton, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.START or Gravity.BOTTOM).apply { leftMargin = dp(8); bottomMargin = dp(140) })
 
+        // Top left: Home, where every part of Lumora can be opened.
+        stage.addView(glassButton(IconView(this, HomeActivity.HOME_ICON, 2f).apply { tag = IconTurner.TAG }, 44, "หน้าหลัก ฟีเจอร์ทั้งหมดของ Lumora") { openHome() },
+            FrameLayout.LayoutParams(dp(44), dp(44), Gravity.TOP or Gravity.START).apply { setMargins(dp(12), dp(8), 0, 0) })
         statusRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL or Gravity.END; contentDescription = "สิ่งที่เปิดอยู่"; minimumWidth = dp(48); isClickable = true; setOnClickListener { openPanel() } }
         stage.addView(statusRow, FrameLayout.LayoutParams(-2, dp(48), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(6), dp(12), 0) })
         banner = text("ล็อก AE/AF", 13f, Glass.ACCENT, true).apply { background = glass(16); setPadding(dp(14), dp(6), dp(14), dp(6)); visibility = View.GONE }

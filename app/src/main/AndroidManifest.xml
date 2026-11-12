@@ -35,6 +35,7 @@
             <meta-data android:name="androidx.work.WorkManagerInitializer" android:value="androidx.startup" tools:node="remove"/>
         </provider>
         <activity android:name=".GalleryActivity" android:exported="false"/>
+        <activity android:name=".HomeActivity" android:exported="false"/>
         <service android:name="androidx.work.impl.foreground.SystemForegroundService"
             android:foregroundServiceType="dataSync" tools:node="merge"/>
         <activity android:name=".VideoPlayerActivity" android:exported="false"/>
