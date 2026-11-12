@@ -18,6 +18,7 @@ import androidx.activity.result.contract.ActivityResultContracts
  * still opens straight into the camera). Photo modes return to the camera in that mode; everything else opens
  * its own screen.
  */
+@androidx.annotation.OptIn(markerClass = [androidx.camera.camera2.interop.ExperimentalCamera2Interop::class])
 class HomeActivity : ComponentActivity() {
     companion object {
         /** Result extra: the photo mode the camera should switch to. */
