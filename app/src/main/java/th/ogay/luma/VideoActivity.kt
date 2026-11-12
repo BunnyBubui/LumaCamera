@@ -49,7 +49,7 @@ class VideoActivity:ComponentActivity(){
     private lateinit var preview:PreviewView;private lateinit var status:TextView;private lateinit var config:TextView
     private lateinit var shutter:ShutterButton;private lateinit var pause:FrameLayout;private lateinit var pauseIcon:IconView
     private lateinit var library:FrameLayout;private lateinit var flip:FrameLayout;private lateinit var stage:FrameLayout
-    private lateinit var zooms:LinearLayout;private lateinit var wheel:ZoomWheel
+    private lateinit var zooms:ZoomCapsule;private lateinit var wheel:ZoomWheel
     private lateinit var tabs:FrameLayout;private lateinit var knob:View;private val tabLabels=mutableListOf<TextView>()
     private lateinit var chipFrame:FrameLayout;private lateinit var chips:CenterStrip;private val chipTexts=mutableListOf<Pair<TextView,TextView>>()
     private lateinit var dial:LinearLayout;private lateinit var dialTitle:TextView;private lateinit var dialValue:TextView;private lateinit var slider:GlassSlider
@@ -65,6 +65,8 @@ class VideoActivity:ComponentActivity(){
         sounds.load(MediaActionSound.START_VIDEO_RECORDING);sounds.load(MediaActionSound.STOP_VIDEO_RECORDING)
         stabilization=prefs.getBoolean("video_eis",false)
         buildScreen()
+        onBackPressedDispatcher.addCallback(this,object:androidx.activity.OnBackPressedCallback(true){override fun handleOnBackPressed(){
+            if(openChip!=null){closeDial();return};isEnabled=false;onBackPressedDispatcher.onBackPressed();isEnabled=true}})
         ProcessCameraProvider.getInstance(this).also{f->f.addListener({runCatching{provider=f.get();if(ContextCompat.checkSelfPermission(this,Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED)bind()else permission.launch(arrayOf(Manifest.permission.CAMERA))}.onFailure{status.text=it.localizedMessage}},main)}
     }
     private fun selector()=if(rear)CameraSelector.DEFAULT_BACK_CAMERA else CameraSelector.DEFAULT_FRONT_CAMERA
@@ -165,7 +167,7 @@ class VideoActivity:ComponentActivity(){
         box.addView(Switch(this).apply{text="เริ่มและจบแบบนุ่ม";setTextColor(WHITE);isChecked=smooth;setOnCheckedChangeListener{_,v->smooth=v}},-1,dp(48))
         box.addView(pill("เล่น ${zoomText(zoomA)} → ${zoomText(zoomB)}"){d.dismiss();val cam=camera?:return@pill;val z=cam.cameraInfo.zoomState.value?:return@pill;animator?.cancel();animator=ValueAnimator.ofFloat(ln(zoomA.coerceIn(z.minZoomRatio,z.maxZoomRatio)),ln(zoomB.coerceIn(z.minZoomRatio,z.maxZoomRatio))).apply{duration=zoomDuration*1000;interpolator=if(smooth)android.view.animation.AccelerateDecelerateInterpolator()else android.view.animation.LinearInterpolator();addUpdateListener{cam.cameraControl.setZoomRatio(exp(it.animatedValue as Float))};start()}},-1,dp(56))
     }}
-    override fun onPause(){starting=false;animator?.cancel();handler.removeCallbacksAndMessages(null);recording?.stop();super.onPause()}
+    override fun onPause(){if(::zooms.isInitialized){zooms.finish();wheel.removeCallbacks(hideWheel);hideWheel.run()};starting=false;animator?.cancel();handler.removeCallbacksAndMessages(null);recording?.stop();super.onPause()}
     override fun onDestroy(){sounds.release();super.onDestroy()}
     override fun onKeyDown(keyCode:Int,event:KeyEvent):Boolean{if(keyCode==KeyEvent.KEYCODE_VOLUME_DOWN||keyCode==KeyEvent.KEYCODE_VOLUME_UP){if(event.repeatCount==0)shutter.performClick();return true};return super.onKeyDown(keyCode,event)}
     // ---------- Glass screen ----------
@@ -176,22 +178,25 @@ class VideoActivity:ComponentActivity(){
     private fun busy()=recording!=null||starting||finalizing
     private fun buildScreen(){
         val host=FrameLayout(this);installRoot(host)
+        val landscape=resources.configuration.orientation==android.content.res.Configuration.ORIENTATION_LANDSCAPE
         val column=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL};host.addView(column,-1,-1)
         val head=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(dp(14),dp(8),dp(14),dp(6))}
-        head.addView(roundButton(IconView(this,Icons.CHEVRON_LEFT,2.2f),44,"กลับไปถ่ายภาพ"){if(!busy())finish()},dp(44),dp(44))
+        head.addView(roundButton(IconView(this,Icons.CHEVRON_LEFT,2.2f),48,"กลับไปถ่ายภาพ"){if(!busy())finish()},dp(48),dp(48))
         head.addView(text(when(kind){"DUAL"->"Dual-view";"MOVIE"->"วิดีโอโปร";else->"วิดีโอ"},16f,WHITE,true).apply{gravity=Gravity.CENTER},LinearLayout.LayoutParams(0,-2,1f))
         config=text("1080p · 30",13f,WHITE,true).apply{gravity=Gravity.CENTER;background=glass(22);setPadding(dp(14),0,dp(14),0);isClickable=true;contentDescription="รายละเอียดวิดีโอทั้งหมด";glassTouch();setOnClickListener{settings()}}
-        head.addView(config,-2,dp(44));column.addView(head,-1,-2)
-        stage=FrameLayout(this);column.addView(stage,LinearLayout.LayoutParams(-1,0,1f))
+        head.addView(config,-2,dp(48));column.addView(head,-1,-2)
+        // Landscape keeps the dock beside the preview instead of under it.
+        val body=LinearLayout(this).apply{orientation=if(landscape)LinearLayout.HORIZONTAL else LinearLayout.VERTICAL};column.addView(body,LinearLayout.LayoutParams(-1,0,1f))
+        stage=FrameLayout(this);body.addView(stage,if(landscape)LinearLayout.LayoutParams(0,-1,1f) else LinearLayout.LayoutParams(-1,0,1f))
         preview=PreviewView(this).apply{implementationMode=PreviewView.ImplementationMode.COMPATIBLE;scaleType=PreviewView.ScaleType.FIT_CENTER};stage.addView(preview,-1,-1)
         val overlay=CompositionOverlay(this).apply{grid=prefs.getBoolean("grid",false);movie=kind=="MOVIE"};stage.addView(overlay,-1,-1)
         status=text("กำลังเปิดกล้อง…",13f).apply{gravity=Gravity.CENTER;background=glass(18);setPadding(dp(14),dp(7),dp(14),dp(7));maxLines=3;accessibilityLiveRegion=android.view.View.ACCESSIBILITY_LIVE_REGION_POLITE}
         stage.addView(status,FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply{topMargin=dp(10)})
         wheel=ZoomWheel(this).apply{alpha=0f};stage.addView(wheel,FrameLayout.LayoutParams(-1,dp(150),Gravity.BOTTOM).apply{bottomMargin=dp(4)})
-        zooms=LinearLayout(this).apply{gravity=Gravity.CENTER;background=glass(26);setPadding(dp(4),dp(4),dp(4),dp(4))}
-        stage.addView(zooms,FrameLayout.LayoutParams(-2,dp(52),Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply{bottomMargin=dp(8)})
+        zooms=ZoomCapsule(this).apply{background=glass(28);setPadding(dp(4),dp(4),dp(4),dp(4));contentDescription="ระยะเลนส์ ลากซ้ายขวาเพื่อซูมละเอียด"}
+        stage.addView(zooms,FrameLayout.LayoutParams(-2,dp(56),Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply{bottomMargin=dp(8)})
         installZoomDrag()
-        stage.addView(roundButton(IconView(this,"M4 17l5-5 4 4 7-8 M15 8h5v5",2f),44,"ซูมอัตโนมัติจาก A ไป B"){zoomPanel()},FrameLayout.LayoutParams(dp(44),dp(44),Gravity.BOTTOM or Gravity.START).apply{setMargins(dp(16),0,0,dp(12))})
+        stage.addView(roundButton(IconView(this,"M4 17l5-5 4 4 7-8 M15 8h5v5",2f),48,"ซูมอัตโนมัติจาก A ไป B"){closeDial();zoomPanel()},FrameLayout.LayoutParams(dp(48),dp(48),Gravity.BOTTOM or Gravity.START).apply{setMargins(dp(14),0,0,dp(12))})
         // Settings dial floats over the preview, chips sit in the dock.
         dial=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;background=glass(24);setPadding(dp(16),dp(12),dp(16),dp(12));visibility=android.view.View.GONE}
         val dh=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL}
@@ -200,19 +205,20 @@ class VideoActivity:ComponentActivity(){
         slider=GlassSlider(this).apply{onChange={i->openChip?.let{applyChip(it,i)}}};dial.addView(slider,-1,dp(56))
         stage.addView(dial,FrameLayout.LayoutParams(-1,-2,Gravity.BOTTOM).apply{setMargins(dp(16),0,dp(16),dp(66))})
 
-        val dock=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL};column.addView(dock,-1,-2)
+        val dock=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER_VERTICAL};if(landscape)body.addView(dock,dp(320),-1) else body.addView(dock,-1,-2)
         if(kind=="MOVIE"){
             tabs=FrameLayout(this).apply{background=glass(20,0x1fffffff)}
             knob=android.view.View(this).apply{background=glass(17,0x38ffffff)};tabs.addView(knob,FrameLayout.LayoutParams(0,-1).apply{setMargins(dp(3),dp(3),dp(3),dp(3))})
             val row=LinearLayout(this);tabLabels.clear()
             listOf("ปรับแต่งวิดีโอ","คุณภาพวิดีโอ").forEachIndexed{i,t->val l=text(t,13.5f,if(i==category)WHITE else Glass.TEXT2,true).apply{gravity=Gravity.CENTER;isClickable=true;contentDescription=t;setOnClickListener{if(category!=i){category=i;slideKnob(true);closeDial();refreshChips()}}};tabLabels+=l;row.addView(l,LinearLayout.LayoutParams(0,-1,1f))}
             tabs.addView(row,-1,-1);tabs.post{slideKnob(false)}
-            dock.addView(tabs,LinearLayout.LayoutParams(-1,dp(38)).apply{setMargins(dp(16),dp(8),dp(16),dp(4))})
+            dock.addView(tabs,LinearLayout.LayoutParams(-1,dp(48)).apply{setMargins(dp(16),dp(8),dp(16),dp(4))})
         }
         chipFrame=FrameLayout(this).apply{background=glass(24)}
         chips=CenterStrip(this).apply{capsuleHeightDp=44;onSelect={i->chipKeys().getOrNull(i)?.let{k->if(openChip==k)closeDial() else openDial(k)}};onLive={i->styleChips(i)}}
         chipFrame.addView(chips,FrameLayout.LayoutParams(-1,-1).apply{setMargins(dp(1),dp(1),dp(1),dp(1))})
-        dock.addView(chipFrame,LinearLayout.LayoutParams(-1,dp(52)).apply{setMargins(dp(16),dp(6),dp(16),dp(4))})
+        val grow=((resources.configuration.fontScale+1f)/2f).coerceAtLeast(1f)
+        dock.addView(chipFrame,LinearLayout.LayoutParams(-1,(dp(56)*grow).roundToInt()).apply{setMargins(dp(16),dp(6),dp(16),dp(4))})
         val actions=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(dp(36),0,dp(36),0)}
         library=roundButton(IconView(this,Icons.LIBRARY),56,"คลังวิดีโอและแต่งคลิป"){if(!busy())startActivity(Intent(this,StudioLibraryActivity::class.java))}
         pauseIcon=IconView(this,PAUSE,2.4f)
@@ -249,8 +255,8 @@ class VideoActivity:ComponentActivity(){
         val stops=listOfNotNull(z.minZoomRatio.takeIf{it<0.98f},1f,2f,3.5f).filter{it in z.minZoomRatio..z.maxZoomRatio}.distinct()
         if(stops!=zoomStops){zoomStops=stops;zooms.removeAllViews()
             stops.forEach{v->val cell=FrameLayout(this).apply{isClickable=true;contentDescription="ซูม ${zoomText(v)} ลากซ้ายขวาเพื่อซูมละเอียด"}
-                cell.addView(text(zoomText(v),12f,WHITE,true).apply{gravity=Gravity.CENTER;background=GlassDrawable(0x1affffff,dp(20).toFloat(),resources.displayMetrics.density)},FrameLayout.LayoutParams(dp(32),dp(32),Gravity.CENTER))
-                cell.setOnClickListener{animateZoom(v)};zooms.addView(cell,LinearLayout.LayoutParams(dp(44),dp(44)).apply{setMargins(dp(2),0,dp(2),0)})}}
+                cell.addView(text(zoomText(v),12f,WHITE,true).apply{setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP,12f);gravity=Gravity.CENTER;background=GlassDrawable(0x1affffff,dp(20).toFloat(),resources.displayMetrics.density)},FrameLayout.LayoutParams(dp(32),dp(32),Gravity.CENTER))
+                cell.setOnClickListener{animateZoom(v)};zooms.addView(cell,LinearLayout.LayoutParams(dp(48),dp(48)).apply{setMargins(dp(1),0,dp(1),0)})}}
         zooms.visibility=if(stops.size>1&&!dual)android.view.View.VISIBLE else android.view.View.GONE
         val active=stops.indexOfLast{z.zoomRatio>=it-0.001f}.coerceAtLeast(0)
         stops.forEachIndexed{i,v->val t=(zooms.getChildAt(i) as FrameLayout).getChildAt(0) as TextView;val on=i==active
@@ -265,21 +271,20 @@ class VideoActivity:ComponentActivity(){
         animator=ValueAnimator.ofFloat(ln(z.zoomRatio),ln(target)).apply{duration=280;interpolator=Glass.EASE;addUpdateListener{cam.cameraControl.setZoomRatio(exp(it.animatedValue as Float))};start()}
     }
     private val hideWheel=Runnable{wheel.show(false);zooms.animate().alpha(1f).setDuration(200).start()}
+    private var dragZoom0=1f
     private fun installZoomDrag(){
-        var sx=0f;var z0=1f;var moved=false
-        zooms.setOnTouchListener{_,e->
-            val z=camera?.cameraInfo?.zoomState?.value
-            when(e.actionMasked){
-                MotionEvent.ACTION_DOWN->{sx=e.rawX;z0=z?.zoomRatio?:1f;moved=false;wheel.removeCallbacks(hideWheel);animator?.cancel()}
-                MotionEvent.ACTION_MOVE->{if(z!=null){val dx=e.rawX-sx
-                    if(!moved&&abs(dx)>=dp(6)){moved=true;zooms.animate().alpha(0f).setDuration(200).start();wheel.show(true);zooms.parent.requestDisallowInterceptTouchEvent(true)}
-                    if(moved){var t=(z0*2f.pow(-dx/dp(95))).coerceIn(z.minZoomRatio,z.maxZoomRatio)
-                        zoomStops.firstOrNull{abs(ln(t/it)/ln(2f))<0.075f}?.let{lens->if(abs(z.zoomRatio-lens)>0.001f)Glass.tick(wheel);t=lens}
-                        camera?.cameraControl?.setZoomRatio(t);wheel.zoom=t}}}
-                MotionEvent.ACTION_UP,MotionEvent.ACTION_CANCEL->if(moved)wheel.postDelayed(hideWheel,1300)
-            }
-            moved
-        }
+        fun start(){dragZoom0=camera?.cameraInfo?.zoomState?.value?.zoomRatio?:1f;wheel.removeCallbacks(hideWheel);animator?.cancel();zooms.animate().alpha(0f).setDuration(200).start();wheel.show(true)}
+        fun move(dx:Float){val z=camera?.cameraInfo?.zoomState?.value?:return
+            var t=(dragZoom0*2f.pow(-dx/dp(95))).coerceIn(z.minZoomRatio,z.maxZoomRatio)
+            zoomStops.firstOrNull{abs(ln(t/it)/ln(2f))<0.075f}?.let{lens->if(abs(z.zoomRatio-lens)>0.001f)Glass.tick(wheel);t=lens}
+            camera?.cameraControl?.setZoomRatio(t);wheel.zoom=t}
+        fun end(){wheel.removeCallbacks(hideWheel);wheel.postDelayed(hideWheel,1300)}
+        zooms.onStart={start()};zooms.onDrag={move(it)};zooms.onEnd={end()}
+        var sx=0f;var on=false
+        wheel.setOnTouchListener{v,e->when(e.actionMasked){
+            MotionEvent.ACTION_DOWN->{on=wheel.alpha>0.5f;if(on){sx=e.rawX;start();v.parent.requestDisallowInterceptTouchEvent(true)}}
+            MotionEvent.ACTION_MOVE->if(on)move(e.rawX-sx)
+            MotionEvent.ACTION_UP,MotionEvent.ACTION_CANCEL->if(on){on=false;end()}};on}
     }
 
     // ---------- Chips and dial ----------
@@ -324,7 +329,8 @@ class VideoActivity:ComponentActivity(){
         val keys=chipKeys();chipTexts.clear()
         chips.setItems(keys.map{k->val t=text(chipTitle(k),10.5f,Glass.TEXT2).apply{gravity=Gravity.CENTER;maxLines=1};val v=text(chipValues(k).getOrElse(chipIndex(k)){"–"},13f,WHITE,true).apply{gravity=Gravity.CENTER;maxLines=1}
             chipTexts+=t to v
-            CenterStrip.Item(k,78,LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER;isClickable=true;contentDescription=chipTitle(k);addView(t,-2,-2);addView(v,-2,-2)})},
+            val wDp=(chipValues(k).plus(chipTitle(k)).maxOf{v.paint.measureText(it)}/resources.displayMetrics.density+24).roundToInt().coerceAtLeast(78)
+            CenterStrip.Item(k,wDp,LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER;isClickable=true;contentDescription=chipTitle(k);addView(t,-2,-2);addView(v,-2,-2)})},
             keys.indexOf(openChip).coerceAtLeast(0))
         chipFrame.alpha=if(recording!=null&&!(kind=="MOVIE"&&category==0))0.45f else 1f
     }
@@ -352,9 +358,11 @@ class VideoActivity:ComponentActivity(){
             else->evValues().getOrNull(i)?.let{v->val st=camera?.cameraInfo?.exposureState;if(st!=null&&st.isExposureCompensationSupported)camera?.cameraControl?.setExposureCompensationIndex((v/st.exposureCompensationStep.toFloat()).roundToInt())}
         }
         dialValue.text=chipValues(k).getOrElse(i){"–"};styleChips(chips.selected)
-        if(k in listOf("RES","FPS","HDR","RATE","EIS")){handler.removeCallbacks(rebind);handler.postDelayed(rebind,450)}
+        if(k in listOf("RES","FPS","HDR","RATE","EIS")){configPending();handler.removeCallbacks(rebind);handler.postDelayed(rebind,450)}
         else if(k=="MIC")status.text=if(mic)"ไมค์เปิด" else "ไมค์ปิด"
     }
+    /** State hook: the chosen set is not bound yet, so recording waits until bind() succeeds and re-enables the shutter. */
+    private fun configPending(){shutter.isEnabled=false;shutter.alpha=0.45f;status.text="กำลังเปลี่ยนชุดวิดีโอ…"}
     private fun qualityName(q:Quality)=when(q){Quality.UHD->"4K";Quality.FHD->"1080p";Quality.HD->"720p";else->"SD"}
 }
 

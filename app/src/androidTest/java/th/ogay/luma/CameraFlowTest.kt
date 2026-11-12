@@ -29,7 +29,7 @@ class CameraFlowTest {
         assertTrue("Timed out after $ms ms",check())
     }
     @org.junit.Before fun resetStudioMode(){
-        context.getSharedPreferences("camera",Context.MODE_PRIVATE).edit().putString("photo_mode","PHOTO").putString("timer","0").putString("aspect","4:3").putBoolean("watermark",false).putBoolean("gps",false).commit()
+        context.getSharedPreferences("camera",Context.MODE_PRIVATE).edit().putString("photo_mode","PHOTO").putString("timer","0").putString("aspect","4:3").putBoolean("watermark",false).putBoolean("gps",false).putBoolean("night_toggle",false).putBoolean("gallery_device",false).putBoolean("panel_hint_seen",true).commit()
     }
     @Test fun multiFrameAiCapturesFourRealImages() = multiFrameFlow(4)
     @Test fun multiFrameAiCapturesThirtyTwoRealImages() = multiFrameFlow(32)
@@ -48,7 +48,7 @@ class CameraFlowTest {
         val old = context.luma.shots.all().map { it.id }.toSet()
         ActivityScenario.launch(CameraActivity::class.java).use {
             until(35000) { device.findObject(By.desc("ถ่ายภาพ"))?.isEnabled == true }
-            device.findObject(By.desc("ซูม 2×")).click()
+            device.wait(Until.findObject(GlassNav.lens("2×")), 10000).click()
             until(10000) { device.findObject(By.desc("ถ่ายภาพ"))?.isEnabled == true }
             device.findObject(By.desc("ถ่ายภาพ")).click()
             var shot: Shot? = null
@@ -82,7 +82,7 @@ class CameraFlowTest {
         ActivityScenario.launch(CameraActivity::class.java).use {
             until(35000) { device.findObject(By.desc("ถ่ายภาพ"))?.isEnabled == true }
             if (supportsRaw) {
-                device.findObject(By.desc("รูปแบบ RAW")).click()
+                GlassNav.chooseFormat(device, "RAW")
                 until(25000) { device.findObject(By.desc("ถ่ายภาพ"))?.isEnabled == true }
                 device.findObject(By.desc("ถ่ายภาพ")).click()
                 var shot: Shot? = null
@@ -97,7 +97,11 @@ class CameraFlowTest {
                     assertTrue(header[0] == 'I'.code.toByte() || header[0] == 'M'.code.toByte())
                 }
             } else {
-                assertNull(device.findObject(By.desc("รูปแบบ RAW")))
+                GlassNav.openPanel(device)
+                GlassNav.inPanel(device, By.descStartsWith("รูปแบบไฟล์"))!!.click()
+                assertNotNull(device.wait(Until.findObject(GlassNav.menuRow("JPEG")), 5000))
+                assertNull(device.findObject(GlassNav.menuRow("RAW")))
+                GlassNav.closeLayers(device)
                 assertEquals("JPEG", context.getSharedPreferences("camera", Context.MODE_PRIVATE).getString("output", ""))
             }
         }
@@ -107,10 +111,11 @@ class CameraFlowTest {
         val before=context.luma.shots.all().map{it.id}.toSet()
         context.getSharedPreferences("camera",Context.MODE_PRIVATE).edit().putString("output","JPEG").putBoolean("auto",true).putBoolean("software",false).commit()
         ActivityScenario.launch(CameraActivity::class.java).use {
-            val menu=device.wait(Until.findObject(By.desc("การตั้งค่ากล้อง")),30000)
-            assertNotNull("Camera screen did not open",menu);menu.click()
-            device.wait(Until.findObject(By.text("ครอปจากกล้องหลัก 1×")),10000).click()
-            val stop=device.wait(Until.findObject(By.desc("ซูม 2×")),25000)
+            until(35000){device.findObject(GlassNav.SHUTTER)?.isEnabled==true}
+            GlassNav.openAllSettings(device)
+            device.wait(Until.findObject(By.descStartsWith("ครอปจากกล้องหลัก 1×")),10000).click()
+            device.pressBack()
+            val stop=device.wait(Until.findObject(GlassNav.lens("2×")),25000)
             assertNotNull("Missing app-controlled zoom",stop);stop.click()
             until(35000){device.findObject(By.desc("ถ่ายภาพ"))?.isEnabled==true}
             device.findObject(By.desc("ถ่ายภาพ")).click()

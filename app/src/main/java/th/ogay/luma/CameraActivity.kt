@@ -116,7 +116,7 @@ class CameraActivity : ComponentActivity() {
     private lateinit var lockButton: FrameLayout
     private lateinit var lockIcon: IconView
     private lateinit var wheel: ZoomWheel
-    private lateinit var zooms: LinearLayout
+    private lateinit var zooms: ZoomCapsule
     private lateinit var macroButton: FrameLayout
     private lateinit var nightButton: FrameLayout
     private lateinit var nightCard: LinearLayout
@@ -172,6 +172,9 @@ class CameraActivity : ComponentActivity() {
         rear = state?.getBoolean("rear",true) ?: true
         ratio = state?.getFloat("zoom",1f) ?: 1f
         buildScreen()
+        onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() { if (!closeTopLayer()) { isEnabled = false; onBackPressedDispatcher.onBackPressed(); isEnabled = true } }
+        })
         @Suppress("DEPRECATION")
         targetRotation = windowManager.defaultDisplay.rotation
         orientation = object : OrientationEventListener(this) {
@@ -200,6 +203,14 @@ class CameraActivity : ComponentActivity() {
             }
         }, main)
     }
+    /** Closes the top-most glass layer: menu, then sheets, then the pro dial. Returns false when nothing was open. */
+    private fun closeTopLayer(): Boolean = when {
+        menu.showing -> { menu.dismiss(true); true }
+        editor.showing -> { editor.close(); true }
+        panel.showing -> { panel.close(); true }
+        openChip != null -> { closeDial(); true }
+        else -> false
+    }
     private fun granted() = permissions.all { ContextCompat.checkSelfPermission(this,it) == PackageManager.PERMISSION_GRANTED }
     override fun onResume() {
         super.onResume(); orientation.enable(); loadThumb()
@@ -214,6 +225,8 @@ class CameraActivity : ComponentActivity() {
         hdr?.cancel()
         timerGeneration++;timerRunning=false
         menu.dismiss(false)
+        zooms.finish(); wheel.removeCallbacks(hideWheel); hideWheel.run()
+        clearLensShots()
         super.onPause()
     }
     override fun onDestroy() {
@@ -232,13 +245,17 @@ class CameraActivity : ComponentActivity() {
     private fun buildScreen() {
         host = FrameLayout(this)
         installRoot(host)
-        menu = GlassMenu(host) { on -> pushBack(if (on) 0.33f else 0f) }
+        menu = GlassMenu(host) { on -> if (panel.showing || editor.showing) { panel.recede(on); editor.recede(on) } else pushBack(if (on) 0.33f else 0f) }
         panel = GlassSheet(host, { handlePivot() }) { pushBack(it) }
         editor = GlassSheet(host, { handlePivot() }) { pushBack(it) }
-        val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        // One modal owner: a menu over a sheet adds no second dim, and the sheet below keeps its push-back.
+        menu.over = { panel.showing || editor.showing }
+        // Portrait stacks the dock under the viewfinder; landscape puts it beside, so the viewfinder keeps its height.
+        val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        val column = LinearLayout(this).apply { orientation = if (landscape) LinearLayout.HORIZONTAL else LinearLayout.VERTICAL }
         host.addView(column, -1, -1)
         stage = FrameLayout(this).apply { setBackgroundColor(BG) }
-        column.addView(stage, LinearLayout.LayoutParams(-1, 0, 1f))
+        column.addView(stage, if (landscape) LinearLayout.LayoutParams(0, -1, 1f) else LinearLayout.LayoutParams(-1, 0, 1f))
         mask = FrameLayout(this).apply {
             clipChildren = true; clipToPadding = true; clipToOutline = true
             outlineProvider = object : ViewOutlineProvider() { override fun getOutline(v: View, o: Outline) { o.setRoundRect(0, 0, v.width, v.height, maskRadius) } }
@@ -252,19 +269,19 @@ class CameraActivity : ComponentActivity() {
         overlay.monitor(preview)
         frozen = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP; alpha = 0f; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
         mask.addView(frozen, -1, -1)
-        preview.previewStreamState.observe(this) { if (it == PreviewView.StreamState.STREAMING && frozen.alpha > 0f) frozen.animate().alpha(0f).setDuration(220).withEndAction { Glass.blur(frozen, 0f); frozen.setImageDrawable(null) }.start() }
+        preview.previewStreamState.observe(this) { if (it == PreviewView.StreamState.STREAMING && frozen.alpha > 0f) frozen.animate().alpha(0f).setDuration(220).withEndAction { Glass.blur(frozen, 0f); val old = (frozen.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap; frozen.setImageDrawable(null); old?.recycle() }.start() }
 
         expRail = EdgeRail(this, false); stage.addView(expRail, FrameLayout.LayoutParams(dp(150), -1, Gravity.START))
         focusRail = EdgeRail(this, true); stage.addView(focusRail, FrameLayout.LayoutParams(dp(170), -1, Gravity.END))
         lockIcon = IconView(this, Icons.UNLOCK, 2f)
-        lockButton = glassButton(lockIcon, 36, "ล็อกความสว่าง") { toggleAeLock() }.apply { alpha = 0f; visibility = View.GONE }
-        stage.addView(lockButton, FrameLayout.LayoutParams(dp(36), dp(36), Gravity.START or Gravity.CENTER_VERTICAL).apply { leftMargin = dp(10); bottomMargin = dp(300) })
+        lockButton = glassButton(lockIcon, 48, "ล็อกความสว่าง") { toggleAeLock() }.apply { alpha = 0f; visibility = View.GONE }
+        stage.addView(lockButton, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.START or Gravity.CENTER_VERTICAL).apply { leftMargin = dp(8); topMargin = dp(150) })
 
         statusRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL or Gravity.END; contentDescription = "สิ่งที่เปิดอยู่"; isClickable = true; setOnClickListener { openPanel() } }
-        stage.addView(statusRow, FrameLayout.LayoutParams(-2, dp(44), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(8), dp(12), 0) })
+        stage.addView(statusRow, FrameLayout.LayoutParams(-2, dp(48), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(6), dp(12), 0) })
         banner = text("ล็อก AE/AF", 13f, Glass.ACCENT, true).apply { background = glass(16); setPadding(dp(14), dp(6), dp(14), dp(6)); visibility = View.GONE }
         stage.addView(banner, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = dp(12) })
-        viewfinderNotice = text("", 13f).apply { maxLines = 3; gravity = Gravity.CENTER; background = glass(18); setPadding(dp(16), dp(8), dp(16), dp(8)); visibility = View.GONE }
+        viewfinderNotice = text("", 13f).apply { maxLines = 3; gravity = Gravity.CENTER; minHeight = dp(48); background = glass(18); setPadding(dp(16), dp(8), dp(16), dp(8)); visibility = View.GONE }
         viewfinderNotice.setOnClickListener { burst?.cancel() }
         stage.addView(viewfinderNotice, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = dp(60) })
         permissionPanel = LinearLayout(this).apply { gravity = Gravity.CENTER; orientation = LinearLayout.VERTICAL; setPadding(dp(18), dp(14), dp(18), dp(14)); background = glass(24, Glass.FILL_STRONG); visibility = View.GONE }
@@ -273,33 +290,34 @@ class CameraActivity : ComponentActivity() {
 
         wheel = ZoomWheel(this).apply { alpha = 0f }
         stage.addView(wheel, FrameLayout.LayoutParams(-1, dp(150), Gravity.BOTTOM).apply { bottomMargin = dp(4) })
-        zooms = LinearLayout(this).apply { gravity = Gravity.CENTER; background = glass(26); setPadding(dp(4), dp(4), dp(4), dp(4)) }
-        installZoomDrag(zooms)
-        stage.addView(zooms, FrameLayout.LayoutParams(-2, dp(52), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = dp(8) })
-        macroButton = glassButton(IconView(this, Icons.FLOWER), 44, "มาโคร ถ่ายใกล้ได้ทุกระยะเลนส์") { toggleMacro() }
-        stage.addView(macroButton, FrameLayout.LayoutParams(dp(44), dp(44), Gravity.BOTTOM or Gravity.START).apply { setMargins(dp(16), 0, 0, dp(12)) })
-        nightButton = glassButton(IconView(this, Icons.NIGHT), 44, "ถ่ายกลางคืน กดค้างเพื่อเลือกเวลา") { toggleNight() }
+        zooms = ZoomCapsule(this).apply { background = glass(28); setPadding(dp(4), dp(4), dp(4), dp(4)); contentDescription = "ระยะเลนส์ ลากซ้ายขวาเพื่อซูมละเอียด" }
+        installZoomDrag()
+        stage.addView(zooms, FrameLayout.LayoutParams(-2, dp(56), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = dp(8) })
+        macroButton = glassButton(IconView(this, Icons.FLOWER), 48, "มาโคร ถ่ายใกล้ได้ทุกระยะเลนส์") { toggleMacro() }
+        stage.addView(macroButton, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.BOTTOM or Gravity.START).apply { setMargins(dp(14), 0, 0, dp(12)) })
+        nightButton = glassButton(IconView(this, Icons.NIGHT), 48, "ถ่ายกลางคืน กดค้างเพื่อเลือกเวลา") { toggleNight() }
         nightButton.setOnLongClickListener { chooseNightLength(nightButton); true }
-        stage.addView(nightButton, FrameLayout.LayoutParams(dp(44), dp(44), Gravity.BOTTOM or Gravity.END).apply { setMargins(0, 0, dp(16), dp(12)) })
+        stage.addView(nightButton, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.BOTTOM or Gravity.END).apply { setMargins(0, 0, dp(14), dp(12)) })
 
         chipFrame = FrameLayout(this).apply { background = glass(24); visibility = View.GONE }
         chips = CenterStrip(this).apply { capsuleHeightDp = 44; onSelect = { i -> chipSelected(i) }; onLive = { i -> styleChips(i) } }
         chipFrame.addView(chips, FrameLayout.LayoutParams(-1, -1).apply { setMargins(dp(1), dp(1), dp(1), dp(1)) })
-        stage.addView(chipFrame, FrameLayout.LayoutParams(-1, dp(52), Gravity.BOTTOM).apply { setMargins(dp(16), 0, dp(16), dp(66)) })
+        stage.addView(chipFrame, FrameLayout.LayoutParams(-1, dp(56 * grow()), Gravity.BOTTOM).apply { setMargins(dp(16), 0, dp(16), dp(70)) })
         buildDial()
 
-        val dock = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(BG) }
-        column.addView(dock, -1, -2)
-        handle = IconView(this, Icons.CHEVRON_UP, 2f).apply { tint = Glass.TEXT2; contentDescription = "ปัดขึ้นหรือแตะเพื่อดูตัวเลือกกล้อง"; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES; isClickable = true; setOnClickListener { openPanel() } }
-        dock.addView(handle, LinearLayout.LayoutParams(dp(96), dp(26)).apply { gravity = Gravity.CENTER_HORIZONTAL })
+        val dock = SwipeColumn(this).apply { setBackgroundColor(BG); onSwipeUp = { openPanel() } }
+        androidx.core.view.ViewCompat.addAccessibilityAction(dock, "เปิดตัวเลือกกล้อง") { _, _ -> openPanel(); true }
+        if (landscape) { dock.gravity = Gravity.CENTER_VERTICAL; column.addView(dock, dp(320), -1) } else column.addView(dock, -1, -2)
+        handle = IconView(this, Icons.CHEVRON_UP, 2f).apply { tint = Glass.TEXT2; contentDescription = "ตัวเลือกกล้อง ปัดขึ้นหรือแตะเพื่อเปิด"; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES; isClickable = true; isFocusable = true; setPadding(0, dp(12), 0, dp(12)); setOnClickListener { openPanel() } }
+        dock.addView(handle, LinearLayout.LayoutParams(dp(120), dp(48)).apply { gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = -dp(10) })
         nudge()
-        modeStrip = CenterStrip(this).apply { onSelect = { i -> pickBar(i) }; onLive = { i -> styleModes(i) } }
-        dock.addView(modeStrip, -1, dp(60))
+        modeStrip = CenterStrip(this).apply { onSelect = { i -> pickBar(i) }; onLive = { i -> styleModes(i) }; contentDescription = "แถบโหมด" }
+        dock.addView(modeStrip, -1, dp(58 * grow()))
         val actions = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(36), 0, dp(36), 0) }
         dock.addView(actions, -1, dp(104))
         thumb = ImageView(this).apply {
             scaleType = ImageView.ScaleType.CENTER_CROP; background = glass(16); clipToOutline = true
-            contentDescription = "เปิดแกลเลอรี"; setOnClickListener { startActivity(Intent(this@CameraActivity, GalleryActivity::class.java)) }
+            contentDescription = "เปิดรูปถ่ายล่าสุด"; setOnClickListener { startActivity(Intent(this@CameraActivity, GalleryActivity::class.java)) }
             setOnLongClickListener { startActivity(Intent(this@CameraActivity, StudioLibraryActivity::class.java)); true }
             setImageDrawable(null); glassTouch()
         }
@@ -311,13 +329,15 @@ class CameraActivity : ComponentActivity() {
         flipIcon = IconView(this, Icons.FLIP)
         flip = glassButton(flipIcon, 56, "สลับกล้องหน้าและหลัง") { if (!busy) { flipIcon.animate().rotationBy(180f).setInterpolator(Glass.EASE).setDuration(420).start(); freezeFrame(); rear = !rear; ratio = 1f; bind() } }
         actions.addView(flip, dp(56), dp(56))
-        installDockSwipe(dock)
         installGestures()
         rebuildModeStrip()
         refresh()
     }
     private var maskRadius = 0f
 
+    /** Rows that hold two lines of text grow with the font scale (1.0 → 1, 2.0 → 1.5). */
+    private fun grow(): Float = ((resources.configuration.fontScale + 1f) / 2f).coerceAtLeast(1f)
+    private fun dp(x: Float) = (resources.displayMetrics.density * x).roundToInt()
     private fun layoutMask(w0: Int, h0: Int) {
         val landscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         val format = prefs.getString("aspect", "4:3")
@@ -364,8 +384,11 @@ class CameraActivity : ComponentActivity() {
         Glass.blur(stage, 12f * f)
     }
     private fun freezeFrame() {
-        val b = runCatching { preview.bitmap }.getOrNull() ?: return
-        frozen.setImageBitmap(b); frozen.alpha = 1f; Glass.blur(frozen, 16f)
+        val full = runCatching { preview.bitmap }.getOrNull() ?: return
+        // A third of the preview size is enough under a blur and keeps the copy small.
+        val b = Bitmap.createScaledBitmap(full, (full.width / 3).coerceAtLeast(1), (full.height / 3).coerceAtLeast(1), true).also { if (it !== full) full.recycle() }
+        (frozen.drawable as? android.graphics.drawable.BitmapDrawable)?.bitmap?.takeIf { it !== b }?.let { frozen.setImageDrawable(null); it.recycle() }
+        frozen.setImageBitmap(b); frozen.alpha = 1f; Glass.blur(frozen, 6f)
         Glass.blurPulse(stage, 10f, 280)
     }
 
@@ -394,8 +417,8 @@ class CameraActivity : ComponentActivity() {
         val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
         dialTitle = text("", 13f, Glass.TEXT2); dialValue = text("", 20f, Color.WHITE, true).apply { gravity = Gravity.CENTER }
         dialReset = text("AUTO", 12f, Color.WHITE, true).apply { gravity = Gravity.CENTER; background = glass(16, 0x1fffffff); setPadding(dp(12), 0, dp(12), 0); isClickable = true; setOnClickListener { resetChip() }; glassTouch() }
-        head.addView(dialTitle, LinearLayout.LayoutParams(0, -2, 1f)); head.addView(dialValue, LinearLayout.LayoutParams(0, -2, 1f)); head.addView(dialReset, -2, dp(32))
-        dial.addView(head, -1, dp(32))
+        head.addView(dialTitle, LinearLayout.LayoutParams(0, -2, 1f)); head.addView(dialValue, LinearLayout.LayoutParams(0, -2, 1f)); dialReset.minWidth = dp(64); head.addView(dialReset, -2, dp(48))
+        dial.addView(head, -1, -2)
         slider = GlassSlider(this).apply { onChange = { i -> sliderChanged(i) } }
         dial.addView(slider, -1, dp(56))
         stage.addView(dial, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply { setMargins(dp(16), 0, dp(16), dp(130)) })
@@ -425,7 +448,8 @@ class CameraActivity : ComponentActivity() {
     }
     private fun syncModeStrip(animate: Boolean) { val i = barKeys.indexOf(mode.name); if (i >= 0) modeStrip.select(i, animate) else rebuildModeStrip() }
     private fun pickBar(i: Int) {
-        if (i >= barKeys.size) { syncModeStrip(true); openEditor(); return }
+        // "+" opens the editor only when tapped; a swipe that ends past the last mode settles on that mode.
+        if (i >= barKeys.size) { if (modeStrip.byTap) { syncModeStrip(true); openEditor() } else { modeStrip.select(barKeys.size - 1, true); pickBar(barKeys.size - 1) }; return }
         val key = barKeys[i]
         when (key) {
             "VIDEO" -> openVideo("VIDEO"); "MOVIE" -> openVideo("MOVIE"); "DUAL" -> openVideo("DUAL")
@@ -536,41 +560,41 @@ class CameraActivity : ComponentActivity() {
             true
         }
     }
-    private fun installDockSwipe(dock: View) {
-        var sy = 0f; var sx = 0f
-        dock.setOnTouchListener { _, e ->
-            when (e.actionMasked) {
-                MotionEvent.ACTION_DOWN -> { sx = e.rawX; sy = e.rawY }
-                MotionEvent.ACTION_UP -> if (sy - e.rawY > dp(36) && abs(sy - e.rawY) > abs(e.rawX - sx)) openPanel()
-            }
-            true
-        }
-        handle.setOnTouchListener { _, e -> if (e.actionMasked == MotionEvent.ACTION_DOWN) { sx = e.rawX; sy = e.rawY }; if (e.actionMasked == MotionEvent.ACTION_UP && sy - e.rawY > dp(24)) { openPanel(); true } else false }
-    }
-
     // ---------- Zoom ----------
-    private fun installZoomDrag(capsule: LinearLayout) {
-        var sx = 0f; var z0 = 1f; var moved = false
-        capsule.setOnTouchListener { _, e -> zoomTouch(e, { sx = it }, { sx }, { z0 = it }, { z0 }, { moved = it }, { moved }) }
+    private var dragZoom0 = 1f
+    private fun zoomDragStart() { dragZoom0 = ratio; dialing = true; wheel.removeCallbacks(hideWheel); zoomAnimation?.cancel(); zooms.animate().alpha(0f).setDuration(200).start(); wheel.show(true) }
+    private fun zoomDragMove(dx: Float) {
+        val (lo, hi) = range()
+        var z = (dragZoom0 * 2f.pow(-dx / dp(95))).coerceIn(lo, hi)
+        renderedZooms.firstOrNull { abs(ln(z / it) / ln(2f)) < 0.075f }?.let { lens -> if (abs(ratio - lens) > 0.001f) { Glass.tick(wheel); snapshotLens(lens) }; z = lens }
+        applyZoom(z); wheel.zoom = ratio; refreshZoomUi()
     }
-    private fun zoomTouch(e: MotionEvent, setSx: (Float) -> Unit, getSx: () -> Float, setZ0: (Float) -> Unit, getZ0: () -> Float, setMoved: (Boolean) -> Unit, getMoved: () -> Boolean): Boolean {
-        when (e.actionMasked) {
-            MotionEvent.ACTION_DOWN -> { setSx(e.rawX); setZ0(ratio); setMoved(false); wheel.removeCallbacks(hideWheel); zoomAnimation?.cancel() }
-            MotionEvent.ACTION_MOVE -> {
-                val dx = e.rawX - getSx()
-                if (!getMoved() && abs(dx) < dp(6)) return false
-                if (!getMoved()) { setMoved(true); dialing = true; zooms.animate().alpha(0f).setDuration(200).start(); wheel.show(true); zooms.parent.requestDisallowInterceptTouchEvent(true) }
-                val (lo, hi) = range()
-                var z = (getZ0() * 2f.pow(-dx / dp(95))).coerceIn(lo, hi)
-                renderedZooms.firstOrNull { abs(ln(z / it) / ln(2f)) < 0.075f }?.let { lens -> if (abs(ratio - lens) > 0.001f) { Glass.tick(wheel); snapshotLens(lens) }; z = lens }
-                applyZoom(z); wheel.zoom = ratio; refreshZoomUi(); return true
+    private fun zoomDragEnd() { wheel.removeCallbacks(hideWheel); wheel.postDelayed(hideWheel, 1300) }
+    private fun installZoomDrag() {
+        zooms.onStart = { zoomDragStart() }; zooms.onDrag = { zoomDragMove(it) }; zooms.onEnd = { zoomDragEnd() }
+        // While the wheel is showing it keeps the drag: a finger on the wheel continues from the current zoom.
+        var sx = 0f; var on = false
+        wheel.setOnTouchListener { v, e ->
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> { on = wheel.alpha > 0.5f; if (on) { sx = e.rawX; zoomDragStart(); v.parent.requestDisallowInterceptTouchEvent(true) } }
+                MotionEvent.ACTION_MOVE -> if (on) zoomDragMove(e.rawX - sx)
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> if (on) { on = false; zoomDragEnd() }
             }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> if (getMoved()) { wheel.postDelayed(hideWheel, 1300); return true }
+            on
         }
-        return getMoved()
     }
     private val hideWheel = Runnable { dialing = false; wheel.show(false); zooms.animate().alpha(1f).setDuration(200).start(); refresh() }
-    private fun snapshotLens(lens: Float) { runCatching { preview.bitmap }.getOrNull()?.let { lensShots[lens]?.recycle(); lensShots[lens] = it } }
+    private var lastShot = 0L
+    /** Keeps one small frame per lens for the minimap; never more than two, each about 240 px wide. */
+    private fun snapshotLens(lens: Float) {
+        if (lens != 1f && lens != 3.5f) return
+        val now = android.os.SystemClock.uptimeMillis(); if (now - lastShot < 1500 && lensShots.containsKey(lens)) return; lastShot = now
+        val full = runCatching { preview.bitmap }.getOrNull() ?: return
+        val small = Bitmap.createScaledBitmap(full, 240, (240f * full.height / full.width).roundToInt().coerceAtLeast(1), true)
+        if (small !== full) full.recycle()
+        lensShots.put(lens, small)?.recycle()
+    }
+    private fun clearLensShots() { lensShots.values.forEach { it.recycle() }; lensShots.clear(); if (::miniImage.isInitialized) miniImage.setImageDrawable(null) }
     private fun refreshZoomUi() {
         val (lo, hi) = range()
         wheel.minZoom = lo; wheel.maxZoom = hi; wheel.lenses = renderedZooms; wheel.zoom = ratio
@@ -607,7 +631,9 @@ class CameraActivity : ComponentActivity() {
         val items = keys.map { k ->
             val t = text(chipTitle(k), 10.5f, Glass.TEXT2).apply { gravity = Gravity.CENTER }; val v = text(chipValue(k), 13f, Color.WHITE, true).apply { gravity = Gravity.CENTER }
             chipTexts += t to v
-            CenterStrip.Item(k, 72, LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; isClickable = true; contentDescription = chipTitle(k); addView(t, -2, -2); addView(v, -2, -2) })
+            // Width follows the longest text at the current font scale so large fonts are not clipped.
+            val wDp = (chipValues(k).plus(chipTitle(k)).maxOf { v.paint.measureText(it) } / resources.displayMetrics.density + 24).roundToInt().coerceAtLeast(72)
+            CenterStrip.Item(k, wDp, LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; isClickable = true; contentDescription = chipTitle(k); addView(t, -2, -2); addView(v, -2, -2) })
         }
         chips.setItems(items, keys.indexOf(openChip ?: prefs.getString("pro_chip", "ISO")).coerceAtLeast(0))
     }
@@ -690,25 +716,31 @@ class CameraActivity : ComponentActivity() {
         hint(if (nightOn) "ถ่ายกลางคืน · กดชัตเตอร์แล้วถือนิ่ง" else "ปิดถ่ายกลางคืน", 1500); refresh()
     }
     private fun chooseNightLength(anchor: View) {
+        closeDial()
         menu.show(anchor, "เวลารวมแสงกลางคืน", listOf(GlassMenu.Option("อัตโนมัติ", Icons.NIGHT, "16 เฟรม ประมาณ 3 วินาที"), GlassMenu.Option("ยาว", Icons.NIGHT, "24 เฟรม ฉากมืดมาก"), GlassMenu.Option("ยาวที่สุด", Icons.NIGHT, "32 เฟรม ใช้ขาตั้ง")), nightIndex()) { i ->
             prefs.edit().putInt("night_frames", NIGHT_FRAMES[i]).apply(); if (mode != PhotoMode.NIGHT) { nightOn = true; prefs.edit().putBoolean("night_toggle", true).apply() }; refresh()
         }
     }
     private fun nightProgress(done: Int, total: Int) {
-        if (!nightRunning) { nightRunning = true; nightCard.visibility = View.VISIBLE; Liquid.show(nightCard, nightCard.width / 2f, nightCard.height / 2f, false); macroButton.animate().alpha(0f).start(); nightButton.animate().alpha(0f).start(); zooms.animate().alpha(0f).start() }
+        if (!nightRunning) {
+            nightRunning = true; nightCard.visibility = View.VISIBLE; Liquid.show(nightCard, nightCard.width / 2f, nightCard.height / 2f, false)
+            macroButton.animate().alpha(0f).start(); nightButton.animate().alpha(0f).start(); zooms.animate().alpha(0f).start()
+            refresh() // busy disabled the shutter; while gathering light it becomes the stop button
+        }
         shutter.progress = done.toFloat() / total.coerceAtLeast(1)
         nightCount.text = "${((total - done) * 0.18f).roundToInt().coerceAtLeast(1)}"
     }
     private fun endNight() {
-        if (!nightRunning) return; nightRunning = false; shutter.progress = -1f
+        if (!nightRunning) return; nightRunning = false; shutter.progress = -1f; refresh()
         Liquid.hide(nightCard, nightCard.width / 2f, nightCard.height / 2f, false)
         macroButton.animate().alpha(1f).start(); nightButton.animate().alpha(1f).start(); zooms.animate().alpha(1f).start()
     }
 
     // ---------- Options panel ----------
     private fun openPanel() {
-        if (panel.showing || busy) return
-        prefs.edit().putBoolean("panel_hint_seen", true).apply(); closeDial()
+        if (panel.showing || editor.showing || busy) return
+        menu.dismiss(false); closeDial()
+        prefs.edit().putBoolean("panel_hint_seen", true).apply()
         panel.open { box, sheet ->
             box.addView(sectionTitle("ถ่ายภาพ"))
             val grid = GridLayout(this).apply { columnCount = 3 }
@@ -720,10 +752,11 @@ class CameraActivity : ComponentActivity() {
                     addView(text(title, 12f).apply { gravity = Gravity.CENTER }, -2, -2)
                     addView(text(value + if (isMenu) " ▾" else "", 11.5f, if (on) Glass.ACCENT else Glass.TEXT2, true).apply { gravity = Gravity.CENTER }, -2, -2)
                 }
-                grid.addView(t, GridLayout.LayoutParams(GridLayout.spec(GridLayout.UNDEFINED), GridLayout.spec(GridLayout.UNDEFINED, 1f)).apply { width = 0; height = dp(88); setMargins(dp(4), dp(4), dp(4), dp(4)) })
+                t.minimumHeight = dp(88); t.setPadding(dp(4), dp(8), dp(4), dp(8))
+                grid.addView(t, GridLayout.LayoutParams(GridLayout.spec(GridLayout.UNDEFINED), GridLayout.spec(GridLayout.UNDEFINED, 1f)).apply { width = 0; height = GridLayout.LayoutParams.WRAP_CONTENT; setMargins(dp(4), dp(4), dp(4), dp(4)) })
             }
             val flashNames = listOf("ปิด", "อัตโนมัติ", "เปิด"); val flashModes = listOf(ImageCapture.FLASH_MODE_OFF, ImageCapture.FLASH_MODE_AUTO, ImageCapture.FLASH_MODE_ON)
-            fun reopen() { sheet.close { openPanel() } }
+            fun reopen() { sheet.refresh() }
             tile("แฟลช", if (flash == ImageCapture.FLASH_MODE_OFF) Icons.FLASH_OFF else Icons.FLASH, flashNames[flashModes.indexOf(flash).coerceAtLeast(0)], flash != ImageCapture.FLASH_MODE_OFF, isMenu = true) { v ->
                 menu.show(v, "แฟลช", listOf(GlassMenu.Option("ปิด", Icons.FLASH_OFF), GlassMenu.Option("อัตโนมัติ", Icons.FLASH, "เปิดเมื่อแสงน้อย"), GlassMenu.Option("เปิด", Icons.FLASH)), flashModes.indexOf(flash)) { i -> flash = flashModes[i]; capture?.flashMode = flash; refresh(); reopen() }
             }
@@ -748,8 +781,8 @@ class CameraActivity : ComponentActivity() {
 
             val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(14), 0, dp(6)) }
             head.addView(text("ปรับแต่งภาพ", 14f, 0xdbffffff.toInt(), true), LinearLayout.LayoutParams(0, -2, 1f))
-            head.addView(text("คืนค่า", 12f).apply { gravity = Gravity.CENTER; background = glass(16, 0x1affffff); setPadding(dp(12), 0, dp(12), 0); isClickable = true; glassTouch()
-                setOnClickListener { prefs.edit().putInt("look", 0).putInt("look_bright", 0).putInt("look_warm", 0).apply(); applyLook(); reopen() } }, -2, dp(32))
+            head.addView(text("คืนค่า", 12f).apply { gravity = Gravity.CENTER; background = glass(16, 0x1affffff); setPadding(dp(14), 0, dp(14), 0); minWidth = dp(48); isClickable = true; glassTouch()
+                setOnClickListener { prefs.edit().putInt("look", 0).putInt("look_bright", 0).putInt("look_warm", 0).apply(); applyLook(); reopen() } }, -2, dp(48))
             box.addView(head)
             val looks = CenterStrip(this, 10).apply { capsuleHeightDp = 0; capsule.visibility = View.GONE; fadeDp = 44f }
             val frames = mutableListOf<View>()
@@ -827,7 +860,7 @@ class CameraActivity : ComponentActivity() {
         editor.open { box, sheet ->
             val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
             head.addView(text("ปรับแต่งแถบโหมด", 20f, Color.WHITE, true), LinearLayout.LayoutParams(0, -2, 1f))
-            head.addView(text("เสร็จ", 14f, 0xff1a1400.toInt(), true).apply { gravity = Gravity.CENTER; background = glass(22, Glass.ACCENT); setPadding(dp(16), 0, dp(16), 0); isClickable = true; glassTouch(); setOnClickListener { sheet.close() } }, -2, dp(44))
+            head.addView(text("เสร็จ", 14f, 0xff1a1400.toInt(), true).apply { gravity = Gravity.CENTER; background = glass(22, Glass.ACCENT); setPadding(dp(16), 0, dp(16), 0); isClickable = true; glassTouch(); setOnClickListener { sheet.close() } }, -2, dp(48))
             box.addView(head, -1, dp(52))
             box.addView(text("ลากที่จับเพื่อเรียงใหม่ แตะ + หรือ − เพื่อเพิ่มหรือนำออก แตะชื่อโหมดเพิ่มเติมเพื่อใช้ทันที ภาพถ่ายต้องอยู่ในแถบเสมอ", 13f, Glass.TEXT2).apply { maxLines = 4; setPadding(0, dp(4), 0, dp(12)) })
             val inBar = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = glass(22, 0x08ffffff); setPadding(dp(6), dp(6), dp(6), dp(6)) }
@@ -839,33 +872,38 @@ class CameraActivity : ComponentActivity() {
                     val m = ALL.first { it.key == k }
                     val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(8), 0, dp(6), 0); background = glass(18, 0x1affffff) }
                     val grip = IconView(this, "M9 6h.01 M15 6h.01 M9 12h.01 M15 12h.01 M9 18h.01 M15 18h.01", 3f).apply { tint = Glass.TEXT2; contentDescription = "ลากเพื่อเรียง${m.title}"; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES }
-                    row.addView(grip, dp(28), dp(44)); row.addView(IconView(this, m.icon), dp(18), dp(18))
+                    row.addView(grip, dp(40), dp(48)); row.addView(IconView(this, m.icon), dp(18), dp(18))
                     row.addView(text(m.title, 13.5f).apply { setPadding(dp(8), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
-                    if (k == "PHOTO") row.addView(IconView(this, Icons.LOCK, 2f).apply { tint = Glass.TEXT3; contentDescription = "ล็อกไว้" }, dp(32), dp(16))
-                    else row.addView(glassButton(IconView(this, Icons.MINUS, 2.4f), 32, "นำ${m.title}ออกจากแถบ") { saveBar(bar.filter { it != k }); render() }, dp(32), dp(32))
+                    if (k == "PHOTO") row.addView(IconView(this, Icons.LOCK, 2f).apply { tint = Glass.TEXT3; contentDescription = "ภาพถ่าย ล็อกไว้ในแถบ" }, dp(48), dp(16))
+                    else row.addView(glassButton(IconView(this, Icons.MINUS, 2.4f), 48, "นำ${m.title}ออกจากแถบ") { saveBar(bar.filter { it != k }); render() }, dp(48), dp(48))
                     var startY = 0f
                     grip.setOnTouchListener { _, e ->
                         when (e.actionMasked) {
                             MotionEvent.ACTION_DOWN -> { startY = e.rawY; row.elevation = dp(8).toFloat(); row.animate().scaleX(1.03f).scaleY(1.03f).setDuration(120).start(); inBar.parent.requestDisallowInterceptTouchEvent(true) }
                             MotionEvent.ACTION_MOVE -> row.translationY = e.rawY - startY
                             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                                val to = (i + (row.translationY / dp(50)).roundToInt()).coerceIn(0, bar.size - 1)
+                                val to = (i + (row.translationY / dp(58)).roundToInt()).coerceIn(0, bar.size - 1)
                                 if (to != i) { bar.removeAt(i); bar.add(to, k); saveBar(bar); Glass.tick(row) }
                                 render()
                             }
                         }
                         true
                     }
-                    inBar.addView(row, LinearLayout.LayoutParams(-1, dp(44)).apply { setMargins(0, dp(3), 0, dp(3)) })
+                    // TalkBack cannot drag the grip, so each row also offers move up / move down.
+                    if (i > 0) androidx.core.view.ViewCompat.addAccessibilityAction(row, "เลื่อน${m.title}ขึ้น") { _, _ -> bar.removeAt(i); bar.add(i - 1, k); saveBar(bar); render(); true }
+                    if (i < bar.size - 1) androidx.core.view.ViewCompat.addAccessibilityAction(row, "เลื่อน${m.title}ลง") { _, _ -> bar.removeAt(i); bar.add(i + 1, k); saveBar(bar); render(); true }
+                    row.contentDescription = "${m.title} ลำดับ ${i + 1} จาก ${bar.size}"
+                    inBar.addView(row, LinearLayout.LayoutParams(-1, dp(52)).apply { setMargins(0, dp(3), 0, dp(3)) })
                 }
                 ALL.filter { it.key !in bar }.forEach { m ->
                     val cell = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; background = glass(18, 0x12ffffff); setPadding(dp(10), 0, dp(6), 0) }
                     val use = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; isClickable = true; contentDescription = "ใช้โหมด${m.title}ทันที"; glassTouch()
                         addView(IconView(this@CameraActivity, m.icon), dp(20), dp(20)); addView(text(m.title, 13.5f).apply { setPadding(dp(8), 0, 0, 0) })
                         setOnClickListener { sheet.close { useTemporary(m.key) } } }
-                    cell.addView(use, LinearLayout.LayoutParams(0, dp(44), 1f))
-                    cell.addView(glassButton(IconView(this, Icons.PLUS, 2.4f).apply { tint = Glass.ACCENT }, 36, "เพิ่ม${m.title}ลงแถบ") { saveBar(barList() + m.key); render() }, dp(36), dp(36))
-                    more.addView(cell, GridLayout.LayoutParams(GridLayout.spec(GridLayout.UNDEFINED), GridLayout.spec(GridLayout.UNDEFINED, 1f)).apply { width = 0; height = dp(52); setMargins(dp(4), dp(4), dp(4), dp(4)) })
+                    cell.addView(use, LinearLayout.LayoutParams(0, -2, 1f).apply { height = LinearLayout.LayoutParams.WRAP_CONTENT }); use.minimumHeight = dp(48)
+                    cell.addView(glassButton(IconView(this, Icons.PLUS, 2.4f).apply { tint = Glass.ACCENT }, 48, "เพิ่ม${m.title}ลงแถบ") { saveBar(barList() + m.key); render() }, dp(48), dp(48))
+                    cell.minimumHeight = dp(56)
+                    more.addView(cell, GridLayout.LayoutParams(GridLayout.spec(GridLayout.UNDEFINED), GridLayout.spec(GridLayout.UNDEFINED, 1f)).apply { width = 0; height = GridLayout.LayoutParams.WRAP_CONTENT; setMargins(dp(4), dp(4), dp(4), dp(4)) })
                 }
             }
             render()
@@ -889,9 +927,9 @@ class CameraActivity : ComponentActivity() {
             zooms.removeAllViews(); renderedZooms = stops
             stops.forEach { v ->
                 val cell = FrameLayout(this).apply { isClickable = true; isFocusable = true; contentDescription = "ซูม ${zoomText(v)} ลากซ้ายขวาเพื่อซูมละเอียด" }
-                cell.addView(text(zoomText(v), 12f, Color.WHITE, true).apply { gravity = Gravity.CENTER; background = GlassDrawable(0x1affffff, dp(20).toFloat(), resources.displayMetrics.density) }, FrameLayout.LayoutParams(dp(32), dp(32), Gravity.CENTER))
+                cell.addView(text(zoomText(v), 12f, Color.WHITE, true).apply { setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 12f); gravity = Gravity.CENTER; background = GlassDrawable(0x1affffff, dp(20).toFloat(), resources.displayMetrics.density) }, FrameLayout.LayoutParams(dp(32), dp(32), Gravity.CENTER))
                 cell.setOnClickListener { snapshotLens(v); animateZoom(v) }
-                zooms.addView(cell, LinearLayout.LayoutParams(dp(44), dp(44)).apply { setMargins(dp(2), 0, dp(2), 0) })
+                zooms.addView(cell, LinearLayout.LayoutParams(dp(48), dp(48)).apply { setMargins(dp(1), 0, dp(1), 0) })
             }
         }
         refreshZoomUi()
@@ -914,7 +952,7 @@ class CameraActivity : ComponentActivity() {
         if (mode == PhotoMode.PRO && chipFrame.visibility != View.VISIBLE) rebuildChips()
         if (mode != PhotoMode.PRO && chipFrame.visibility == View.VISIBLE) { chipFrame.visibility = View.GONE; closeDial() }
         if (chipFrame.visibility == View.VISIBLE) styleChips(chips.selected)
-        val dlp = dial.layoutParams as FrameLayout.LayoutParams; val want = if (chipFrame.visibility == View.VISIBLE) dp(130) else dp(66)
+        val dlp = dial.layoutParams as FrameLayout.LayoutParams; val want = if (chipFrame.visibility == View.VISIBLE) dp(78 + 56 * grow()) else dp(70)
         if (dlp.bottomMargin != want) { dlp.bottomMargin = want; dial.layoutParams = dlp }
         if (mode == PhotoMode.PANORAMA) hint("พาโนรามา · ถ่ายแล้วแตะชัตเตอร์ค้าง… ต่อภาพ (${panoFiles.size})", 1500)
     }
@@ -1063,9 +1101,11 @@ class CameraActivity : ComponentActivity() {
         busy = true
         hintVersion++
         refresh()
+        val count = if (kind.enhance) burstCount(if (night) prefs.getInt("night_frames", 16) else prefs.getInt("frames", 8)) else 1
+        if (night) nightProgress(0, count) // the stop button works from the first moment, not after the 3A lock
         burst = BurstCapture(
             applicationContext, useCase, kind,
-            if (kind.enhance) burstCount(if (night) prefs.getInt("night_frames", 16) else prefs.getInt("frames", 8)) else 1,
+            count,
             rear, ratio, software && rear, targetRotation,
             started = { captureFeedback() },
             progress = { done, total ->
@@ -1204,7 +1244,7 @@ class CameraActivity : ComponentActivity() {
     }
     private fun openVideo(kind:String){provider?.unbindAll();capture=null;startActivity(Intent(this,VideoActivity::class.java).putExtra("mode",kind))}
     private fun openSpecial(kind:String){provider?.unbindAll();capture=null;startActivity(Intent(this,SpecialVideoActivity::class.java).putExtra("mode",kind))}
-    private fun showAllSettings(){showStudioSettings(rawAvailable){auto=prefs.getBoolean("auto",true);overlay.grid=prefs.getBoolean("grid",false)
+    private fun showAllSettings(){showStudioSettings(rawAvailable){auto=prefs.getBoolean("auto",true);software=prefs.getBoolean("software",false);overlay.grid=prefs.getBoolean("grid",false)
         if(prefs.getBoolean("gps",false)&&ContextCompat.checkSelfPermission(this,Manifest.permission.ACCESS_COARSE_LOCATION)!=PackageManager.PERMISSION_GRANTED)locationRequest.launch(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION,Manifest.permission.ACCESS_FINE_LOCATION))
         refresh();if(!busy){layoutMask(stage.width,stage.height);bind()}
     }}

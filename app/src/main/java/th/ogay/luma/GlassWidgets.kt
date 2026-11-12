@@ -32,6 +32,8 @@ class CenterStrip(context: Context, private val gapDp: Int = 4) : FrameLayout(co
     var onSelect: (Int) -> Unit = {}
     var onLive: (Int) -> Unit = {}
     var onOverscroll: ((Int) -> Unit)? = null
+    /** True while [onSelect] runs for a tap on an item, false when it comes from a swipe or a scroll action. */
+    var byTap = false; private set
     var capsuleHeightDp = 52; set(v) { field = v; (capsule.layoutParams as? LayoutParams)?.let { it.height = context.dp(v); capsule.layoutParams = it } }
     private val track = FrameLayout(context).apply { clipChildren = false }
     val capsule = View(context).apply { background = context.glass(18) }
@@ -41,6 +43,8 @@ class CenterStrip(context: Context, private val gapDp: Int = 4) : FrameLayout(co
     private var drag = 0f; private var dragging = false; private var downX = 0f; private var downY = 0f; private var raw = 0f
     private var vt: VelocityTracker? = null
     private var settle: ValueAnimator? = null
+    private var capsuleAnim: ValueAnimator? = null
+    private var fadeW = 0
     private val slop = ViewConfiguration.get(context).scaledTouchSlop
     private val fade = Paint().apply { xfermode = PorterDuffXfermode(PorterDuff.Mode.DST_IN) }
     var fadeDp = 40f
@@ -57,10 +61,13 @@ class CenterStrip(context: Context, private val gapDp: Int = 4) : FrameLayout(co
         var x = 0
         list.forEachIndexed { i, it ->
             track.addView(it.view, LayoutParams(context.dp(it.widthDp), LayoutParams.MATCH_PARENT).apply { leftMargin = x })
-            it.view.setOnClickListener { _ -> if (!dragging) { select(i, true); onSelect(i) } }
+            it.view.setOnClickListener { _ -> if (!dragging) { byTap = true; select(i, true); onSelect(i); byTap = false } }
             x += context.dp(it.widthDp + gapDp)
         }
+        // The track is as wide as its content: a parent-sized track would clip and block touches on items past its right edge.
+        (track.layoutParams as LayoutParams).let { it.width = max(x, 1); track.layoutParams = it }
         selected = sel.coerceIn(0, max(0, list.size - 1)); live = selected
+        markSelected()
         post { jump() }
     }
 
@@ -79,16 +86,17 @@ class CenterStrip(context: Context, private val gapDp: Int = 4) : FrameLayout(co
         val lp = capsule.layoutParams as LayoutParams
         if (!animate || Glass.reduced(context)) { lp.width = w; lp.leftMargin = (width - w) / 2; capsule.layoutParams = lp; return }
         val from = lp.width
-        ValueAnimator.ofInt(from, w).apply {
+        capsuleAnim?.cancel()
+        capsuleAnim = ValueAnimator.ofInt(from, w).apply {
             duration = 360; interpolator = Glass.EASE
-            addUpdateListener { val v = it.animatedValue as Int; lp.width = v; lp.leftMargin = (width - v) / 2; capsule.layoutParams = lp }
+            addUpdateListener { val v = it.animatedValue as Int; lp.width = v; lp.leftMargin = (width - v) / 2; capsule.requestLayout() }
             start()
         }
     }
 
     fun select(i: Int, animate: Boolean) {
         if (items.isEmpty()) return
-        selected = i.coerceIn(0, items.size - 1); setLive(selected)
+        selected = i.coerceIn(0, items.size - 1); setLive(selected); markSelected()
         settle?.cancel()
         if (!animate || Glass.reduced(context) || width == 0) { jump(); return }
         settle = ValueAnimator.ofFloat(track.translationX, target(selected)).apply {
@@ -100,6 +108,26 @@ class CenterStrip(context: Context, private val gapDp: Int = 4) : FrameLayout(co
     }
 
     private fun setLive(i: Int) { if (i != live) { live = i; Glass.tick(this); onLive(i) } }
+    private fun markSelected() {
+        items.forEachIndexed { i, it ->
+            it.view.isSelected = i == selected
+            androidx.core.view.ViewCompat.setStateDescription(it.view, if (i == selected) "เลือกอยู่" else null)
+        }
+    }
+    override fun onDetachedFromWindow() { settle?.cancel(); capsuleAnim?.cancel(); vt?.recycle(); vt = null; super.onDetachedFromWindow() }
+    override fun getAccessibilityClassName(): CharSequence = "android.widget.HorizontalScrollView"
+    override fun onInitializeAccessibilityNodeInfo(info: AccessibilityNodeInfo) {
+        super.onInitializeAccessibilityNodeInfo(info)
+        info.isScrollable = items.size > 1
+        if (selected < items.size - 1) info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_FORWARD)
+        if (selected > 0) info.addAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SCROLL_BACKWARD)
+    }
+    override fun performAccessibilityAction(action: Int, args: Bundle?): Boolean {
+        val d = when (action) { AccessibilityNodeInfo.ACTION_SCROLL_FORWARD -> 1; AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD -> -1; else -> 0 }
+        val t = selected + d
+        if (d != 0 && t in items.indices) { select(t, true); onSelect(t); items[t].view.sendAccessibilityEvent(android.view.accessibility.AccessibilityEvent.TYPE_VIEW_SELECTED); return true }
+        return super.performAccessibilityAction(action, args)
+    }
 
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) { super.onSizeChanged(w, h, ow, oh); post { jump() } }
 
@@ -148,7 +176,7 @@ class CenterStrip(context: Context, private val gapDp: Int = 4) : FrameLayout(co
         val save = c.saveLayer(0f, 0f, width.toFloat(), height.toFloat(), null)
         super.dispatchDraw(c)
         val f = context.px(fadeDp) / width
-        fade.shader = LinearGradient(0f, 0f, width.toFloat(), 0f, intArrayOf(0, Color.BLACK, Color.BLACK, 0), floatArrayOf(0f, f, 1 - f, 1f), Shader.TileMode.CLAMP)
+        if (fadeW != width || fade.shader == null) fadeW = width.also { fade.shader = LinearGradient(0f, 0f, width.toFloat(), 0f, intArrayOf(0, Color.BLACK, Color.BLACK, 0), floatArrayOf(0f, f, 1 - f, 1f), Shader.TileMode.CLAMP) }
         c.drawRect(0f, 0f, width.toFloat(), height.toFloat(), fade); c.restoreToCount(save)
     }
 }
@@ -395,30 +423,106 @@ class GlassSwitch(context: Context) : View(context) {
     }
 }
 
-/** Glass dropdown that grows from its anchor; drag up/down to scrub with a moving glass highlight and release to pick. */
+/** Frame that stops taking touches once it starts closing, so a fading layer never swallows the next tap. */
+class LayerFrame(context: Context) : FrameLayout(context) {
+    var closing = false
+    override fun dispatchTouchEvent(e: MotionEvent): Boolean = if (closing) false else super.dispatchTouchEvent(e)
+}
+
+/**
+ * Column that owns vertical swipes: children keep taps and horizontal drags (CenterStrip),
+ * but once a drag goes up past the touch slop the column takes the stream and calls [onSwipeUp].
+ */
+class SwipeColumn(context: Context) : LinearLayout(context) {
+    var onSwipeUp: () -> Unit = {}
+    private val slop = ViewConfiguration.get(context).scaledTouchSlop
+    private var downX = 0f; private var downY = 0f; private var fired = false
+    init { orientation = VERTICAL }
+    override fun onInterceptTouchEvent(e: MotionEvent): Boolean {
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> { downX = e.x; downY = e.y; fired = false }
+            MotionEvent.ACTION_MOVE -> { val dy = downY - e.y; if (dy > slop && dy > abs(e.x - downX) * 1.2f) return true }
+        }
+        return false
+    }
+    override fun onTouchEvent(e: MotionEvent): Boolean {
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> { downX = e.x; downY = e.y; fired = false; return true }
+            MotionEvent.ACTION_MOVE -> { parent?.requestDisallowInterceptTouchEvent(true); if (!fired && downY - e.y > context.px(36f)) { fired = true; onSwipeUp() } }
+            MotionEvent.ACTION_UP -> { if (!fired && downY - e.y > context.px(20f)) { fired = true; onSwipeUp() } }
+        }
+        return true
+    }
+}
+
+/**
+ * Lens pill capsule: a tap goes to the lens cell under the finger, a sideways drag anywhere on the capsule
+ * (cells included) becomes a zoom drag that this view owns until UP or CANCEL.
+ */
+class ZoomCapsule(context: Context) : LinearLayout(context) {
+    var onStart: () -> Unit = {}
+    var onDrag: (Float) -> Unit = {}
+    var onEnd: () -> Unit = {}
+    var dragging = false; private set
+    private val slop = ViewConfiguration.get(context).scaledTouchSlop
+    private var downX = 0f; private var downY = 0f
+    init { gravity = Gravity.CENTER }
+    override fun onInterceptTouchEvent(e: MotionEvent): Boolean {
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> { downX = e.rawX; downY = e.rawY; dragging = false }
+            MotionEvent.ACTION_MOVE -> if (abs(e.rawX - downX) > slop && abs(e.rawX - downX) > abs(e.rawY - downY)) { begin(); return true }
+        }
+        return false
+    }
+    override fun onTouchEvent(e: MotionEvent): Boolean {
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> { downX = e.rawX; downY = e.rawY; dragging = false; return true }
+            MotionEvent.ACTION_MOVE -> { if (!dragging && abs(e.rawX - downX) > slop) begin(); if (dragging) onDrag(e.rawX - downX) }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> finish()
+        }
+        return true
+    }
+    private fun begin() { if (dragging) return; dragging = true; parent?.requestDisallowInterceptTouchEvent(true); onStart() }
+    /** Ends a drag; also called when the screen pauses mid-gesture. */
+    fun finish() { if (dragging) { dragging = false; onEnd() } }
+}
+
+/**
+ * Glass dropdown that grows from its anchor; drag up/down to scrub with a moving glass highlight and release to pick.
+ * When it opens over a sheet ([over] returns true) it adds no second dark shade and uses an opaque card so both stay
+ * readable; [dim] still fires so the caller can let the sheet recede (see [GlassSheet.recede]).
+ */
 class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Unit = {}) {
     class Option(val label: String, val icon: String = "", val note: String = "", val inner: String = "")
-    private var overlay: View? = null; private var card: FrameLayout? = null
+    var over: () -> Boolean = { false }
+    private var overlay: View? = null; private var card: LayerFrame? = null; private var dimmed = false
     fun show(anchor: View, title: String, options: List<Option>, selected: Int, pick: (Int) -> Unit) {
         dismiss(false)
+        if (options.isEmpty() || !anchor.isAttachedToWindow) return
         val c = host.context; val d = c.resources.displayMetrics.density
         val loc = IntArray(2); val hl = IntArray(2); anchor.getLocationInWindow(loc); host.getLocationInWindow(hl)
         val ax = loc[0] - hl[0]; val ay = loc[1] - hl[1]
-        val w = max(c.dp(232), anchor.width); val h = c.dp(36) + options.size * c.dp(54) + c.dp(6)
-        val x = (ax + anchor.width / 2 - w / 2).coerceIn(c.dp(12), host.width - c.dp(12) - w)
-        val up = ay + anchor.height + c.dp(8) + h > host.height - c.dp(12)
-        val y = if (up) max(c.dp(12), ay - c.dp(8) - h) else ay + anchor.height + c.dp(8)
-        val shade = View(c).apply { setBackgroundColor(0x29000000); alpha = 0f; setOnClickListener { dismiss(true) } }
+        val padT = host.paddingTop + c.dp(12); val padB = host.paddingBottom + c.dp(12)
+        val avail = host.height - padT - padB
+        val w = max(c.dp(232), anchor.width).coerceAtMost(host.width - c.dp(24))
+        val full = c.dp(36) + options.size * c.dp(54) + c.dp(12)
+        val h = min(full, avail); val scrolls = full > avail
+        val x = (ax + anchor.width / 2 - w / 2).coerceIn(c.dp(12), max(c.dp(12), host.width - c.dp(12) - w))
+        val below = ay + anchor.height + c.dp(8); val above = ay - c.dp(8) - h
+        val up = below + h > host.height - padB
+        val y = (if (up) above else below).coerceIn(padT, max(padT, host.height - padB - h))
+        val quiet = over()
+        val shade = View(c).apply { setBackgroundColor(if (quiet) 0 else 0x29000000); alpha = 0f; isClickable = true; contentDescription = "ปิดเมนู"; setOnClickListener { dismiss(true) } }
         host.addView(shade, FrameLayout.LayoutParams(-1, -1)); shade.animate().alpha(1f).setDuration(320).start()
-        val menu = FrameLayout(c).apply { background = c.glass(22, Glass.FILL_POP); setPadding(c.dp(6), c.dp(6), c.dp(6), c.dp(6)); elevation = 12 * d }
+        val menu = LayerFrame(c).apply { background = c.glass(22, if (quiet) 0xf5222225.toInt() else Glass.FILL_POP); setPadding(c.dp(6), c.dp(6), c.dp(6), c.dp(6)); elevation = 12 * d }
         val hi = View(c).apply { background = GlassDrawable(0x24ffffff, c.dp(16).toFloat(), d) }
-        menu.addView(hi, FrameLayout.LayoutParams(-1, c.dp(52)).apply { topMargin = c.dp(30) })
         val list = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }
-        list.addView(c.text(title, 12f, Glass.TEXT2, true).apply { setPadding(c.dp(10), c.dp(6), 0, 0) }, -1, c.dp(30))
+        list.addView(c.text(title, 12f, Glass.TEXT2, true).apply { setPadding(c.dp(10), c.dp(6), 0, 0); importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES; isFocusable = true }, -1, c.dp(30))
         val rows = options.mapIndexed { i, o ->
             LinearLayout(c).apply {
-                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(c.dp(10), 0, c.dp(10), 0)
-                contentDescription = o.label + if (o.note.isNotEmpty()) ", ${o.note}" else ""; isClickable = true
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(c.dp(10), 0, c.dp(10), 0); minimumHeight = c.dp(52)
+                contentDescription = o.label + if (o.note.isNotEmpty()) ", ${o.note}" else ""; isClickable = true; isFocusable = true
+                isSelected = i == selected; androidx.core.view.ViewCompat.setStateDescription(this, if (i == selected) "เลือกอยู่" else null)
                 if (o.icon.isNotEmpty()) addView(IconView(c, o.icon).apply { tint = if (i == selected) Glass.ACCENT else Color.WHITE; inner = o.inner }, c.dp(22), c.dp(22))
                 val texts = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL; setPadding(c.dp(10), 0, 0, 0) }
                 texts.addView(c.text(o.label, 14f, Color.WHITE, i == selected))
@@ -426,35 +530,50 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
                 addView(texts, LinearLayout.LayoutParams(0, -2, 1f))
                 if (i == selected) addView(IconView(c, Icons.CHECK, 2.4f).apply { tint = Glass.ACCENT }, c.dp(18), c.dp(18))
                 setOnClickListener { choose(i, pick) }
-            }.also { list.addView(it, LinearLayout.LayoutParams(-1, c.dp(52)).apply { topMargin = c.dp(2) }) }
+            }.also { list.addView(it, LinearLayout.LayoutParams(-1, -2).apply { topMargin = c.dp(2) }) }
         }
-        menu.addView(list, -1, -2)
-        fun moveHi(i: Int, press: Boolean) {
-            hi.animate().translationY((i * c.dp(54)).toFloat()).scaleX(if (press) 1.03f else 1f).scaleY(if (press) 1.03f else 1f).setInterpolator(Glass.POP).setDuration(240).start()
-            rows.forEachIndexed { k, r -> r.animate().scaleX(if (press && k == i) 1.02f else 1f).scaleY(if (press && k == i) 1.02f else 1f).setDuration(200).start() }
-        }
-        var current = selected.coerceAtLeast(0); hi.translationY = (current * c.dp(54)).toFloat()
-        menu.setOnTouchListener { _, e ->
-            val i = ((e.y - c.dp(36)) / c.dp(54)).toInt().coerceIn(0, options.size - 1)
-            when (e.actionMasked) {
-                MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> { if (i != current) { current = i; Glass.tick(menu) }; moveHi(i, true) }
-                MotionEvent.ACTION_UP -> { moveHi(i, false); choose(i, pick) }
-                MotionEvent.ACTION_CANCEL -> moveHi(current, false)
+        if (scrolls) {
+            // Too many options for the space: a plain scrolling list, rows stay tappable, no scrub highlight.
+            menu.addView(ScrollView(c).apply { isVerticalScrollBarEnabled = false; addView(list) }, -1, -1)
+        } else {
+            menu.addView(hi, FrameLayout.LayoutParams(-1, c.dp(52)).apply { topMargin = c.dp(32) })
+            menu.addView(list, -1, -2)
+            fun rowAt(y: Float) = rows.indexOfFirst { y - c.dp(6) < it.bottom }.let { if (it < 0) rows.size - 1 else it }
+            fun moveHi(i: Int, press: Boolean) {
+                val r = rows[i]
+                hi.layoutParams = (hi.layoutParams as FrameLayout.LayoutParams).apply { height = r.height.coerceAtLeast(c.dp(52)) }
+                hi.animate().translationY((r.top - rows[0].top).toFloat()).scaleX(if (press) 1.03f else 1f).scaleY(if (press) 1.03f else 1f).setInterpolator(Glass.POP).setDuration(240).start()
+                rows.forEachIndexed { k, row -> row.animate().scaleX(if (press && k == i) 1.02f else 1f).scaleY(if (press && k == i) 1.02f else 1f).setDuration(200).start() }
             }
-            true
+            var current = selected.coerceIn(0, rows.size - 1)
+            menu.post { if (rows[current].height > 0) moveHi(current, false) }
+            if (selected < 0) hi.alpha = 0f
+            menu.setOnTouchListener { _, e ->
+                val i = rowAt(e.y)
+                when (e.actionMasked) {
+                    MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> { hi.alpha = 1f; if (i != current) { current = i; Glass.tick(menu) }; moveHi(i, true) }
+                    MotionEvent.ACTION_UP -> { moveHi(i, false); choose(i, pick) }
+                    MotionEvent.ACTION_CANCEL -> moveHi(current, false)
+                }
+                true
+            }
         }
-        host.addView(menu, FrameLayout.LayoutParams(w, -2).apply { leftMargin = x; topMargin = y })
-        overlay = shade; card = menu; dim(true)
+        host.addView(menu, FrameLayout.LayoutParams(w, if (scrolls) h else -2).apply { leftMargin = x; topMargin = y })
+        overlay = shade; card = menu; dimmed = true; dim(true)
         menu.alpha = 0f
-        menu.post { Liquid.show(menu, (ax + anchor.width / 2f - x), if (up) menu.height.toFloat() else 0f, false) }
+        menu.post { Liquid.show(menu, (ax + anchor.width / 2f - x).coerceIn(0f, w.toFloat()), if (up) menu.height.toFloat() else 0f, false) }
     }
-    private fun choose(i: Int, pick: (Int) -> Unit) { pick(i); host.postDelayed({ dismiss(true) }, 160) }
+    private fun choose(i: Int, pick: (Int) -> Unit) {
+        val m = card ?: return
+        m.closing = true // one pick per menu, even with a fast double tap
+        pick(i); host.postDelayed({ if (card === m) dismiss(true) }, 160)
+    }
     fun dismiss(animate: Boolean) {
         val o = overlay; val m = card; overlay = null; card = null
         if (o == null && m == null) return
-        dim(false)
-        o?.animate()?.alpha(0f)?.setDuration(260)?.withEndAction { host.removeView(o) }?.start()
-        if (m != null) { if (animate) Liquid.hide(m, m.pivotX, m.pivotY, false) { host.removeView(m) } else host.removeView(m) }
+        if (dimmed) dim(false); dimmed = false
+        o?.let { it.isClickable = false; it.setOnClickListener(null); it.animate().alpha(0f).setDuration(if (animate) 260 else 0).withEndAction { host.removeView(it) }.start() }
+        if (m != null) { m.closing = true; if (animate) Liquid.hide(m, m.pivotX, m.pivotY, false) { host.removeView(m) } else host.removeView(m) }
     }
     val showing get() = card != null
 }
@@ -462,21 +581,24 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
 /**
  * Bottom glass sheet that grows from a drop at [pivotYFromBottom] and sinks back there; drag the handle down to dismiss.
  * [pushBack] receives 0..1 so the caller can shrink and blur the camera behind it.
+ * [refresh] rebuilds the content in place so a changed value never closes and reopens the sheet.
  */
 class GlassSheet(private val host: FrameLayout, private val pivotYFromBottom: () -> Float, private val pushBack: (Float) -> Unit = {}) {
-    private var shade: View? = null; private var card: FrameLayout? = null
+    private var shade: View? = null; private var card: LayerFrame? = null
+    private var body: LinearLayout? = null; private var builder: ((LinearLayout, GlassSheet) -> Unit)? = null
+    var onClosed: () -> Unit = {}
     val showing get() = card != null
     fun open(build: (LinearLayout, GlassSheet) -> Unit) {
         if (card != null) return
         val c = host.context; val d = c.resources.displayMetrics.density
-        val s = View(c).apply { setBackgroundColor(0x52000000); alpha = 0f; setOnClickListener { close() } }
+        val s = View(c).apply { setBackgroundColor(0x52000000); alpha = 0f; isClickable = true; contentDescription = "ปิดแผง"; setOnClickListener { close() } }
         host.addView(s, FrameLayout.LayoutParams(-1, -1)); s.animate().alpha(1f).setDuration(300).start()
-        val sheet = FrameLayout(c).apply { background = c.glass(34, Glass.FILL_STRONG); elevation = 16 * d }
-        val scroll = ScrollView(c).apply { isVerticalScrollBarEnabled = false; overScrollMode = View.OVER_SCROLL_NEVER }
-        val body = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL; setPadding(c.dp(16), c.dp(4), c.dp(16), c.dp(20)) }
-        val handle = FrameLayout(c).apply { contentDescription = "ปัดลงหรือแตะเพื่อปิด"; isClickable = true }
+        val sheet = LayerFrame(c).apply { background = c.glass(34, Glass.FILL_STRONG); elevation = 16 * d }
+        val scroll = ScrollView(c).apply { isVerticalScrollBarEnabled = false; overScrollMode = View.OVER_SCROLL_NEVER; clipToPadding = false }
+        val b = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL; setPadding(c.dp(16), c.dp(4), c.dp(16), c.dp(20)) }
+        val handle = FrameLayout(c).apply { contentDescription = "ปัดลงหรือแตะเพื่อปิด"; isClickable = true; isFocusable = true }
         handle.addView(View(c).apply { background = GlassDrawable(0x52ffffff, c.dp(3).toFloat(), d) }, FrameLayout.LayoutParams(c.dp(40), c.dp(5), Gravity.CENTER))
-        body.addView(handle, LinearLayout.LayoutParams(c.dp(120), c.dp(28)).apply { gravity = Gravity.CENTER_HORIZONTAL })
+        b.addView(handle, LinearLayout.LayoutParams(c.dp(120), c.dp(48)).apply { gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = -c.dp(12) })
         var startY = 0f; var t0 = 0L
         handle.setOnTouchListener { _, e ->
             when (e.actionMasked) {
@@ -484,26 +606,39 @@ class GlassSheet(private val host: FrameLayout, private val pivotYFromBottom: ()
                 MotionEvent.ACTION_MOVE -> { val dy = e.rawY - startY; sheet.translationY = if (dy > 0) dy else dy * 0.2f; pushBack((1 - sheet.translationY / host.height).coerceIn(0f, 1f)) }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     val dy = e.rawY - startY
-                    if (dy > c.dp(80) || (dy > c.dp(24) && e.eventTime - t0 < 250) || abs(dy) < c.dp(4)) close()
+                    if (e.actionMasked == MotionEvent.ACTION_UP && (dy > c.dp(80) || (dy > c.dp(24) && e.eventTime - t0 < 250) || abs(dy) < c.dp(4))) close()
                     else { sheet.animate().translationY(0f).setInterpolator(Glass.SPRING).setDuration(420).start(); pushBack(1f) }
                 }
             }
             true
         }
-        build(body, this)
-        scroll.addView(body)
+        handle.setOnClickListener { close() }
+        b.addView(LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }, -1, -2)
+        build(b.getChildAt(1) as LinearLayout, this)
+        scroll.addView(b)
         sheet.addView(scroll, -1, -2)
         host.addView(sheet, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply { setMargins(c.dp(8), c.dp(24), c.dp(8), c.dp(8)) })
-        shade = s; card = sheet; pushBack(1f)
+        shade = s; card = sheet; body = b; builder = build; pushBack(1f)
         sheet.alpha = 0f
         sheet.post { Liquid.show(sheet, sheet.width / 2f, sheet.height - pivotYFromBottom(), true) }
     }
+    /** Softens the sheet while a menu sits on top of it, the way the prototype blurs what is behind a menu. */
+    fun recede(on: Boolean) {
+        val sheet = card ?: return
+        sheet.animate().alpha(if (on) 0.82f else 1f).setDuration(220).start()
+        Glass.blur(sheet, if (on) 6f else 0f)
+    }
+    fun refresh() {
+        val content = body?.getChildAt(1) as? LinearLayout ?: return; val build = builder ?: return
+        content.removeAllViews(); build(content, this)
+    }
     fun close(end: (() -> Unit)? = null) {
-        val s = shade; val sheet = card; shade = null; card = null
-        if (sheet == null) return
+        val s = shade; val sheet = card; shade = null; card = null; body = null; builder = null
+        if (sheet == null) { end?.invoke(); return }
+        sheet.closing = true
         pushBack(0f)
-        s?.animate()?.alpha(0f)?.setDuration(300)?.withEndAction { host.removeView(s) }?.start()
+        s?.let { it.isClickable = false; it.setOnClickListener(null); it.animate().alpha(0f).setDuration(300).withEndAction { host.removeView(it) }.start() }
         Liquid.hide(sheet, sheet.width / 2f, sheet.height - pivotYFromBottom(), true) { host.removeView(sheet); end?.invoke() }
+        onClosed()
     }
 }
-

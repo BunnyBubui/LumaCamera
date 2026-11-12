@@ -228,11 +228,16 @@ class IconView(context: Context, d: String = "", var strokeDp: Float = 1.8f) : V
     private val t = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER; typeface = Typeface.DEFAULT_BOLD }
     private val m = Matrix(); private val scaled = Path()
     init { importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }
+    companion object {
+        // Icons are parsed once in their 24-unit box and only scaled per draw.
+        private val paths = android.util.LruCache<String, Path>(160)
+        fun cached(d: String): Path = paths.get(d) ?: SvgPath.parse(d).also { paths.put(d, it) }
+    }
     override fun onDraw(c: Canvas) {
         if (path.isEmpty()) return
         val s = min(width, height) / 24f
         m.setScale(s, s); m.postTranslate((width - 24 * s) / 2, (height - 24 * s) / 2)
-        SvgPath.parse(path).transform(m, scaled)
+        cached(path).transform(m, scaled)
         if (shadow) { p.color = 0x66000000; p.strokeWidth = (strokeDp + 1.5f) * s; c.drawPath(scaled, p) }
         p.color = tint; p.strokeWidth = strokeDp * s; c.drawPath(scaled, p)
         if (inner.isNotEmpty()) { t.color = tint; t.textSize = 8.5f * s; c.drawText(inner, width / 2f, height / 2f + t.textSize * 0.36f, t) }
@@ -263,6 +268,8 @@ class GlassDrawable(var fill: Int = Glass.FILL, radius: Float = 0f, private val 
     }
     override fun setAlpha(alpha: Int) { p.alpha = alpha }
     override fun setColorFilter(cf: ColorFilter?) { p.colorFilter = cf }
+    // Same radius as the drawn shape, so clipToOutline and elevation shadows match the glass edge.
+    override fun getOutline(o: android.graphics.Outline) { val b = bounds; o.setRoundRect(b, min(radius, min(b.width(), b.height()) / 2f)) }
     @Deprecated("Deprecated in Java") override fun getOpacity() = PixelFormat.TRANSLUCENT
 }
 
