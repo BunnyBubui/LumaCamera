@@ -57,8 +57,8 @@ object EnhanceUi {
         val card = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; background = a.glass(28, Glass.FILL_STRONG); setPadding(a.dp(18), a.dp(18), a.dp(18), a.dp(16)); isClickable = true }
         val column = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
         card.addView(ScrollView(a).apply { isVerticalScrollBarEnabled = false; addView(column) }, LinearLayout.LayoutParams(-1, -2, 1f))
-        val width = minOf((a.resources.displayMetrics.widthPixels * 0.92f).toInt(), a.dp(440))
-        host.addView(card, FrameLayout.LayoutParams(width, -2, Gravity.CENTER).apply { topMargin = a.dp(24); bottomMargin = a.dp(24) })
+        val cardW = minOf((a.resources.displayMetrics.widthPixels * 0.92f).toInt(), a.dp(440))
+        host.addView(card, FrameLayout.LayoutParams(cardW, -2, Gravity.CENTER).apply { topMargin = a.dp(24); bottomMargin = a.dp(24) })
         host.setOnClickListener { dialog.dismiss() }
         fun label(value: String, size: Float = 13f, color: Int = Glass.TEXT2) = a.text(value, size, color).apply { maxLines = 12; ellipsize = null; setLineSpacing(0f, 1.18f) }
 
