@@ -1,0 +1,49 @@
+package th.ogay.luma
+
+import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
+import org.junit.Test
+
+class StudioMathTest {
+    @Test fun orderPutsTheOpenedClipAfterTheLeadingClips() {
+        assertEquals(listOf(0, 1, 2, 3), StudioMath.order(0, 3))
+        assertEquals(listOf(1, 2, 0, 3), StudioMath.order(2, 3))
+        assertEquals(listOf(1, 2, 3, 0), StudioMath.order(9, 3))
+        assertEquals(listOf(0), StudioMath.order(1, 0))
+    }
+
+    @Test fun glideHoldsOutsideAndEasesBetweenKeyframes() {
+        val times = longArrayOf(1000, 2000, 4000)
+        val values = arrayOf(floatArrayOf(0f, 1f), floatArrayOf(1f, 1f), floatArrayOf(1f, 0f))
+        assertArrayEquals(floatArrayOf(0f, 1f), StudioMath.glide(times, values, 0), 1e-6f)
+        assertArrayEquals(floatArrayOf(1f, 0f), StudioMath.glide(times, values, 9000), 1e-6f)
+        // Half way is half way; a quarter of the way is less than a quarter because the move starts softly.
+        assertEquals(0.5f, StudioMath.glide(times, values, 1500)[0], 1e-6f)
+        assertEquals(0.15625f, StudioMath.glide(times, values, 1250)[0], 1e-6f)
+        assertEquals(0.5f, StudioMath.glide(times, values, 3000)[1], 1e-6f)
+        assertArrayEquals(floatArrayOf(1f, 1f), StudioMath.glide(times, values, 2000), 1e-6f)
+    }
+
+    @Test fun fadeRisesAtTheStartAndFallsAtTheEnd() {
+        assertEquals(0f, StudioMath.fade(0, 3000, 1000, 500), 1e-6f)
+        assertEquals(0.5f, StudioMath.fade(500, 3000, 1000, 500), 1e-6f)
+        assertEquals(1f, StudioMath.fade(1500, 3000, 1000, 500), 1e-6f)
+        assertEquals(0.5f, StudioMath.fade(2750, 3000, 1000, 500), 1e-6f)
+        assertEquals(1f, StudioMath.fade(0, 3000, 0, 0), 1e-6f)
+    }
+
+    @Test fun packKeepsOverlappingBarsOnSeparateLanes() {
+        assertArrayEquals(intArrayOf(0, 1, 0), StudioMath.pack(listOf(0L to 1000L, 500L to 1500L, 1000L to 2000L), 4))
+        // With one lane only, everything shares it.
+        assertArrayEquals(intArrayOf(0, 0), StudioMath.pack(listOf(0L to 1000L, 500L to 1500L), 1))
+        assertArrayEquals(intArrayOf(0, 1, 1), StudioMath.pack(listOf(0L to 1000L, 0L to 1000L, 0L to 1000L), 2))
+    }
+
+    @Test fun srtIsReadAndWrittenBack() {
+        val file = "﻿1\r\n00:00:01,000 --> 00:00:02,500\r\nสวัสดี\r\n\r\n2\r\n00:01:00.250 --> 00:01:03.000\r\n<i>two</i>\r\nlines\r\n\r\nbroken block\r\n\r\n4\r\n00:00:05,000 --> 00:00:04,000\r\nends before it starts\r\n"
+        val cues = StudioMath.parseSrt(file)
+        assertEquals(listOf(StudioMath.Cue(1000, 2500, "สวัสดี"), StudioMath.Cue(60250, 63000, "two\nlines")), cues)
+        assertEquals(cues, StudioMath.parseSrt(StudioMath.writeSrt(cues)))
+        assertEquals("1\n00:00:01,000 --> 00:00:02,500\nสวัสดี\n", StudioMath.writeSrt(cues.take(1)))
+    }
+}

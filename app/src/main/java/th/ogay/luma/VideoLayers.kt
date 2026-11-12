@@ -54,23 +54,12 @@ data class VideoLayer(
     fun rawPose(outMs: Long): FloatArray {
         val k = keyList
         if (k.isEmpty()) return floatArrayOf(x, y, size, opacity)
-        val t = outMs - at
-        if (t <= k.first().t) return k.first().let { floatArrayOf(it.x, it.y, it.size, it.opacity) }
-        if (t >= k.last().t) return k.last().let { floatArrayOf(it.x, it.y, it.size, it.opacity) }
-        val i = k.indexOfLast { it.t <= t }; val a = k[i]; val b = k[i + 1]
-        // Ease in and out, so a move starts and stops softly instead of at once.
-        var f = ((t - a.t).toFloat() / (b.t - a.t).coerceAtLeast(1)).coerceIn(0f, 1f); f = f * f * (3 - 2 * f)
-        return floatArrayOf(a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f, a.size + (b.size - a.size) * f, a.opacity + (b.opacity - a.opacity) * f)
+        return StudioMath.glide(LongArray(k.size) { k[it].t }, Array(k.size) { floatArrayOf(k[it].x, k[it].y, k[it].size, k[it].opacity) }, outMs - at)
     }
     /** As [rawPose], with the fade in and fade out applied to the opacity. The preview and the export both draw from this. */
     fun pose(outMs: Long): FloatArray { val p = rawPose(outMs); p[3] = (p[3] * fade(outMs)).coerceIn(0f, 1f); return p }
     /** 0..1: how far the fade in or fade out has let the layer through at [outMs]. Used for the picture and for the sound. */
-    fun fade(outMs: Long): Float {
-        val t = outMs - at; var f = 1f
-        if (fadeIn > 0 && t < fadeIn) f = (t.toFloat() / fadeIn).coerceIn(0f, 1f)
-        if (fadeOut > 0 && t > length - fadeOut) f = minOf(f, ((length - t).toFloat() / fadeOut).coerceIn(0f, 1f))
-        return f
-    }
+    fun fade(outMs: Long): Float = StudioMath.fade(outMs - at, length, fadeIn, fadeOut)
 
     companion object {
         const val VIDEO = 0; const val IMAGE = 1; const val SOUND = 2; const val TEXT = 3

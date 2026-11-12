@@ -107,7 +107,7 @@ class VideoEditorActivity : ComponentActivity() {
     private var mainAt = 0
     private fun mainPos() = mainAt.coerceIn(0, extras.size)
     /** Clip numbers in playing order: 0 is the clip the editor was opened with, k ≥ 1 is added clip k. */
-    private fun order(): List<Int> { val m = mainPos(); return (1..m).toList() + 0 + ((m + 1)..extras.size).toList() }
+    private fun order(): List<Int> = StudioMath.order(mainAt, extras.size)
     private fun nextOf(k: Int): Int { val o = order(); return o[(o.indexOf(k) + 1).mod(o.size)] }
     private fun lenOf(k: Int) = if (k == 0) mainLen() else extras.getOrNull(k - 1)?.len ?: 0L
     /** Markers: moments of the finished video the user flagged; shown on the ruler, and edges snap to them. */
@@ -200,12 +200,14 @@ class VideoEditorActivity : ComponentActivity() {
         music?.let { m -> val pk = AudioPeaks.get(m); if (pk == null) AudioPeaks.load(this, m, luma.readIo) { runOnUiThread { if (!isDestroyed) refreshTimeline() } }
             lanes += mutableListOf(StudioTimeline.Bar(-1, 0, list.sumOf { it.len }, 0xff34d399.toInt(), musicName, false, pk, 0L, (pk?.size ?: 0).toLong() * AudioPeaks.STEP_MS)) }
         val firstLayerLane = lanes.size
+        val laneOf = StudioMath.pack(layers.map { it.at to it.end }, 4 - firstLayerLane)
         layers.forEachIndexed { i, l ->
             val pk = if (l.kind == VideoLayer.SOUND) AudioPeaks.get(l.source) ?: run { AudioPeaks.load(this, l.source, luma.readIo) { runOnUiThread { if (!isDestroyed) refreshTimeline() } }; null } else null
             val bar = StudioTimeline.Bar(i, l.at, l.length, when (l.kind) { VideoLayer.VIDEO -> 0xff4dc3ff.toInt(); VideoLayer.IMAGE -> 0xffff6fb5.toInt(); VideoLayer.TEXT -> 0xffffd60a.toInt(); else -> 0xffa78bfa.toInt() },
                 layerName(l), true, pk, l.from, 0L, l.keyList.map { it.t })
-            val free = (firstLayerLane until lanes.size).firstOrNull { k -> lanes[k].none { it.at < l.end && l.at < it.at + it.len } }
-            if (free != null) lanes[free] += bar else if (lanes.size < 4) lanes += mutableListOf(bar) else lanes.last() += bar
+            val at = firstLayerLane + laneOf[i]
+            while (lanes.size <= at) lanes += mutableListOf<StudioTimeline.Bar>()
+            lanes[at] += bar
         }
         timeline.clips = list; timeline.lanes = lanes; timeline.selected = seq.indexOf(playIndex).coerceAtLeast(0); timeline.joined = transition != 0; timeline.marks = markers
         timeline.selectedBar = if (tool == LAYER_TOOL && layerPick in layers.indices) layerPick else if (tool == 6 && music != null) -1 else -2
@@ -335,8 +337,7 @@ class VideoEditorActivity : ComponentActivity() {
     private val pickSrt = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if (uri != null) importSrt(uri) }
     private val saveSrt = registerForActivityResult(ActivityResultContracts.CreateDocument("application/x-subrip")) { uri ->
         if (uri != null) runCatching {
-            fun stamp(ms: Long) = String.format(Locale.US, "%02d:%02d:%02d,%03d", ms / 3600000, ms / 60000 % 60, ms / 1000 % 60, ms % 1000)
-            val lines = layers.filter { it.kind == VideoLayer.TEXT }.sortedBy { it.at }.mapIndexed { n, l -> "${n + 1}\n${stamp(l.at)} --> ${stamp(l.end)}\n${l.text}\n" }.joinToString("\n")
+            val lines = StudioMath.writeSrt(layers.filter { it.kind == VideoLayer.TEXT }.map { StudioMath.Cue(it.at, it.end, it.text) })
             contentResolver.openOutputStream(uri)?.use { it.write(lines.toByteArray()) }; notice("บันทึกไฟล์ซับแล้ว")
         }.onFailure { notice("บันทึกไฟล์ซับไม่สำเร็จ") }
     }
@@ -344,15 +345,7 @@ class VideoEditorActivity : ComponentActivity() {
     private fun importSrt(uri: Uri) {
         luma.readIo.execute {
             val made = runCatching {
-                val raw = contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) }.orEmpty().removePrefix("\uFEFF").replace("\r", "")
-                val time = Regex("""(\d+):(\d+):(\d+)[,.](\d+)\s*-->\s*(\d+):(\d+):(\d+)[,.](\d+)""")
-                raw.split(Regex("""\n\s*\n""")).mapNotNull { block ->
-                    val rows = block.trim().lines(); val ti = rows.indexOfFirst { time.containsMatchIn(it) }; if (ti < 0) return@mapNotNull null
-                    val g = time.find(rows[ti])!!.groupValues.drop(1).map { it.toLong() }
-                    val from = g[0] * 3600000 + g[1] * 60000 + g[2] * 1000 + g[3]; val to = g[4] * 3600000 + g[5] * 60000 + g[6] * 1000 + g[7]
-                    val words = rows.drop(ti + 1).joinToString("\n").replace(Regex("<[^>]+>"), "").trim()
-                    if (words.isEmpty() || to <= from) null else Triple(from, to, words)
-                }.take(SRT_LIMIT + 1).map { (from, to, words) ->
+                StudioMath.parseSrt(contentResolver.openInputStream(uri)?.use { it.readBytes().toString(Charsets.UTF_8) }.orEmpty()).take(SRT_LIMIT + 1).map { (from, to, words) ->
                     val draft = VideoLayer(VideoLayer.TEXT, VideoLayer.textSource(words, Color.WHITE, 1), from, to - from, text = words, style = 1)
                     val pic = VideoLayers.textPicture(draft, TEXT_PREVIEW); draft to pic
                 }
@@ -490,7 +483,7 @@ class VideoEditorActivity : ComponentActivity() {
         root.addView(trim, LinearLayout.LayoutParams(-1, dp(64)).apply { setMargins(dp(12), dp(4), dp(12), dp(4)) })
         tools = FrameLayout(this).apply { clipChildren = false }
         root.addView(tools, LinearLayout.LayoutParams(-1, dp(124)))
-        toolBar = EditorKit.ToolBar(this, listOf(EditorKit.SCISSORS to "ตัด", EditorKit.SPLIT to "แยก", EditorKit.SPEED to "ความเร็ว", EditorKit.CROP to "ครอบ", EditorKit.TEXT to "ข้อความ", Icons.FILM to "ฟิลเตอร์", EditorKit.MUSIC to "เพลง", EditorKit.ADJUST to "ปรับ", EditorKit.ROTATE to "หมุน", Icons.SOUND to "เสียง", CLIPS to "คลิป", JOIN to "ทรานซิชัน", STICKER to "สติกเกอร์", LAYERS to "เลเยอร์")) { showTool(it) }
+        toolBar = EditorKit.ToolBar(this, listOf(EditorKit.SCISSORS to "ตัด", EditorKit.SPLIT to "แยกไฟล์", EditorKit.SPEED to "ความเร็ว", EditorKit.CROP to "ครอบ", EditorKit.TEXT to "ข้อความ", Icons.FILM to "ฟิลเตอร์", EditorKit.MUSIC to "เพลง", EditorKit.ADJUST to "ปรับ", EditorKit.ROTATE to "หมุน", Icons.SOUND to "เสียง", CLIPS to "คลิป", JOIN to "ทรานซิชัน", STICKER to "สติกเกอร์", LAYERS to "เลเยอร์")) { showTool(it) }
         root.addView(toolBar, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(4), 0, dp(4), dp(8)) })
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) { override fun handleOnBackPressed() = leave() })
 
