@@ -6,6 +6,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC"/>
+    <uses-permission android:name="android.permission.POST_PROMOTED_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <uses-feature android:name="android.hardware.microphone" android:required="false"/>
@@ -35,9 +36,13 @@
             <meta-data android:name="androidx.work.WorkManagerInitializer" android:value="androidx.startup" tools:node="remove"/>
         </provider>
         <activity android:name=".GalleryActivity" android:exported="false"/>
+        <activity android:name=".HomeActivity" android:exported="false"/>
         <service android:name="androidx.work.impl.foreground.SystemForegroundService"
             android:foregroundServiceType="dataSync" tools:node="merge"/>
         <activity android:name=".VideoPlayerActivity" android:exported="false"/>
+        <activity android:name=".NoticeAskActivity" android:exported="false" android:theme="@style/LumaTheme.Translucent" android:excludeFromRecents="true"/>
+        <activity android:name=".ExportActivity" android:exported="false" android:launchMode="singleTop"/>
+        <service android:name=".ExportService" android:exported="false" android:foregroundServiceType="dataSync"/>
         <activity android:name=".CameraActivity" android:exported="true" android:configChanges="orientation|screenSize|screenLayout|keyboardHidden">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/>

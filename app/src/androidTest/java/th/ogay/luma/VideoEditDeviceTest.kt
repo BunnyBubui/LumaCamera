@@ -54,6 +54,54 @@ class VideoEditDeviceTest {
         assertTrue("Joined length · $joined", ms in 3000..4000)
     }
 
+    /** Video, picture and sound layers export on top of the clip, and the file keeps the main clip's length. */
+    @Test(timeout = 600_000) fun layersExport() {
+        val c = inst.targetContext
+        val clip = Uri.fromFile(TestMedia.clip(inst)); val tall = Uri.fromFile(TestMedia.clip(inst, 1500, 360, 640)); val song = Uri.fromFile(TestMedia.tone(c))
+        val png = File(c.cacheDir, "layer-test.png").apply { outputStream().use { o ->
+            android.graphics.Bitmap.createBitmap(200, 120, android.graphics.Bitmap.Config.ARGB_8888).apply { eraseColor(0xffff9f0a.toInt()) }.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, o) } }
+        val base = VideoEditSpec(clip, 0, 2000, 640, 360, keepAudio = false)
+        val picture = VideoLayer(VideoLayer.IMAGE, Uri.fromFile(png), 300, 1200, x = 0.3f, y = 0.3f, size = 0.3f, aspect = 200 / 120f)
+        val video = VideoLayer(VideoLayer.VIDEO, tall, 500, 1200, x = 0.7f, y = 0.6f, size = 0.3f, aspect = 360 / 640f)
+        val sound = VideoLayer(VideoLayer.SOUND, song, 400, 1000)
+        val cases = listOf("picture" to base.copy(layers = listOf(picture)), "video" to base.copy(layers = listOf(video)),
+            "sound" to base.copy(layers = listOf(sound)), "all" to base.copy(layers = listOf(picture, video, sound), speed = 2f, stickers = listOf(VideoSticker("😀", 0.5f, 0.5f))))
+        val results = cases.map { (name, spec) -> name to export(spec) }
+        assertTrue("Layer exports · " + results.joinToString(" | ") { "${it.first}: ${it.second}" }, results.all { it.second.startsWith("ok") })
+        val ms = Regex("(\\d+)ms").find(results.first { it.first == "picture" }.second)?.groupValues?.get(1)?.toLong() ?: 0
+        assertTrue("Layer keeps clip length · ${results.first().second}", ms in 1700..2400)
+    }
+
+    /** Optical-flow slow motion: ×4 frames from a 1 s clip gives about 4 s at the same frame rate, and it exports. */
+    @Test(timeout = 600_000) fun opticalFlowSlowMotion() {
+        val c = inst.targetContext
+        val clip = Uri.fromFile(TestMedia.clip(inst, 1000))
+        val out = File(c.cacheDir, "flow-test-${System.nanoTime()}.mp4")
+        val r = SlowFlow.render(c, clip, 0, 1000, 4, out, java.util.concurrent.atomic.AtomicBoolean(false))
+        val ms = android.media.MediaMetadataRetriever().run { try { setDataSource(out.path); extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)!!.toLong() } finally { release() } }
+        assertTrue("Smooth clip · ${r.frames} frames, ${ms} ms, ${r.width}x${r.height}", r.frames > 40 && ms in 3000..4700)
+        val exported = export(VideoEditSpec(Uri.fromFile(out), 0, ms, r.width, r.height, speed = 1f, keepAudio = false))
+        out.delete()
+        assertTrue("Smooth export · $exported", exported.startsWith("ok"))
+    }
+
+    /** Export above the source: AI doubles the pixels and optical flow doubles the frames; the sound is kept. */
+    @Test(timeout = 900_000) fun enhancerMakesBiggerAndSmootherClip() {
+        val c = inst.targetContext
+        val clip = TestMedia.clip(inst, 600, 256, 144)
+        val out = File(c.cacheDir, "enhance-test-${System.nanoTime()}.mp4")
+        VideoEnhancer.run(c, clip, out, VideoEnhancer.Plan(288, 60f, true), java.util.concurrent.atomic.AtomicBoolean(false))
+        val r = android.media.MediaMetadataRetriever().apply { setDataSource(out.path) }
+        val w = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)!!.toInt()
+        val h = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)!!.toInt()
+        val frames = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_FRAME_COUNT)?.toInt() ?: 0
+        val ms = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)!!.toLong()
+        r.release(); out.delete(); clip.delete()
+        assertTrue("Enhanced size · ${w}x$h", w == 512 && h == 288)
+        // 0.6 s at 60 fps is about 36 frames; the source had about half as many.
+        assertTrue("Enhanced frames · $frames in $ms ms", frames in 28..44 && ms in 450..800)
+    }
+
     private fun export(spec: VideoEditSpec): String {
         val out = File(inst.targetContext.cacheDir, "edit-test-${System.nanoTime()}.mp4")
         val done = CountDownLatch(1); var result = "timeout"; var t: Transformer? = null
@@ -62,7 +110,7 @@ class VideoEditDeviceTest {
                 override fun onCompleted(composition: Composition, r: ExportResult) { result = "ok ${r.videoFrameCount}f ${r.durationMs}ms"; done.countDown() }
                 override fun onError(composition: Composition, r: ExportResult, e: ExportException) { result = "${e.errorCodeName} ${e.cause?.message ?: e.message}"; done.countDown() }
             })
-            runCatching { t!!.start(VideoEdit.composition(spec), out.path) }.onFailure { result = "start: $it"; done.countDown() }
+            runCatching { t!!.start(VideoEdit.composition(spec, inst.targetContext), out.path) }.onFailure { result = "start: $it"; done.countDown() }
         }
         if (!done.await(60, TimeUnit.SECONDS)) inst.runOnMainSync { runCatching { t?.cancel() } }
         out.delete(); return result

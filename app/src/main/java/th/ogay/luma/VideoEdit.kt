@@ -27,6 +27,7 @@ import androidx.media3.effect.RgbMatrix
 import androidx.media3.effect.Presentation
 import androidx.media3.effect.SingleColorLut
 import androidx.media3.effect.SpeedChangeEffect
+import androidx.media3.effect.FrameDropEffect
 import androidx.media3.effect.StaticOverlaySettings
 import androidx.media3.effect.TextOverlay
 import androidx.media3.effect.TextureOverlay
@@ -59,7 +60,11 @@ data class VideoEditSpec(
     /** Between two different clips: 0 cut, 1 fade through black, 2 flash of white, 3 zoom in. */
     val transition: Int = 0,
     /** Emoji stickers over the whole video. */
-    val stickers: List<VideoSticker> = emptyList())
+    val stickers: List<VideoSticker> = emptyList(),
+    /** Video, picture and sound layers on top, timed in ms of the finished video. */
+    val layers: List<VideoLayer> = emptyList(),
+    /** Smaller output: short side in pixels (0 = as edited) and a lower frame rate (0 = as recorded). */
+    val outShort: Int = 0, val outFps: Float = 0f)
 
 /** A clip appended after the main one. [from]/[to] in ms of that clip. */
 data class VideoPart(val source: Uri, val from: Long, val to: Long)
@@ -132,13 +137,16 @@ object VideoEdit {
         }
     }
 
-    fun composition(s: VideoEditSpec): Composition {
+    /** [context] is needed only when the spec has picture or video layers (to decode them). */
+    fun composition(s: VideoEditSpec, context: Context? = null): Composition {
         val cut = s.cutFrom in (s.from + 1) until s.cutTo && s.cutTo < s.to
         val ranges = if (cut) listOf(s.from to s.cutFrom, s.cutTo to s.to) else listOf(s.from to s.to)
         val multi = s.extras.isNotEmpty()
         val effects = mutableListOf<Effect>()
         if (s.turns % 4 != 0 || s.mirror) effects += ScaleAndRotateTransformation.Builder().setScale(if (s.mirror) -1f else 1f, 1f).setRotationDegrees(360f - (s.turns % 4) * 90f).build()
         if (s.speed != 1f && !s.keepAudio) effects += SpeedChangeEffect(s.speed)
+        // Fast speeds (up to 500×) would hand the encoder hundreds of frames per second; keep about 30 of them.
+        if (s.speed > 1f) effects += FrameDropEffect.createDefaultFrameDropEffect(30f)
         // One clip: look and text belong to the clip. Several clips: they belong to the whole video (below), so they
         // run across the joins and every clip is brought to the first clip's frame.
         if (!multi) s.look?.let { effects += SingleColorLut.createFromCube(EditorKit.cube(it)) }
@@ -165,17 +173,25 @@ object VideoEdit {
         }
         val main = if (s.keepAudio) EditedMediaItemSequence.withAudioAndVideoFrom(items) else EditedMediaItemSequence.withVideoFrom(items)
         val whole = mutableListOf<Effect>()
+        // Layers are measured on the finished frame, so they go last, over everything else.
+        val layerOverlays = if (s.layers.any { it.visual }) VideoLayers.overlays(requireNotNull(context) { "layers need a context" }, s.layers) else emptyList()
         if (multi) {
             val (w, h) = frameSize(s)
             whole += Presentation.createForWidthAndHeight(w / 2 * 2, h / 2 * 2, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP)
             s.look?.let { whole += SingleColorLut.createFromCube(EditorKit.cube(it)) }
             if (texts.isNotEmpty()) whole += OverlayEffect(texts)
         }
+        if (layerOverlays.isNotEmpty()) whole += OverlayEffect(layerOverlays)
+        if (s.outShort > 0) whole += Presentation.createForShortSide(s.outShort)
+        if (s.outFps > 0f) whole += FrameDropEffect.createDefaultFrameDropEffect(s.outFps)
         val song = s.music
-        val builder = if (song == null) Composition.Builder(main) else {
+        val sequences = mutableListOf(main)
+        if (song != null) {
             val track = EditedMediaItem.Builder(MediaItem.fromUri(song)).setRemoveVideo(true).setEffects(Effects(if (s.musicVolume != 1f) listOf(gain(s.musicVolume)) else emptyList(), emptyList())).build()
-            Composition.Builder(main, EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_AUDIO)).addItem(track).setIsLooping(true).build())
+            sequences += EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_AUDIO)).addItem(track).setIsLooping(true).build()
         }
+        if (s.layers.any { it.audible }) sequences += VideoLayers.sounds(requireNotNull(context) { "layers need a context" }, s.layers) { gain(it) }
+        val builder = Composition.Builder(sequences)
         if (whole.isNotEmpty()) builder.setEffects(Effects(emptyList(), whole))
         return builder.build()
     }
@@ -186,7 +202,8 @@ object VideoEdit {
      * Transformer with the clip editor's decoder choice: on emulators the Goldfish decoder can drop surface frames,
      * so Android's software decoder goes first and only one frame is in flight. Phones keep the normal decoders.
      */
-    fun transformer(c: Context, listener: Transformer.Listener): Transformer {
+    /** [looper] runs the export and its callbacks on that thread (the export job); default is the caller's. */
+    fun transformer(c: Context, listener: Transformer.Listener, looper: android.os.Looper? = null): Transformer {
         val emulator = Util.isRunningOnEmulator()
         val selector = MediaCodecSelector { mime, secure, tunnel ->
             val codecs = MediaCodecSelector.DEFAULT.getDecoderInfos(mime, secure, tunnel)
@@ -200,6 +217,7 @@ object VideoEdit {
             }
         }
         return Transformer.Builder(c).setAssetLoaderFactory(DefaultAssetLoaderFactory(c, decoder, Clock.DEFAULT, null))
-            .setMaxDelayBetweenMuxerSamplesMs(90_000).setVideoMimeType(MimeTypes.VIDEO_H264).setPortraitEncodingEnabled(true).addListener(listener).build()
+            .setMaxDelayBetweenMuxerSamplesMs(90_000).setVideoMimeType(MimeTypes.VIDEO_H264).setPortraitEncodingEnabled(true).addListener(listener)
+            .apply { if (looper != null) setLooper(looper) }.build()
     }
 }

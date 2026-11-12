@@ -125,6 +125,11 @@ object EditorKit {
     fun actions(c: Context, items: List<View>): LinearLayout = LinearLayout(c).apply {
         gravity = Gravity.CENTER; items.forEach { addView(it, LinearLayout.LayoutParams(c.dp(72), -2)) }
     }
+    /** Like [actions] but in one row that scrolls sideways when the buttons do not fit the width. */
+    fun actionRow(c: Context, items: List<View>): View = android.widget.HorizontalScrollView(c).apply {
+        isHorizontalScrollBarEnabled = false; isFillViewport = true; clipToPadding = false; setPadding(c.dp(6), 0, c.dp(6), 0)
+        addView(LinearLayout(c).apply { gravity = Gravity.CENTER; items.forEach { addView(it, LinearLayout.LayoutParams(c.dp(64), -2)) } }, -1, -2)
+    }
     /** Accent round button with an icon (save, export). */
     fun roundAccent(c: Context, icon: String, desc: String, click: () -> Unit) = FrameLayout(c).apply {
         background = c.glass(24, Glass.ACCENT); contentDescription = desc; isClickable = true; glassTouch()
@@ -226,7 +231,7 @@ object EditorKit {
      * Tool tabs (icon over a small name) with an accent pill that springs to the chosen one. Up to six share the
      * width; more become a row that scrolls and glides the chosen tab towards the middle.
      */
-    class ToolBar(c: Context, list: List<Pair<String, String>>, private val pick: (Int) -> Unit) : FrameLayout(c) {
+    class ToolBar(c: Context, list: List<Pair<String, String>>, private val accents: Set<Int> = emptySet(), private val pick: (Int) -> Unit) : FrameLayout(c) {
         private val scrolls = list.size > 6
         private val pill = View(c).apply { background = c.glass(16, Glass.ACCENT_SOFT) }
         private val row = LinearLayout(c)
@@ -250,7 +255,7 @@ object EditorKit {
             val first = selected < 0; selected = i
             tabs.forEachIndexed { k, t ->
                 val on = k == i; val ic = t.getChildAt(0) as IconView
-                ic.tint = if (on) Glass.ACCENT else Color.WHITE; (t.getChildAt(1) as TextView).setTextColor(if (on) Color.WHITE else Glass.TEXT2)
+                ic.tint = if (on || k in accents) Glass.ACCENT else Color.WHITE; (t.getChildAt(1) as TextView).setTextColor(if (on) Color.WHITE else if (k in accents) Glass.ACCENT else Glass.TEXT2)
                 t.isSelected = on; ViewCompat.setStateDescription(t, if (on) "เลือกอยู่" else null)
                 if (on && animate && !Glass.reduced(context)) { ic.scaleX = 0.72f; ic.scaleY = 0.72f; ic.animate().scaleX(1f).scaleY(1f).setInterpolator(Glass.SPRING).setDuration(440).start() }
             }

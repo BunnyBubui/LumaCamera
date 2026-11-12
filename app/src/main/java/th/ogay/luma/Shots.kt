@@ -135,6 +135,10 @@ class Shots(context: Context) : SQLiteOpenHelper(context, "frames.db", null, 3) 
     fun pendingIds(): List<String> = readableDatabase.rawQuery("SELECT id FROM shots WHERE stage IN ('QUEUED','RUNNING')", null).use {
         buildList { while (it.moveToNext()) add(it.getString(0)) }
     }
+    /** True while a user-started AI upscale (not a capture's own fusion) is queued or running. */
+    fun upscaling(): Boolean = readableDatabase.rawQuery(
+        "SELECT 1 FROM shots WHERE stage IN ('QUEUED','RUNNING') AND ai_model IN (?,?) LIMIT 1",
+        arrayOf(th.ogay.luma.ai.EnhanceSpec.MODEL, th.ogay.luma.ai.EnhanceSpec.NATURAL_MODEL)).use { it.moveToFirst() }
     fun update(id: String, stage: Stage, ai: Uri? = null, elapsed: Long = 0, error: String? = null) {
         writableDatabase.update("shots", ContentValues().apply {
             put("stage", stage.name); put("ai", ai?.toString()); put("elapsed", elapsed); put("error", error)
@@ -145,7 +149,7 @@ class Shots(context: Context) : SQLiteOpenHelper(context, "frames.db", null, 3) 
     /** A new token separates exports and prevents an old/cancelled worker completing a newer request. */
     fun queueEnhancement(id: String, spec: EnhanceSpec): Boolean {
         val changed = writableDatabase.update("shots",ContentValues().apply {
-            put("stage",Stage.QUEUED.name); put("ai_model",EnhanceSpec.MODEL)
+            put("stage",Stage.QUEUED.name); put("ai_model",spec.modelId)
             put("ai_scale",spec.scale); put("ai_strength",spec.strength)
             put("ai_token",UUID.randomUUID().toString().replace("-", "").take(12))
             putNull("ai"); putNull("error"); putNull("ai_report")

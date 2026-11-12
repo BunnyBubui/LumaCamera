@@ -34,12 +34,20 @@ class DetailSuperResolution(private val context: Context) {
             try {
                 val source = Dimensions(decoder.width, decoder.height)
                 val output = spec.output(source)
+                // Scan once per image; restore text conservatively without redrawing glyphs.
+                // Detection is optional: OCR failures fall back to the original Natural guard.
+                AiProgress.begin(shot.id, if (spec.profile == EnhanceProfile.NATURAL) "กำลังหาคนและตัวหนังสือในภาพ" else "กำลังเตรียมภาพ"); AiProgress.model = if (spec.profile == EnhanceProfile.NATURAL) "Natural SR3" else "Classic SR2"
+                val textScan = if (spec.profile == EnhanceProfile.NATURAL)
+                    DetailTextGuard.scan(context, shot.uri, source, stopped) else null
+                val personScan = if (spec.profile == EnhanceProfile.NATURAL)
+                    DetailPersonGuard.scan(context, shot.uri, source, stopped) else null
                 // Budget for a large, noisy, high-quality JPEG and its MediaStore copy.
                 if (context.cacheDir.usableSpace < maxOf(64L*1024*1024, output.pixels*6))
                     throw IOException("พื้นที่ว่างไม่พอสำหรับภาพ ×${spec.scale} กรุณาเลือกสเกลเล็กลง")
                 val columns = (source.w+EnhanceSpec.CORE-1)/EnhanceSpec.CORE
                 val rows = (source.h+EnhanceSpec.CORE-1)/EnhanceSpec.CORE
                 checkpoint()
+                AiProgress.tiles(columns*rows)
                 val initStart = SystemClock.elapsedRealtime()
                 DetailRuntime(context).use { runtime ->
                     val modelInitMs = SystemClock.elapsedRealtime()-initStart
@@ -50,6 +58,7 @@ class DetailSuperResolution(private val context: Context) {
                         val renderExec = java.util.concurrent.Executors.newSingleThreadExecutor()
                         val encodeExec = java.util.concurrent.Executors.newSingleThreadExecutor()
                         val decodeT = java.util.concurrent.atomic.AtomicLong(); val renderT = java.util.concurrent.atomic.AtomicLong(); val encodeT = java.util.concurrent.atomic.AtomicLong()
+                        val reuse = Row.Reuse()
                         fun timed(acc: java.util.concurrent.atomic.AtomicLong, f: () -> Unit) { val t = SystemClock.elapsedRealtime(); f(); acc.addAndGet(SystemClock.elapsedRealtime()-t) }
                         try {
                             val stripeLen = output.w*minOf(EnhanceSpec.CORE,source.h)*spec.scale
@@ -57,7 +66,12 @@ class DetailSuperResolution(private val context: Context) {
                             val stripeWrites = arrayOfNulls<java.util.concurrent.Future<*>>(2)
                             val buffers = Array(2) { IntArray(EnhanceSpec.INPUT*EnhanceSpec.INPUT) }
                             val renders = arrayOfNulls<java.util.concurrent.Future<*>>(2)
-                            fun decodeRow(top: Int) = decodeExec.submit(java.util.concurrent.Callable { var r: Row? = null; timed(decodeT) { r = Row.decode(decoder,top) }; r!! })
+                            // Two strip buffers take turns (one being read while the next is decoded) and one bitmap is
+                            // reused for every decode: no multi-megabyte allocation per row, so no garbage collection
+                            // pause about once a second that made the whole phone hitch.
+                            val rowData = arrayOfNulls<IntArray>(2); var rowTurn = 0
+                            fun decodeRow(top: Int): java.util.concurrent.Future<Row> { val turn = rowTurn; rowTurn = 1-rowTurn
+                                return decodeExec.submit(java.util.concurrent.Callable { AiPace.helperPriority(context); var r: Row? = null; timed(decodeT) { r = Row.decode(decoder,top,rowData,turn,reuse) }; r!! }) }
                             var nextRow = decodeRow(0)
                             var stripeIndex = 0; var slot = 0
                             for (top in 0 until source.h step EnhanceSpec.CORE) {
@@ -77,21 +91,24 @@ class DetailSuperResolution(private val context: Context) {
                                     val enhanced = try { runtime.run(pixels) } finally { android.os.Trace.endSection() }
                                     inferMs += SystemClock.elapsedRealtime()-t
                                     AiPace.afterTile(context, SystemClock.elapsedRealtime()-t)
-                                    renders[slot] = renderExec.submit { timed(renderT) { DetailResampler.copyCore(enhanced,pixels,spec.scale,spec.strength,w,h,stripe,output.w,left*spec.scale) } }
+                                    val textMask = textScan?.mask?.forCore(left,top,w,h)
+                                    val personMask = personScan?.mask?.forCore(left,top,w,h)
+                                    renders[slot] = renderExec.submit { AiPace.helperPriority(context); timed(renderT) { DetailResampler.copyCore(enhanced,pixels,spec.scale,spec.strength,w,h,stripe,output.w,left*spec.scale,spec.profile,textMask,personMask) } }
                                     slot = 1-slot
                                     count++
+                                    AiProgress.tile(count)
                                     val percent = (count*99/(columns*rows)).coerceAtMost(99)
                                     if (percent != lastProgress) { lastProgress = percent; progress(percent) }
                                 }
                                 renders.forEach { it?.get() }
                                 checkpoint()
                                 val rowsOut = h*spec.scale
-                                stripeWrites[stripeIndex] = encodeExec.submit { timed(encodeT) { jpeg.write(stripe,rowsOut) } }
+                                stripeWrites[stripeIndex] = encodeExec.submit { AiPace.helperPriority(context); timed(encodeT) { jpeg.write(stripe,rowsOut) } }
                                 stripeIndex = 1-stripeIndex
                             }
                             stripeWrites.forEach { it?.get() }
                         } catch (e: java.util.concurrent.ExecutionException) { throw e.cause ?: e }
-                        finally { decodeExec.shutdownNow(); renderExec.shutdownNow(); encodeExec.shutdown(); encodeExec.awaitTermination(30, java.util.concurrent.TimeUnit.SECONDS) }
+                        finally { decodeExec.shutdownNow(); renderExec.shutdownNow(); encodeExec.shutdown(); encodeExec.awaitTermination(30, java.util.concurrent.TimeUnit.SECONDS); reuse.bitmap?.recycle() }
                         decodeMs = decodeT.get(); renderMs = renderT.get(); encodeMs = encodeT.get()
                         checkpoint()
                         val encodeStart=SystemClock.elapsedRealtime()
@@ -102,7 +119,14 @@ class DetailSuperResolution(private val context: Context) {
                         exif?.getAttribute(ExifInterface.TAG_DATETIME_ORIGINAL),ai=true,version=shot.aiVersion)
                     progress(100)
                     val report = JSONObject().put("model",EnhanceSpec.MODEL).put("scale",spec.scale)
-                        .put("nativeScale",4).put("strength",spec.strength).put("backend",runtime.backend)
+                        .put("nativeScale",4).put("strength",spec.strength)
+                        .put("profile",spec.profile.name).put("outputModel",spec.modelId)
+                        .put("textGuardStatus",textScan?.status ?: "not-requested")
+                        .put("textGuardRegions",textScan?.boxCount ?: 0)
+                        .put("textGuardScanMs",textScan?.elapsedMs ?: 0)
+                        .put("personGuardStatus",personScan?.status ?: "not-requested")
+                        .put("personGuardScanMs",personScan?.elapsedMs ?: 0)
+                        .put("backend",runtime.backend)
                         .put("fallback",runtime.fallbackReason ?: JSONObject.NULL)
                         .put("inputWidth",source.w).put("inputHeight",source.h)
                         .put("outputWidth",output.w).put("outputHeight",output.h)
@@ -127,17 +151,23 @@ class DetailSuperResolution(private val context: Context) {
                 for (i in 0 until n) out[o+i] = data[base+(x0+i).coerceIn(0,width-1)]
             }
         }
+        /** The decode bitmap kept between rows. */
+        class Reuse { var bitmap: android.graphics.Bitmap? = null }
         companion object {
-            fun decode(decoder: BitmapRegionDecoder, top: Int): Row {
+            fun decode(decoder: BitmapRegionDecoder, top: Int, buffers: Array<IntArray?>? = null, turn: Int = 0, reuse: Reuse? = null): Row {
                 val n = EnhanceSpec.INPUT; val y0 = top-EnhanceSpec.HALO
                 val rect = Rect(0,y0.coerceIn(0,decoder.height-1),decoder.width,(y0+n).coerceIn(1,decoder.height))
-                val bitmap = decoder.decodeRegion(rect, BitmapFactory.Options().apply { inPreferredConfig=android.graphics.Bitmap.Config.ARGB_8888 })
+                val w = rect.width(); val h = rect.height()
+                val old = reuse?.bitmap?.takeIf { !it.isRecycled && it.isMutable && it.width == w && it.height >= h }
+                val options = BitmapFactory.Options().apply { inPreferredConfig=android.graphics.Bitmap.Config.ARGB_8888; inMutable = true; if (old != null) inBitmap = old }
+                val bitmap = (try { decoder.decodeRegion(rect, options) } catch (_: IllegalArgumentException) {
+                    decoder.decodeRegion(rect, BitmapFactory.Options().apply { inPreferredConfig=android.graphics.Bitmap.Config.ARGB_8888; inMutable = true }) })
                     ?: throw IOException("อ่านส่วนภาพไม่ได้")
-                return try {
-                    val data = IntArray(bitmap.width*bitmap.height)
-                    bitmap.getPixels(data,0,bitmap.width,0,0,bitmap.width,bitmap.height)
-                    Row(data,bitmap.width,bitmap.height,y0,rect.top)
-                } finally { bitmap.recycle() }
+                val size = w*h
+                val data = buffers?.get(turn)?.takeIf { it.size >= size } ?: IntArray(n*w.coerceAtLeast(1)).let { if (it.size >= size) it else IntArray(size) }.also { buffers?.set(turn, it) }
+                bitmap.getPixels(data,0,w,0,0,w,minOf(h,bitmap.height))
+                if (reuse != null) { if (reuse.bitmap !== bitmap) { reuse.bitmap?.recycle(); reuse.bitmap = bitmap } } else bitmap.recycle()
+                return Row(data,w,h,y0,rect.top)
             }
         }
     }
