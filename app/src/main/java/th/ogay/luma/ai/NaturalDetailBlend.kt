@@ -38,7 +38,7 @@ internal object NaturalDetailBlend {
         val toneGate = if (baseY < 24f || baseY > 235f) 0.55f else 1f
         val gain = (strength / 100f) * 0.85f * textureGate * edgeGate * toneGate * protectionFactor
         val maximumShift = (3f + 16f * (localContrast / 25f).coerceIn(0f, 1f) * edgeGate)
-            .coerceAtMost(18f)
+            .coerceAtMost(18f) * protectionFactor
         val correction = ((neuralY - baseY) * gain).coerceIn(-maximumShift, maximumShift)
 
         // An equal RGB adjustment preserves the source chroma difference instead
