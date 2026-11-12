@@ -105,7 +105,7 @@ class StudioFlowTest{
             GlassNav.closeLayers(device)
         }
     }
-    @Test fun softwareHdrBracketPublishesEf1AndFrameCounts(){
+    @org.junit.Ignore("HDR mode was removed from the camera") @Test fun softwareHdrBracketPublishesEf1AndFrameCounts(){
         val provider=androidx.camera.lifecycle.ProcessCameraProvider.getInstance(context).get()
         val info=androidx.camera.core.CameraSelector.DEFAULT_BACK_CAMERA.filter(provider.availableCameraInfos).first()
         assumeTrue(info.exposureState.isExposureCompensationSupported)

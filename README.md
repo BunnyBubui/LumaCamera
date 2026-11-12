@@ -1,105 +1,88 @@
-# Luma Camera 0.3.0 — Studio (กำลังตรวจรับ)
+<p align="center">
+  <img src="docs/assets/readme-banner.svg" alt="Luma Camera" width="100%" />
+</p>
 
-สถานะ: โค้ด Studio พร้อม HDR ที่รวม PR #4/#5 ผ่าน GitHub build, lint, JVM 41 tests และ Android API 30 emulator 13/13 แล้ว รวม SR1 GPU ส่งออก 2× ครบเฟรม ดู Checks ของ PR #4 และสถานะ PR #3 รุ่นนี้ยังไม่ใช่การรับรองว่าทุกโหมดทำงานหรือได้คุณภาพตามเป้าบน Reno15 จริง
+<h1 align="center">Luma Camera</h1>
 
-งาน Claude รอบถัดไป A: Thai OCR, D: UI 0.3 review, E: Panorama quality พร้อมขอบเขตไฟล์/เกณฑ์รับ/พรอมป์ต์อยู่ที่ [docs/CLAUDE_NEXT_TASKS.md](docs/CLAUDE_NEXT_TASKS.md) และ API เดิมที่ [docs/CLAUDE_HANDOFF.md](docs/CLAUDE_HANDOFF.md) เปิด PR เข้า `v0.3-studio` โดยไม่ merge เอง
+<p align="center">Camera capture, multi-frame fusion, local SR1 processing, recovery and image comparison</p>
 
-## Studio UI และโหมดใหม่
+<p align="center">
+  <img alt="Portfolio" src="https://img.shields.io/badge/Portfolio-6d28d9?style=flat-square" /> <img alt="Kotlin" src="https://img.shields.io/badge/Kotlin-6d28d9?style=flat-square" /> <img alt="Java" src="https://img.shields.io/badge/Java-6d28d9?style=flat-square" /> <img alt="CameraX" src="https://img.shields.io/badge/CameraX-6d28d9?style=flat-square" /> <img alt="WorkManager" src="https://img.shields.io/badge/WorkManager-6d28d9?style=flat-square" />
+</p>
 
-- หน้ากล้องสีดำ/ขาว/เหลือง แถบ Night / Portrait / Photo / Video / Pro / More แตะหรือปัดเปลี่ยนโหมด แผงตั้งค่าด่วนและไม้บรรทัดซูมด้วยนิ้วเดียว
-- HDR เลือก OEM เมื่อรองรับ ไม่เช่นนั้นถ่าย bracket และ exposure fusion เป็น SDR; Night ใช้ OEM หรือ AI 32 เฟรม; Portrait ใช้ OEM หรือ ML Kit selfie segmentation beta; Ultra HDR เปิดเมื่อกล้องรองรับ JPEG gain map และเก็บไฟล์ตรง; HI-RES ร้องขอความละเอียดสูงสุดที่ Android เปิดให้
-- PRO เปิด ISO/shutter เฉพาะ manual sensor, WB ตามโหมดที่กล้องรายงาน, manual focus ตามระยะเลนส์ และ EV พร้อม histogram/peaking/zebra จากพรีวิว
-- Video มีไมค์/เงียบ พัก/ต่อ คุณภาพและ fps เป้าหมาย SDR/HLG/HDR10 กันสั่น EIS ตามที่รองรับ Zoom A→B และคันโยกซูม Dual-view ใช้ concurrent composition เมื่อระบบเปิดให้ Movie ใช้ viewport 2.39:1 การสลับเลนส์ระหว่างอัดยังขึ้นกับระบบกล้อง
-- หลังจบคลิปอ่าน track และ sample timestamps เพื่อรายงานขนาด fps และการมีเสียงจริง ค่าเป้าหมายอาจต่างจากไฟล์เมื่อกล้อง/encoder ปรับชุด
-- Slow-motion ใช้ constrained high-speed Camera2 และ MediaRecorder ไม่เก็บเสียง; Time-lapse เลือกช่วงเฟรมและส่งออก 30 fps ต้องตรวจผลบนเครื่องจริง
-- Document ปรับมุม 4 จุด ตรวจขอบ แก้ perspective เก็บหลายหน้าเป็น PDF และ OCR Latin; **OCR ไทยยังอยู่ในงาน Claude**
-- Panorama ใช้ ORB/homography และ feather blend ต้องถ่ายภาพซ้อนกัน 40–60% ผลไม่ผ่านจะเก็บอินพุตไว้
-- RAW Lab ทดลอง DNG sequence 10 วินาที เก็บ JSONL timestamps/ISO/shutter จำนวนเฟรมที่เขียน/ทิ้ง และ WAV แยกเมื่อเปิดไมค์ ส่งออก ZIP ได้ ขนาด RAW รุ่นทดลองจำกัด ≤16 MP การซิงก์เสียงต้องตรวจ sensor timestamp source และ hardware audio timestamp
-- RAW AI ทดลองรวม linear RGB หลัง Bayer 2×2/WB ก่อน gamma แล้วเข้าคิว SR1 แยกจาก RAW+AI รุ่น 0.2 **ยังไม่มี lens-shading/hot-pixel calibration** DNG ต้นฉบับเก็บไว้
-- แต่งคลิปส่งออกไฟล์ใหม่: SR1 2× บน GPU จากน้ำหนักเดียวกับภาพนิ่ง (SDR ต้นฉบับ ≤1080p), Movie LUT, นำเข้า .cube 3D 2–33, ครอป 2.39, เปลี่ยนความเร็วและ codec H.264/HEVC ตาม encoder **SR1 video ยังไม่มี temporal consistency**
-- Luma Log เป็น transfer curve ที่แปลงจาก SDR หลังถ่าย พร้อม JSON sidecar **ไม่ใช่ Log จากเซนเซอร์หรือ RAW video** เปิดหน้าแต่งคลิปไว้ขณะส่งออก หากออกจากหน้าจะยกเลิกโดยเก็บต้นฉบับไว้ ระหว่างส่งออกหยุดพรีวิวและจำกัดเฟรมค้างใน decoder เพื่อลดการใช้หน่วยความจำ/เฟรมสูญหาย; emulator เลือก decoder ซอฟต์แวร์เพื่อเลี่ยงปัญหา Goldfish ที่พบใน CI ต้องวัดความเร็วจริงบนมือถือ
-- ตั้งเวลา 3/10 วินาที อัตราส่วน 4:3/1:1/16:9 ถ่าย JPEG ต่อเนื่อง 10 ภาพ ปุ่มเสียง เส้นระดับ ลายน้ำ กลับเซลฟี่ แสงหน้าจอ และโฟลเดอร์ภาพ GPS ใช้ตำแหน่งล่าสุดไม่เกิน 15 นาทีเมื่อผู้ใช้เลือกเปิดและอนุญาตเท่านั้น
+<p align="center"><a href="#overview">ภาพรวม</a> · <a href="#features">ความสามารถ</a> · <a href="#start">เริ่มใช้งาน</a> · <a href="#structure">โครงสร้าง</a> · <a href="#validation">ตรวจสอบงาน</a></p>
 
-## ข้อจำกัดการตรวจรับ
+<a id="overview"></a>
 
-โหมด HDR/สี, RAW, high-speed, dual-camera, fps, thermal และคุณภาพเทียบกล้อง OPPO ต้องใช้ผลจากเครื่องจริง การมี capability flag หรือ build ผ่านยังไม่ใช่ผลการทดสอบ session ข้อความในแอปและรายงานต้องระบุสิ่งที่ร้องขอเทียบกับสิ่งที่บันทึกได้จริง
+## ภาพรวม
 
-OpenCV 4.12 และ ML Kit native ARM64 ที่บรรจุมี ELF PT_LOAD alignment 16 KB ตามที่ตรวจจาก dependency แต่ยังต้องทดสอบบนเครื่องที่ใช้ page size 16 KB จริง
+แอปกล้อง Android ที่เก็บต้นฉบับและสำเนาปรับภาพแยกกัน รองรับการถ่ายหลายเฟรม การประมวลผลบนเครื่อง และการเปรียบเทียบภาพด้วย CameraX และ WorkManager
 
----
+<a id="features"></a>
 
-แอปกล้อง Android ภาษาไทยสำหรับถ่ายภาพและสร้างสำเนา AI 12 MP บนเครื่อง เครื่องเป้าหมายแรกคือ OPPO Reno15 5G (CPH2825) รองรับการติดตั้งตั้งแต่ Android 6.0 (API 23) ขึ้นไปบนอุปกรณ์ที่มีกล้อง รองรับ 32/64 บิตตามไลบรารี CameraX ที่บรรจุใน APK การมีกล้องเทเลและมุมกว้างพิเศษให้ใช้ขึ้นกับข้อมูลที่มือถือเปิดให้แอป
+## ความสามารถที่มีใน source
 
-## ติดตั้งจาก GitHub บน Reno15
+| ส่วนงาน | รายละเอียด | อ้างอิง |
+|---|---|---|
+| **Camera capture** | ถ่าย JPEG และ RAW ตามความสามารถกล้อง | [ดู source](app/src/main/java/th/ogay/luma/CameraActivity.kt) |
+| **Multi-frame** | รับและจัดการภาพหลายเฟรม | [ดู source](app/src/main/java/th/ogay/luma/MultiFrameFusion.kt) |
+| **Background work** | คิวประมวลผลภาพและการลองใหม่ | [ดู source](app/src/main/java/th/ogay/luma/EnhanceWorker.kt) |
+| **Local model** | SR1 และขั้นตอนฝึกโมเดล | [ดู source](model/) |
 
-1. ลงชื่อเข้า GitHub ด้วยบัญชีที่เข้าถึง repo นี้ เปิด Checks ของ [PR #3](https://github.com/BunnyBubui/luma-camera/pull/3) หรือ [PR #4](https://github.com/BunnyBubui/luma-camera/pull/4) เลือก **Android APK** ของ commit ล่าสุดที่ผ่าน สำหรับ Studio 0.3 ให้ตรวจ branch `v0.3-studio`/PR ที่เกี่ยวข้อง; `main` ยังเป็นรุ่น 0.2
-2. เลื่อนลงไปที่ **Artifacts → Luma-Camera-Android-APK** ดาวน์โหลด แตก ZIP แล้วแตะ **Luma-Camera-0.3.0-debug.apk**
-3. หาก ColorOS ขออนุญาตติดตั้งจากแอปที่ใช้เปิดไฟล์ ให้เปิดสิทธิ์ให้แอปนั้นชั่วคราว ติดตั้งแล้วเปิด **Luma Camera** และอนุญาตใช้กล้อง
-4. กดชัตเตอร์ ภาพต้นฉบับจะอยู่ใน **รูปภาพ → Luma** แตะภาพย่อข้างชัตเตอร์เพื่อดูรูป เปิด/ปิด AI ด้วยปุ่มด้านบน
+### เส้นทางการทำงาน
 
-## เลือกภาพบนหน้ากล้อง
+```mermaid
+flowchart LR
+  A[CameraX capture] --> B[Original image]
+  A --> C[Multi-frame input]
+  C --> D[WorkManager and SR1]
+  B --> E[Gallery comparison]
+  D --> E
+```
 
-- **JPEG** ใช้ภาพที่กล้องประมวลผล พร้อม AI อัตโนมัติตามเกณฑ์ซูมเดิม
-- **RAW** บันทึกข้อมูลเซนเซอร์เป็น DNG และเก็บ JPEG สำหรับดูตัวอย่างภายในแอป
-- **AI** ถ่ายหลายเฟรม จัดแนว ลดผลจากส่วนที่เคลื่อนไหว แล้วประมวลผลด้วย SR1 เก็บ JPEG ต้นฉบับหนึ่งภาพพร้อมภาพ AI
-- **RAW + AI** เก็บ DNG จากเฟรมแรก พร้อม JPEG อ้างอิงและภาพ AI จากชุดเฟรม
+<a id="start"></a>
 
-ปุ่ม RAW แสดงตามการรองรับ RAW+JPEG ของกล้องที่เลือก หากเครื่องไม่เปิดให้ใช้จะซ่อนตัวเลือกและให้เลือก JPEG/AI ได้ DNG เก็บข้อมูลเซนเซอร์เต็มตามที่กล้องส่ง ส่วนภาพ JPEG ที่จับคู่อาจมีครอป/ซูม กด **เปิด DNG** ในอัลบั้มเพื่อเปิดด้วยแอป RAW ที่ติดตั้ง ภาพในตัวเปรียบเทียบของ Luma เป็น JPEG ที่จับคู่กับ DNG
+## เริ่มต้นใช้งาน
 
-เปิด **⋯ → ตั้งค่าเสียง / AI / การตอบสนอง** เพื่อเลือก 4/8/16/32 เฟรม ค่าเริ่มต้น 8 เฟรม ตัวเลือก 16–32 เหมาะกับฉากนิ่งและใช้เวลาถ่ายเพิ่มขึ้น แตะข้อความจำนวนเฟรมระหว่างถ่ายเพื่อหยุดโดยเก็บเฟรมที่ได้รับแล้ว เมื่อเริ่มประมวลผลสามารถถ่ายรูปถัดไปได้
+**สิ่งที่ต้องมี:** JDK 17, Android SDK Platform 36 และ build tools ตามคู่มือกล้อง
 
-ระบบเก็บอินพุตลงไฟล์ทีละภาพ ล็อก AE/AWB เมื่อกล้องอนุญาต ใช้การจัดแนว translation หลายระดับ และตัดน้ำหนักบริเวณที่เปลี่ยนมากเพื่อลดภาพซ้อน เฟรมที่คลาดจากภาพอ้างอิงเกินเกณฑ์จะถูกคัดออก จำนวนเฟรมรับจริงและจำนวนที่ผ่านจัดแนวอยู่ใน **ข้อมูล** ส่วนภาพเคลื่อนไหวใช้พิกเซลภาพอ้างอิงในบริเวณที่ถูกคัดออก
-
-เมื่อ AI สำเร็จ แอปเก็บต้นฉบับ ภาพ AI และ DNG ที่เลือกไว้ พร้อมลบไฟล์อินพุตชั่วคราวเพื่อคืนพื้นที่ งานที่ล้มเหลวเก็บอินพุตไว้ให้ลองใหม่ได้ หากปิดกระบวนการระหว่างถ่าย แอปกู้คืนจากเฟรมที่บันทึกสำเร็จเมื่อเปิดใหม่
-
-## การตอบสนองและเสียง
-
-ปุ่มมีการยุบและคืนตัว มีแรงสั่นที่เปิด/ปิดได้ ทางลัดซูมเลื่อนระยะอย่างต่อเนื่อง กดค้างปุ่มซูมเพื่อเปิดแถบเลื่อนแบบ logarithmic รองรับบีบซูม เส้นกริด เสียงชัตเตอร์ และลดแอนิเมชันในหน้าตั้งค่า เสียงชัตเตอร์เล่นหนึ่งครั้งต่อชุดภาพตาม capture callback และตรวจค่าบังคับเสียงที่ระบบรายงาน
-
-## การประเมินคุณภาพหลายเฟรม
-
-ชุดทดสอบตรวจการจัดแนวภาพเลื่อน การลดนอยส์จาก 32 เฟรมจำลอง การคงวัตถุเคลื่อนไหวในภาพอ้างอิง ขอบที่ไม่มีข้อมูล และการย้ายฐานข้อมูลจาก 0.1 การทดสอบ Android ตรวจภาพจริง 4 และ 32 เฟรมบน emulator พร้อมสร้างและเปิดภาพ AI และตรวจ RAW ตามความสามารถของกล้องที่ทดสอบ
-
-รุ่นนี้ทำ fusion จาก JPEG ที่ Android ส่ง แล้วใช้โมเดล SR1 ประมวลผลภาพ การเทียบกับกล้อง OPPO ต้องวัดบน Reno15 ด้วยฉากและแสงเดียวกัน รวมตัวหนังสือ ใบหน้า วัตถุเคลื่อนไหว ความร้อน และเวลาเก็บ 8/16/32 เฟรม จำนวนเฟรมที่ตั้งไว้เป็นจำนวนที่ร้องขอ ผลลัพธ์แสดงจำนวนที่รับและใช้จริง
-
-## ทดลอง AI บนเครื่องครั้งแรก
-
-เลือก **JPEG → ⋯ → ครอปจากกล้องหลัก 1× → 2×** เปิด **AI ออโต้** แล้วถ่ายป้ายตัวหนังสือ แอปครอปจาก JPEG ที่กล้องส่งที่ 1× จึงวัดจำนวนพิกเซลหลังครอปได้แม้ ColorOS ซ่อนข้อมูลเลนส์ เมื่อภาพครอปต่ำกว่า 12 MP แอปบันทึกต้นฉบับก่อน แล้วสร้างสำเนาแยก แตะรูปย่อ เลือก **ต้นฉบับ / ภาพ AI** บีบซูมหรือแตะสองครั้งและสลับเทียบที่จุดเดิม ดูเวลาและขนาดใน **ข้อมูล**
-
-โหมดเริ่มต้น **ซูมด้วยระบบกล้อง** ให้ CameraX จัดการซูมและเปลี่ยนเลนส์ เมื่อซูมหลังมากกว่า 1× จะเข้า AI ถ้า JPEG ต่ำกว่า 12 MP หรือมีพื้นที่ครอปของเฟรมที่ยืนยันว่าต่ำกว่าเกณฑ์ หากไฟล์ถึงเกณฑ์แต่ข้อมูลครอปไม่พอ จะมีปุ่ม **ปรับด้วย AI** ให้เลือกเอง ระบบจับคู่ metadata กับเวลาเซนเซอร์ของภาพที่ถ่ายจริง ป้าย 3.5× แสดงอัตราซูม การระบุเลนส์ดูจาก Physical camera ID ที่เครื่องรายงาน
-
-## ฟีเจอร์
-
-- ภาพสด จัดองค์ประกอบ 4:3 แนวตั้งและแนวนอน โฟกัสด้วยการแตะ แฟลช สลับหน้า/หลัง ทางลัดซูมและบีบซูมตามช่วงที่รองรับ
-- ภาพต้นฉบับและสำเนา AI แยกกันในแกลเลอรี ระบบเข้าคิวบนเครื่อง ประมวลผลครั้งละหนึ่งภาพ ถ่ายรูปถัดไปได้ งานผูกกับรหัสภาพและรุ่นโมเดล กู้คืนงานค้างและลองใหม่เมื่อผิดพลาด
-- อัลบั้มแสดงรูปที่แอปนี้ถ่าย พร้อมดูขนาดจริงด้วยการอ่าน JPEG เฉพาะบริเวณที่ขยาย ดูเหตุผลตัดสิน AI ระยะซูม ขนาดภาพและเวลา
-- AI ภาพเดี่ยว SR1 ทำงานบน CPU ด้วยโมเดลที่ฝึกและบรรจุมากับ APK โมเดลประเมินรายละเอียดจากภาพเดียว ประสิทธิภาพขึ้นกับเครื่อง แสง และการประมวลผลจากกล้อง [รายละเอียดโมเดล](model/README.md)
-
-## Build และทดสอบ
-
-ใช้ JDK 17, Android SDK Platform 36 และ Build Tools 34.0.0/35.0.0 เปิดโฟลเดอร์นี้ใน Android Studio หรือรัน
-
-```bash
+```sh
 ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+# Requires a compatible device or camera-enabled emulator
 ./gradlew :app:connectedDebugAndroidTest
 ```
 
-คำสั่งที่สองใช้เครื่องทดสอบ Android 10 ขึ้นไปหรือ emulator ที่เปิดกล้องหลังและหน้า ตรวจการกดถ่ายจริงในโหมดครอป การเข้าคิว AI การบันทึกรูป 12 MP และการเปิดรูปเปรียบเทียบ APK ปกติอยู่ที่ app/build/outputs/apk/debug/app-debug.apk
+ใช้ Android Studio ได้เช่นกัน ผล RAW/เลนส์และคุณภาพภาพขึ้นกับอุปกรณ์; ดูรายละเอียดการถ่ายและตรวจภาพในคู่มือกล้อง
 
-CI ใช้ Gradle Wrapper, ตรวจ SHA-256 โมเดล และเก็บ APK พร้อม checksum และ commit.txt ใน Actions artifacts สำหรับ PR นั้น commit อาจเป็น merge commit ของ GitHub การ build ใหม่จาก runner ที่ใช้คีย์ debug ชั่วคราวอาจต้องถอนแอป debug ก่อนติดตั้ง build ถัดไป การถอนแอปทำให้ประวัติเปรียบเทียบในแอปหาย ใช้รุ่น beta ที่เซ็นด้วยคีย์เดิมสำหรับทดสอบระยะยาว
+<a id="structure"></a>
 
-### ลงนามสำหรับการอัปเดตทับ
+## โครงสร้างที่ควรเริ่มอ่าน
 
-รุ่น debug ใช้ application ID ลงท้าย .dev ส่วน beta ลงท้าย .beta และรุ่น release ใช้ th.ogay.luma ตั้งค่าใน **Settings → Secrets and variables → Actions** สำหรับคีย์ทดสอบกำหนด LUMA_TEST_KEYSTORE_B64, LUMA_TEST_STORE_PASSWORD, LUMA_TEST_KEY_ALIAS, LUMA_TEST_KEY_PASSWORD สำหรับคีย์ส่งมอบใช้ชื่อเดียวกันโดยเปลี่ยน TEST เป็น RELEASE เก็บ keystore และรหัสผ่านในที่ปลอดภัย
-
-เมื่อ main มี test secrets จะได้ artifact Luma-Camera-Beta-APK เพิ่มอีกชุด ส่วน tag v* ใช้ release secrets สร้าง signed APK ใน artifact เท่านั้น เลขเวอร์ชันภายในเพิ่มตามหมายเลข run
-
-## รายการทดสอบเครื่องจริง
-
-| เครื่อง | รายการบันทึก |
+| ตำแหน่ง | หน้าที่ |
 |---|---|
-| Reno15 | ทดสอบ 1×, 2×, 3.5× ทั้งสองโหมดซูม กลางวัน/แสงน้อย เทียบภาพป้ายไทย ใบหน้า ลายผ้า ฉากเคลื่อนที่ และกล้อง OPPO ที่ระยะเดียวกัน |
-| ต่างยี่ห้อ | ทดสอบกลับจากล็อกจอ หมุนจอ สลับกล้อง ปฏิเสธสิทธิ์ และช่วงซูมที่เครื่องรายงาน |
-| รุ่นเก่าหรือ RAM ต่ำ | ต้นฉบับ 20 ครั้งต้องมี 20 ไฟล์ วัดมัธยฐาน/P95 ของเวลา AI และตรวจเมื่อพื้นที่หรือหน่วยความจำไม่เพียงพอ |
+| [model/](model) | โมเดลและขั้นตอนฝึก |
 
-ยังต้องวัดผลฮาร์ดแวร์และคุณภาพบน Reno15 จริง แอปใช้ AndroidX CameraX 1.6.2, WorkManager 2.9.1 และ ExifInterface 1.3.7
+<a id="validation"></a>
+
+## คำสั่งและผลตรวจ
+
+ใช้ Gradle ตามคำสั่งในหัวข้อเริ่มต้นและคู่มือ ดูผล workflow ปัจจุบันได้ในแท็บ [Actions](https://github.com/BunnyBubui/LumaCamera/actions)
+
+<a id="scope"></a>
+
+## ขอบเขตของงาน
+
+จำนวนเฟรม คุณภาพภาพและเลนส์ที่ใช้ได้ขึ้นกับกล้องที่ Android เปิดให้แอป ผลบนอุปกรณ์จริงต้องวัดแยกจาก unit tests
+
+<a id="reading"></a>
+
+## อ่านต่อ
+
+- [คู่มือรายละเอียดเดิม](docs/CAMERA_GUIDE.md)
+- [บันทึกการเตรียม source](docs/CLEANUP.md)
+- [รายละเอียด SR1](model/README.md)
+
+
+---
+
+<p align="center"><a href="https://github.com/BunnyBubui">BunnyBubui</a> · <a href="https://github.com/BunnyBubui/test">Software Portfolio</a></p>

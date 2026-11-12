@@ -24,6 +24,8 @@ object CameraState {
     @Volatile var exposureNs = 0L
     @Volatile var iso = 0
     @Volatile var frames = 0L
+    /** STATISTICS_SCENE_FLICKER: 0 none, 1 = 50 Hz, 2 = 60 Hz. */
+    @Volatile var flicker = 0
     fun update(r: CaptureResult) {
         awbMode = r.get(CaptureResult.CONTROL_AWB_MODE) ?: -1
         r.get(CaptureResult.COLOR_CORRECTION_GAINS)?.let { gains = floatArrayOf(it.red, it.greenEven, it.blue) }
@@ -32,6 +34,7 @@ object CameraState {
         fps = r.get(CaptureResult.CONTROL_AE_TARGET_FPS_RANGE)
         exposureNs = r.get(CaptureResult.SENSOR_EXPOSURE_TIME) ?: 0L
         iso = r.get(CaptureResult.SENSOR_SENSITIVITY) ?: 0
+        flicker = r.get(CaptureResult.STATISTICS_SCENE_FLICKER) ?: 0
         frames++
     }
 

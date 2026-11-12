@@ -18,6 +18,8 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Native HDR EF2 links the OpenCV AAR's libopencv_java4.so, which is built against c++_shared.
         externalNativeBuild { cmake { arguments += listOf("-DANDROID_STL=c++_shared") } }
+        // Phones are arm64; x86_64 stays for the CI emulator. 32-bit copies of OpenCV/LiteRT only made the APK bigger.
+        ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
     }
     externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" } }
     buildFeatures { prefab = true }
@@ -36,7 +38,7 @@ android {
         }
     }
     buildTypes {
-        debug { applicationIdSuffix = ".dev" }
+        debug { applicationIdSuffix = ".preview" }
         create("beta") {
             initWith(getByName("release"))
             applicationIdSuffix = ".beta"
@@ -59,6 +61,8 @@ kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarg
 dependencies {
     // Standalone CompiledModel: offline GPU FP16 with explicit CPU fallback.
     implementation("com.google.ai.edge.litert:litert:2.1.6")
+    // Installs the baseline profile below so the first launches run precompiled code instead of interpreting.
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
     implementation("androidx.activity:activity-ktx:1.9.3")
     implementation("androidx.camera:camera-camera2:1.6.2")
     implementation("androidx.camera:camera-lifecycle:1.6.2")
@@ -68,10 +72,12 @@ dependencies {
     implementation("androidx.media3:media3-transformer:1.9.0")
     implementation("androidx.media3:media3-effect:1.9.0")
     implementation("com.google.mlkit:segmentation-selfie:16.0.0-beta6")
+    // Bundled QR model: scans the viewfinder without waiting for Play services to download anything.
+    implementation("com.google.mlkit:barcode-scanning:17.3.0")
     implementation("org.opencv:opencv:4.12.0")
     implementation("androidx.exifinterface:exifinterface:1.3.7")
     implementation("androidx.work:work-runtime:2.9.1")
-    testImplementation("junit:junit:4.13.2")
+testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:rules:1.6.1")
     androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")

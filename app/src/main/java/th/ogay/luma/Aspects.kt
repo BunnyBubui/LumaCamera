@@ -14,4 +14,8 @@ object Aspects {
     /** width / height of the picture for the current screen orientation. */
     fun value(k: String, landscape: Boolean): Float = pair(k).let { val r = it.first.toFloat() / it.second; if (landscape) r else 1f / r }
     fun isNative(k: String) = k == "4:3"
+    /** Shapes the sensor itself outputs (found when the camera opens); falls back to the full list before that. */
+    fun available(p: android.content.SharedPreferences): List<String> =
+        p.getString("native_aspects", null)?.split(',')?.filter { it in keys }?.takeIf { it.isNotEmpty() } ?: keys
+    fun detect(sizes: Array<android.util.Size>): List<String> = keys.filter { k -> val r = value(k, true); sizes.any { kotlin.math.abs(it.width.toFloat() / it.height - r) < 0.02f } }
 }

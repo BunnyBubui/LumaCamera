@@ -33,9 +33,9 @@ object MediaLedger {
     fun view(c:Context,uri:Uri,mime:String) { runCatching{c.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri,mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))}.onFailure{c.notice("ยังไม่มีแอปเปิดไฟล์ประเภทนี้ ใช้ปุ่มส่งออกเพื่อบันทึกไฟล์")}}
     fun publishVideo(c:Context,file:File,title:String,note:String=""):Uri {
         val values=ContentValues().apply{put(MediaStore.Video.Media.DISPLAY_NAME,title);put(MediaStore.Video.Media.MIME_TYPE,"video/mp4");put(MediaStore.Video.Media.DATE_TAKEN,System.currentTimeMillis())}
-        if(Build.VERSION.SDK_INT>=29){values.put(MediaStore.Video.Media.RELATIVE_PATH,"Movies/Luma/");values.put(MediaStore.Video.Media.IS_PENDING,1)}
+        if(Build.VERSION.SDK_INT>=29){values.put(MediaStore.Video.Media.RELATIVE_PATH,"Movies/Lumora/");values.put(MediaStore.Video.Media.IS_PENDING,1)}
         else {
-            @Suppress("DEPRECATION") val target=File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES),"Luma/$title")
+            @Suppress("DEPRECATION") val target=File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES),"Lumora/$title")
             target.parentFile?.mkdirs();file.copyTo(target,true)
             @Suppress("DEPRECATION") values.put(MediaStore.Video.Media.DATA,target.path)
         }
@@ -57,7 +57,7 @@ class StudioLibraryActivity:ComponentActivity(){
     private fun render(){
         val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(18),0,dp(18),0)};installRoot(root)
         root.addView(pill("‹  กลับหน้ากล้อง"){finish()},-1,-2)
-        root.addView(label("คลัง Luma",28f).apply{minHeight=dp(64)},-1,-2)
+        root.addView(label("คลัง Lumora",28f).apply{minHeight=dp(64)},-1,-2)
         root.addView(pill("ภาพถ่ายและเปรียบเทียบ AI"){startActivity(Intent(this,GalleryActivity::class.java))},-1,-2)
         val scroll=ScrollView(this);val list=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL};scroll.addView(list);root.addView(scroll,-1,0);(scroll.layoutParams as LinearLayout.LayoutParams).weight=1f
         val media=MediaLedger.all(this)

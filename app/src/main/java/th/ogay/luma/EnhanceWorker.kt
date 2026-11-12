@@ -43,11 +43,24 @@ class EnhanceWorker(context: Context, params: WorkerParameters) : Worker(context
             setForegroundAsync(foreground(shot,0)).get()
             val burstFolder = File(context.filesDir,"bursts/${shot.id}")
             val hasBurst = burstFolder.listFiles()?.any { it.name.matches(Regex("[0-9]{4}\\.jpg")) } == true
-            fun stopped() = isStopped || db.get(key)?.aiToken != shot.aiToken
+            // The database check (a newer request or a cancel) costs a query, so it runs at most twice a second.
+            var lastCheck = 0L; var replaced = false
+            fun stopped(): Boolean {
+                if (isStopped || replaced) return true
+                val now = SystemClock.elapsedRealtime()
+                if (now - lastCheck >= 500) { lastCheck = now; replaced = db.get(key)?.aiToken != shot.aiToken }
+                return replaced
+            }
             val input = if (shot.output.enhance && hasBurst) {
                 val fusion = MultiFrameFusion(context).process(shot) { stopped() }
                 db.fusionProgress(key,fusion.used)
-                shot.copy(uri=Uri.fromFile(fusion.file),size=fusion.size)
+                // Portrait long exposure: blur the background of the merged picture, then add watermark, frame and look.
+                val portraitF = File(burstFolder,BurstCapture.PORTRAIT_NOTE).takeIf { it.exists() }?.readText()?.trim()?.toFloatOrNull()
+                if (portraitF != null) {
+                    PhotoEffects.portrait(fusion.file,portraitF)
+                    PhotoEffects.decorate(context,fusion.file,shot.rear)
+                }
+                shot.copy(uri=Uri.fromFile(fusion.file),size=if (portraitF != null) PhotoMedia.dimensions(fusion.file) else fusion.size)
             } else shot
             var report: String? = null
             val output = when (shot.aiModel) {
@@ -62,7 +75,8 @@ class EnhanceWorker(context: Context, params: WorkerParameters) : Worker(context
                             { stopped() }) { percent ->
                         db.aiState(key,shot.aiToken,Stage.RUNNING,percent)
                         val now = SystemClock.elapsedRealtime()
-                        if (now-lastNotification > 1000) {
+                        // Each update redraws the live alert in the status bar; out of the app it is refreshed less often.
+                        if (now-lastNotification > (if (th.ogay.luma.ai.AiPace.watching) 1000 else 3000)) {
                             lastNotification=now; setForegroundAsync(foreground(shot,percent))
                         }
                     }
@@ -76,9 +90,13 @@ class EnhanceWorker(context: Context, params: WorkerParameters) : Worker(context
             }
             if (stopped()) throw CancellationException()
             report?.let { reportFile.parentFile?.mkdirs(); reportFile.writeText(it) }
+            // The AI picture keeps the original's camera details (lens, shutter, ISO, time, place), so the phone's gallery
+            // shows them for it as well.
+            runCatching { ExifCarry.write(temp, ExifCarry.read(context, shot.uri)) }
             val uri = PhotoMedia.publish(context,temp,shot.aiName,shot.time)
             if (db.aiState(key,shot.aiToken,Stage.DONE,100,uri,SystemClock.elapsedRealtime()-start,
                     size=output,report=report) && shot.output.enhance) burstFolder.deleteRecursively()
+            finished(shot)
             return Result.success()
         } catch (_: CancellationException) {
             db.aiState(key,shot.aiToken,Stage.ORIGINAL)
@@ -89,25 +107,31 @@ class EnhanceWorker(context: Context, params: WorkerParameters) : Worker(context
             db.aiState(key,shot.aiToken,Stage.FAILED,error=e.localizedMessage ?: "สร้างภาพ AI ไม่สำเร็จ")
         } catch (e: LinkageError) {
             db.aiState(key,shot.aiToken,Stage.FAILED,error="โหลดระบบ AI ไม่สำเร็จ: ${e.javaClass.simpleName}")
-        } finally { temp.delete() }
+        } finally { temp.delete(); th.ogay.luma.ai.AiProgress.end(key) }
         return Result.failure()
     }
 
+    private fun openGallery(shot: Shot) = android.app.PendingIntent.getActivity(applicationContext, shot.id.hashCode(),
+        android.content.Intent(applicationContext, GalleryActivity::class.java).putExtra("open", shot.id).putExtra("tab", "luma")
+            .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP),
+        android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE)
+
     private fun foreground(shot: Shot, progress: Int): ForegroundInfo {
         val context = applicationContext
-        if (Build.VERSION.SDK_INT >= 26) context.getSystemService(NotificationManager::class.java)
-            .createNotificationChannel(NotificationChannel("luma-ai","ประมวลผลภาพ AI",NotificationManager.IMPORTANCE_LOW))
-        val notification = NotificationCompat.Builder(context,"luma-ai")
-            .setSmallIcon(android.R.drawable.ic_menu_camera).setContentTitle("Luma · เพิ่มรายละเอียดภาพ")
-            .setContentText(if (shot.aiModel == EnhanceSpec.MODEL || shot.aiModel == EnhanceSpec.NATURAL_MODEL)
-                    "${if (shot.aiModel == EnhanceSpec.NATURAL_MODEL) "Natural" else "Classic"} ×${shot.aiScale} · $progress%"
-                else "SR1 · $progress%")
-            .setOngoing(true).setOnlyAlertOnce(true).setProgress(100,progress,progress==0)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel,"ยกเลิก",
-                WorkManager.getInstance(context).createCancelPendingIntent(id)).build()
+        val scale = when (shot.aiModel) { EnhanceSpec.NATURAL_MODEL -> "Natural ×${shot.aiScale}"; EnhanceSpec.MODEL -> "Classic ×${shot.aiScale}"; else -> "SR1" }
+        val notification = LiveNotice.progress(context, "Lumora · กำลังเพิ่มรายละเอียดภาพ $scale",
+            if (progress == 0) "กำลังเตรียมภาพ" else "ทำไปแล้ว $progress%" + th.ogay.luma.ai.AiProgress.etaText().let { if (it.isEmpty()) "" else " · $it" }, if (progress == 0) -1 else progress,
+            openGallery(shot), WorkManager.getInstance(context).createCancelPendingIntent(id))
         val notificationId = 40000+(shot.id.hashCode() and 0x7fff)
         return if (Build.VERSION.SDK_INT >= 29) ForegroundInfo(notificationId,notification,ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
             else ForegroundInfo(notificationId,notification)
+    }
+
+    /** "Finished" notice, only when the app is not on screen (there the picture itself shows it). */
+    private fun finished(shot: Shot) = runCatching {
+        val state = android.app.ActivityManager.RunningAppProcessInfo(); android.app.ActivityManager.getMyMemoryState(state)
+        if (state.importance == android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND) return@runCatching
+        LiveNotice.done(applicationContext, 50000+(shot.id.hashCode() and 0x7fff), "ภาพ AI เสร็จแล้ว", "เพิ่มรายละเอียด ×${shot.aiScale.coerceAtLeast(1)} เรียบร้อย · แตะเพื่อเปิดดู", openGallery(shot))
     }
 
     companion object {

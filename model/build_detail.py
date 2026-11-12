@@ -21,7 +21,11 @@ import torch.nn.functional as F
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / "app/src/main/assets"
 CHECKPOINTS = ROOT / "build/detail-source"
-INPUT = 200
+# A 192-pixel core per tile (was 128): the 36-pixel halo is then 49% of the work instead of 59%, and there are
+# 2.25x fewer tiles to dispatch, so the same picture needs about a quarter less GPU time.
+CORE = 192
+HALO = 36
+INPUT = CORE + 2 * HALO
 NAMES = ["realesr-general-x4v3", "realesr-general-wdn-x4v3"]
 URL = "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.5.0/{}.pth"
 
@@ -103,7 +107,7 @@ def main():
     validation = {}
     if args.verify:
         rng = np.random.default_rng(15)
-        # The deployment graph deliberately fixes resize/output shapes at 200/800.
+        # The deployment graph deliberately fixes resize/output shapes at INPUT/INPUT*4.
         # Validate that actual graph, rather than resizing only its input tensor.
         sample = rng.uniform(0, 1, (1, INPUT, INPUT, 3)).astype(np.float32)
         expected = reference(sample)
@@ -129,7 +133,7 @@ def main():
 
     metadata = {"model": "DetailSR2", "upstream": "Real-ESRGAN general-x4v3 v0.2.5.0",
         "sourceSha256": source_hashes, "denoiseDni": 0.5, "precision": "FP16 weights / float32 I/O",
-        "nativeScale": 4, "input": [1, INPUT, INPUT, 3], "core": 128, "halo": 36,
+        "nativeScale": 4, "input": [1, INPUT, INPUT, 3], "core": CORE, "halo": HALO,
         "sha256": hashlib.sha256(model).hexdigest(), "bytes": len(model), "validation": validation}
     (ASSETS / "luma-detail-sr2.json").write_text(json.dumps(metadata, indent=2) + "\n")
     (CHECKPOINTS / "observed-source-lock.json").write_text(json.dumps(source_hashes, indent=2) + "\n")

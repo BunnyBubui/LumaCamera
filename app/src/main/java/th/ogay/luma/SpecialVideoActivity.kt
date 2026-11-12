@@ -52,10 +52,11 @@ class SpecialVideoActivity:ComponentActivity(){
         val dock=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setBackgroundColor(BG)}
         val strip=CenterStrip(this).apply{contentDescription="แถบโหมด"}
         ModeBar.fill(this,strip,"TIMELAPSE"){key->if(recording||working){notice("หยุดคลิปก่อนเปลี่ยนโหมด");false}else{ModeBar.go(this,key);true}}
-        dock.addView(strip,-1,dp(58))
+        dock.clipChildren=false
+        dock.addView(ArrowTab.wrap(this,strip,dp(58)){settings()}.first,-1,-2)
         shutter=Glyph(this,"shutter","เริ่มบันทึก Time-lapse"){if(!working){if(recording)stop()else start()}}.apply{video=true;isEnabled=false}
         val actions=FrameLayout(this);actions.addView(shutter,FrameLayout.LayoutParams(dp(82),dp(82),Gravity.CENTER))
-        actions.addView(FrameLayout(this).apply{background=glass(28);contentDescription="แกลเลอรีวิดีโอ Luma";isClickable=true;glassTouch()
+        actions.addView(FrameLayout(this).apply{background=glass(28);contentDescription="แกลเลอรีวิดีโอ Lumora";isClickable=true;glassTouch()
             addView(IconView(this@SpecialVideoActivity,Icons.LIBRARY),FrameLayout.LayoutParams(dp(24),dp(24),Gravity.CENTER))
             setOnClickListener{if(!recording&&!working)startActivity(android.content.Intent(this@SpecialVideoActivity,GalleryActivity::class.java).putExtra("tab","luma").putExtra("category","วิดีโอ"))}},FrameLayout.LayoutParams(dp(56),dp(56),Gravity.CENTER_VERTICAL or Gravity.START).apply{leftMargin=dp(36)})
         dock.addView(actions,-1,dp(104))
@@ -111,9 +112,9 @@ class SpecialVideoActivity:ComponentActivity(){
         recording=false;recorder?.release();recorder=null;session?.close();session=null
         if(output!=null&&success&&output.length()>0)luma.fileIo.execute{runCatching{val uri=MediaLedger.publishVideo(this,output,output.name,"${if(slow)"Slow-motion $fps → 30 fps" else "Time-lapse ทุก $interval วินาที"} · เวลาถ่าย ${wall/1000}s");ClipInspector.record(this,uri,output.name);output.delete()}.onSuccess{runOnUiThread{status.text="บันทึกคลิปแล้ว"}}.onFailure{runOnUiThread{status.text="ไฟล์ยังอยู่ในแอป · ${it.localizedMessage}"};MediaLedger.rememberFile(this,output,"video/mp4")}}
         else{output?.delete();runOnUiThread{status.text="คลิปสั้นเกินไปหรือ recorder ไม่ส่งไฟล์ที่สมบูรณ์"}}
-        runOnUiThread{working=false;shutter.recording=false;requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR};if(visible)preview()else close()
+        runOnUiThread{working=false;shutter.recording=false;requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT};if(visible)preview()else close()
     }}
-    private fun showError(message:String){runOnUiThread{working=false;requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR;shutter.recording=false;shutter.isEnabled=false;status.text=message}}
+    private fun showError(message:String){runOnUiThread{working=false;requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;shutter.recording=false;shutter.isEnabled=false;status.text=message}}
     private fun close(){session?.close();session=null;camera?.close();camera=null;runCatching{recorder?.reset()};recorder?.release();recorder=null;previewSurface?.release();previewSurface=null}
     override fun onPause(){visible=false;if(recording&&!working)stop()else handler.post{close()};super.onPause()}
     override fun onDestroy(){handler.post{close();thread.quitSafely()};super.onDestroy()}

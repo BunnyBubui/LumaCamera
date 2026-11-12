@@ -11,7 +11,7 @@ object DetailResampler {
                  profile: EnhanceProfile = EnhanceProfile.CLASSIC,
                  textMask: ByteArray? = null,
                  personMask: ByteArray? = null) {
-        require(scale in 2..4 && strength in 0..100)
+        require(scale in 2..4 && strength in 0..150)
         val edge = EnhanceSpec.INPUT
         val outEdge = edge * 4
         require(native.size == outEdge*outEdge*3 && input.size == edge*edge)
@@ -20,7 +20,7 @@ object DetailResampler {
         if (profile == EnhanceProfile.NATURAL) {
             require(textMask == null || textMask.size == coreW*coreH) { "invalid source text mask" }
             require(personMask == null || personMask.size == coreW*coreH) { "invalid source person mask" }
-            copyNatural(native,input,scale,strength,coreW,coreH,destination,stride,left,textMask,personMask)
+            copyNatural(native,input,scale,strength.coerceAtMost(100),coreW,coreH,destination,stride,left,textMask,personMask)
             return
         }
         val gain = strength / 100f

@@ -155,12 +155,12 @@ class RawLabActivity:ComponentActivity(){
                 if(ai&&fusion!=null&&frames>0){
                     val f=fusion!!;val bitmap=Bitmap.createBitmap(f.finish(),f.width(),f.height(),Bitmap.Config.ARGB_8888);val merged=File(dir,"RAW_LINEAR_FUSION.jpg");PhotoEffects.write(bitmap,merged);PhotoMedia.tag(merged,sensorRotation);bitmap.recycle()
                     val time=System.currentTimeMillis();val id=UUID.randomUUID().toString();val first=dir.listFiles{file->file.extension=="dng"}!!.sortedBy{it.name}.first()
-                    val raw=PhotoMedia.publish(this,first,"LUMA_RAW_${time}.dng",time,"image/x-adobe-dng");val uri=PhotoMedia.publish(this,merged,"LUMA_RAW_FUSION_${time}.jpg",time)
+                    val raw=PhotoMedia.publish(this,first,"Lumora_RAW_${time}.dng",time,"image/x-adobe-dng");val uri=PhotoMedia.publish(this,merged,"Lumora_RAW_FUSION_${time}.jpg",time)
                     luma.shots.insert(Shot(id,time,uri,PhotoMedia.dimensions(merged),1f,true,cameraId,null,Decision.MANUAL_AI,Stage.QUEUED,null,0,null,false,raw,CaptureOutput.RAW,frames,requestedFrames,f.used(),"ทดลอง RAW linear fusion ก่อน gamma · ลดขนาด Bayer 2×2 · ไม่มี lens shading / hot-pixel calibration"));EnhanceWorker.enqueue(this,id)
                 }
                 fusion=null
             }.onSuccess{runOnUiThread{status.text="เก็บ $frames เฟรมแล้ว · dropped $dropped\n${if(ai)"เข้าคิว SR1 แล้ว · DNG ต้นฉบับยังอยู่"else "ส่งออก ZIP เพื่อดู DNG / WAV / timestamps"}"}}.onFailure{runOnUiThread{status.text="ไฟล์ที่ปิดแล้วอยู่ในแอป · ${it.localizedMessage}"}}
-            runOnUiThread{finishing=false;shutter.isEnabled=visible&&session!=null;requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR}
+            runOnUiThread{finishing=false;shutter.isEnabled=visible&&session!=null;requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT}
         }
     }
     private fun exportLast(){if(running||finishing){notice("หยุดบันทึกก่อนส่งออก");return};writer.execute{runCatching{

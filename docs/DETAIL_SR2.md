@@ -19,8 +19,8 @@ creation/invocation failure. Creation, inference and destruction share a worker
 thread. Buffers and compiled model are reused throughout each photo. GPU program
 cache persists between jobs. No claim of working NPU acceleration is made.
 
-Tiling: 128 input pixels of valid core, 36 input pixels of halo on each edge,
-200x200 fixed model input. The receptive field radius is 34 pixels. Area resampling
+Tiling: 192 input pixels of valid core, 36 input pixels of halo on each edge,
+264x264 fixed model input. The receptive field radius is 34 pixels. Area resampling
 of native 4x output produces 2x/3x without tile-dependent phases; it still pays for
 4x neural inference. The outside image border is replicated consistently.
 Full-resolution JPEG uses native baseline scanlines (4:4:4, quality 95), one Java

@@ -11,7 +11,8 @@ import tensorflow as tf
 
 ROOT=Path(__file__).resolve().parents[1]
 DEST=ROOT/"build/detail-comparison"
-CORE,HALO=128,36
+CORE,HALO=192,36
+INPUT=CORE+2*HALO
 
 def main():
     DEST.mkdir(parents=True,exist_ok=True)
@@ -19,8 +20,8 @@ def main():
     inp=interpreter.get_input_details()[0]["index"]
     interpreter.allocate_tensors()
     def run(image,left=0,top=0):
-        xs=np.clip(np.arange(left-HALO,left-HALO+200),0,image.shape[1]-1)
-        ys=np.clip(np.arange(top-HALO,top-HALO+200),0,image.shape[0]-1)
+        xs=np.clip(np.arange(left-HALO,left-HALO+INPUT),0,image.shape[1]-1)
+        ys=np.clip(np.arange(top-HALO,top-HALO+INPUT),0,image.shape[0]-1)
         tile=image[ys[:,None],xs[None,:]]
         interpreter.set_tensor(inp,tile[None].astype(np.float32)); interpreter.invoke()
         result=interpreter.get_tensor(interpreter.get_output_details()[0]["index"])[0]
@@ -48,13 +49,14 @@ def main():
         results[name]={"input":list(low.shape[::-1]),"output":list(image.size),"desktopCpuSeconds":seconds,
             "meanDifferenceFromBicubic":float(np.abs(np.asarray(image,dtype=float)-np.asarray(bicubic,dtype=float)).mean())}
     # Shift the context window by half a tile. Matching overlapping interiors
-    # verifies the 36-pixel halo, including both sides of the real x=128 seam.
+    # verifies the 36-pixel halo, including both sides of the real x=CORE seam.
     source=np.random.default_rng(42).uniform(0.1,0.9,(24,CORE+9,3)).astype(np.float32)
-    middle=run(source,64)
+    HALF=CORE//2
+    middle=run(source,HALF)
     for left in [0,CORE]:
         tile=run(source,left)
-        lo=max(left,64); hi=min(left+tile.shape[1]//4,64+middle.shape[1]//4)
-        difference=np.abs(tile[:,(lo-left)*4:(hi-left)*4]-middle[:,(lo-64)*4:(hi-64)*4])
+        lo=max(left,HALF); hi=min(left+tile.shape[1]//4,HALF+middle.shape[1]//4)
+        difference=np.abs(tile[:,(lo-left)*4:(hi-left)*4]-middle[:,(lo-HALF)*4:(hi-HALF)*4])
         results[f"tileAt{left}"]={"meanError":float(difference.mean()),"maxError":float(difference.max())}
         assert difference.max()<0.005,results
     (DEST/"comparison.json").write_text(json.dumps(results,indent=2)+"\n")

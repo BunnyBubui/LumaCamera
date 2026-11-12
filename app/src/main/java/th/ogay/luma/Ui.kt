@@ -59,6 +59,7 @@ fun Activity.installRoot(root: View) {
         insets
     }
     setContentView(root)
+    ClickFeedback.install(this)
 }
 fun zoomText(ratio: Float): String = String.format(Locale.US,
     if (kotlin.math.abs(ratio-ratio.roundToInt()) < 0.025f) "%.0f×" else "%.1f×",ratio)
@@ -128,4 +129,64 @@ fun Activity.preferFastestRefresh() {
     val best = d.supportedModes.filter { it.physicalWidth == now.physicalWidth && it.physicalHeight == now.physicalHeight }.maxByOrNull { it.refreshRate } ?: return
     if (best.modeId != window.attributes.preferredDisplayModeId) window.attributes = window.attributes.apply { preferredDisplayModeId = best.modeId }
     if (android.os.Build.VERSION.SDK_INT >= 30) runCatching { window.attributes = window.attributes.apply { preferredRefreshRate = best.refreshRate } }
+}
+
+/**
+ * A small copy of what the preview shows, [width] pixels wide. PreviewView.getBitmap() reads the whole frame back
+ * at full size on the main thread (tens of milliseconds); here the TextureView scales on the GPU and only the
+ * small result is read, with the view's own transform applied so it matches the screen.
+ */
+fun androidx.camera.view.PreviewView.smallFrame(width: Int): android.graphics.Bitmap? = runCatching {
+    val tv = (0 until childCount).map { getChildAt(it) }.firstOrNull { it is android.view.TextureView } as? android.view.TextureView
+    if (tv == null || !tv.isAvailable || tv.width <= 0 || tv.height <= 0 || this.width <= 0 || this.height <= 0) {
+        return@runCatching bitmap?.let { f -> android.graphics.Bitmap.createScaledBitmap(f, width, (width.toFloat() * f.height / f.width).toInt().coerceAtLeast(1), true).also { if (it !== f) f.recycle() } }
+    }
+    // CameraX sizes the TextureView to the stream and fills the PreviewView with the view's own scale/translation,
+    // plus a buffer correction in setTransform; all three are applied, as on screen.
+    val s = width.toFloat() / this.width
+    val src = tv.getBitmap((tv.width * s).toInt().coerceAtLeast(1), (tv.height * s).toInt().coerceAtLeast(1)) ?: return@runCatching null
+    val m = android.graphics.Matrix().apply {
+        setScale(tv.width.toFloat() / src.width, tv.height.toFloat() / src.height)
+        postConcat(tv.getTransform(null)); postConcat(tv.matrix); postTranslate(tv.left.toFloat(), tv.top.toFloat()); postScale(s, s)
+    }
+    val out = android.graphics.Bitmap.createBitmap(width, (this.height * s).toInt().coerceAtLeast(1), android.graphics.Bitmap.Config.ARGB_8888)
+    android.graphics.Canvas(out).drawBitmap(src, m, android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG))
+    src.recycle(); out
+}.getOrNull()
+
+
+/**
+ * Sound and haptic for every tap on anything clickable, in every screen. Buttons that already call
+ * [Glass.tick] keep their own feedback (a tick in the last 150 ms means the button handled it).
+ */
+object ClickFeedback {
+    fun install(a: Activity) {
+        val w = a.window; val inner = w.callback ?: return
+        if (inner is Wrapper) return
+        w.callback = Wrapper(inner)
+    }
+    private class Wrapper(private val inner: android.view.Window.Callback) : android.view.Window.Callback by inner {
+        private var target: View? = null; private var downAt = 0L
+        override fun dispatchTouchEvent(e: android.view.MotionEvent): Boolean {
+            val root = (inner as? Activity)?.window?.decorView
+            if (e.actionMasked == android.view.MotionEvent.ACTION_DOWN && root != null) { target = hit(root, e.rawX.toInt(), e.rawY.toInt()); downAt = android.os.SystemClock.uptimeMillis() }
+            val handled = inner.dispatchTouchEvent(e)
+            if (e.actionMasked == android.view.MotionEvent.ACTION_UP) {
+                val v = target; target = null
+                if (v != null && v.isEnabled && v.isAttachedToWindow && inside(v, e.rawX.toInt(), e.rawY.toInt()) && Glass.lastTick < downAt &&
+                    android.os.SystemClock.uptimeMillis() - downAt < android.view.ViewConfiguration.getLongPressTimeout()) {
+                    v.post { if (Glass.lastTick < downAt) Glass.tick(v, android.view.HapticFeedbackConstants.VIRTUAL_KEY) }
+                }
+            }
+            if (e.actionMasked == android.view.MotionEvent.ACTION_CANCEL) target = null
+            return handled
+        }
+        private fun inside(v: View, x: Int, y: Int): Boolean { val r = android.graphics.Rect(); return v.getGlobalVisibleRect(r) && r.contains(x, y) }
+        /** The deepest visible view under the finger that reacts to clicks. */
+        private fun hit(v: View, x: Int, y: Int): View? {
+            if (v.visibility != View.VISIBLE || v.alpha <= 0.01f || !inside(v, x, y)) return null
+            if (v is android.view.ViewGroup) for (i in v.childCount - 1 downTo 0) hit(v.getChildAt(i), x, y)?.let { return it }
+            return if (v.isClickable && v.hasOnClickListeners()) v else null
+        }
+    }
 }

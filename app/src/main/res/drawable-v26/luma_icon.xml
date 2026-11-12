@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Lumora adaptive launcher icon: night-sky glass with a lens and a small star of light. -->
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/lumora_icon_back"/>
+    <foreground android:drawable="@drawable/lumora_icon_front"/>
+    <monochrome android:drawable="@drawable/lumora_icon_mono"/>
+</adaptive-icon>

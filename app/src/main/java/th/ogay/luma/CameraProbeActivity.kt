@@ -38,6 +38,8 @@ class CameraProbeActivity : ComponentActivity() {
     private lateinit var choiceButton:TextView
     private lateinit var reportButton:TextView
     private lateinit var clipButton:TextView
+    private lateinit var scanButton:TextView
+    private var scanAfterPermission=false
     private lateinit var orientation:OrientationEventListener
     @Volatile private var foreground=false
     @Volatile private var busy=false
@@ -60,7 +62,7 @@ class CameraProbeActivity : ComponentActivity() {
     private var reportFile:File?=null
     private var clipUri:Uri?=null
     private var sensor=VideoDiagnostics()
-    private val permission=registerForActivityResult(ActivityResultContracts.RequestPermission()){allowed->if(allowed)launchProbe()else status.text="ต้องอนุญาตกล้องเพื่อทดสอบ"}
+    private val permission=registerForActivityResult(ActivityResultContracts.RequestPermission()){allowed->val scan=scanAfterPermission;scanAfterPermission=false;if(!allowed)status.text="ต้องอนุญาตกล้องเพื่อทดสอบ" else if(scan)deepScan() else launchProbe()}
     private fun ui(action:()->Unit)=runOnUiThread{if(!isDestroyed)action()}
     private fun stage(value:String){stage=value;events.put(JSONObject().put("stage",value).put("elapsedNs",SystemClock.elapsedRealtimeNanos()));
         val message=when(value){"prepare"->"กำลังเตรียมไฟล์…";"open"->"กำลังเปิดกล้อง…";"configure"->"กำลังเปิดชุดวิดีโอ…";"start"->"กำลังเริ่มบันทึก…";"stop"->"กำลังปิดไฟล์…";else->null}
@@ -73,6 +75,10 @@ class CameraProbeActivity : ComponentActivity() {
         body.addView(pill("‹ กลับ"){if(!busy)finish()},-1,-2)
         body.addView(label("ทดสอบกล้องจริง",24f),-1,-2)
         status=label("กำลังอ่านชุดวิดีโอ…",15f).apply{minHeight=dp(64)};body.addView(status,-1,-2)
+        scanButton=pill("สแกนทุกทางของกล้อง"){if(!busy){if(ContextCompat.checkSelfPermission(this,Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED){scanAfterPermission=true;permission.launch(Manifest.permission.CAMERA)}else deepScan()}}
+        scanButton.contentDescription="สแกนกล้องทุกตัว ขนาดภาพ เลนส์ที่ซ่อน และ 60 fps"
+        body.addView(scanButton,-1,-2)
+        body.addView(label("ลองทุกทางที่แอปทั่วไปขอได้ เช่น ภาพเต็มเซนเซอร์ เลนส์ย่อย และ 60 fps ใช้เวลาราว 1 นาที ถ้าพบทางถ่ายภาพที่ใหญ่กว่าปกติ โหมดความละเอียดสูงจะใช้ทางนั้นเอง",14f,MUTED),-1,-2)
         choiceButton=pill("เลือกชุดทดสอบ"){if(!busy)AlertDialog.Builder(this).setTitle("ชุดที่ Android รายงาน").setItems(choices.map{it.title()}.toTypedArray()){_,i->choice=choices[i];choiceButton.text=choice!!.title()}.show()}.apply{isEnabled=false};body.addView(choiceButton,-1,-2)
         startButton=pill("เริ่มทดสอบ 10 วินาที"){if(busy)handler.post{finishProbe(true)}else if(ContextCompat.checkSelfPermission(this,Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED)permission.launch(Manifest.permission.CAMERA)else launchProbe()}.apply{contentDescription="เริ่มทดสอบกล้อง 10 วินาที";isEnabled=false};body.addView(startButton,-1,-2)
         body.addView(label("ทดสอบแบบไม่มีเสียง · โหมด 120/240 บันทึกเป็นคลิปเล่น 30 fps",14f,MUTED),-1,-2)
@@ -85,6 +91,7 @@ class CameraProbeActivity : ComponentActivity() {
         }
         reportButton=pill("บันทึกและส่งรายงาน"){if(!busy){startButton.isEnabled=false;choiceButton.isEnabled=false;reportButton.isEnabled=false;handler.post{saveReport(true);ui{startButton.isEnabled=choice!=null;choiceButton.isEnabled=choices.isNotEmpty();reportButton.isEnabled=true}}}}.apply{contentDescription="ส่งรายงานทดสอบกล้อง";isEnabled=false};body.addView(reportButton,-1,-2)
         clipButton=pill("เปิดคลิปทดสอบ"){clipUri?.let{MediaLedger.view(this,it,"video/mp4")}}.apply{isEnabled=false};body.addView(clipButton,-1,-2)
+        if(intent.getBooleanExtra("scan",false)&&state==null)body.post{scanButton.performClick()}
         targetRotation=windowManager.defaultDisplay.rotation
         orientation=object:OrientationEventListener(this){override fun onOrientationChanged(degrees:Int){VideoSessionPolicy.rotation(degrees)?.let{targetRotation=it}}}
         handler.post{
@@ -103,6 +110,24 @@ class CameraProbeActivity : ComponentActivity() {
                 ui{choiceButton.text=choice?.title()?:"ไม่มีชุดทดสอบที่ใช้ได้";choiceButton.isEnabled=choices.isNotEmpty();startButton.isEnabled=choice!=null;reportButton.isEnabled=true;status.text="ถือเครื่องให้นิ่ง หันไปยังวัตถุที่ขยับในฉากสว่าง แล้วกดเริ่ม"}
             }.onFailure{abort("inventory",it)}
         }
+    }
+    /** Runs [DeepScan] on its own thread; the result becomes the report the share button sends. */
+    private fun deepScan(){
+        if(busy)return
+        busy=true;requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_LOCKED
+        listOf(scanButton,choiceButton,reportButton,startButton,clipButton).forEach{it.isEnabled=false}
+        status.text="กำลังสแกน… ห้ามออกจากหน้านี้"
+        Thread({
+            // Let the camera screen behind finish releasing the hardware first.
+            SystemClock.sleep(500)
+            val result=DeepScan.run(applicationContext){msg->ui{status.text=msg}}
+            handler.post{
+                report=result.json.put("inventory",inventory);reportFile=null;saveReport(false)
+                busy=false
+                ui{requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED;status.text=result.summary+"\n\nกด \"บันทึกและส่งรายงาน\" เพื่อส่งผลนี้"
+                    scanButton.isEnabled=true;reportButton.isEnabled=true;choiceButton.isEnabled=choices.isNotEmpty();startButton.isEnabled=choice!=null}
+            }
+        },"LumaDeepScan").start()
     }
     private fun launchProbe(){
         val selected=choice?:return

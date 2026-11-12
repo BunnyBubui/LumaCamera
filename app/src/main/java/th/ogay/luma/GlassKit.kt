@@ -11,6 +11,8 @@ import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.Gravity
+import android.widget.LinearLayout
 import android.view.animation.PathInterpolator
 import kotlin.math.*
 
@@ -55,7 +57,13 @@ object Glass {
             (Build.VERSION.SDK_INT >= 26 && !ValueAnimator.areAnimatorsEnabled())
 
     /** Haptic plus a matching soft click: detents tick, taps click, long presses open. */
+    /** True while a video records: the phone's vibration motor and click sounds were picked up by the microphone (heard as a "zoom sound"). */
+    @Volatile var quiet = false
+    /** When the last feedback played, so the automatic click feedback never doubles a button's own. */
+    @Volatile var lastTick = 0L
     fun tick(v: View, type: Int = HapticFeedbackConstants.CLOCK_TICK) {
+        lastTick = android.os.SystemClock.uptimeMillis()
+        if (quiet) return
         if (v.context.getSharedPreferences("camera", 0).getBoolean("haptic", true)) v.performHapticFeedback(type)
         Sounds.play(v.context, when (type) { HapticFeedbackConstants.CLOCK_TICK -> Sounds.Kind.DETENT; HapticFeedbackConstants.LONG_PRESS -> Sounds.Kind.OPEN; else -> Sounds.Kind.TAP })
     }
@@ -189,7 +197,8 @@ object Icons {
     const val DUAL = "M3 6h8v12H3z M13 6h8v12h-8z"
     const val MOVIE = "M3 8h18v12H3z M3 8l3-4h4l-3 4 M10 8l3-4h4l-3 4"
     const val RAWV = "M3.5 7h11v10h-11z M14.5 10.5 20.5 7v10l-6-3.5 M7 14v-4h2a1 1 0 0 1 0 2H7 M9 14l-1-2"
-    const val LIBRARY = "M4 4h7v7H4z M13 4h7v7h-7z M4 13h7v7H4z M13 13h7v7h-7z"
+    /** Gallery: a photo with a second one stacked behind it. */
+    const val LIBRARY = "M8 3.5h10.5a2 2 0 0 1 2 2V16 M5.5 6.5h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-10a2 2 0 0 1-2-2v-10a2 2 0 0 1 2-2z M3.5 17l4-4 3 3 2-2 5 5 M13 10.5h.01"
     const val PLUS = "M12 5v14 M5 12h14"
     const val MINUS = "M5 12h14"
     const val FILM = "M4 4h16v16H4z M8 4v16 M16 4v16 M4 8h4 M4 12h4 M4 16h4 M16 8h4 M16 12h4 M16 16h4"
@@ -242,6 +251,36 @@ object Icons {
     const val CHAT = "M4 5h16v11H9l-5 4z"
     const val SHOT = "M7 3h10v18H7z M10 7h4"
     const val RAW = "M4 6h16v12H4z M8 15v-6h2.5a1.5 1.5 0 0 1 0 3H8 M10.5 12l1.5 3"
+    /**
+     * An icon that fits the words of a menu row, for menus whose caller gave none: "ปิด" gets a cross,
+     * seconds a timer, fps a film strip and so on. Unknown words fall back to [fallback].
+     */
+    fun forLabel(label: String, fallback: String = CHECK): String {
+        val t = label.lowercase()
+        return when {
+            t == "ปิด" || t.startsWith("ปิด ") -> CLOSE
+            "แฟลช" in t -> FLASH
+            "กีฬา" in t || "ถ่ายเร็ว" in t || "เคลื่อนไหว" in t -> MOTION
+            "วินาที" in t || t.endsWith(" วิ") || "ตั้งเวลา" in t -> TIMER
+            "fps" in t || "เฟรม" in t -> FPS
+            "อัตโนมัติ" in t || "ตามระบบ" in t || "auto" in t -> AI
+            "4k" in t || "1080" in t || "720" in t || "mp" in t || "ความละเอียด" in t -> RES
+            "ev" in t || "hdr" in t || "ช่วงแสง" in t -> HDR
+            "เสียง" in t -> SOUND
+            "สั่น" in t -> HAPTIC
+            "ซูม" in t || "เลนส์" in t || "×" in t -> SEARCH
+            "ถ่ายภาพ" in t || "ชัตเตอร์" in t -> SHOT
+            "%" in t || "jpeg" in t || "png" in t || "webp" in t || "ไฟล์" in t -> FILE
+            "raw" in t || "dng" in t -> RAW
+            "ช้า" in t || "ปกติ" in t || "เร็ว" in t -> MOTION
+            "กลางคืน" in t || "มืด" in t -> NIGHT
+            "บุคคล" in t || "ใบหน้า" in t -> PORTRAIT
+            "วิดีโอ" in t -> VIDEO
+            "กริด" in t || "เส้น" in t -> GRID
+            "ล่าสุด" in t || "วันที่" in t || "เวลา" in t -> TIMER
+            else -> fallback
+        }
+    }
 }
 
 /** Stroked icon drawn from SVG path data, with optional text set inside the glyph. */
@@ -425,6 +464,15 @@ object Liquid {
  */
 class IconTurner {
     var angle = 0f; private set
+    companion object {
+        /** Views marked with this tag anywhere in the window (sheet tiles, look thumbnails, chips) turn with the phone. */
+        const val TAG = "turn"
+        fun tagged(root: View): List<View> {
+            val out = ArrayList<View>()
+            fun walk(v: View) { if (v.tag == TAG) out += v; if (v is android.view.ViewGroup) for (i in 0 until v.childCount) walk(v.getChildAt(i)) }
+            walk(root); return out
+        }
+    }
     fun update(degrees: Int, views: () -> List<View>, reduced: Boolean) {
         if (degrees < 0) return
         val snapped = listOf(0, 90, 180, 270, 360).minBy { kotlin.math.abs(it - degrees) } % 360
@@ -436,3 +484,80 @@ class IconTurner {
     }
     fun apply(views: List<View>) { views.forEach { it.rotation = angle } }
 }
+
+/** Plain-text dialog in the glass style, used instead of the system AlertDialog so every popup matches the app. */
+object GlassDialog {
+    /** A glass card dialog that rises softly; [build] fills the column and may dismiss the dialog. */
+    fun panel(a: android.app.Activity, title: String, build: (LinearLayout, android.app.Dialog) -> Unit): android.app.Dialog {
+        val d = android.app.Dialog(a)
+        d.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+        val box = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; background = a.glass(28, Glass.FILL_STRONG); setPadding(a.dp(20), a.dp(18), a.dp(20), a.dp(16)) }
+        box.addView(a.text(title, 18f, Color.WHITE, true).apply { tag = "title" }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = a.dp(6) })
+        val column = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
+        box.addView(android.widget.ScrollView(a).apply { isVerticalScrollBarEnabled = false; addView(column) }, LinearLayout.LayoutParams(-1, -2, 1f))
+        build(column, d)
+        // The card springs a little past its place as it opens; the window is slightly larger than the card so that
+        // overshoot is not clipped (the top edge used to vanish for a moment).
+        val pad = android.widget.FrameLayout(a).apply { setPadding(a.dp(12), a.dp(20), a.dp(12), a.dp(20)); clipChildren = false; clipToPadding = false; addView(box, -1, -2) }
+        d.setContentView(pad)
+        d.window?.apply { setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)); setLayout(minOf(a.resources.displayMetrics.widthPixels, (a.resources.displayMetrics.widthPixels * 0.9f).toInt() + a.dp(24)), android.view.WindowManager.LayoutParams.WRAP_CONTENT); setDimAmount(0.45f) }
+        d.setOnShowListener { if (!Glass.reduced(a)) { box.alpha = 0f; box.translationY = a.dp(22).toFloat(); box.scaleX = 0.96f; box.scaleY = 0.96f; box.animate().alpha(1f).translationY(0f).scaleX(1f).scaleY(1f).setInterpolator(Glass.SPRING).setDuration(380).start() } }
+        return d
+    }
+    /** One row of equal buttons; the last one is the accent action. */
+    fun actions(a: android.app.Activity, vararg items: Pair<String, () -> Unit>): LinearLayout = LinearLayout(a).apply {
+        items.forEachIndexed { i, (label, run) ->
+            val main = i == items.size - 1
+            addView(a.text(label, 14f, if (main) Glass.ON_ACCENT else Color.WHITE, true).apply { gravity = Gravity.CENTER; background = a.glass(22, if (main) Glass.ACCENT else 0x1affffff); isClickable = true; contentDescription = label; setOnClickListener { run() }; glassTouch() },
+                LinearLayout.LayoutParams(0, a.dp(48), 1f).apply { if (i > 0) leftMargin = a.dp(8) })
+        }
+    }
+    fun show(a: android.app.Activity, title: String, message: String, button: String = "ปิด") {
+        val d = android.app.Dialog(a)
+        d.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+        val box = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; background = a.glass(28, Glass.FILL_STRONG); setPadding(a.dp(20), a.dp(18), a.dp(20), a.dp(14)) }
+        box.addView(a.text(title, 18f, Color.WHITE, true), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = a.dp(8) })
+        val body = a.text(message, 14f, Glass.TEXT2).apply { maxLines = 60; ellipsize = null; setLineSpacing(0f, 1.15f) }
+        box.addView(android.widget.ScrollView(a).apply { isVerticalScrollBarEnabled = false; addView(body) }, LinearLayout.LayoutParams(-1, -2, 1f))
+        box.addView(a.text(button, 15f, Glass.ON_ACCENT, true).apply { gravity = Gravity.CENTER; background = a.glass(24, Glass.ACCENT); isClickable = true; setOnClickListener { d.dismiss() }; glassTouch() },
+            LinearLayout.LayoutParams(-1, a.dp(48)).apply { topMargin = a.dp(14) })
+        d.setContentView(box)
+        d.window?.apply { setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)); setLayout((a.resources.displayMetrics.widthPixels * 0.88f).toInt(), android.view.WindowManager.LayoutParams.WRAP_CONTENT); setDimAmount(0.5f) }
+        d.show()
+    }
+}
+
+/** A portrait rectangle with the ratio's real proportions, so 21:9 looks long and 1:1 square (icon path on a 24 grid). */
+fun aspectIconPath(name: String): String {
+    val p = name.split(':').mapNotNull { it.trim().toFloatOrNull() }
+    val r = if (p.size == 2 && p[1] > 0f) maxOf(p[0], p[1]) / minOf(p[0], p[1]) else 4f / 3f
+    val h = 20f; val w = h / r; val x = 12f - w / 2; val y = 12f - h / 2
+    return String.format(java.util.Locale.US, "M%.2f %.2fh%.2fv%.2fh%.2fz", x, y, w, h, -w)
+}
+
+/**
+ * Strip cell whose content (icon and label, or title and value) turns with the phone as one piece.
+ * The content keeps its own width, so the cell can be narrow while the phone is held sideways.
+ */
+fun android.content.Context.turnCell(content: View, contentWidthDp: Int, desc: String): android.widget.FrameLayout = android.widget.FrameLayout(this).apply {
+    isClickable = true; isFocusable = true; contentDescription = desc
+    content.tag = IconTurner.TAG
+    addView(content, android.widget.FrameLayout.LayoutParams(dp(contentWidthDp), -2, android.view.Gravity.CENTER))
+}
+
+/**
+ * Keeps a top-centre notice at the top of the picture as the phone is held: it turns with the phone and moves to the
+ * edge that is "up" (the right edge for +90 degrees, the left for -90), [insetPx] away from it.
+ */
+fun View.turnTo(angle: Float, insetPx: Int, animate: Boolean) {
+    val p = parent as? View ?: return
+    if (width == 0 || p.width == 0) { rotation = angle; return }
+    val side = kotlin.math.abs(angle) == 90f
+    val cx = left + width / 2f; val cy = top + height / 2f
+    val tx = when { !side -> 0f; angle > 0 -> p.width - insetPx - height / 2f - cx; else -> insetPx + height / 2f - cx }
+    val ty = if (side) (p.height - p.paddingBottom) / 2f - cy else 0f
+    var to = angle; while (to - rotation > 180) to -= 360; while (to - rotation < -180) to += 360
+    if (animate) animate().rotation(to).translationX(tx).translationY(ty).setInterpolator(Glass.SPRING).setDuration(420).start()
+    else { animate().cancel(); rotation = to; translationX = tx; translationY = ty }
+}
+

@@ -1,0 +1,44 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Lumora: Auto Deploy (on save)",
+      "type": "shell",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+        "${workspaceFolder}\\scripts\\auto-deploy.ps1"
+      ],
+      "options": { "cwd": "${workspaceFolder}" },
+      "isBackground": true,
+      "problemMatcher": [],
+      "group": { "kind": "build", "isDefault": true },
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": false },
+      "detail": "Build and install Lumora debug automatically after a source/config save."
+    },
+    {
+      "label": "Lumora: Deploy Once",
+      "type": "shell",
+      "command": "powershell.exe",
+      "args": [
+        "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+        "${workspaceFolder}\\scripts\\auto-deploy.ps1", "-Once"
+      ],
+      "options": { "cwd": "${workspaceFolder}" },
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" },
+      "detail": "Build, install and launch Lumora debug a single time."
+    },
+    {
+      "label": "Lumora: Mirror Phone (scrcpy)",
+      "type": "shell",
+      "command": "scrcpy",
+      "args": ["--no-audio", "--stay-awake"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "isBackground": true,
+      "problemMatcher": [],
+      "presentation": { "reveal": "always", "panel": "dedicated" },
+      "detail": "Mirror Android phone in a separate desktop window. Requires scrcpy."
+    }
+  ]
+}

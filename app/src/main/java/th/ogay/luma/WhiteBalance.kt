@@ -104,7 +104,12 @@ enum class LogProfile(val key: String, val label: String, val note: String) {
     STANDARD("standard", "มาตรฐาน", "สีและคอนทราสต์ของกล้อง"),
     FLAT("flat", "Log แบน", "ยกเงา กดไฮไลต์มากที่สุด เกรดสีภายหลัง"),
     SOFT("soft", "Log นุ่ม", "แบนน้อยกว่า ดูได้ทันทีโดยยังเกรดได้"),
-    NEUTRAL("neutral", "โปรไฟล์จืด", "คอนทราสต์ต่ำแบบเส้นตรง สีไม่ถูกดัน");
+    NEUTRAL("neutral", "โปรไฟล์จืด", "คอนทราสต์ต่ำแบบเส้นตรง สีไม่ถูกดัน"),
+    CLOG("clog", "แนว C-Log", "โค้ง log นุ่ม เก็บไฮไลต์ดี เลียนแบบกล้อง Canon"),
+    SLOG("slog", "แนว S-Log", "แบนมาก ยกเงาสูง เลียนแบบกล้อง Sony"),
+    HLG("hlg", "แนว HLG", "ครึ่งล่างแกมมา ครึ่งบน log ดูได้ทันที"),
+    CINE("cine", "ซีเน", "โค้งตัว S แบบหนัง เงาลึก ไฮไลต์นุ่ม"),
+    VIVID("vivid", "สดใส", "คอนทราสต์เพิ่มเล็กน้อย พร้อมใช้");
     /** 32-point curve, x/y pairs, input linear 0..1. */
     fun curve(): FloatArray {
         val n = 32
@@ -114,6 +119,11 @@ enum class LogProfile(val key: String, val label: String, val note: String) {
                 FLAT -> (kotlin.math.ln(1f + 40f * x) / kotlin.math.ln(41f))
                 SOFT -> 0.04f + 0.94f * (kotlin.math.ln(1f + 14f * x) / kotlin.math.ln(15f))
                 NEUTRAL -> 0.06f + 0.88f * Math.pow(x.toDouble(), 1 / 2.4).toFloat()
+                CLOG -> 0.07f + 0.88f * (kotlin.math.ln(1f + 40.6f * x) / kotlin.math.ln(41.6f)) * 0.82f + 0.88f * 0.18f * x
+                SLOG -> 0.09f + 0.86f * (kotlin.math.ln(1f + 80f * x) / kotlin.math.ln(81f))
+                HLG -> if (x <= 1 / 12f) kotlin.math.sqrt(3f * x) else 0.17883277f * kotlin.math.ln(12f * x - 0.28466892f) + 0.55991073f
+                CINE -> Math.pow(x.toDouble(), 1 / 2.2).toFloat().let { g -> 0.45f * g + 0.55f * g * g * (3 - 2 * g) }
+                VIVID -> Math.pow(x.toDouble(), 1 / 2.2).toFloat().let { g -> 0.7f * g + 0.3f * g * g * (3 - 2 * g) }
                 STANDARD -> Math.pow(x.toDouble(), 1 / 2.2).toFloat()
             }
         }

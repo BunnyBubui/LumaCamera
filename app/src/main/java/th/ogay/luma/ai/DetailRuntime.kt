@@ -36,7 +36,7 @@ class DetailRuntime(private val context: Context, private val forceCpu: Boolean 
             if (useGpu) gpuOptions = CompiledModel.GpuOptions(
                 precision = CompiledModel.GpuOptions.Precision.FP16,
                 serializationDir = File(context.codeCacheDir, "detail-sr2").apply { mkdirs() }.path,
-                modelCacheKey = "detail-$fingerprint-200",
+                modelCacheKey = "detail-$fingerprint-${EnhanceSpec.INPUT}",
                 serializeProgramCache = true)
         }
         model = CompiledModel.create(context.assets, "luma-detail-sr2.tflite", options)

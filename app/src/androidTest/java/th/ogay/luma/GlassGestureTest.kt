@@ -116,7 +116,7 @@ class GlassGestureTest {
             assertNotNull(device.wait(Until.findObject(By.text("เสร็จ")), 4000))
             device.pressBack(); until(3000) { !device.hasObject(By.text("เสร็จ")) }
             repeat(3) { device.swipe(bar.left + (20 * density).toInt(), bar.centerY(), bar.right - (20 * density).toInt(), bar.centerY(), 6); SystemClock.sleep(900) }
-            val first = device.wait(Until.findObject(By.desc("โหมดกลางคืน")), 4000).visibleBounds
+            val first = device.wait(Until.findObject(By.desc("โหมดบุคคล")), 4000).visibleBounds
             assertTrue("First cell is cut: $first in $bar", first.width() >= (48 * density).toInt() && first.left >= bar.left)
         }
     }
@@ -146,7 +146,7 @@ class GlassGestureTest {
         }
     }
 
-    @Test fun shutterStopsNightBurstAndKeepsCapturedFrames() {
+    @org.junit.Ignore("The night toggle was removed from the camera in round 8") @Test fun shutterStopsNightBurstAndKeepsCapturedFrames() {
         context.getSharedPreferences("camera", 0).edit().putBoolean("night_toggle", true).putInt("night_frames", 12).putBoolean("software", false).commit()
         val before = context.luma.shots.all().map { it.id }.toSet()
         launch().use {

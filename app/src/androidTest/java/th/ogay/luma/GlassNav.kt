@@ -29,7 +29,8 @@ object GlassNav {
     /** Finds a view inside the open sheet, scrolling the sheet when it is below the fold. */
     fun inPanel(device: UiDevice, selector: BySelector): UiObject2? {
         // Search inside the sheet only: the status row behind it can carry the same description (e.g. "รูปแบบไฟล์ AI").
-        val panel = device.findObject(PANEL_SCROLL) ?: return null
+        // A short sheet that fits the screen has nothing to scroll, so look for the control directly.
+        val panel = device.findObject(PANEL_SCROLL) ?: return device.findObject(selector)
         panel.findObject(selector)?.let { if (it.visibleBounds.height() > 0) return it }
         return panel.scrollUntil(Direction.DOWN, Until.findObject(selector)) ?: panel.findObject(selector)
     }
