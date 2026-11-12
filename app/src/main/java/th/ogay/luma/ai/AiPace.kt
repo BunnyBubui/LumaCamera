@@ -6,7 +6,7 @@ import android.os.SystemClock
 /**
  * How hard the AI works. While someone watches its progress it runs nearly flat out, but still leaves a few
  * milliseconds after each tile so the screen can draw (the GPU is shared with the display). Otherwise (with the
- * saver on, the default) every AI thread drops to background priority and rests after each tile for as long as the
+ * saver on, the default) every AI thread drops to background priority and rests after each tile for one and a half times as long as the
  * tile took, so the phone stays smooth and cool and the job simply finishes later.
  */
 object AiPace {
@@ -19,7 +19,7 @@ object AiPace {
     fun afterTile(context: Context, tileMs: Long) {
         val saver = saving(context)
         android.os.Process.setThreadPriority(if (saver) android.os.Process.THREAD_PRIORITY_BACKGROUND else android.os.Process.THREAD_PRIORITY_DEFAULT)
-        Thread.sleep(if (saver) tileMs.coerceIn(20L, 600L) else 6L)
+        Thread.sleep(if (saver) (tileMs * 3 / 2).coerceIn(30L, 900L) else 6L)
     }
 }
 

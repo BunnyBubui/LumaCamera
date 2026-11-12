@@ -119,14 +119,6 @@ class PhotoEditorActivity : ComponentActivity() {
             }; true }
             setOnClickListener { }
         }, LinearLayout.LayoutParams(dp(48), dp(48)).apply { rightMargin = dp(8) })
-        // AI detail for this picture: a sparkle pill in the accent colour, like the AI buttons elsewhere.
-        bar.addView(LinearLayout(this).apply {
-            gravity = Gravity.CENTER; background = glass(24, Glass.ACCENT_SOFT); isClickable = true; contentDescription = "ปรับด้วย AI"; glassTouch()
-            setPadding(dp(12), 0, dp(14), 0)
-            addView(IconView(this@PhotoEditorActivity, Icons.AI, 1.9f).apply { tint = Glass.ACCENT }, LinearLayout.LayoutParams(dp(20), dp(20)))
-            addView(text("AI", 14f, Glass.ACCENT, true).apply { setPadding(dp(6), 0, 0, 0) })
-            setOnClickListener { Glass.tick(this); enhance() }
-        }, LinearLayout.LayoutParams(-2, dp(48)).apply { rightMargin = dp(8) })
         saveButton = EditorKit.roundAccent(this, Icons.CHECK, "บันทึก") { save() }
         bar.addView(saveButton, LinearLayout.LayoutParams(dp(48), dp(48)))
         root.addView(bar, -1, -2)
@@ -135,7 +127,10 @@ class PhotoEditorActivity : ComponentActivity() {
         root.addView(canvasView, LinearLayout.LayoutParams(-1, 0, 1f))
         tools = FrameLayout(this).apply { clipChildren = false }
         root.addView(tools, LinearLayout.LayoutParams(-1, dp(172)))
-        toolBar = EditorKit.ToolBar(this, listOf(EditorKit.CROP to "ครอบตัด", EditorKit.ADJUST to "ปรับ", HSL_ICON to "สี", CURVE_ICON to "เส้นโค้ง", Icons.FILM to "ฟิลเตอร์", EditorKit.PEN to "วาด")) { showTool(it) }
+        // "ปรับด้วย AI" leads the row, beside crop, in the accent colour; it opens the AI sheet instead of a panel.
+        // With seven buttons the row scrolls sideways.
+        toolBar = EditorKit.ToolBar(this, listOf(Icons.AI to "ปรับด้วย AI", EditorKit.CROP to "ครอบตัด", EditorKit.ADJUST to "ปรับ", HSL_ICON to "สี", CURVE_ICON to "เส้นโค้ง", Icons.FILM to "ฟิลเตอร์", EditorKit.PEN to "วาด"), setOf(0)) { i ->
+            if (i == 0) { Glass.tick(toolBar); enhance() } else showTool(i - 1) }
         root.addView(toolBar, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(8), dp(2), dp(8), dp(8)) })
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) { override fun handleOnBackPressed() = leave() })
         markHistory()
@@ -162,7 +157,7 @@ class PhotoEditorActivity : ComponentActivity() {
     private fun showTool(i: Int, animate: Boolean = true) {
         val dir = if (animate) i.compareTo(tool) else 0
         val modeChange = (tool == 0) != (i == 0)
-        tool = i; toolBar.select(i, animate)
+        tool = i; toolBar.select(i + 1, animate)
         // The curve and colour mixer need more room than one strip of dials; the picture gives way smoothly.
         val want = dp(when (i) { 3 -> 268; 2 -> 206; else -> 172 })
         if (tools.layoutParams.height != want) {

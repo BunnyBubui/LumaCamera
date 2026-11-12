@@ -44,6 +44,8 @@ object ExportJob {
     class State(val plan: Plan) {
         @Volatile var stage = 0; @Volatile var fraction = 0f; @Volatile var detail = ""; @Volatile var etaMs = 0L
         @Volatile var frames = 0; @Volatile var totalFrames = 0
+        /** The latest frame made by the AI / in-between step, for the progress page to show frame by frame. */
+        @Volatile var frame: Bitmap? = null
         @Volatile var finished = false; @Volatile var error: String? = null; @Volatile var cancelled = false
         @Volatile var outputs: List<File> = emptyList()
         /** Gallery addresses of the saved clips, so the gallery can open the new one rather than the original. */
@@ -125,7 +127,7 @@ object ExportJob {
         Thread {
             var last = 0L
             val r = runCatching { VideoEnhancer.run(app, edited, out, plan, cancel) { p ->
-                s.fraction = p.fraction; s.etaMs = p.etaMs; s.frames = p.frames; s.totalFrames = p.total
+                s.fraction = p.fraction; s.etaMs = p.etaMs; s.frames = p.frames; s.totalFrames = p.total; p.frame?.let { s.frame = it }
                 s.detail = if (p.backend.isNotEmpty()) "AI บน ${p.backend}" else ""
                 val now = SystemClock.elapsedRealtime(); if (now - last > 300) { last = now; changed() }
             } }
@@ -246,4 +248,6 @@ class ExportActivity : androidx.activity.ComponentActivity() {
         .apply { if (uri != null) putExtra("open", "ledger:$uri") }) }
 
     override fun onDestroy() { ExportJob.unlisten(update); main.removeCallbacksAndMessages(null); super.onDestroy() }
+    override fun onPause() { super.onPause(); th.ogay.luma.ai.AiPace.watching = false }
+    override fun onResume() { super.onResume(); if (prog != null) th.ogay.luma.ai.AiPace.watching = true }
 }

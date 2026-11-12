@@ -538,7 +538,7 @@ class VideoActivity:ComponentActivity(){
         wheel.minZoom=z.minZoomRatio;wheel.maxZoom=zMax(z);wheel.lenses=stops;wheel.zoom=zNow(z)
         zoomMap?.let{m->val now=zNow(z);val lens=if(now>=3.5f&&stops.contains(3.5f))3.5f else 1f
             if(!dual&&extraZoom<=1.001f&&preview.previewStreamState.value==PreviewView.StreamState.STREAMING)m.capture(preview,now,lens)
-            m.update(if(dual)1f else now,lens,false)}
+            m.update(if(dual)1f else now,lens,null)}
     }
     /** Zoom pauses while an adjuster is open so a stray pinch never fights with it. */
     private fun zoomLocked()=openChip!=null

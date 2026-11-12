@@ -237,7 +237,7 @@ class FlowBlender(private val w: Int, private val h: Int) : AutoCloseable {
  * tile is enlarged ×4 by the model and brought to the needed ×2–×4, then the whole frame is fitted to the
  * exact output size. Runs on one thread (GPU when available).
  */
-class FrameSr(c: Context) : AutoCloseable {
+class FrameSr(private val c: Context, private val profile: th.ogay.luma.ai.EnhanceProfile = th.ogay.luma.ai.EnhanceProfile.CLASSIC) : AutoCloseable {
     // The GPU delegate crashes in native code on the emulator (the Detail SR device test runs on CPU there too).
     private val rt = DetailRuntime(c, forceCpu = emulator())
     val backend get() = rt.backend
@@ -263,7 +263,10 @@ class FrameSr(c: Context) : AutoCloseable {
                     val x = (x0 - halo + i % n).coerceIn(0, w - 1); val y = (y0 - halo + i / n).coerceIn(0, h - 1)
                     input[i] = px[y * w + x]
                 }
-                DetailResampler.copyCore(rt.run(input), input, scale, 100, coreW, coreH, band, bw, x0 * scale)
+                val t0 = android.os.SystemClock.elapsedRealtime(); val native = rt.run(input)
+                // Same pacing as photos: full speed while the progress page is watched, gentle otherwise.
+                th.ogay.luma.ai.AiPace.afterTile(c, android.os.SystemClock.elapsedRealtime() - t0)
+                DetailResampler.copyCore(native, input, scale, if (profile == th.ogay.luma.ai.EnhanceProfile.NATURAL) 70 else 100, coreW, coreH, band, bw, x0 * scale, profile)
                 x0 += core
             }
             for (yy in 0 until coreH * scale) {

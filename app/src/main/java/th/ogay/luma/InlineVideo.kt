@@ -37,7 +37,8 @@ class InlineVideo(c: Context, private val uri: Uri, still: Bitmap?, private val 
     /** Called when the controls appear or hide, so the gallery can fade its own bars with them. */
     var onChrome: (Boolean) -> Unit = {}
     private val prefs = c.getSharedPreferences("camera", 0)
-    private val glow = ImageView(c).apply { scaleType = ImageView.ScaleType.CENTER_CROP; alpha = 0.55f; importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }
+    private val glow = Reflection(c)
+    private val shade = Shade(c)
     private val poster = ImageView(c).apply { scaleType = ImageView.ScaleType.FIT_CENTER; importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }
     private var texture: TextureView? = null
     private var player: MediaPlayer? = null
@@ -61,8 +62,9 @@ class InlineVideo(c: Context, private val uri: Uri, still: Bitmap?, private val 
 
     init {
         clipChildren = false
-        if (glowOn) addView(glow, -1, -1)
+        addView(glow, -1, -1)
         addView(poster, -1, -1)
+        addView(shade, -1, -1)
         setStill(still)
 
         center = FrameLayout(c).apply { background = context.glass(42, 0x33ffffff); isClickable = true; contentDescription = "เล่นหรือหยุด"; glassTouch()
@@ -114,11 +116,52 @@ class InlineVideo(c: Context, private val uri: Uri, still: Bitmap?, private val 
     fun poster(b: Bitmap?) { if (b != null && !playing) setStill(b) }
     private fun setStill(b: Bitmap?) {
         poster.setImageBitmap(b)
-        if (glowOn && b != null && !b.isRecycled) glow.setImageBitmap(runCatching {
-            val w = 24; val h = (24f * b.height / b.width).toInt().coerceIn(4, 64)
-            val small = Bitmap.createScaledBitmap(b, w, h, true); val tiny = Bitmap.createScaledBitmap(small, 6, (h / 4).coerceAtLeast(2), true)
-            Bitmap.createScaledBitmap(tiny, w, h, true).also { if (it !== small) small.recycle(); if (it !== tiny) tiny.recycle() }
-        }.getOrNull())
+        if (b != null && !b.isRecycled) { glow.aspect = b.width.toFloat() / b.height
+            if (glowOn) glow.set(runCatching {
+                val w = 24; val h = (24f * b.height / b.width).toInt().coerceIn(4, 96)
+                val small = Bitmap.createScaledBitmap(b, w, h, true); val tiny = Bitmap.createScaledBitmap(small, (w / 3).coerceAtLeast(2), (h / 3).coerceAtLeast(2), true)
+                Bitmap.createScaledBitmap(tiny, w, h, true).also { if (it !== small) small.recycle(); if (it !== tiny) tiny.recycle() }
+            }.getOrNull()) }
+    }
+
+    /** Darker bands under the floating bars, the same heights as the photo viewer's. */
+    fun shades(top: Int, bottom: Int) { shade.shadeTop = top.toFloat(); shade.shadeBottom = bottom.toFloat(); shade.invalidate() }
+
+    /**
+     * The photo viewer's light: the clip's blurred colours mirrored past each edge of the picture, plus soft dark
+     * bands at the top and bottom where the bars float.
+     */
+    private class Reflection(c: Context) : View(c) {
+        var aspect = 0f
+        private var g: Bitmap? = null
+        private val paint = Paint(Paint.FILTER_BITMAP_FLAG).apply { colorFilter = android.graphics.ColorMatrixColorFilter(android.graphics.ColorMatrix().apply { setSaturation(1.15f); postConcat(android.graphics.ColorMatrix().apply { setScale(0.5f, 0.5f, 0.5f, 1f) }) }) }
+        private val r = RectF()
+        init { importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }
+        fun set(b: Bitmap?) { g?.recycle(); g = b; invalidate() }
+        override fun onDraw(cv: Canvas) {
+            val w = width.toFloat(); val h = height.toFloat(); val b = g
+            if (b != null && !b.isRecycled && aspect > 0f && w > 0f) {
+                val fw: Float; val fh: Float
+                if (w / h > aspect) { fh = h; fw = h * aspect } else { fw = w; fh = w / aspect }
+                r.set((w - fw) / 2, (h - fh) / 2, (w + fw) / 2, (h + fh) / 2)
+                val reach = maxOf(w, h)
+                if (r.top > 0.5f) { cv.save(); cv.clipRect(0f, 0f, w, r.top); cv.scale(1f, -1f, 0f, r.top); cv.drawBitmap(b, null, RectF(r.left - reach, r.top, r.right + reach, r.bottom), paint); cv.restore() }
+                if (r.bottom < h - 0.5f) { cv.save(); cv.clipRect(0f, r.bottom, w, h); cv.scale(1f, -1f, 0f, r.bottom); cv.drawBitmap(b, null, RectF(r.left - reach, r.top, r.right + reach, r.bottom), paint); cv.restore() }
+                if (r.left > 0.5f) { cv.save(); cv.clipRect(0f, r.top, r.left, r.bottom); cv.scale(-1f, 1f, r.left, 0f); cv.drawBitmap(b, null, r, paint); cv.restore() }
+                if (r.right < w - 0.5f) { cv.save(); cv.clipRect(r.right, r.top, w, r.bottom); cv.scale(-1f, 1f, r.right, 0f); cv.drawBitmap(b, null, r, paint); cv.restore() }
+            }
+        }
+    }
+    /** Soft dark bands over the clip where the bars float, so the buttons read on any picture. */
+    private class Shade(c: Context) : View(c) {
+        var shadeTop = 0f; var shadeBottom = 0f
+        private val fade = Paint(); private val fadeBottom = Paint()
+        init { importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }
+        override fun onDraw(cv: Canvas) {
+            val w = width.toFloat(); val h = height.toFloat()
+            if (shadeTop > 0f) { fade.shader = LinearGradient(0f, 0f, 0f, shadeTop, 0x8c000000.toInt(), 0, Shader.TileMode.CLAMP); cv.drawRect(0f, 0f, w, shadeTop, fade) }
+            if (shadeBottom > 0f) { fadeBottom.shader = LinearGradient(0f, h - shadeBottom, 0f, h, 0, 0xa6000000.toInt(), Shader.TileMode.CLAMP); cv.drawRect(0f, h - shadeBottom, w, h, fadeBottom) }
+        }
     }
 
     /** Lifts the controls above the gallery's own action row. */

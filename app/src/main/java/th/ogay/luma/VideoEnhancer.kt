@@ -19,8 +19,9 @@ import kotlin.math.roundToInt
  * less than running the model on them too.
  */
 object VideoEnhancer {
-    class Plan(val shortSide: Int, val fps: Float, val ai: Boolean)
-    class Progress(val fraction: Float, val etaMs: Long, val frames: Int, val total: Int, val backend: String)
+    class Plan(val shortSide: Int, val fps: Float, val ai: Boolean, val profile: th.ogay.luma.ai.EnhanceProfile = th.ogay.luma.ai.EnhanceProfile.NATURAL)
+    /** [frame]: a fresh picture of the frame just made, about twice a second, for the progress page. */
+    class Progress(val fraction: Float, val etaMs: Long, val frames: Int, val total: Int, val backend: String, val frame: android.graphics.Bitmap? = null)
 
     /** Output size for [shortSide] keeping the shape (even numbers, coded orientation). */
     fun size(w: Int, h: Int, shortSide: Int): Pair<Int, Int> {
@@ -37,6 +38,7 @@ object VideoEnhancer {
         val stepUs = 1_000_000.0 / plan.fps
         var k = 0L
         val started = SystemClock.elapsedRealtime()
+        var lastPicture = 0L
         val total = dec.durationUs.coerceAtLeast(1)
         try {
             while (!cancel.get()) {
@@ -46,7 +48,7 @@ object VideoEnhancer {
                 if (enc == null) {
                     val (w, h) = size(f.rgb.cols(), f.rgb.rows(), plan.shortSide)
                     enc = FrameEncoder(out, w, h, plan.fps, dec.rotation, input)
-                    if (plan.ai && w > f.rgb.cols() * 1.05) sr = FrameSr(c)
+                    if (plan.ai && w > f.rgb.cols() * 1.05) sr = FrameSr(c, plan.profile)
                     if (plan.fps > dec.fps * 1.05f) blend = FlowBlender(w, h)
                 }
                 val gray = if (blend != null) FlowBlender.gray(f.rgb) else null
@@ -76,7 +78,9 @@ object VideoEnhancer {
                 prev = big; prevGray = gray; prevPts = pts
                 val done = (pts.toFloat() / total).coerceIn(0.001f, 1f)
                 val spent = SystemClock.elapsedRealtime() - started
-                progress(Progress(done, (spent / done * (1 - done)).toLong(), enc.frames, (total / 1_000_000.0 * plan.fps).toInt(), sr?.backend ?: ""))
+                val now = SystemClock.elapsedRealtime()
+                val shot = if (now - lastPicture > 450) { lastPicture = now; picture(big, dec.rotation) } else null
+                progress(Progress(done, (spent / done * (1 - done)).toLong(), enc.frames, (total / 1_000_000.0 * plan.fps).toInt(), sr?.backend ?: "", shot))
             }
             if (cancel.get()) error("cancelled")
             val e = enc ?: error("ไม่พบเฟรมในคลิป")
@@ -91,4 +95,15 @@ object VideoEnhancer {
             runCatching { enc?.close() }; dec.close(); runCatching { sr?.close() }; blend?.close(); prev?.release(); prevGray?.release()
         }
     }
+
+    /** A 540-pixel-wide copy of an RGB frame for the progress page: sharp enough to see the new detail. */
+    private fun picture(rgb: Mat, rotation: Int): android.graphics.Bitmap? = runCatching {
+        val w0 = minOf(540, rgb.cols()); val h0 = (w0.toDouble() * rgb.rows() / rgb.cols()).roundToInt().coerceAtLeast(1)
+        val small = Mat(); Imgproc.resize(rgb, small, Size(w0.toDouble(), h0.toDouble()), 0.0, 0.0, Imgproc.INTER_AREA)
+        // Turned upright the way the clip is shown.
+        when (((rotation % 360) + 360) % 360) { 90 -> org.opencv.core.Core.rotate(small, small, org.opencv.core.Core.ROTATE_90_CLOCKWISE); 180 -> org.opencv.core.Core.rotate(small, small, org.opencv.core.Core.ROTATE_180); 270 -> org.opencv.core.Core.rotate(small, small, org.opencv.core.Core.ROTATE_90_COUNTERCLOCKWISE) }
+        val w = small.cols(); val h = small.rows()
+        val rgba = Mat(); Imgproc.cvtColor(small, rgba, Imgproc.COLOR_RGB2RGBA); small.release()
+        android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888).also { org.opencv.android.Utils.matToBitmap(rgba, it); rgba.release() }
+    }.getOrNull()
 }

@@ -904,7 +904,7 @@ class VideoEditorActivity : ComponentActivity() {
         if (luma.shots.upscaling()) { notice("กำลังเพิ่มรายละเอียดภาพด้วย AI อยู่ · ส่งออกได้เมื่อเสร็จแล้ว"); return }
         val bigger = c.shortSide > src.shortSide * 1.05f; val smoother = c.fps > src.fps * 1.05f
         if (!changed() && !bigger && !smoother && c.shortSide >= src.shortSide - 8 && c.fps >= src.fps - 0.6f) { notice("ยังไม่มีการแก้ไข"); return }
-        enhance = if (bigger || smoother) VideoEnhancer.Plan(c.shortSide, c.fps, c.ai) else null
+        enhance = if (bigger || smoother) VideoEnhancer.Plan(c.shortSide, c.fps, c.ai, c.profile) else null
         shrinkShort = if (enhance == null && c.shortSide < src.shortSide - 8) c.shortSide else 0
         shrinkFps = if (enhance == null && c.fps < src.fps - 0.6f) c.fps else 0f
         // Several clips or layers become one file, so the split (two files of the main clip) is left out then.
@@ -928,7 +928,10 @@ class VideoEditorActivity : ComponentActivity() {
         val dir = File(filesDir, "video-exports/$id").apply { mkdirs() }
         val slowFile = File(cacheDir, "slowflow-$id.mp4")
         val n = SlowFlow.factor(speed); val app = applicationContext; val src0 = source; val a = start; val b = end
-        val plan = ExportJob.Plan(steps, weights, firstFrame, 0, stageEdit, stageEnhance, stageSave,
+        // A sharper still than the trim strip's thumbnail for the progress page (about 540 px).
+        val still = runCatching { android.media.MediaMetadataRetriever().run { try { setDataSource(this@VideoEditorActivity, source)
+            if (android.os.Build.VERSION.SDK_INT >= 27) getScaledFrameAtTime(start * 1000, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 540, 960) else getFrameAtTime(start * 1000) } finally { release() } } }.getOrNull() ?: firstFrame
+        val plan = ExportJob.Plan(steps, weights, still, 0, stageEdit, stageEnhance, stageSave,
             slow = if (slow) { cancel, progress -> SlowFlow.render(app, src0, a, b, n, slowFile, cancel, progress = progress) } else null,
             parts = { f -> flow = f; ranges.mapIndexed { k, (from, to) -> composition(from, to) to File(dir, "Lumora_EDIT_${id}${if (ranges.size > 1) "_${k + 1}" else ""}${if (enhance != null) "_edit" else ""}.mp4") } },
             enhance = enhance, finalFile = enhance?.let { File(dir, "Lumora_EDIT_${id}.mp4") }, note = "ตัดต่อใน Lumora",
@@ -936,7 +939,7 @@ class VideoEditorActivity : ComponentActivity() {
         LiveNotice.askPermissions(this)
         ExportJob.start(this, plan)
         exportButton.alpha = 0.5f
-        prog = ExportProgress(this, firstFrame, steps, kinds, { cancelExport() }, { goBackground() })
+        prog = ExportProgress(this, still, steps, kinds, { cancelExport() }, { goBackground() })
         overlay = prog?.view
         ExportJob.listen(jobListener); onJob()
     }
@@ -981,7 +984,8 @@ class VideoEditorActivity : ComponentActivity() {
     private fun cancelExport() { ExportJob.cancel() }
 
     // ---------- Lifecycle ----------
-    override fun onPause() { player?.let { if (it.isPlaying) togglePlay() }; super.onPause() }
+    override fun onPause() { player?.let { if (it.isPlaying) togglePlay() }; if (prog != null) th.ogay.luma.ai.AiPace.watching = false; super.onPause() }
+    override fun onResume() { super.onResume(); if (prog != null) th.ogay.luma.ai.AiPace.watching = true }
     override fun onDestroy() { handler.removeCallbacksAndMessages(null); releasePlayer(); musicPlayer?.runCatching { release() }; releaseLayerSound(); super.onDestroy() }
     override fun onSaveInstanceState(out: Bundle) {
         super.onSaveInstanceState(out)

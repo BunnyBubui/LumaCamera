@@ -18,7 +18,7 @@ import java.util.Locale
 import kotlin.math.ceil
 
 /** What the export sheet hands back: the short side in pixels, the frame rate and whether AI may enlarge. */
-data class ExportChoice(val shortSide: Int, val fps: Float, val ai: Boolean)
+data class ExportChoice(val shortSide: Int, val fps: Float, val ai: Boolean, val profile: th.ogay.luma.ai.EnhanceProfile = th.ogay.luma.ai.EnhanceProfile.NATURAL)
 
 /**
  * Export sheet in the style of TikTok's: the clip at the top, then two sliders (resolution and frame rate) like
@@ -53,7 +53,10 @@ object ExportSheet {
         val rates = (RATES.filter { kotlin.math.abs(it - src.fps) > 0.6f } + src.fps).sorted()
         var side = sides.indexOf(src.shortSide)
         var rate = rates.indexOf(src.fps)
-        var ai = true
+        // The AI model for new pixels, chosen the same way as for photos: none, Natural SR3 or Classic SR2.
+        val prefs = a.getSharedPreferences("camera", 0)
+        var model = prefs.getInt("video_ai_model", 1).coerceIn(0, 2)
+        fun ai() = model != 0
         val sideValue = a.text("", 15f, Color.WHITE, true); val rateValue = a.text("", 15f, Color.WHITE, true)
         val sideNote = a.text("", 12f, Glass.TEXT2); val rateNote = a.text("", 12f, Glass.TEXT2)
         val aiChip = LinearLayout(a)
@@ -66,7 +69,7 @@ object ExportSheet {
             sideValue.text = sideName(s); sideValue.setTextColor(if (bigger) Glass.ACCENT else Color.WHITE)
             rateValue.text = "${fpsName(r)} fps"; rateValue.setTextColor(if (smoother) Glass.ACCENT else Color.WHITE)
             sideNote.text = when {
-                bigger && ai -> "AI สร้างพิกเซลเพิ่ม ×${String.format(Locale.US, "%.1f", s.toFloat() / src.shortSide)} จากโมเดล Detail SR"
+                bigger && ai() -> "AI สร้างพิกเซลเพิ่ม ×${String.format(Locale.US, "%.1f", s.toFloat() / src.shortSide)} ด้วย ${if (model == 2) "Classic SR2" else "Natural SR3"}"
                 bigger -> "ขยายภาพแบบปกติ ไม่ใช้ AI"
                 s < src.shortSide - 8 -> "ย่อลงจากต้นฉบับ ไฟล์เล็กลง"
                 else -> "เท่าต้นฉบับ"
@@ -76,10 +79,11 @@ object ExportSheet {
                 r < src.fps - 0.6f -> "ลดเฟรมลงจากต้นฉบับ"
                 else -> "เท่าต้นฉบับ"
             }
-            aiChip.visibility = if (bigger) View.VISIBLE else View.GONE
+            // Always in place so the sheet keeps its height; it only matters (and is lit) when the picture gets bigger.
+            aiChip.alpha = if (bigger) 1f else 0.4f; aiChip.isEnabled = bigger
             val long = (src.longSide * s.toFloat() / src.shortSide).toInt()
             val mb = FrameEncoder.bitrate(long, s, r) / 8.0 * src.durationMs / 1000.0 / 1_000_000.0
-            val minutes = minutes(src, s, r, ai && bigger)
+            val minutes = minutes(src, s, r, ai() && bigger)
             val ok = !(bigger || smoother) || FrameEncoder.pickMime(long / 2 * 2, s, r) != null
             estimate.text = if (!ok) "เครื่องนี้เข้ารหัส ${sideName(s)} ${fpsName(r)} fps ไม่ได้ ลองลดความละเอียดหรือเฟรมเรต"
                 else "ไฟล์ประมาณ ${if (mb < 10) String.format(Locale.US, "%.1f", mb) else mb.toInt().toString()} MB" + (if (minutes > 0) " · ใช้เวลาประมาณ ${if (minutes < 1) "ไม่ถึง 1" else ceil(minutes).toInt().toString()} นาที" else "")
@@ -96,12 +100,27 @@ object ExportSheet {
         }
         row("ความละเอียด", sideValue, sideNote, sides.map { sideName(it) }, side) { side = it }
         row("อัตราเฟรม", rateValue, rateNote, rates.map { fpsName(it) }, rate) { rate = it }
-        lateinit var chip: View
-        fun buildChip() { aiChip.removeAllViews(); chip = EditorKit.chip(a, if (ai) "AI เพิ่มรายละเอียด · เปิด" else "AI เพิ่มรายละเอียด · ปิด (เร็วกว่า)", Icons.AI, ai) { ai = !ai; buildChip(); refresh() }; aiChip.addView(chip, -2, a.dp(34)) }
-        buildChip()
-        card.addView(aiChip, LinearLayout.LayoutParams(-2, -2).apply { topMargin = a.dp(12) })
+        val names = listOf("ไม่ใช้ AI", "Natural SR3", "Classic SR2")
+        val notes = listOf("ขยายภาพแบบปกติ เร็วที่สุด", "คน ใบหน้า ตัวหนังสือ · เนียนตา", "วิว ตึก ใบไม้ · คมเต็มที่")
+        val icons = listOf(Icons.PHOTO, th.ogay.luma.ai.EnhanceUi.LEAF, th.ogay.luma.ai.EnhanceUi.GEM)
+        val menu = GlassMenu(a.window.decorView as FrameLayout) { on -> sheet.recede(on) }
+        val modelIcon = IconView(a, icons[model], 1.8f).apply { tint = Glass.ACCENT }
+        val modelName = a.text(names[model], 15f, Color.WHITE, true)
+        val modelNote = a.text(notes[model], 12f, Glass.TEXT2).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }
+        aiChip.apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; background = a.glass(20, 0x1affffff); setPadding(a.dp(10), a.dp(8), a.dp(12), a.dp(8)); isClickable = true; glassTouch(); contentDescription = "โมเดล AI ${names[model]}" }
+        aiChip.addView(FrameLayout(a).apply { background = a.glass(12, 0x24ffffff); addView(modelIcon, FrameLayout.LayoutParams(a.dp(20), a.dp(20), Gravity.CENTER)) }, a.dp(38), a.dp(38))
+        aiChip.addView(LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; setPadding(a.dp(12), 0, a.dp(8), 0); addView(a.text("โมเดล AI สร้างพิกเซล", 11.5f, Glass.TEXT3)); addView(modelName); addView(modelNote) }, LinearLayout.LayoutParams(0, -2, 1f))
+        aiChip.addView(IconView(a, Icons.UPDOWN, 2f).apply { tint = Glass.TEXT3 }, a.dp(18), a.dp(18))
+        aiChip.setOnClickListener { }
+        aiChip.pressMenu(menu) { anchor ->
+            if (!aiChip.isEnabled) return@pressMenu
+            menu.show(anchor, "โมเดล AI สร้างพิกเซล", names.indices.map { GlassMenu.Option(names[it], icons[it], notes[it]) }, model) { i ->
+                model = i; prefs.edit().putInt("video_ai_model", i).apply()
+                modelIcon.path = icons[i]; modelName.text = names[i]; modelNote.text = notes[i]; aiChip.contentDescription = "โมเดล AI ${names[i]}"; refresh() }
+        }
+        card.addView(aiChip, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(14) })
         card.addView(estimate, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(16) })
-        go.setOnClickListener { Glass.tick(go); close(); onExport(ExportChoice(sides[side], rates[rate], ai)) }
+        go.setOnClickListener { Glass.tick(go); close(); onExport(ExportChoice(sides[side], rates[rate], ai(), if (model == 2) th.ogay.luma.ai.EnhanceProfile.CLASSIC else th.ogay.luma.ai.EnhanceProfile.NATURAL)) }
         card.addView(go, LinearLayout.LayoutParams(-1, a.dp(52)).apply { topMargin = a.dp(12) })
         card.addView(a.text("ยกเลิก", 14f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; isClickable = true; setPadding(0, a.dp(12), 0, 0); setOnClickListener { close() } }, -1, a.dp(44))
         refresh()
@@ -139,6 +158,8 @@ class ExportProgress(private val a: Activity, thumb: Bitmap?, private val steps:
     val view: View get() = layer
     private val backdrop = Backdrop(a)
     private val ring = Ring(a)
+    private val still = ImageView(a)
+    private var shownFrame: Bitmap? = null
     private val percent = a.text("0%", 40f, Color.WHITE, true).apply { gravity = Gravity.CENTER }
     private val frames = a.text("", 13.5f, Glass.TEXT2).apply { gravity = Gravity.CENTER }
     private val eta = a.text("", 17f, Color.WHITE, true).apply { gravity = Gravity.CENTER }
@@ -149,7 +170,7 @@ class ExportProgress(private val a: Activity, thumb: Bitmap?, private val steps:
         layer.addView(backdrop, -1, -1)
         val col = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; setPadding(a.dp(28), 0, a.dp(28), 0) }
         val frame = FrameLayout(a)
-        frame.addView(ImageView(a).apply { scaleType = ImageView.ScaleType.CENTER_CROP; setImageBitmap(thumb); setBackgroundColor(0x22ffffff); clipToOutline = true; alpha = 0.9f
+        frame.addView(still.apply { scaleType = ImageView.ScaleType.CENTER_CROP; setImageBitmap(thumb); setBackgroundColor(0x22ffffff); clipToOutline = true
             outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: android.graphics.Outline) = o.setRoundRect(0, 0, v.width, v.height, a.dp(18).toFloat()) } },
             FrameLayout.LayoutParams(a.dp(132), a.dp(176), Gravity.CENTER))
         frame.addView(ring, FrameLayout.LayoutParams(a.dp(150), a.dp(194), Gravity.CENTER))
@@ -176,12 +197,18 @@ class ExportProgress(private val a: Activity, thumb: Bitmap?, private val steps:
         col.addView(buttons, LinearLayout.LayoutParams(-2, -2).apply { topMargin = a.dp(18) })
         col.addView(a.text("ออกจากหน้านี้ได้ ความคืบหน้าจะแสดงในการแจ้งเตือน", 11.5f, Glass.TEXT3).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(8) })
         layer.addView(col, FrameLayout.LayoutParams(-1, -2, Gravity.CENTER))
+        // While this page is on screen the AI runs at full speed; once it is left the work slows to keep the phone smooth.
+        layer.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) { th.ogay.luma.ai.AiPace.watching = true }
+            override fun onViewDetachedFromWindow(v: View) { th.ogay.luma.ai.AiPace.watching = false } })
         (a.window.decorView as FrameLayout).addView(layer, -1, -1)
         layer.animate().alpha(1f).setDuration(220).start()
     }
 
     /** Shows the export's current state. */
     fun render(s: ExportJob.State) {
+        // Frame by frame: the picture in the ring is the frame the AI or the in-between step just made.
+        s.frame?.let { f -> if (f !== shownFrame && !f.isRecycled) { shownFrame = f; still.setImageBitmap(f) } }
         val p = s.percent() / 100f
         ring.progress = p; percent.text = "${(p * 100).toInt()}%"
         val i = s.stage

@@ -59,6 +59,8 @@ class CameraActivity : ComponentActivity() {
     companion object {
         /** Rear camera zoom limit: hardware zoom, then the app's crop enlarged by AI SR1 when the photo is saved. */
         const val SUPER_ZOOM = 500f
+        /** Highest zoom the back camera does itself; above it the app crops (see hardwareMax). */
+        const val MAP_HW = 10f
         /** Front camera: the system stops at 10×; the app crops up to here. */
         const val FRONT_ZOOM = 20f
         /** Fast-shot types: shutter time in nanoseconds and the ISO that keeps the picture usable. */
@@ -833,7 +835,7 @@ class CameraActivity : ComponentActivity() {
         // The map keeps a wide frame of each lens whenever the zoom is still near it, and shows it past 10×.
         val lens = if (ratio >= 3.5f && renderedZooms.contains(3.5f)) 3.5f else 1f
         if (rear && !busy && !zoomSettling && preview.previewStreamState.value == PreviewView.StreamState.STREAMING) zoomMap.capture(preview, ratio, lens)
-        zoomMap.update(if (rear) ratio else 1f, lens, appCrop() > 1.01f && abs(minOf(ratio, hardwareMax()) - lens) < 0.05f)
+        zoomMap.update(if (rear) ratio else 1f, lens, if (appCrop() > 1.01f) minOf(ratio, hardwareMax()) else null)
     }
 
     // ---------- Pro chips and dial ----------
@@ -1161,42 +1163,58 @@ class CameraActivity : ComponentActivity() {
         val scroll = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; clipChildren = false; clipToPadding = false; addView(row, -2, -2) }
         val cells = mutableListOf<LookCell>()
         if (mode == PhotoMode.FILM) {
-            // Everything is in reach without sideways hunting: the groups wrap onto two lines (Lumora's own looks first),
-            // and each group shows eight looks at a time in a grid; a swipe turns the page.
+            // One line of film families, one strip of large film cards, and the chosen film named under them.
+            // Each card is the live view in that film's colour, its name on the picture; the chosen card is lit.
             fun current() = Films.byId(prefs.getString("film", null)) ?: Films.default
             var group = current().group
-            val groups = FlowLayout(this).apply { gap = dp(6); setPadding(dp(2), dp(2), dp(2), dp(8)) }
-            val pager = SnapScroll(this); val pages = LinearLayout(this); pager.addView(pages, -2, -2)
-            val dots = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(0, dp(2), 0, dp(4)) }
-            val pw = resources.displayMetrics.widthPixels - dp(48)
-            fun dot(on: Int) { for (i in 0 until dots.childCount) dots.getChildAt(i).alpha = if (i == on) 1f else 0.3f }
-            pager.onPage = { dot(it) }
+            val tabRow = LinearLayout(this).apply { setPadding(dp(2), dp(2), dp(2), dp(2)) }
+            val tabScroll = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; overScrollMode = View.OVER_SCROLL_NEVER; addView(tabRow, -2, -2) }
+            val strip = LinearLayout(this).apply { setPadding(dp(2), dp(12), dp(2), dp(8)); clipChildren = false; clipToPadding = false }
+            val stripScroll = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; clipChildren = false; clipToPadding = false; overScrollMode = View.OVER_SCROLL_NEVER; addView(strip, -2, -2) }
+            val nowName = text("", 16f, Color.WHITE, true)
+            val nowNote = text("", 12.5f, Glass.TEXT2).apply { maxLines = 2; ellipsize = null; minLines = 2 }
+            val cards = mutableListOf<Pair<Film, FrameLayout>>()
+            fun mark(animate: Boolean) {
+                val cur = current()
+                cards.forEach { (f, card) -> val on = f.id == cur.id
+                    card.foreground = if (on) android.graphics.drawable.GradientDrawable().apply { setStroke(dp(3), Glass.ACCENT); cornerRadius = dp(20).toFloat() } else null
+                    card.getChildAt(card.childCount - 1).visibility = if (on) View.VISIBLE else View.GONE
+                    val sc = if (on) 1f else 0.93f
+                    if (animate) card.animate().scaleX(sc).scaleY(sc).setInterpolator(Glass.SPRING).setDuration(360).start() else { card.scaleX = sc; card.scaleY = sc } }
+                nowName.text = cur.name
+                nowNote.text = cur.note.ifEmpty { "ฟิล์มในกลุ่ม ${cur.group}" }
+            }
+            fun card(f: Film): FrameLayout = FrameLayout(this).apply {
+                isClickable = true; contentDescription = f.name; glassTouch()
+                clipToOutline = true; outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: Outline) { o.setRoundRect(0, 0, v.width, v.height, dp(20).toFloat()) } }
+                val img = ImageView(this@CameraActivity).apply { scaleType = ImageView.ScaleType.CENTER_CROP; lookSampleCache?.let { setImageBitmap(it) } ?: setBackgroundColor(0xff34506a.toInt()); colorFilter = ColorMatrixColorFilter(Films.matrix(f)) }
+                lookImages += img
+                addView(img, -1, -1)
+                addView(View(this@CameraActivity).apply { background = android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.BOTTOM_TOP, intArrayOf(0xcc000000.toInt(), 0x00000000)) }, FrameLayout.LayoutParams(-1, dp(56), Gravity.BOTTOM))
+                addView(text(f.name.removePrefix("Lumora "), 12.5f, Color.WHITE, true).apply { maxLines = 2; ellipsize = null; setPadding(dp(10), 0, dp(8), dp(9)) }, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+                addView(FrameLayout(this@CameraActivity).apply { background = glass(11, Glass.ACCENT); addView(IconView(this@CameraActivity, Icons.CHECK, 2.6f).apply { tint = Glass.ON_ACCENT }, FrameLayout.LayoutParams(dp(13), dp(13), Gravity.CENTER)) },
+                    FrameLayout.LayoutParams(dp(22), dp(22), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(7), dp(7), 0) })
+                setOnClickListener { prefs.edit().putString("film", f.id).apply(); applyLook(); mark(true); Glass.tick(this) }
+            }
             fun fillFilms() {
-                pages.removeAllViews(); cells.clear(); lookImages.clear(); dots.removeAllViews()
-                val films = Films.inGroup(group)
-                films.chunked(8).forEach { chunk ->
-                    val grid = GridLayout(this).apply { columnCount = 4 }
-                    chunk.forEach { f -> grid.addView(lookThumb(Films.matrix(f), f.name.removePrefix("Lumora "), f.id, cells, 68) { prefs.edit().putString("film", f.id).apply(); applyLook(); markLook(cells, f.id); Glass.tick(pager) },
-                        GridLayout.LayoutParams().apply { width = pw / 4; height = GridLayout.LayoutParams.WRAP_CONTENT; bottomMargin = dp(6) }) }
-                    pages.addView(grid, pw, -2)
-                    dots.addView(View(this).apply { background = glass(3, 0xffffffff.toInt()) }, LinearLayout.LayoutParams(dp(6), dp(6)).apply { setMargins(dp(3), 0, dp(3), 0) })
-                }
-                dots.visibility = if (dots.childCount > 1) View.VISIBLE else View.INVISIBLE
-                markLook(cells, current().id)
-                val page = films.indexOfFirst { it.id == current().id }.coerceAtLeast(0) / 8
-                dot(page); pager.post { pager.go(page, false) }
+                strip.removeAllViews(); cards.clear(); lookImages.clear()
+                Films.inGroup(group).forEach { f -> val c = card(f); cards += f to c; strip.addView(c, LinearLayout.LayoutParams(dp(100), dp(134)).apply { setMargins(dp(4), 0, dp(4), 0) }) }
+                mark(false)
+                val at = cards.indexOfFirst { it.first.id == current().id }
+                stripScroll.post { stripScroll.smoothScrollTo(if (at < 0) 0 else (at * dp(108) - stripScroll.width / 2 + dp(54)).coerceAtLeast(0), 0) }
             }
-            fun styleGroups() { for (i in 0 until groups.childCount) { val t = groups.getChildAt(i) as TextView; val on = t.text == group; val own = t.text == "Lumora"
-                t.setTextColor(if (on) Color.BLACK else if (own) Glass.ACCENT else Glass.TEXT2); t.typeface = if (on || own) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT
-                t.background = glass(17, if (on) 0xebffffff.toInt() else 0x14ffffff) } }
+            fun styleTabs() { for (i in 0 until tabRow.childCount) { val t = tabRow.getChildAt(i) as TextView; val on = t.text == group
+                t.setTextColor(if (on) Color.BLACK else if (t.text == "Lumora") Glass.ACCENT else Color.WHITE); t.typeface = if (on) android.graphics.Typeface.DEFAULT_BOLD else android.graphics.Typeface.DEFAULT
+                t.background = glass(18, if (on) 0xebffffff.toInt() else 0x14ffffff) } }
             Films.groups.forEach { g ->
-                groups.addView(text(g, 12.5f).apply { gravity = Gravity.CENTER; setPadding(dp(13), 0, dp(13), 0); isClickable = true; glassTouch()
-                    setOnClickListener { if (group != g) { group = g; styleGroups(); fillFilms(); Glass.tick(groups) } } }, android.view.ViewGroup.LayoutParams(-2, dp(34)))
+                tabRow.addView(text(g, 13f).apply { gravity = Gravity.CENTER; setPadding(dp(15), 0, dp(15), 0); isClickable = true; glassTouch()
+                    setOnClickListener { if (group != g) { group = g; styleTabs(); fillFilms(); Glass.tick(tabRow) } } }, LinearLayout.LayoutParams(-2, dp(38)).apply { rightMargin = dp(6) })
             }
-            styleGroups()
-            host.addView(groups, -1, -2)
+            styleTabs()
+            host.addView(tabScroll, -1, -2)
             fillFilms()
-            host.addView(pager, pw, -2); host.addView(dots, -1, dp(14))
+            host.addView(stripScroll, -1, -2)
+            host.addView(LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(6), dp(4), dp(6), dp(6)); addView(nowName); addView(nowNote) }, -1, -2)
         } else {
             LOOKS.forEachIndexed { i, name -> row.addView(lookThumb(lookMatrix(i, 0, 0), name, "$i", cells) { prefs.edit().putInt("look", i).apply(); applyLook(); markLook(cells, "$i"); Glass.tick(row) }, LinearLayout.LayoutParams(dp(94), -2)) }
             markLook(cells, "${prefs.getInt("look", 0)}")
@@ -1522,7 +1540,12 @@ class CameraActivity : ComponentActivity() {
     }
     /** Highest ratio the camera zooms by itself; beyond it the app crops the preview and AI SR1 enlarges the photo. */
     private fun cropPref(): Float = (prefs.getString("crop_from", null) ?: if (prefs.getBoolean("software", false)) "1" else "0").toFloatOrNull() ?: 0f
-    private fun hardwareMax(): Float = if(software && rear) minOf(cropFrom, camera?.cameraInfo?.zoomState?.value?.maxZoomRatio ?: cropFrom) else camera?.cameraInfo?.zoomState?.value?.maxZoomRatio ?: 1f
+    /**
+     * The zoom the camera itself does; past it the app crops. On the back camera it stops at 10× (the tele lens with
+     * its sharp in-sensor crop): the stream then stays wider than the picture, so the small map can show it live.
+     */
+    private fun hardwareMax(): Float = (if(software && rear) minOf(cropFrom, camera?.cameraInfo?.zoomState?.value?.maxZoomRatio ?: cropFrom) else camera?.cameraInfo?.zoomState?.value?.maxZoomRatio ?: 1f)
+        .let { if (rear) minOf(it, MAP_HW) else it }
     private fun range(): Pair<Float,Float> {
         val z=camera?.cameraInfo?.zoomState?.value
         val lo=if(software && rear && cropFrom<=1f) 1f else z?.minZoomRatio ?: 1f
@@ -1924,14 +1947,18 @@ class CameraActivity : ComponentActivity() {
     private var restingForSettings=false
     private fun showAllSettings(){settingsSignature=cameraSignature()
         if(!busy&&!timerRunning){cancelModeSwitch();freezeFrame();provider?.unbindAll();capture=null;boundKey=null;restingForSettings=true}
-        showStudioSettings(rawAvailable,closed={afterSettings()}){if(!restingForSettings){host.removeCallbacks(applySettings);host.postDelayed(applySettings,420)}}}
+        showStudioSettings(rawAvailable,closed={afterSettings()}){askLocationIfNeeded();if(!restingForSettings){host.removeCallbacks(applySettings);host.postDelayed(applySettings,420)}}}
+    /** Turning on location tags asks for the permission right away, on the settings page, not later on the camera. */
+    private fun askLocationIfNeeded(){if(prefs.getBoolean("gps",false)&&ContextCompat.checkSelfPermission(this,Manifest.permission.ACCESS_COARSE_LOCATION)!=PackageManager.PERMISSION_GRANTED&&!askedLocation){askedLocation=true;locationRequest.launch(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION,Manifest.permission.ACCESS_FINE_LOCATION))}
+        if(!prefs.getBoolean("gps",false))askedLocation=false}
+    private var askedLocation=false
     private fun afterSettings(){if(isDestroyed)return;host.removeCallbacks(applySettings)
         val rebind=cameraSignature()!=settingsSignature;val rested=restingForSettings;restingForSettings=false
         applyAllSettings();if(rested&&!rebind&&!busy){boundKey=null;bind()}}
     private fun applyAllSettings(){if(isDestroyed)return
         val rebind=cameraSignature()!=settingsSignature;settingsSignature=cameraSignature()
         overlay.gridKind=Grids.kind(prefs)
-        if(prefs.getBoolean("gps",false)&&ContextCompat.checkSelfPermission(this,Manifest.permission.ACCESS_COARSE_LOCATION)!=PackageManager.PERMISSION_GRANTED)locationRequest.launch(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION,Manifest.permission.ACCESS_FINE_LOCATION))
+        if(!askedLocation&&prefs.getBoolean("gps",false)&&ContextCompat.checkSelfPermission(this,Manifest.permission.ACCESS_COARSE_LOCATION)!=PackageManager.PERMISSION_GRANTED)locationRequest.launch(arrayOf(Manifest.permission.ACCESS_COARSE_LOCATION,Manifest.permission.ACCESS_FINE_LOCATION))
         if(!rebind){overlay.invalidate();refresh();return}
         run{auto=false;cropFrom=cropPref();software=cropFrom>0f;boundKey=null;overlay.gridKind=Grids.kind(prefs)
         refresh();if(!busy){layoutMask(stage.width,stage.height);bind()}

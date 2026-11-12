@@ -778,6 +778,10 @@ class GlassSheet(private val host: FrameLayout, private val pivotYFromBottom: ()
     val showing get() = card != null
     /** Room kept clear at the top and bottom (status and navigation bars) when the host runs under them. */
     var topInset = 0; var bottomInset = 0
+    /** Raised above an earlier sheet when one sheet opens over another, so its shade dims that sheet too. */
+    var lift = 0f
+    /** The screen behind the sheet; it is blurred together with the sheet when something opens on top. */
+    var behind: View? = null
     private var dragged = 0f
     private var pendingRelease: Pair<Boolean, Float>? = null
     /** Follows a finger that is opening the sheet from the dock (see [open] with interactive = true). */
@@ -806,9 +810,9 @@ class GlassSheet(private val host: FrameLayout, private val pivotYFromBottom: ()
         if (card != null) return
         val c = host.context; val d = c.resources.displayMetrics.density
         modal.hide()
-        val s = View(c).apply { setBackgroundColor(0x52000000); alpha = 0f; isClickable = true; contentDescription = "ปิดแผง"; elevation = 14 * d; outlineProvider = null; setOnClickListener { close() } }
+        val s = View(c).apply { setBackgroundColor(0x52000000); alpha = 0f; isClickable = true; contentDescription = "ปิดแผง"; elevation = 14 * d + lift; outlineProvider = null; setOnClickListener { close() } }
         host.addView(s, FrameLayout.LayoutParams(-1, -1)); s.animate().alpha(1f).setDuration(300).start()
-        val sheet = LayerFrame(c).apply { background = c.glass(34, Glass.FILL_STRONG); elevation = 16 * d }
+        val sheet = LayerFrame(c).apply { background = c.glass(34, Glass.FILL_STRONG); elevation = 16 * d + lift }
         val scroll = ScrollView(c).apply { isVerticalScrollBarEnabled = false; overScrollMode = View.OVER_SCROLL_NEVER; clipToPadding = false }
         val b = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL; setPadding(c.dp(16), c.dp(4), c.dp(16), c.dp(20)) }
         val handle = FrameLayout(c).apply { contentDescription = "ปัดลงหรือแตะเพื่อปิด"; isClickable = true; isFocusable = true }
@@ -825,6 +829,9 @@ class GlassSheet(private val host: FrameLayout, private val pivotYFromBottom: ()
         handle.setOnClickListener { close() }
         b.addView(LinearLayout(c).apply { orientation = LinearLayout.VERTICAL }, -1, -2)
         build(b.getChildAt(1) as LinearLayout, this)
+        // A sheet never shrinks while it is open: when its content gets shorter (another choice with a shorter
+        // note) the sheet keeps its height instead of jumping.
+        b.addOnLayoutChangeListener { v, _, top, _, bottom, _, _, _, _ -> val h = bottom - top; if (h > v.minimumHeight) v.minimumHeight = h }
         scroll.addView(b)
         sheet.addView(scroll, -1, -2)
         host.addView(sheet, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply { setMargins(c.dp(8), c.dp(24) + topInset, c.dp(8), c.dp(8) + bottomInset) })
@@ -844,8 +851,9 @@ class GlassSheet(private val host: FrameLayout, private val pivotYFromBottom: ()
     /** Softens the sheet while a menu sits on top of it, the way the prototype blurs what is behind a menu. */
     fun recede(on: Boolean) {
         val sheet = card ?: return
-        sheet.animate().alpha(if (on) 0.88f else 1f).setDuration(220).start()
-        Glass.blur(sheet, if (on) 3.5f else 0f)
+        // The whole screen behind goes soft evenly, not only the sheet.
+        sheet.animate().alpha(if (on) 0.9f else 1f).scaleX(if (on) 0.97f else 1f).scaleY(if (on) 0.97f else 1f).setDuration(220).start()
+        Glass.blur(sheet, if (on) 6f else 0f); behind?.let { Glass.blur(it, if (on) 6f else 0f) }
     }
     fun refresh() {
         val content = body?.getChildAt(1) as? LinearLayout ?: return; val build = builder ?: return
@@ -1183,6 +1191,9 @@ fun androidx.activity.ComponentActivity.screenSheet(): GlassSheet {
     val bars = androidx.core.view.ViewCompat.getRootWindowInsets(decor)?.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())
     val sheet = GlassSheet(decor, { dp(40).toFloat() })
     sheet.topInset = bars?.top ?: 0; sheet.bottomInset = bars?.bottom ?: 0
+    sheet.behind = decor.getChildAt(0)
+    // A sheet opened over another sits above it (its shade dims the first one too).
+    sheet.lift = (0 until decor.childCount).maxOfOrNull { decor.getChildAt(it).elevation }?.let { if (it >= 14 * resources.displayMetrics.density) it - 12 * resources.displayMetrics.density else 0f } ?: 0f
     val back = object : androidx.activity.OnBackPressedCallback(true) { override fun handleOnBackPressed() { sheet.close() } }
     onBackPressedDispatcher.addCallback(this, back)
     sheet.onClosed = { back.remove() }

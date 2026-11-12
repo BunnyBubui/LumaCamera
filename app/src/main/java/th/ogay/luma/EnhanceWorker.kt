@@ -75,7 +75,8 @@ class EnhanceWorker(context: Context, params: WorkerParameters) : Worker(context
                             { stopped() }) { percent ->
                         db.aiState(key,shot.aiToken,Stage.RUNNING,percent)
                         val now = SystemClock.elapsedRealtime()
-                        if (now-lastNotification > 1000) {
+                        // Each update redraws the live alert in the status bar; out of the app it is refreshed less often.
+                        if (now-lastNotification > (if (th.ogay.luma.ai.AiPace.watching) 1000 else 3000)) {
                             lastNotification=now; setForegroundAsync(foreground(shot,percent))
                         }
                     }

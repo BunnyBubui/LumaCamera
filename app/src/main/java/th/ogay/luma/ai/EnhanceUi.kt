@@ -24,15 +24,15 @@ object EnhanceUi {
         val short: String, val about: String, val key: String, val start: Int, val max: Int,
     )
     // A leaf for the natural model (soft, true to life); a cut gem for the classic one (hard, crisp facets).
-    private const val LEAF = "M5 19C5 10.5 10.5 5 19 5c0 8.5-5.5 14-14 14z M5 19l8.5-8.5 M9.5 14.5h3.5 M12.5 11.5V8"
-    private const val GEM = "M7 4h10l4 5-9 11L3 9z M3 9h18 M12 20L8.5 9 12 4l3.5 5z"
+    const val LEAF = "M5 19C5 10.5 10.5 5 19 5c0 8.5-5.5 14-14 14z M5 19l8.5-8.5 M9.5 14.5h3.5 M12.5 11.5V8"
+    const val GEM = "M7 4h10l4 5-9 11L3 9z M3 9h18 M12 20L8.5 9 12 4l3.5 5z"
     private val MODELS = listOf(
         Model(EnhanceProfile.NATURAL, "Natural SR3", "แนะนำ", LEAF,
-            "คน ใบหน้า ตัวหนังสือ · เนียนเหมือนภาพจริง",
+            "คน ใบหน้า ตัวหนังสือ · เนียนตา",
             "เหมาะกับภาพคน ใบหน้า ผิว ภาพในร่ม และภาพที่มีป้ายหรือตัวหนังสือ โมเดลหาบริเวณคนและตัวหนังสือก่อน แล้วเติมรายละเอียดตรงนั้นให้เบาลง ผิวจึงไม่เป็นเม็ด และตัวอักษรไม่ถูกแต่งจนอ่านเป็นคำอื่น ผลที่ได้ดูเป็นภาพถ่ายจริงมากกว่าคมจัด",
             "strength_natural", 70, 100),
         Model(EnhanceProfile.CLASSIC, "Classic SR2", "คมชัด", GEM,
-            "วิว ตึก ใบไม้ พื้นผิว · คมเต็มที่",
+            "วิว ตึก ใบไม้ · คมเต็มที่",
             "เหมาะกับภาพวิว สถาปัตยกรรม ใบไม้ หิน ผ้า และภาพซูมไกลที่ต้องการความคมมากที่สุด โมเดลเติมรายละเอียดเท่ากันทั้งภาพและดันได้ถึง 150% แต่กับภาพคนอาจทำให้ผิวดูหยาบ และอาจทำให้ตัวหนังสือเพี้ยน",
             "strength2", 120, 150),
     )
@@ -86,7 +86,7 @@ object EnhanceUi {
         val modelIcon = IconView(a, model.icon, 1.8f).apply { tint = Glass.ACCENT }
         val modelName = a.text(model.name, 15.5f, Color.WHITE, true)
         val modelBadge = a.text(model.badge, 11f, Glass.ON_ACCENT, true).apply { background = a.glass(9, Glass.ACCENT); setPadding(a.dp(7), a.dp(1), a.dp(7), a.dp(2)) }
-        val modelShort = label(model.short, 12f)
+        val modelShort = label(model.short, 12f).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }
         val picker = LinearLayout(a).apply { gravity = Gravity.CENTER_VERTICAL; background = a.glass(20, 0x1affffff); setPadding(a.dp(10), a.dp(10), a.dp(12), a.dp(10))
             isClickable = true; isFocusable = true; glassTouch() }
         picker.addView(FrameLayout(a).apply { background = a.glass(13, 0x24ffffff); addView(modelIcon, FrameLayout.LayoutParams(a.dp(22), a.dp(22), Gravity.CENTER)) }, a.dp(42), a.dp(42))
@@ -97,6 +97,10 @@ object EnhanceUi {
         column.addView(picker, LinearLayout.LayoutParams(-1, -2).apply { })
         val about = label(model.about, 12.5f).apply { setPadding(a.dp(4), a.dp(10), a.dp(4), a.dp(4)) }
         column.addView(about, -1, -2)
+        // The note is as tall as the longest model's note, so switching models never makes the sheet grow or shrink.
+        about.post { val w = View.MeasureSpec.makeMeasureSpec(about.width, View.MeasureSpec.EXACTLY); val now = about.text
+            about.minHeight = MODELS.maxOf { m -> about.text = m.about; about.measure(w, View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)); about.measuredHeight }
+            about.text = now }
 
         // Scale: a sliding pill for ×2 / ×3 / ×4, in the same style as the gallery tabs.
         column.addView(label("ขนาด", 12.5f, Glass.TEXT3).apply { setPadding(a.dp(4), a.dp(14), 0, a.dp(6)) })
@@ -177,8 +181,15 @@ object EnhanceUi {
         sheet.onClosed.let { closed -> sheet.onClosed = { stopped.set(true); parent?.recede(false); compare.release(); closed() } }
         sheet.open { col, sh ->
             val head = LinearLayout(activity).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(activity.dp(4), 0, activity.dp(4), activity.dp(10)) }
-            head.addView(LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL
-                addView(title); addView(activity.text("$name · ×${spec.scale} · ความแรง ${spec.strength}% · ส่วนกลางภาพ", 12f, Glass.TEXT3)) }, LinearLayout.LayoutParams(0, -2, 1f))
+            // Under the title: the model with its own icon, then the settings as small tags.
+            val model = MODELS.first { it.profile == spec.profile }
+            val tags = FlowLayout(activity).apply { gap = activity.dp(6); setPadding(0, activity.dp(8), 0, 0) }
+            tags.addView(LinearLayout(activity).apply { gravity = Gravity.CENTER_VERTICAL; background = activity.glass(13, Glass.ACCENT_SOFT); setPadding(activity.dp(8), 0, activity.dp(10), 0)
+                addView(IconView(activity, model.icon, 1.8f).apply { tint = Glass.ACCENT }, LinearLayout.LayoutParams(activity.dp(15), activity.dp(15)))
+                addView(activity.text(model.name, 12f, Glass.ACCENT, true).apply { setPadding(activity.dp(5), 0, 0, 0) }) }, android.view.ViewGroup.LayoutParams(-2, activity.dp(26)))
+            fun tag(t: String) = tags.addView(activity.text(t, 12f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; background = activity.glass(13, 0x14ffffff); setPadding(activity.dp(10), 0, activity.dp(10), 0) }, android.view.ViewGroup.LayoutParams(-2, activity.dp(26)))
+            tag("×${spec.scale}"); tag("ความแรง ${spec.strength}%"); tag("ส่วนกลางภาพ")
+            head.addView(LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; addView(title); addView(tags) }, LinearLayout.LayoutParams(0, -2, 1f))
             head.addView(FrameLayout(activity).apply { background = activity.glass(22, 0x1affffff); isClickable = true; contentDescription = "ปิดตัวอย่าง"; glassTouch()
                 addView(IconView(activity, Icons.CLOSE, 2f), FrameLayout.LayoutParams(activity.dp(18), activity.dp(18), Gravity.CENTER)); setOnClickListener { Glass.tick(this); sh.close() } }, activity.dp(44), activity.dp(44))
             col.addView(head, -1, -2)
@@ -252,7 +263,9 @@ object EnhanceUi {
         private val glow = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
         private val clip = android.graphics.Path(); private val box = android.graphics.RectF(); private val src = android.graphics.RectF()
         private val loading = android.animation.ValueAnimator.ofFloat(0f, 1f).apply { duration = 1400; repeatCount = android.animation.ValueAnimator.INFINITE; addUpdateListener { sweep = it.animatedValue as Float; invalidate() } }
-        init { contentDescription = "ตัวอย่างก่อนและหลัง AI"; setBackgroundColor(0x14ffffff) }
+        init { contentDescription = "ตัวอย่างก่อนและหลัง AI"
+            background = android.graphics.drawable.GradientDrawable().apply { setColor(0x14ffffff); cornerRadius = 20 * d }
+            clipToOutline = true; outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: android.graphics.Outline) { o.setRoundRect(0, 0, v.width, v.height, 20 * d) } } }
         override fun onAttachedToWindow() { super.onAttachedToWindow(); if (after == null && !Glass.reduced(context)) loading.start() }
         override fun onDetachedFromWindow() { loading.cancel(); super.onDetachedFromWindow() }
         fun set(b: Bitmap?, a: Bitmap?) { before = b; after = a; loading.cancel(); split = 1f

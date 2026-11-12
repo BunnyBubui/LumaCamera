@@ -989,7 +989,6 @@ class GalleryActivity : ComponentActivity() {
     }
     private fun open(item: Item) {
         if (item.file) { MediaLedger.view(this, item.uri, item.mime); return }
-        if (item.video && item.key.startsWith("device:")) { VideoPlayerActivity.open(this, item.uri); return }
         selected = item.shot?.id ?: item.key; useAi = false; reload()
     }
     private fun neighbourItem(dir: Int): Item? { val v = lastItems.filter { !it.file }; val i = v.indexOfFirst { (it.shot?.id ?: it.key) == selected || it.key == selected }; return if (i < 0) null else v.getOrNull(i + dir) }
@@ -1289,8 +1288,8 @@ class GalleryActivity : ComponentActivity() {
         val top = viewerBar("วิดีโอ").also { root.removeView(it) }
         top.addView(roundButton(Icons.INFO, "รายละเอียด") { itemInfo(item) }, dp(48), dp(48))
         toggle = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(dp(6), dp(2), dp(6), dp(10)) }
-        val bottom = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, 0, 0, bars.bottom)
-            background = android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.BOTTOM_TOP, intArrayOf(0x99000000.toInt(), 0x00000000)) }
+        val bottom = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, 0, 0, bars.bottom) }
+        player.shades(bars.top + dp(84), bars.bottom + dp(150))
         bottom.addView(toggle, -1, -2)
         frame.addView(top, FrameLayout.LayoutParams(-1, -2, Gravity.TOP).apply { topMargin = bars.top })
         frame.addView(bottom, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
