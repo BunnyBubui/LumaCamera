@@ -48,6 +48,13 @@ class BenchmarkSR3Tests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "unique"):
             run_manifest(self.manifest([self.case, dict(self.case)]))
 
+    def test_perfect_reference_has_valid_json_and_explicit_exact_match(self):
+        Image.new("RGB", (10, 8), (70, 100, 130)).save(self.root / "reference.png")
+        report = run_manifest(self.manifest())
+        self.assertIsNone(report["cases"][0]["classic"]["PSNR_dB"])
+        self.assertTrue(report["cases"][0]["classic"]["referenceExactMatch"])
+        json.dumps(report, allow_nan=False)
+
     def test_no_ground_truth_does_not_claim_psnr(self):
         self.case.pop("reference_hr")
         report = run_manifest(self.manifest())
