@@ -388,7 +388,7 @@ class VideoActivity:ComponentActivity(){
     private fun turnNow(){if(::status.isInitialized)status.post{status.turnTo(turner.angle,dp(64),false)};turner.apply(turnViews());if(::expRail.isInitialized){expRail.contentAngle=turner.angle;focusRail.contentAngle=turner.angle}}
     private fun stopRecording(){animator?.cancel();finalizing=true;shutter.isEnabled=false;pause.isEnabled=false;status.text="กำลังปิดไฟล์…";recording?.stop()}
     private fun saveSettings(){if(!slow)prefs.edit().putString("video_fps_s","$fps").apply();prefs.edit().putString(if(slow)"slow_camera"else "video_camera",selectedCameraId).apply();if(slow){prefs.edit().putInt("slow_fps",fps).putString("slow_quality",when(quality){Quality.UHD->"UHD";Quality.HD->"HD";Quality.SD->"SD";else->"FHD"}).apply();return};prefs.edit().putString("video_quality",when(quality){Quality.UHD->"UHD";Quality.HD->"HD";Quality.SD->"SD";else->"FHD"}).putInt("video_fps",fps).putInt("video_bitrate",bitrate).putBoolean("video_eis",stabilization).putString("video_dynamic",when(dynamic){DynamicRange.HLG_10_BIT->"HLG";DynamicRange.HDR10_10_BIT->"HDR10";else->"SDR"}).apply()}
-    override fun onResume(){super.onResume();orientation.enable();if(recording==null&&!starting&&!finalizing&&useCase!=null){shutter.isEnabled=true;config.isEnabled=true}}
+    override fun onResume(){super.onResume();orientation.enable();if(::vPanel.isInitialized&&!vPanel.showing&&::stage.isInitialized)stage.alpha=1f;if(recording==null&&!starting&&!finalizing&&useCase!=null){shutter.isEnabled=true;config.isEnabled=true}}
     override fun onPause(){zFollow?.end();stopTracking();if(::zooms.isInitialized){zooms.finish();wheel.removeCallbacks(hideWheel);hideWheel.run()};orientation.disable();if(starting&&recording==null){requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT};starting=false;animator?.cancel();handler.removeCallbacksAndMessages(null);recording?.stop();super.onPause()}
     override fun onDestroy(){Glass.quiet=false;sounds.release();zoomEffect?.release();super.onDestroy()}
     override fun onKeyDown(keyCode:Int,event:KeyEvent):Boolean{if(keyCode==KeyEvent.KEYCODE_VOLUME_DOWN||keyCode==KeyEvent.KEYCODE_VOLUME_UP){if(event.repeatCount==0)shutter.performClick();return true};return super.onKeyDown(keyCode,event)}
@@ -400,7 +400,7 @@ class VideoActivity:ComponentActivity(){
     private fun busy()=recording!=null||starting||finalizing
     private fun buildScreen(){
         val host=FrameLayout(this);installRoot(host)
-        vMenu=GlassMenu(host){on->if(vPanel.showing)vPanel.recede(on)};vPanel=GlassSheet(host,{dp(150).toFloat()}){f->if(::stage.isInitialized)stage.alpha=1f-0.4f*f};vMenu.over={vPanel.showing}
+        vMenu=GlassMenu(host){on->if(vPanel.showing)vPanel.recede(on)};vPanel=GlassSheet(host,{dp(150).toFloat()}){f->if(::stage.isInitialized)stage.alpha=1f-0.4f*f};vMenu.over={vPanel.showing};vPanel.onClosed={host.postDelayed({if(!isDestroyed&&!vPanel.showing&&::stage.isInitialized){stage.animate().cancel();stage.alpha=1f}},520)}
         val landscape=resources.configuration.orientation==android.content.res.Configuration.ORIENTATION_LANDSCAPE
         val column=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL};host.addView(column,-1,-1)
         // Landscape keeps the dock beside the preview instead of under it.

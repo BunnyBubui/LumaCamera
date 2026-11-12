@@ -117,12 +117,27 @@ class InlineVideo(c: Context, private val uri: Uri, still: Bitmap?, private val 
     private fun setStill(b: Bitmap?) {
         poster.setImageBitmap(b)
         if (b != null && !b.isRecycled) { glow.aspect = b.width.toFloat() / b.height
-            if (glowOn) glow.set(runCatching {
-                val w = 24; val h = (24f * b.height / b.width).toInt().coerceIn(4, 96)
-                val small = Bitmap.createScaledBitmap(b, w, h, true); val tiny = Bitmap.createScaledBitmap(small, (w / 3).coerceAtLeast(2), (h / 3).coerceAtLeast(2), true)
-                Bitmap.createScaledBitmap(tiny, w, h, true).also { if (it !== small) small.recycle(); if (it !== tiny) tiny.recycle() }
-            }.getOrNull()) }
+            if (glowOn) glow.set(soft(b)) }
     }
+    /** A tiny, blurred copy of a frame: shrink to 24 px wide, shrink again, grow back. The source is left untouched. */
+    private fun soft(b: Bitmap): Bitmap? = runCatching {
+        val w = 24; val h = (24f * b.height / b.width).toInt().coerceIn(4, 96)
+        val small = Bitmap.createScaledBitmap(b, w, h, true); val tiny = Bitmap.createScaledBitmap(small, (w / 3).coerceAtLeast(2), (h / 3).coerceAtLeast(2), true)
+        Bitmap.createScaledBitmap(tiny, w, h, true).also { if (it !== small && small !== b) small.recycle(); if (it !== tiny) tiny.recycle() }
+    }.getOrNull()
+    /**
+     * Ambient light that follows the clip while it plays, like YouTube's ambient mode: about eleven times a second a
+     * very small copy of the current frame (48 px wide, read back from the surface) becomes the new glow, and the
+     * glow cross-fades to it, so the colours around the picture flow with the scene instead of staying on frame one.
+     */
+    private val ambient = object : Runnable { override fun run() {
+        val tv = texture
+        if (glowOn && playing && tv != null && tv.isAvailable && tv.alpha > 0.5f && videoW > 0 && videoH > 0) {
+            val gw = 48; val gh = (48f * videoH / videoW).toInt().coerceIn(8, 160)
+            runCatching { tv.getBitmap(gw, gh) }.getOrNull()?.let { grab -> soft(grab)?.let { glow.push(it) }; grab.recycle() }
+        }
+        if (isAttachedToWindow && playing) postDelayed(this, 90)
+    } }
 
     /** Darker bands under the floating bars, the same heights as the photo viewer's. */
     fun shades(top: Int, bottom: Int) { shade.shadeTop = top.toFloat(); shade.shadeBottom = bottom.toFloat(); shade.invalidate() }
@@ -134,13 +149,27 @@ class InlineVideo(c: Context, private val uri: Uri, still: Bitmap?, private val 
     private class Reflection(c: Context) : View(c) {
         var aspect = 0f
         private var g: Bitmap? = null
-        private val paint = Paint(Paint.FILTER_BITMAP_FLAG).apply { colorFilter = android.graphics.ColorMatrixColorFilter(android.graphics.ColorMatrix().apply { setSaturation(1.15f); postConcat(android.graphics.ColorMatrix().apply { setScale(0.5f, 0.5f, 0.5f, 1f) }) }) }
+        private val paint = Paint(Paint.FILTER_BITMAP_FLAG).apply { colorFilter = android.graphics.ColorMatrixColorFilter(android.graphics.ColorMatrix().apply { setSaturation(1.35f); postConcat(android.graphics.ColorMatrix().apply { setScale(0.6f, 0.6f, 0.6f, 1f) }) }) }
         private val r = RectF()
         init { importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }
-        fun set(b: Bitmap?) { g?.recycle(); g = b; invalidate() }
+        fun set(b: Bitmap?) { mixAnim?.cancel(); old = null; mix = 1f; g = b; invalidate() }
+        // The glow of the frame before, faded out under the new one. Old copies are left to the garbage collector:
+        // recycling one the render thread may still be drawing would crash.
+        private var old: Bitmap? = null; private var mix = 1f; private var mixAnim: android.animation.ValueAnimator? = null
+        fun push(b: Bitmap) {
+            mixAnim?.cancel(); old = g; g = b; mix = 0f
+            mixAnim = android.animation.ValueAnimator.ofFloat(0f, 1f).apply { duration = 140; addUpdateListener { mix = it.animatedValue as Float; invalidate() }; start() }
+        }
+        override fun onDetachedFromWindow() { mixAnim?.cancel(); super.onDetachedFromWindow() }
         override fun onDraw(cv: Canvas) {
-            val w = width.toFloat(); val h = height.toFloat(); val b = g
-            if (b != null && !b.isRecycled && aspect > 0f && w > 0f) {
+            val o = old
+            if (mix < 1f && o != null && !o.isRecycled) { paint.alpha = 255; drawGlow(cv, o) }
+            g?.let { paint.alpha = if (o != null && mix < 1f) (255 * mix).toInt() else 255; drawGlow(cv, it) }
+            paint.alpha = 255
+        }
+        private fun drawGlow(cv: Canvas, b: Bitmap) {
+            val w = width.toFloat(); val h = height.toFloat()
+            if (!b.isRecycled && aspect > 0f && w > 0f) {
                 val fw: Float; val fh: Float
                 if (w / h > aspect) { fh = h; fw = h * aspect } else { fw = w; fh = w / aspect }
                 r.set((w - fw) / 2, (h - fh) / 2, (w + fw) / 2, (h + fh) / 2)
@@ -170,7 +199,7 @@ class InlineVideo(c: Context, private val uri: Uri, still: Bitmap?, private val 
     fun start() {
         if (player == null) { open(); return }
         if (!prepared) return
-        player?.start(); playing = true; applySpeed(); refresh(); removeCallbacks(tick); post(tick); scheduleHide()
+        player?.start(); playing = true; applySpeed(); refresh(); removeCallbacks(tick); post(tick); removeCallbacks(ambient); postDelayed(ambient, 120); scheduleHide()
     }
     fun pause() { if (playing) { runCatching { player?.pause() }; playing = false; refresh(); showChrome(true) } }
     private fun toggle() { if (playing) pause() else start() }
@@ -234,7 +263,7 @@ class InlineVideo(c: Context, private val uri: Uri, still: Bitmap?, private val 
         if (on) scheduleHide()
     }
     private fun release() { val p = player ?: return; player = null; prepared = false; playing = false; runCatching { p.stop() }; runCatching { p.release() } }
-    override fun onDetachedFromWindow() { removeCallbacks(tick); removeCallbacks(hide); release(); super.onDetachedFromWindow() }
+    override fun onDetachedFromWindow() { removeCallbacks(tick); removeCallbacks(ambient); removeCallbacks(hide); release(); super.onDetachedFromWindow() }
 
     /**
      * Slim rounded scrubber: a soft track, an accent fill that fades from blue to orange, and a knob that grows

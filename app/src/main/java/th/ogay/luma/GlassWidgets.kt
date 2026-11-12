@@ -783,6 +783,7 @@ class GlassSheet(private val host: FrameLayout, private val pivotYFromBottom: ()
     /** The screen behind the sheet; it is blurred together with the sheet when something opens on top. */
     var behind: View? = null
     private var dragged = 0f
+    private var settling: android.animation.ValueAnimator? = null
     private var pendingRelease: Pair<Boolean, Float>? = null
     /** Follows a finger that is opening the sheet from the dock (see [open] with interactive = true). */
     private var hapticStep = 0
@@ -803,7 +804,17 @@ class GlassSheet(private val host: FrameLayout, private val pivotYFromBottom: ()
     private fun settle(sheet: View) {
         val from = progress(sheet)
         if (from < 0.98f && sheet.context.getSharedPreferences("camera", 0).getBoolean("haptic", true)) sheet.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
-        sheet.animate().translationY(0f).setInterpolator(Glass.SPRING).setDuration(460).setUpdateListener { pushBack(from + (1 - from) * it.animatedFraction) }.withEndAction { pushBack(1f) }.start()
+        // A separate animator, not sheet.animate(): an update listener set on the view's shared ViewPropertyAnimator
+        // stays attached to every later animate() call (recede, close), which kept pushing the dark backdrop back
+        // up after the sheet had closed and left the camera dimmed.
+        settling?.cancel()
+        val y0 = sheet.translationY
+        settling = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 460; interpolator = Glass.SPRING
+            addUpdateListener { if (card === sheet) { sheet.translationY = y0 * (1 - it.animatedValue as Float); pushBack(from + (1 - from) * it.animatedFraction) } }
+            addListener(object : android.animation.AnimatorListenerAdapter() { override fun onAnimationEnd(a: android.animation.Animator) { if (card === sheet) pushBack(1f) } })
+            start()
+        }
     }
     fun open(build: (LinearLayout, GlassSheet) -> Unit) = open(false, build)
     fun open(interactive: Boolean, build: (LinearLayout, GlassSheet) -> Unit) {
@@ -852,9 +863,12 @@ class GlassSheet(private val host: FrameLayout, private val pivotYFromBottom: ()
     fun recede(on: Boolean) {
         val sheet = card ?: return
         // The whole screen behind goes soft evenly, not only the sheet.
+        sheet.animate().setUpdateListener(null)
         sheet.animate().alpha(if (on) 0.9f else 1f).scaleX(if (on) 0.97f else 1f).scaleY(if (on) 0.97f else 1f).setDuration(220).start()
         Glass.blur(sheet, if (on) 6f else 0f); behind?.let { Glass.blur(it, if (on) 6f else 0f) }
     }
+    /** Lets the sheet get shorter again (it normally keeps its tallest height), for content that collapses on purpose. */
+    fun unpin() { body?.minimumHeight = 0 }
     fun refresh() {
         val content = body?.getChildAt(1) as? LinearLayout ?: return; val build = builder ?: return
         content.removeAllViews(); build(content, this)
@@ -863,6 +877,8 @@ class GlassSheet(private val host: FrameLayout, private val pivotYFromBottom: ()
         val s = shade; val sheet = card; shade = null; card = null; body = null; builder = null
         if (sheet == null) { end?.invoke(); return }
         sheet.closing = true
+        settling?.cancel(); settling = null
+        sheet.animate().setUpdateListener(null).cancel()
         Sounds.play(host.context, Sounds.Kind.CLOSE)
         modal.restore()
         pushBack(0f)
@@ -893,6 +909,15 @@ class AiRing(context: Context) : View(context) {
     private var glide: ValueAnimator? = null
     private var spin: ValueAnimator? = null
     init { visibility = GONE; isClickable = false }
+    // The same moving light as behind the video export page (its AI step), drawn under the ring.
+    private val bg = ExportProgress.Backdrop(context).apply { selfDriven = false; mode = ExportProgress.Backdrop.AI }
+    private var ambient: ValueAnimator? = null
+    private fun startAmbient() {
+        if (ambient != null || Glass.reduced(context)) return
+        ambient = ValueAnimator.ofFloat(0f, 1f).apply { duration = 1000; repeatCount = ValueAnimator.INFINITE; interpolator = LinearInterpolator(); addUpdateListener { bg.advance(); invalidate() }; start() }
+    }
+    private fun stopAmbient() { ambient?.cancel(); ambient = null }
+    override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) { super.onSizeChanged(w, h, ow, oh); bg.layout(0, 0, w, h) }
 
     /** [percent] 0..100, or null while the work has not started and nothing can be measured yet. */
     /** Second line under the caption: tiles done and the time left. */
@@ -900,7 +925,7 @@ class AiRing(context: Context) : View(context) {
     private var eta = ""
     fun update(percent: Float?, text: String, detailText: String? = null, etaText: String? = null) {
         caption = text; if (detailText != null) detail = detailText; if (etaText != null) eta = etaText
-        visibility = VISIBLE
+        visibility = VISIBLE; if (isAttachedToWindow) startAmbient()
         if (percent == null) {
             spinning = true; glide?.cancel()
             if (spin == null && !Glass.reduced(context)) spin = ValueAnimator.ofFloat(0f, 360f).apply { duration = 1400; repeatCount = ValueAnimator.INFINITE; interpolator = LinearInterpolator(); addUpdateListener { angle = it.animatedValue as Float; invalidate() }; start() }
@@ -914,8 +939,9 @@ class AiRing(context: Context) : View(context) {
         else glide = ValueAnimator.ofFloat(shown, target).apply { duration = 650; interpolator = LinearInterpolator(); addUpdateListener { shown = it.animatedValue as Float; invalidate() }; start() }
         contentDescription = "$text ${String.format(Locale.US, "%.0f", target)} เปอร์เซ็นต์"
     }
-    fun hide() { glide?.cancel(); spin?.cancel(); spin = null; spinning = false; shown = 0f; target = 0f; detail = ""; eta = ""; visibility = GONE }
-    override fun onDetachedFromWindow() { glide?.cancel(); spin?.cancel(); spin = null; super.onDetachedFromWindow() }
+    fun hide() { glide?.cancel(); spin?.cancel(); spin = null; stopAmbient(); spinning = false; shown = 0f; target = 0f; detail = ""; eta = ""; visibility = GONE }
+    override fun onAttachedToWindow() { super.onAttachedToWindow(); if (visibility == VISIBLE) startAmbient() }
+    override fun onDetachedFromWindow() { glide?.cancel(); spin?.cancel(); spin = null; stopAmbient(); super.onDetachedFromWindow() }
 
     private val glow = Paint(Paint.ANTI_ALIAS_FLAG)
     private val halo = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 20 * d; strokeCap = Paint.Cap.ROUND; color = Glass.ACCENT; alpha = 46 }
@@ -929,7 +955,9 @@ class AiRing(context: Context) : View(context) {
     private var sized = 0
 
     override fun onDraw(c: Canvas) {
-        c.drawColor(0xa6050912.toInt())
+        c.drawColor(0xb8050912.toInt())
+        if (bg.width != width || bg.height != height) bg.layout(0, 0, width, height)
+        bg.draw(c)
         val cx = width / 2f; val cy = height / 2f
         val r = minOf(width, height) * 0.27f
         if (sized != width) { sized = width

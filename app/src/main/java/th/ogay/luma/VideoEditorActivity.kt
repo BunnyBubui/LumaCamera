@@ -93,6 +93,8 @@ class VideoEditorActivity : ComponentActivity() {
     private var duration = 0L; private var videoW = 16; private var videoH = 9; private var hasAudio = true
 
     // ---- Edit state ----
+    /** Opened for "AI sharpen": the export sheet starts one size above the source so the model is in play. */
+    private var aiStart = false
     private var start = 0L; private var end = 0L; private var split = -1L
     private var speed = 1f; private var cropIndex = 0
     private var caption = ""; private var place = 2; private var textColor = Color.WHITE; private var textBig = false
@@ -204,6 +206,7 @@ class VideoEditorActivity : ComponentActivity() {
         // From Home "แต่งวิดีโอชัด AI": open the export sheet at once with an AI model chosen.
         if (state == null && intent.getBooleanExtra("ai_export", false)) {
             getSharedPreferences("camera", MODE_PRIVATE).let { if (it.getInt("video_ai_model", 1) == 0) it.edit().putInt("video_ai_model", 1).apply() }
+            aiStart = true
             android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ if (!isDestroyed && !isFinishing) export() }, 700)
         }
         state?.let { restore(it) }
@@ -908,7 +911,7 @@ class VideoEditorActivity : ComponentActivity() {
             val file = java.io.File(cacheDir, "model-preview.jpg")
             file.outputStream().use { f.compress(Bitmap.CompressFormat.JPEG, 95, it) }; f.recycle(); Uri.fromFile(file) } }.getOrNull()
         val src = ExportSheet.Source(short, long, sourceFps(), totalOut(), firstFrame, still)
-        ExportSheet.show(this, src) { c -> startExport(c, src) }
+        ExportSheet.show(this, src, upscale = aiStart) { c -> startExport(c, src) }; aiStart = false
     }
     private fun startExport(c: ExportChoice, src: ExportSheet.Source) {
         if (ExportJob.running()) { notice("มีงานส่งออกอยู่แล้ว · รอให้เสร็จก่อน"); return }

@@ -506,6 +506,7 @@ class GalleryActivity : ComponentActivity() {
         else listOf<Pair<String, (Item) -> Boolean>>("ทั้งหมด" to { _ -> true }, "รูปภาพ" to { it -> !it.video }, "วิดีโอ" to { it -> it.video })
 
     // ---------- Grid ----------
+    private var searchAnim: android.animation.ValueAnimator? = null
     private fun showGrid(all: List<Item>) {
         th.ogay.luma.ai.AiPace.watching = false
         showingId = null; viewerKind = ""; immersive(false); root.removeAllViews()
@@ -535,17 +536,31 @@ class GalleryActivity : ComponentActivity() {
         (bar.findViewWithTag<View>("title") as? TextView)?.apply { maxLines = 1; minHeight = dp(48); gravity = Gravity.CENTER_VERTICAL }
         fun morph(open: Boolean, animate: Boolean = true) {
             val from = searchBox.width; val to = if (open) bar.width - bar.paddingLeft - bar.paddingRight - dp(58) else dp(48)
+            if (from == to && field.visibility == (if (open) View.VISIBLE else View.GONE)) return
             field.visibility = if (open) View.VISIBLE else View.GONE; close.visibility = field.visibility
             val quick = !animate || Glass.reduced(this@GalleryActivity)
             // The title stays in the row and only fades, so nothing below moves; it returns softly once the box has closed.
             bar.findViewWithTag<View>("title")?.let { t -> t.animate().cancel(); if (open) t.animate().alpha(0f).setDuration(if (quick) 0 else 140).start() else t.animate().alpha(1f).setStartDelay(if (quick) 0 else 240).setDuration(if (quick) 0 else 260).withEndAction { t.animate().setStartDelay(0) }.start() }
-            // The ⋮ button is not needed while typing: it leaves, and the box takes its place.
-            more.animate().cancel()
-            if (open) { more.animate().alpha(0f).setDuration(if (quick) 0 else 120).withEndAction { more.visibility = View.GONE }.start() }
-            else { more.visibility = View.VISIBLE; more.alpha = 0f; more.animate().alpha(1f).setStartDelay(if (quick) 0 else 300).setDuration(200).withEndAction { more.animate().setStartDelay(0) }.start() }
-            android.animation.ValueAnimator.ofInt(from, to).apply {
-                duration = if (!animate || Glass.reduced(this@GalleryActivity)) 0 else 420; interpolator = Glass.EASE
-                addUpdateListener { searchBox.layoutParams = (searchBox.layoutParams as LinearLayout.LayoutParams).apply { width = it.animatedValue as Int } }
+            // The ⋮ button is not needed while typing. It shrinks to nothing in the same motion as the box grows, so
+            // the box's right edge glides into its place; removing it in one step made the box jump sideways.
+            more.animate().cancel(); field.animate().cancel()
+            val mlp = more.layoutParams as LinearLayout.LayoutParams
+            val moreFrom = if (more.visibility == View.GONE) 0f else mlp.width / dp(48).toFloat()
+            val moreTo = if (open) 0f else 1f
+            more.visibility = View.VISIBLE
+            if (open) { field.alpha = 0f; field.animate().alpha(1f).setStartDelay(if (quick) 0 else 160).setDuration(if (quick) 0 else 220).withEndAction { field.animate().setStartDelay(0) }.start() }
+            searchAnim?.cancel()
+            searchAnim = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
+                duration = if (quick) 0 else 420; interpolator = Glass.EASE
+                addUpdateListener {
+                    val f = it.animatedValue as Float
+                    val m = (moreFrom + (moreTo - moreFrom) * f).coerceIn(0f, 1f)
+                    mlp.width = (dp(48) * m).toInt(); mlp.leftMargin = (dp(8) * m).toInt(); more.layoutParams = mlp
+                    more.alpha = ((m - 0.4f) / 0.6f).coerceIn(0f, 1f); more.scaleX = 0.6f + 0.4f * m; more.scaleY = more.scaleX
+                    searchBox.layoutParams = (searchBox.layoutParams as LinearLayout.LayoutParams).apply { width = (from + (to - from) * f).toInt() }
+                }
+                addListener(object : android.animation.AnimatorListenerAdapter() { override fun onAnimationEnd(a: android.animation.Animator) {
+                    if (open) more.visibility = View.GONE else { mlp.width = dp(48); mlp.leftMargin = dp(8); more.layoutParams = mlp; more.alpha = 1f; more.scaleX = 1f; more.scaleY = 1f } } })
                 start()
             }
             val ime = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
@@ -1125,6 +1140,8 @@ class GalleryActivity : ComponentActivity() {
         if (!item.file) act(EditorKit.ADJUST, if (item.video) "ตัดต่อ" else "แก้ไขภาพ", Color.WHITE) {
             if (item.video) editVideo.launch(VideoEditorActivity.intent(this, item.uri)) else editPhoto.launch(PhotoEditorActivity.intent(this, item.shot?.ai ?: item.uri)) }
         if (!item.video && !item.file) act(Icons.AI, "ปรับด้วย AI", Glass.ACCENT) { item.shot?.let { EnhanceUi.show(this, it) } ?: enhanceDevice(item.uri) }
+        // A video goes to the editor, which opens its export sheet straight away with an AI model chosen.
+        if (item.video && !item.file) act(Icons.AI, "ปรับด้วย AI", Glass.ACCENT) { editVideo.launch(VideoEditorActivity.intent(this, item.uri).putExtra("ai_export", true)) }
         act(RENAME, "เปลี่ยนชื่อ", Color.WHITE) { rename(item) }
         act(Icons.SHARE, "แชร์", Color.WHITE) { share(item) }
         act(Icons.INFO, "รายละเอียด", Color.WHITE) { itemInfo(item) }

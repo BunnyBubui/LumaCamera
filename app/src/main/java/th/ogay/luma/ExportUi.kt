@@ -32,7 +32,7 @@ object ExportSheet {
 
     class Source(val shortSide: Int, val longSide: Int, val fps: Float, val durationMs: Long, val thumb: Bitmap?, val still: android.net.Uri? = null)
 
-    fun show(a: androidx.activity.ComponentActivity, src: Source, onExport: (ExportChoice) -> Unit) {
+    fun show(a: androidx.activity.ComponentActivity, src: Source, upscale: Boolean = false, onExport: (ExportChoice) -> Unit) {
         // The camera's glass sheet: rises with the same animation and sound, follows the finger down to close.
         val sheet = a.screenSheet()
         val card = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; setPadding(a.dp(4), 0, a.dp(4), a.dp(4)) }
@@ -51,7 +51,8 @@ object ExportSheet {
         // The source's own size and rate are always choices (and the starting point), so keeping them never enlarges.
         val sides = (SIDES.filter { kotlin.math.abs(it - src.shortSide) > 8 } + src.shortSide).sorted()
         val rates = (RATES.filter { kotlin.math.abs(it - src.fps) > 0.6f } + src.fps).sorted()
-        var side = sides.indexOf(src.shortSide)
+        // Opened for AI sharpening: start one size above the source so the model and its preview are showing.
+        var side = sides.indexOf(src.shortSide).let { if (upscale && it < sides.size - 1) it + 1 else it }
         var rate = rates.indexOf(src.fps)
         // The AI model for new pixels, chosen the same way as for photos: none, Natural SR3 or Classic SR2.
         val prefs = a.getSharedPreferences("camera", 0)
@@ -63,6 +64,8 @@ object ExportSheet {
         val estimate = a.text("", 12.5f, Glass.TEXT2).apply { gravity = Gravity.CENTER }
         val go = a.text("ส่งออก", 16f, Glass.ON_ACCENT, true).apply { gravity = Gravity.CENTER; background = a.glass(26, Glass.ACCENT); isClickable = true; glassTouch(); contentDescription = "เริ่มส่งออก" }
 
+        // The model chip and its preview only matter when the picture gets bigger; set further down.
+        var onBigger: (Boolean) -> Unit = {}
         fun refresh() {
             val s = sides[side]; val r = rates[rate]
             val bigger = s > src.shortSide * 1.05f; val smoother = r > src.fps * 1.05f
@@ -80,7 +83,7 @@ object ExportSheet {
                 else -> "เท่าต้นฉบับ"
             }
             // Always in place so the sheet keeps its height; it only matters (and is lit) when the picture gets bigger.
-            aiChip.alpha = if (bigger) 1f else 0.4f; aiChip.isEnabled = bigger
+            aiChip.isEnabled = bigger; onBigger(bigger)
             val long = (src.longSide * s.toFloat() / src.shortSide).toInt()
             val mb = FrameEncoder.bitrate(long, s, r) / 8.0 * src.durationMs / 1000.0 / 1_000_000.0
             val minutes = minutes(src, s, r, ai() && bigger)
@@ -119,14 +122,45 @@ object ExportSheet {
                 model = i; prefs.edit().putInt("video_ai_model", i).apply()
                 modelIcon.path = icons[i]; modelName.text = names[i].substringBefore(" ·"); modelNote.text = notes[i]; aiChip.contentDescription = "โมเดล AI ${names[i]}"; refresh(); syncPrev() }
         }
-        card.addView(aiChip, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(14) })
+        // The model chip and the preview live in one box that opens only when the resolution goes above the source;
+        // making in-between frames alone needs no AI model, so the box stays closed and the rows below move up.
+        val aiBox = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
+        aiBox.addView(aiChip, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(14) })
+        card.addView(aiBox, -1, -2)
         card.addView(estimate, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(16) })
         // Same preview as for photos: a before / after of the middle of the clip with the chosen model.
         val previewBtn = a.text("ดูตัวอย่างโมเดล", 14f, Glass.ACCENT, true).apply { gravity = Gravity.CENTER; isClickable = true; background = a.glass(24, 0x1affffff); glassTouch(); contentDescription = "ดูตัวอย่างผลของโมเดล AI"
             setOnClickListener { val u = src.still ?: return@setOnClickListener
                 th.ogay.luma.ai.EnhanceUi.previewUri(a, u, th.ogay.luma.ai.EnhanceSpec(2, if (model == 2) 100 else 70, if (model == 2) th.ogay.luma.ai.EnhanceProfile.CLASSIC else th.ogay.luma.ai.EnhanceProfile.NATURAL), sheet) } }
         syncPrev = { previewBtn.visibility = if (model != 0 && src.still != null) View.VISIBLE else View.GONE }
-        card.addView(previewBtn, LinearLayout.LayoutParams(-1, a.dp(46)).apply { topMargin = a.dp(12) }); syncPrev()
+        aiBox.addView(previewBtn, LinearLayout.LayoutParams(-1, a.dp(46)).apply { topMargin = a.dp(12) }); syncPrev()
+        var aiShown: Boolean? = null
+        var grow: android.animation.ValueAnimator? = null
+        onBigger = { on ->
+            if (aiShown != on) {
+                val first = aiShown == null; aiShown = on
+                grow?.cancel(); aiBox.animate().cancel()
+                val lp = aiBox.layoutParams
+                if (first || Glass.reduced(a) || card.width == 0) {
+                    lp.height = -2; aiBox.layoutParams = lp; aiBox.visibility = if (on) View.VISIBLE else View.GONE; aiBox.alpha = if (on) 1f else 0f
+                } else {
+                    val from = if (aiBox.visibility == View.GONE) 0 else aiBox.height
+                    aiBox.measure(View.MeasureSpec.makeMeasureSpec(card.width - card.paddingLeft - card.paddingRight, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
+                    val to = if (on) aiBox.measuredHeight else 0
+                    aiBox.visibility = View.VISIBLE; lp.height = from; aiBox.layoutParams = lp
+                    // The box opens and closes in height, so the estimate, the buttons and the sheet's top glide instead of jumping.
+                    grow = android.animation.ValueAnimator.ofInt(from, to).apply {
+                        duration = 340; interpolator = Glass.EASE
+                        addUpdateListener { lp.height = it.animatedValue as Int; aiBox.layoutParams = lp; sheet.unpin() }
+                        addListener(object : android.animation.AnimatorListenerAdapter() { override fun onAnimationEnd(an: android.animation.Animator) {
+                            if (aiShown == on) { if (on) { lp.height = -2; aiBox.layoutParams = lp } else aiBox.visibility = View.GONE } } })
+                        start()
+                    }
+                    aiBox.translationY = if (on) -a.dp(10).toFloat() else 0f
+                    aiBox.animate().alpha(if (on) 1f else 0f).translationY(if (on) 0f else -a.dp(10).toFloat()).setStartDelay(if (on) 90 else 0).setDuration(if (on) 260 else 180).start()
+                }
+            }
+        }
         go.setOnClickListener { Glass.tick(go); close(); onExport(ExportChoice(sides[side], rates[rate], ai(), if (model == 2) th.ogay.luma.ai.EnhanceProfile.CLASSIC else th.ogay.luma.ai.EnhanceProfile.NATURAL)) }
         card.addView(go, LinearLayout.LayoutParams(-1, a.dp(52)).apply { topMargin = a.dp(12) })
         card.addView(a.text("ยกเลิก", 14f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; isClickable = true; setPadding(0, a.dp(12), 0, 0); setOnClickListener { close() } }, -1, a.dp(44))
@@ -266,9 +300,13 @@ class ExportProgress(private val a: Activity, thumb: Bitmap?, private val steps:
         private val rnd = java.util.Random(7)
         private val sparks = List(40) { floatArrayOf(rnd.nextFloat(), rnd.nextFloat(), 0.4f + rnd.nextFloat(), 1f + rnd.nextFloat() * 3f) }
         private val anim = android.animation.ValueAnimator.ofFloat(0f, 1f).apply { duration = 1000; repeatCount = android.animation.ValueAnimator.INFINITE
-            interpolator = android.view.animation.LinearInterpolator(); addUpdateListener { t += 0.016f; fade = (fade + 0.03f).coerceAtMost(1f); invalidate() } }
+            interpolator = android.view.animation.LinearInterpolator(); addUpdateListener { advance(); invalidate() } }
+        /** One frame of motion; also driven from outside when the backdrop is drawn inside another view (the photo AI ring). */
+        fun advance() { t += 0.016f; fade = (fade + 0.03f).coerceAtMost(1f) }
+        /** Set false when another view draws this backdrop itself, so it never runs its own animator. */
+        var selfDriven = true
         init { importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }
-        override fun onAttachedToWindow() { super.onAttachedToWindow(); if (!Glass.reduced(context)) anim.start() }
+        override fun onAttachedToWindow() { super.onAttachedToWindow(); if (selfDriven && !Glass.reduced(context)) anim.start() }
         override fun onDetachedFromWindow() { anim.cancel(); super.onDetachedFromWindow() }
         override fun onDraw(cv: Canvas) {
             if (fade < 1f) draw(cv, previous, 1f - fade)
