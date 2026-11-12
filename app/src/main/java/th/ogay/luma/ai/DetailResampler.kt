@@ -8,7 +8,8 @@ import kotlin.math.roundToInt
 object DetailResampler {
     fun copyCore(native: FloatArray, input: IntArray, scale: Int, strength: Int,
                  coreW: Int, coreH: Int, destination: IntArray, stride: Int, left: Int,
-                 profile: EnhanceProfile = EnhanceProfile.CLASSIC) {
+                 profile: EnhanceProfile = EnhanceProfile.CLASSIC,
+                 textMask: ByteArray? = null) {
         require(scale in 2..4 && strength in 0..100)
         val edge = EnhanceSpec.INPUT
         val outEdge = edge * 4
@@ -16,7 +17,8 @@ object DetailResampler {
         require(coreW in 1..EnhanceSpec.CORE && coreH in 1..EnhanceSpec.CORE)
         require(left >= 0 && left + coreW*scale <= stride && destination.size >= stride*coreH*scale)
         if (profile == EnhanceProfile.NATURAL) {
-            copyNatural(native,input,scale,strength,coreW,coreH,destination,stride,left)
+            require(textMask == null || textMask.size == coreW*coreH) { "invalid source text mask" }
+            copyNatural(native,input,scale,strength,coreW,coreH,destination,stride,left,textMask)
             return
         }
         val gain = strength / 100f
@@ -77,7 +79,8 @@ object DetailResampler {
      * unverifiable text or facial detail, but reduces aggressive neural artifacts.
      */
     private fun copyNatural(native: FloatArray, input: IntArray, scale: Int, strength: Int,
-                            coreW: Int, coreH: Int, destination: IntArray, stride: Int, left: Int) {
+                            coreW: Int, coreH: Int, destination: IntArray, stride: Int, left: Int,
+                            textMask: ByteArray?) {
         val edge = EnhanceSpec.INPUT
         val outEdge = edge*4
         val halo = EnhanceSpec.HALO
@@ -123,7 +126,8 @@ object DetailResampler {
                 val localContrast=maxOf(y00,y10,y01,y11)-minOf(y00,y10,y01,y11)
                 destination[y*stride+left+x]=NaturalDetailBlend.blend(
                     baseR,baseG,baseB,(r/area*255).toFloat(),(g/area*255).toFloat(),
-                    (b/area*255).toFloat(),localContrast,strength)
+                    (b/area*255).toFloat(),localContrast,strength,
+                    if (textMask?.get((y/scale)*coreW + x/scale)?.toInt() == 1) 0.22f else 1f)
             }
         }
     }
