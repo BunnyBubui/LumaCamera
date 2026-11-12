@@ -58,7 +58,7 @@ class DetailSuperResolution(private val context: Context) {
                                 inferMs += SystemClock.elapsedRealtime()-t
                                 checkpoint()
                                 t = SystemClock.elapsedRealtime()
-                                DetailResampler.copyCore(enhanced,pixels,spec.scale,spec.strength,w,h,stripe,output.w,left*spec.scale)
+                                DetailResampler.copyCore(enhanced,pixels,spec.scale,spec.strength,w,h,stripe,output.w,left*spec.scale,spec.profile)
                                 renderMs += SystemClock.elapsedRealtime()-t
                                 count++
                                 val percent = (count*99/(columns*rows)).coerceAtMost(99)
@@ -78,7 +78,9 @@ class DetailSuperResolution(private val context: Context) {
                         exif?.getAttribute(ExifInterface.TAG_DATETIME_ORIGINAL),ai=true,version=shot.aiVersion)
                     progress(100)
                     val report = JSONObject().put("model",EnhanceSpec.MODEL).put("scale",spec.scale)
-                        .put("nativeScale",4).put("strength",spec.strength).put("backend",runtime.backend)
+                        .put("nativeScale",4).put("strength",spec.strength)
+                        .put("profile",spec.profile.name).put("outputModel",spec.modelId)
+                        .put("backend",runtime.backend)
                         .put("fallback",runtime.fallbackReason ?: JSONObject.NULL)
                         .put("inputWidth",source.w).put("inputHeight",source.h)
                         .put("outputWidth",output.w).put("outputHeight",output.h)
