@@ -47,13 +47,15 @@ jobs:
           emulator-boot-timeout: 300
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back emulated -camera-front emulated
           script: |
-            bash gradlew --no-daemon -Pkotlin.compiler.execution.strategy=in-process :app:connectedDebugAndroidTest
+            mkdir -p app/build/reports
             adb install -r -t app/build/outputs/apk/debug/app-debug.apk
             adb shell pm grant th.ogay.luma.dev android.permission.CAMERA
             adb shell am start -W -n th.ogay.luma.dev/th.ogay.luma.CameraActivity
             sleep 3
             adb shell screencap -p /sdcard/Download/camera-screen.png
             adb pull /sdcard/Download/camera-screen.png app/build/reports/camera-screen.png
+            adb shell am force-stop th.ogay.luma.dev
+            bash gradlew --no-daemon -Pkotlin.compiler.execution.strategy=in-process :app:connectedDebugAndroidTest
       - uses: actions/upload-artifact@v4
         if: always()
         with:

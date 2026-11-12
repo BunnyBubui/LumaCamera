@@ -20,15 +20,15 @@ fun Context.studioSheet(title: String, build: (LinearLayout, Dialog) -> Unit): D
     val container = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         setPadding(dp(20), dp(8), dp(20), dp(24))
-        background = shape(0xff1c1c1e.toInt(), dp(28).toFloat())
+        background = glass(28, Glass.FILL_POP)
     }
-    val handle = label("━━━━", 18f, MUTED).apply { gravity = Gravity.CENTER; contentDescription = "ปัดลงเพื่อปิด" }
+    val handle = FrameLayout(this).apply { contentDescription = "ปัดลงเพื่อปิด"; addView(View(this@studioSheet).apply { background = glass(3, 0x59ffffff) }, FrameLayout.LayoutParams(dp(40), dp(5), Gravity.CENTER)) }
     var down = 0f
     handle.setOnTouchListener { _, e ->
         when(e.actionMasked) {
             MotionEvent.ACTION_DOWN -> down = e.rawY
             MotionEvent.ACTION_MOVE -> container.translationY = max(0f, e.rawY-down)
-            MotionEvent.ACTION_UP -> { if(e.rawY-down>dp(60)) dialog.dismiss() else container.animate().translationY(0f).setDuration(160).start(); handle.performClick() }
+            MotionEvent.ACTION_UP -> { if(e.rawY-down>dp(60)) dialog.dismiss() else container.animate().translationY(0f).setInterpolator(Glass.SPRING).setDuration(320).start(); handle.performClick() }
         }; true
     }
     // TalkBack cannot drag; a double tap on the handle closes the sheet instead.
@@ -40,7 +40,9 @@ fun Context.studioSheet(title: String, build: (LinearLayout, Dialog) -> Unit): D
     dialog.setContentView(scroll)
     dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
     dialog.window?.setGravity(Gravity.BOTTOM)
+    dialog.window?.setDimAmount(0.35f)
     dialog.show()
+    if (!Glass.reduced(this)) { container.alpha = 0f; container.post { Liquid.show(container, container.width / 2f, container.height.toFloat(), true) } }
     dialog.window?.setLayout(-1, min(resources.displayMetrics.heightPixels*0.8f, container.measuredHeight.toFloat().takeIf{it>dp(160)} ?: (resources.displayMetrics.heightPixels*0.75f)).toInt())
     return dialog
 }
@@ -105,3 +107,4 @@ class ZoomRuler(context: Context, private val zoom: (Float)->Unit): View(context
     }
     override fun performClick():Boolean{super.performClick();return true}
 }
+
