@@ -9,7 +9,8 @@ object DetailResampler {
     fun copyCore(native: FloatArray, input: IntArray, scale: Int, strength: Int,
                  coreW: Int, coreH: Int, destination: IntArray, stride: Int, left: Int,
                  profile: EnhanceProfile = EnhanceProfile.CLASSIC,
-                 textMask: ByteArray? = null) {
+                 textMask: ByteArray? = null,
+                 personMask: ByteArray? = null) {
         require(scale in 2..4 && strength in 0..100)
         val edge = EnhanceSpec.INPUT
         val outEdge = edge * 4
@@ -18,7 +19,8 @@ object DetailResampler {
         require(left >= 0 && left + coreW*scale <= stride && destination.size >= stride*coreH*scale)
         if (profile == EnhanceProfile.NATURAL) {
             require(textMask == null || textMask.size == coreW*coreH) { "invalid source text mask" }
-            copyNatural(native,input,scale,strength,coreW,coreH,destination,stride,left,textMask)
+            require(personMask == null || personMask.size == coreW*coreH) { "invalid source person mask" }
+            copyNatural(native,input,scale,strength,coreW,coreH,destination,stride,left,textMask,personMask)
             return
         }
         val gain = strength / 100f
@@ -80,7 +82,7 @@ object DetailResampler {
      */
     private fun copyNatural(native: FloatArray, input: IntArray, scale: Int, strength: Int,
                             coreW: Int, coreH: Int, destination: IntArray, stride: Int, left: Int,
-                            textMask: ByteArray?) {
+                            textMask: ByteArray?, personMask: ByteArray?) {
         val edge = EnhanceSpec.INPUT
         val outEdge = edge*4
         val halo = EnhanceSpec.HALO
@@ -127,7 +129,11 @@ object DetailResampler {
                 destination[y*stride+left+x]=NaturalDetailBlend.blend(
                     baseR,baseG,baseB,(r/area*255).toFloat(),(g/area*255).toFloat(),
                     (b/area*255).toFloat(),localContrast,strength,
-                    if (textMask?.get((y/scale)*coreW + x/scale)?.toInt() == 1) 0.22f else 1f)
+                    when {
+                        textMask?.get((y/scale)*coreW+x/scale)?.toInt() == 1 -> 0.22f
+                        personMask?.get((y/scale)*coreW+x/scale)?.toInt() == 1 -> 0.40f
+                        else -> 1f
+                    })
             }
         }
     }
