@@ -53,8 +53,11 @@ object ExportSheet {
         head.addView(heads, LinearLayout.LayoutParams(0, -2, 1f))
         card.addView(head, -1, -2)
 
-        var side = SIDES.indexOfLast { it <= src.shortSide + 8 }.coerceAtLeast(0)
-        var rate = RATES.indexOfLast { it <= src.fps + 0.6f }.coerceAtLeast(0)
+        // The source's own size and rate are always choices (and the starting point), so keeping them never enlarges.
+        val sides = (SIDES.filter { kotlin.math.abs(it - src.shortSide) > 8 } + src.shortSide).sorted()
+        val rates = (RATES.filter { kotlin.math.abs(it - src.fps) > 0.6f } + src.fps).sorted()
+        var side = sides.indexOf(src.shortSide)
+        var rate = rates.indexOf(src.fps)
         var ai = true
         val sideValue = a.text("", 15f, Color.WHITE, true); val rateValue = a.text("", 15f, Color.WHITE, true)
         val sideNote = a.text("", 12f, Glass.TEXT2); val rateNote = a.text("", 12f, Glass.TEXT2)
@@ -63,9 +66,9 @@ object ExportSheet {
         val go = a.text("ส่งออก", 16f, Glass.ON_ACCENT, true).apply { gravity = Gravity.CENTER; background = a.glass(26, Glass.ACCENT); isClickable = true; glassTouch(); contentDescription = "เริ่มส่งออก" }
 
         fun refresh() {
-            val s = SIDES[side]; val r = RATES[rate]
+            val s = sides[side]; val r = rates[rate]
             val bigger = s > src.shortSide * 1.05f; val smoother = r > src.fps * 1.05f
-            sideValue.text = SIDE_NAMES[side]; sideValue.setTextColor(if (bigger) Glass.ACCENT else Color.WHITE)
+            sideValue.text = sideName(s); sideValue.setTextColor(if (bigger) Glass.ACCENT else Color.WHITE)
             rateValue.text = "${fpsName(r)} fps"; rateValue.setTextColor(if (smoother) Glass.ACCENT else Color.WHITE)
             sideNote.text = when {
                 bigger && ai -> "AI สร้างพิกเซลเพิ่ม ×${String.format(Locale.US, "%.1f", s.toFloat() / src.shortSide)} จากโมเดล Detail SR"
@@ -83,7 +86,7 @@ object ExportSheet {
             val mb = FrameEncoder.bitrate(long, s, r) / 8.0 * src.durationMs / 1000.0 / 1_000_000.0
             val minutes = minutes(src, s, r, ai && bigger)
             val ok = !(bigger || smoother) || FrameEncoder.pickMime(long / 2 * 2, s, r) != null
-            estimate.text = if (!ok) "เครื่องนี้เข้ารหัส ${SIDE_NAMES[side]} ${fpsName(r)} fps ไม่ได้ ลองลดความละเอียดหรือเฟรมเรต"
+            estimate.text = if (!ok) "เครื่องนี้เข้ารหัส ${sideName(s)} ${fpsName(r)} fps ไม่ได้ ลองลดความละเอียดหรือเฟรมเรต"
                 else "ไฟล์ประมาณ ${if (mb < 10) String.format(Locale.US, "%.1f", mb) else mb.toInt().toString()} MB" + (if (minutes > 0) " · ใช้เวลาประมาณ ${if (minutes < 1) "ไม่ถึง 1" else ceil(minutes).toInt().toString()} นาที" else "")
             estimate.setTextColor(if (ok) Glass.TEXT2 else 0xffff6b5e.toInt())
             go.isEnabled = ok; go.alpha = if (ok) 1f else 0.4f
@@ -96,14 +99,14 @@ object ExportSheet {
                 onChange = { k -> set(k); refresh() } }, LinearLayout.LayoutParams(-1, a.dp(46)))
             card.addView(note, -1, -2)
         }
-        row("ความละเอียด", sideValue, sideNote, SIDE_NAMES, side) { side = it }
-        row("อัตราเฟรม", rateValue, rateNote, RATES.map { fpsName(it) }, rate) { rate = it }
+        row("ความละเอียด", sideValue, sideNote, sides.map { sideName(it) }, side) { side = it }
+        row("อัตราเฟรม", rateValue, rateNote, rates.map { fpsName(it) }, rate) { rate = it }
         lateinit var chip: View
         fun buildChip() { aiChip.removeAllViews(); chip = EditorKit.chip(a, if (ai) "AI เพิ่มรายละเอียด · เปิด" else "AI เพิ่มรายละเอียด · ปิด (เร็วกว่า)", Icons.AI, ai) { ai = !ai; buildChip(); refresh() }; aiChip.addView(chip, -2, a.dp(34)) }
         buildChip()
         card.addView(aiChip, LinearLayout.LayoutParams(-2, -2).apply { topMargin = a.dp(12) })
         card.addView(estimate, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(16) })
-        go.setOnClickListener { Glass.tick(go); close(); onExport(ExportChoice(SIDES[side], RATES[rate], ai)) }
+        go.setOnClickListener { Glass.tick(go); close(); onExport(ExportChoice(sides[side], rates[rate], ai)) }
         card.addView(go, LinearLayout.LayoutParams(-1, a.dp(52)).apply { topMargin = a.dp(12) })
         card.addView(a.text("ยกเลิก", 14f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; isClickable = true; setPadding(0, a.dp(12), 0, 0); setOnClickListener { close() } }, -1, a.dp(44))
         refresh()

@@ -25,7 +25,7 @@ import kotlin.math.ceil
 import kotlin.math.roundToInt
 
 /** Reads a video's frames in order as RGB matrices (coded orientation; [rotation] says how to show them). */
-class FrameDecoder(c: Context, uri: Uri, private val fromUs: Long = 0L, private val toUs: Long = Long.MAX_VALUE) : AutoCloseable {
+class FrameDecoder(c: Context, uri: Uri, private val fromUs: Long = 0L, private val toUs: Long = Long.MAX_VALUE / 4) : AutoCloseable {
     class Frame(val ptsUs: Long, val rgb: Mat)
 
     private val extractor = MediaExtractor().apply { setDataSource(c, uri, null) }
