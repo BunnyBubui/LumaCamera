@@ -86,7 +86,74 @@ class VideoEditorActivity : ComponentActivity() {
     }
 
     /** A clip added after the main one; it plays whole and takes the main clip's frame shape. */
-    private class Extra(val uri: Uri, val duration: Long, val w: Int, val h: Int, val name: String, var thumb: Bitmap?)
+    /** One added clip on the sequence: the file, and the part of it [from, to) that plays. Two parts may share one file (after a split or a copy). */
+    private class Extra(val uri: Uri, val duration: Long, val w: Int, val h: Int, val name: String, var thumb: Bitmap?) {
+        var from = 0L; var to = duration
+        val len get() = to - from
+        fun copy() = Extra(uri, duration, w, h, name, thumb).also { it.from = from; it.to = to }
+    }
+    private var mainFrames: List<Bitmap> = emptyList()
+    private val clipFrames = HashMap<String, List<Bitmap>>()
+    private fun buildExtras(uris: List<String>, ranges: List<String>?, get: (String) -> Extra?): List<Extra> = uris.mapIndexedNotNull { i, u ->
+        get(u)?.copy()?.also { e -> ranges?.getOrNull(i)?.split(",")?.takeIf { it.size == 2 }?.let { r ->
+            e.from = (r[0].toLongOrNull() ?: 0L).coerceIn(0, e.duration); e.to = (r[1].toLongOrNull() ?: e.duration).coerceIn(e.from, e.duration) } } }
+    /** The film strip under the preview shows the clip that is on screen: the first clip, or the added clip that was picked. */
+    private fun showClipOnBar() {
+        val e = extras.getOrNull(playIndex - 1)
+        if (e == null) { trim.duration = duration; trim.end = end; trim.start = start; trim.end = end; trim.split = split; trim.frames = mainFrames; return }
+        trim.duration = e.duration; trim.end = e.to; trim.start = e.from; trim.end = e.to; trim.split = -1
+        ensureFrames(e); trim.frames = framesOf(e)
+    }
+    private val framesLoading = HashSet<String>()
+    private fun framesOf(e: Extra): List<Bitmap> = if (e.uri == source && mainFrames.isNotEmpty()) mainFrames else clipFrames[e.uri.toString()] ?: listOfNotNull(e.thumb)
+    private fun ensureFrames(e: Extra) {
+        val key = e.uri.toString()
+        if (e.uri == source || key in clipFrames || !framesLoading.add(key)) return
+        luma.readIo.execute {
+            val list = runCatching { val r = MediaMetadataRetriever(); try { r.setDataSource(this, e.uri)
+                (0 until 10).mapNotNull { i -> val t = e.duration * 1000 * (2 * i + 1) / 20
+                    if (android.os.Build.VERSION.SDK_INT >= 27) r.getScaledFrameAtTime(t, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 160, 160) else r.getFrameAtTime(t, MediaMetadataRetriever.OPTION_CLOSEST_SYNC) } } finally { runCatching { r.release() } } }.getOrDefault(emptyList())
+            runOnUiThread { if (!isDestroyed) { framesLoading.remove(key); if (list.isNotEmpty()) clipFrames[key] = list; if (extras.getOrNull(playIndex - 1)?.uri == e.uri) trim.frames = framesOf(e); refreshTimeline() } }
+        }
+    }
+
+    // ---------- Timeline ----------
+    private lateinit var timeline: StudioTimeline
+    private var laneCount = -1
+    private var pendingSeek = -1L; private var lastSeekAt = 0L
+    private fun mainLen() = ((end - start - cutMs()) / speed).toLong()
+    private fun refreshTimeline() {
+        if (!::timeline.isInitialized) return
+        val list = ArrayList<StudioTimeline.Clip>(extras.size + 1)
+        list += StudioTimeline.Clip(mainLen().coerceAtLeast(1), start, end, duration, speed, mainFrames.ifEmpty { listOfNotNull(firstFrame) }, false)
+        extras.forEach { e -> ensureFrames(e); list += StudioTimeline.Clip(e.len.coerceAtLeast(1), e.from, e.to, e.duration, 1f, framesOf(e), true) }
+        val lanes = ArrayList<List<StudioTimeline.Bar>>()
+        if (music != null) lanes += listOf(StudioTimeline.Bar(0, list.sumOf { it.len }, 0xff34d399.toInt(), musicName))
+        layers.forEach { l -> if (lanes.size < 4) lanes += listOf(StudioTimeline.Bar(l.at, l.length, when (l.kind) { VideoLayer.VIDEO -> 0xff4dc3ff.toInt(); VideoLayer.IMAGE -> 0xffff6fb5.toInt(); else -> 0xffa78bfa.toInt() }, layerName(l))) }
+        timeline.clips = list; timeline.lanes = lanes; timeline.selected = playIndex.coerceIn(0, list.size - 1); timeline.joined = transition != 0
+        if (lanes.size != laneCount) { laneCount = lanes.size; timeline.layoutParams = timeline.layoutParams.apply { height = dp(68 + 12 * lanes.size) } }
+        timeline.playhead = outNow()
+        timeline.invalidate()
+    }
+    /** Which clip, and where in its source file, a moment of the finished video falls. */
+    private fun locate(t: Long): Pair<Int, Long> {
+        var r = t.coerceAtLeast(0); val m = mainLen()
+        if (r < m || extras.isEmpty()) { var at = start + (r.coerceAtMost(m) * speed).toLong(); if (cutValid() && at >= cutFrom) at += cutMs(); return 0 to at.coerceIn(start, end) }
+        r -= m
+        extras.forEachIndexed { i, e -> if (r < e.len || i == extras.size - 1) return (i + 1) to (e.from + r).coerceIn(e.from, e.to); r -= e.len }
+        return 0 to start
+    }
+    /** Shows clip [k] at [at] ms of its source, without the transition animation: used while scrubbing and picking on the timeline. */
+    private fun jumpTo(k: Int, at: Long, exact: Boolean = true) {
+        if (k != playIndex || player == null) { playIndex = k.coerceIn(0, extras.size); pendingSeek = at; showClipOnBar(); trim.playhead = at.coerceIn(trim.start, trim.end); openPlayer() }
+        else {
+            trim.playhead = at.coerceIn(trim.start, trim.end)
+            val now = android.os.SystemClock.uptimeMillis()
+            if (!prepared) pendingSeek = at
+            else if (exact || now - lastSeekAt > 70) { lastSeekAt = now; player?.runCatching { if (android.os.Build.VERSION.SDK_INT >= 26) seekTo(at, if (exact) MediaPlayer.SEEK_CLOSEST else MediaPlayer.SEEK_CLOSEST_SYNC) else seekTo(at.toInt()) } }
+        }
+        showTime()
+    }
 
     // ---- Source ----
     private lateinit var source: Uri
@@ -154,7 +221,8 @@ class VideoEditorActivity : ComponentActivity() {
                 if (pos >= end - 30) { if (extras.isNotEmpty()) playClip(1) else { p.seekTo(start.toInt()); musicPlayer?.seekTo(0) } }
                 else if (cutValid() && pos in cutFrom until cutTo) p.seekTo(cutTo.toInt())
                 trim.playhead = pos.coerceIn(start, end)
-            }
+            } else if (playIndex > 0 && !switching) extras.getOrNull(playIndex - 1)?.let { e ->
+                if (pos >= e.to - 30) playClip(if (playIndex < extras.size) playIndex + 1 else 0) else trim.playhead = pos.coerceIn(e.from, e.to) }
             showTime(); syncLayerSound(true)
         }
         handler.postDelayed(this, 33)
@@ -172,7 +240,7 @@ class VideoEditorActivity : ComponentActivity() {
             val extra = readExtra(uri)
             runOnUiThread {
                 if (isDestroyed) return@runOnUiThread
-                if (extra == null) notice("เปิดวิดีโอนี้ไม่ได้") else { extraCache[uri.toString()] = extra; extras += extra; showTime(); showTool(10, false); notice("เพิ่มคลิปแล้ว · ส่งออกรวมเป็นไฟล์เดียว") }
+                if (extra == null) notice("เปิดวิดีโอนี้ไม่ได้") else { extraCache[uri.toString()] = extra; extras += extra.copy(); showTime(); showTool(10, false); notice("เพิ่มคลิปแล้ว · ส่งออกรวมเป็นไฟล์เดียว") }
             }
         }
     }
@@ -258,11 +326,27 @@ class VideoEditorActivity : ComponentActivity() {
         transport.addView(timeLabel, LinearLayout.LayoutParams(0, -2, 1f))
         transport.addView(EditorKit.chip(this, "เพิ่มคลิป", ADD) { pickClip.launch(arrayOf("video/*")) }, LinearLayout.LayoutParams(-2, dp(44)))
         root.addView(transport, -1, -2)
+        timeline = StudioTimeline(this).apply { contentDescription = "ไทม์ไลน์ ลากเพื่อเลื่อนเวลา แตะคลิปเพื่อเลือก ลากขอบคลิปที่เลือกเพื่อตัด กดค้างแล้วลากเพื่อสลับลำดับ" }
+        timeline.onSeek = { t -> if (player?.isPlaying == true) togglePlay(); val (k, at) = locate(t); jumpTo(k, at, false) }
+        timeline.onSelect = { i -> if (i != playIndex) jumpTo(i, if (i == 0) start else extras[i - 1].from); if (tool == 10) showTool(10, false) }
+        timeline.onTrim = { i, f, t, done ->
+            if (i == 0) { start = f; end = t; if (split !in (f + 300)..(t - 300)) split = -1; if (cutValid() && (cutFrom < f + 100 || cutTo > t - 100)) { cutFrom = -1; cutTo = -1 } }
+            else extras.getOrNull(i - 1)?.let { it.from = f; it.to = t }
+            if (playIndex == i) { showClipOnBar(); trim.playhead = trim.playhead.coerceIn(f, t); if (done) jumpTo(i, trim.playhead) }
+            showTime()
+        }
+        timeline.onMove = { i, j ->
+            val playing = extras.getOrNull(playIndex - 1)
+            if (i - 1 in extras.indices && j - 1 in extras.indices) { extras.add(j - 1, extras.removeAt(i - 1)); if (playing != null) playIndex = extras.indexOf(playing) + 1 }
+            showTime(); if (tool == 10) showTool(10, false)
+        }
+        root.addView(timeline, LinearLayout.LayoutParams(-1, dp(68)).apply { topMargin = dp(2) })
         trim = TrimBar(this).apply {
             contentDescription = "ช่วงคลิป ลากขอบซ้ายขวาเพื่อตัด"
         }
         // Set outside apply{}: inside it, start/end/split would name the bar's own fields, not the edit's.
-        trim.onRange = { s, e -> start = s; end = e; if (split !in (s + 300)..(e - 300)) split = -1; trim.split = split; seek(trim.playhead.coerceIn(s, e)); showTime() }
+        trim.onRange = { s, e -> val x = extras.getOrNull(playIndex - 1)
+            if (x != null) { x.from = s; x.to = e; seek(trim.playhead.coerceIn(s, e)); showTime() } else { start = s; end = e; if (split !in (s + 300)..(e - 300)) split = -1; trim.split = split; seek(trim.playhead.coerceIn(s, e)); showTime() } }
         trim.onSeek = { ms -> seek(ms) }
         root.addView(trim, LinearLayout.LayoutParams(-1, dp(64)).apply { setMargins(dp(12), dp(4), dp(12), dp(4)) })
         tools = FrameLayout(this).apply { clipChildren = false }
@@ -274,7 +358,7 @@ class VideoEditorActivity : ComponentActivity() {
         trim.duration = duration; trim.start = start; trim.end = end; trim.split = split
         luma.readIo.execute {
             val frames = frames(10)
-            runOnUiThread { if (!isDestroyed) { trim.frames = frames; firstFrame = frames.firstOrNull(); if (tool == 5) showTool(5, false) } }
+            runOnUiThread { if (!isDestroyed) { mainFrames = frames; if (playIndex == 0) trim.frames = frames; firstFrame = frames.firstOrNull(); if (tool == 5) showTool(5, false) } }
         }
         texture.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
             override fun onSurfaceTextureAvailable(s: SurfaceTexture, w: Int, h: Int) { surface = Surface(s); openPlayer() }
@@ -307,8 +391,8 @@ class VideoEditorActivity : ComponentActivity() {
     private fun restoreExtras(s: Bundle, done: () -> Unit = {}) {
         val uris = s.getStringArrayList("extras") ?: run { done(); return }
         luma.readIo.execute {
-            val list = uris.mapNotNull { u -> extraCache[u] ?: readExtra(Uri.parse(u)) }
-            runOnUiThread { if (!isDestroyed) { list.forEach { extraCache[it.uri.toString()] = it }; extras.clear(); extras += list; showTime(); if (tool == 10) showTool(10, false); done() } }
+            val read = uris.distinct().mapNotNull { u -> (extraCache[u] ?: readExtra(Uri.parse(u)))?.let { u to it } }.toMap()
+            runOnUiThread { if (!isDestroyed) { extraCache.putAll(read); extras.clear(); extras += buildExtras(uris, s.getStringArrayList("extraRanges")) { extraCache[it] }; showTime(); if (tool == 10) showTool(10, false); done() } }
         }
     }
 
@@ -346,7 +430,7 @@ class VideoEditorActivity : ComponentActivity() {
             runCatching {
                 setDataSource(this@VideoEditorActivity, clip); setSurface(s); isLooping = false
                 setOnPreparedListener { mp ->
-                    prepared = true; if (playIndex == 0) seekTo(this@VideoEditorActivity.start.toInt()); applySound(); layoutVideo(); arrived()
+                    prepared = true; if (playIndex == 0) seekTo(this@VideoEditorActivity.start.toInt()) else extras.getOrNull(playIndex - 1)?.let { if (it.from > 0) seekTo(it.from.toInt()) }; if (pendingSeek >= 0) { seekTo(pendingSeek.toInt()); pendingSeek = -1 }; applySound(); layoutVideo(); arrived()
                     if (autoPlay) { autoPlay = false; if (playIndex == 0) runCatching { mp.playbackParams = mp.playbackParams.setSpeed(speed) }; mp.start(); musicPlayer?.runCatching { start() }; playIcon.path = "M8 6v12 M16 6v12" }
                 }
                 setOnCompletionListener { if (playIndex == 0) seekTo(this@VideoEditorActivity.start.toInt()) else playClip(if (playIndex < extras.size) playIndex + 1 else 0) }
@@ -362,7 +446,7 @@ class VideoEditorActivity : ComponentActivity() {
         // Back at the start after the last clip: the music starts again too.
         if (k == 0) musicPlayer?.runCatching { seekTo(0) }
         switching = true
-        val go = Runnable { playIndex = k; switching = false; openPlayer(); showTime() }
+        val go = Runnable { playIndex = k; switching = false; showClipOnBar(); trim.playhead = trim.start; openPlayer(); showTime() }
         if ((transition == 1 || transition == 2) && !Glass.reduced(this)) {
             dip.setBackgroundColor(if (transition == 2) Color.WHITE else Color.BLACK)
             dip.animate().cancel(); dip.animate().alpha(1f).setDuration(VideoEdit.TRANSITION_MS / 2).withEndAction(go).start()
@@ -394,6 +478,7 @@ class VideoEditorActivity : ComponentActivity() {
         if (p.isPlaying) { p.pause(); musicPlayer?.pause(); syncLayerSound(false); playIcon.path = "M9 6.5v11l9-5.5z" }
         else {
             if (playIndex == 0 && p.currentPosition >= end - 60) p.seekTo(start.toInt())
+            extras.getOrNull(playIndex - 1)?.let { if (p.currentPosition >= it.to - 60) p.seekTo(it.from.toInt()) }
             runCatching { p.playbackParams = p.playbackParams.setSpeed(if (playIndex == 0) speed else 1f) }
             p.start(); musicPlayer?.let { mp -> runCatching { mp.seekTo(((p.currentPosition - start).coerceAtLeast(0) % max(1, mp.duration)).toInt()); mp.start() } }
             playIcon.path = "M8 6v12 M16 6v12"
@@ -401,17 +486,16 @@ class VideoEditorActivity : ComponentActivity() {
     }
     private fun seek(ms: Long) {
         trim.playhead = ms
-        // Touching the main clip's timeline brings the preview back to it.
-        if (playIndex != 0) { playClip(0, false); return }
         val p = player ?: return
         if (prepared) { if (android.os.Build.VERSION.SDK_INT >= 26) p.seekTo(ms, MediaPlayer.SEEK_CLOSEST) else p.seekTo(ms.toInt()) }
         showTime()
     }
     private fun clock(ms: Long) = String.format(Locale.US, "%d:%02d.%d", ms / 60000, ms / 1000 % 60, ms / 100 % 10)
     private fun showTime() {
+        refreshTimeline()
         val length = ((end - start) / speed).toLong()
-        val more = extras.sumOf { it.duration }
-        timeLabel.text = (if (playIndex > 0) "คลิป ${playIndex + 1}/${extras.size + 1}  ·  " else "${clock(trim.playhead - start)} / ${clock(end - start)}") +
+        val more = extras.sumOf { it.len }
+        timeLabel.text = (if (playIndex > 0) "คลิป ${playIndex + 1}/${extras.size + 1}  ·  ${clock(trim.playhead - trim.start)} / ${clock(trim.end - trim.start)}" else "${clock(trim.playhead - start)} / ${clock(end - start)}") +
             (if (extras.isNotEmpty()) "  ·  รวม ${clock(length + more)}" else if (speed != 1f) "  ·  ได้คลิป ${clock(length)}" else "") + (if (split >= 0 && extras.isEmpty() && layers.isEmpty()) "  ·  แยกเป็น 2 คลิป" else "")
         if (layers.isNotEmpty()) { placeLayers(); lanes?.playhead = outNow() }
     }
@@ -469,6 +553,8 @@ class VideoEditorActivity : ComponentActivity() {
     private fun showTool(i: Int, animate: Boolean = true) {
         val dir = if (animate) i.compareTo(tool) else 0
         tool = i; toolBar.select(i, animate)
+        // Cut, split-into-two-files and speed belong to the first clip, so the preview goes back to it.
+        if (i in 0..2 && playIndex != 0 && !switching) playClip(0, false)
         // The layer lanes need room; the preview gives way smoothly.
         val want = dp(if (i == LAYER_TOOL) 276 else if (i == 2 && speed < 1f) 150 else 124)
         if (tools.layoutParams.height != want) {
@@ -654,16 +740,34 @@ class VideoEditorActivity : ComponentActivity() {
             addView(text(label, 10.5f, Color.WHITE, true).apply { setShadowLayer(4f, 0f, 1f, 0xcc000000.toInt()); setPadding(dp(5), 0, dp(5), dp(3)) }, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.START))
         }
         row.addView(card(firstFrame, "1 · " + clock(end - start), playIndex == 0) { playClip(0, false) }, LinearLayout.LayoutParams(dp(76), dp(56)).apply { rightMargin = dp(6) })
-        extras.forEachIndexed { i, e -> row.addView(card(e.thumb, "${i + 2} · " + clock(e.duration), playIndex == i + 1) { playClip(i + 1, false); showTool(10, false) }, LinearLayout.LayoutParams(dp(76), dp(56)).apply { rightMargin = dp(6) }) }
+        extras.forEachIndexed { i, e -> row.addView(card(e.thumb, "${i + 2} · " + clock(e.len), playIndex == i + 1) { playClip(i + 1, false); showTool(10, false) }, LinearLayout.LayoutParams(dp(76), dp(56)).apply { rightMargin = dp(6) }) }
         row.addView(FrameLayout(this).apply { background = glass(14, 0x26ffffff); isClickable = true; contentDescription = "เพิ่มคลิป"; glassTouch(); setOnClickListener { pickClip.launch(arrayOf("video/*")) }
             addView(IconView(this@VideoEditorActivity, ADD, 2f), FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER)) }, LinearLayout.LayoutParams(dp(56), dp(56)))
         col.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(row) }, -1, -2)
         val chosen = playIndex - 1
-        if (chosen in extras.indices) col.addView(EditorKit.actions(this, listOf(
-            EditorKit.action(this, LEFT, "เลื่อนก่อน") { if (chosen > 0) { extras.add(chosen - 1, extras.removeAt(chosen)); playIndex = chosen } ; showTool(10, false) },
-            EditorKit.action(this, RIGHT, "เลื่อนหลัง") { if (chosen < extras.size - 1) { extras.add(chosen + 1, extras.removeAt(chosen)); playIndex = chosen + 2 }; showTool(10, false) },
-            EditorKit.action(this, Icons.CLOSE, "เอาออก") { extras.removeAt(chosen); playClip(0, false); showTime(); showTool(10, false) })), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(2) })
-        else col.addView(text(if (extras.isEmpty()) "เพิ่มคลิปเพื่อต่อกันเป็นวิดีโอเดียว" else "แตะคลิปที่เพิ่มเพื่อเลื่อนลำดับหรือเอาออก · ตัดและความเร็วใช้กับคลิปแรก", 11.5f, Glass.TEXT3).apply { gravity = Gravity.CENTER; setPadding(dp(16), dp(8), dp(16), 0) }, -1, -2)
+        val copyIcon = "M8 8h11v11H8z M5 16V5h11"
+        fun go(k: Int) { playIndex = k; showClipOnBar(); playClip(k, false); showTime(); showTool(10, false) }
+        if (chosen in extras.indices) { val e = extras[chosen]
+            col.addView(EditorKit.actionRow(this, listOf(
+                EditorKit.action(this, EditorKit.SPLIT, "แยกตรงนี้") { val at = trim.playhead
+                    if (at - e.from < 300 || e.to - at < 300) notice("เลื่อนหัวอ่านให้ห่างจากขอบคลิปอย่างน้อย 0.3 วินาที")
+                    else { val second = e.copy().also { it.from = at }; e.to = at; extras.add(chosen + 1, second); go(chosen + 1) } },
+                EditorKit.action(this, copyIcon, "ทำสำเนา") { extras.add(chosen + 1, e.copy()); go(chosen + 2) },
+                EditorKit.action(this, LEFT, "เลื่อนก่อน") { if (chosen > 0) { extras.add(chosen - 1, extras.removeAt(chosen)); playIndex = chosen }; showTool(10, false) },
+                EditorKit.action(this, RIGHT, "เลื่อนหลัง") { if (chosen < extras.size - 1) { extras.add(chosen + 1, extras.removeAt(chosen)); playIndex = chosen + 2 }; showTool(10, false) },
+                EditorKit.action(this, Icons.CLOSE, "ลบ") { extras.removeAt(chosen); go(if (chosen < extras.size) chosen + 1 else chosen) })), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(2) })
+        } else col.addView(EditorKit.actionRow(this, listOf(
+            // Splitting the first clip turns its second half into a clip of its own, which can then be moved, trimmed or removed.
+            EditorKit.action(this, EditorKit.SPLIT, "แยกตรงนี้") { val at = trim.playhead
+                if (speed != 1f || cutValid()) notice("คลิปแรกที่ปรับความเร็วหรือตัดช่วงกลางออกแล้ว แยกเป็นสองคลิปไม่ได้")
+                else if (at - start < 300 || end - at < 300) notice("เลื่อนหัวอ่านให้ห่างจากขอบคลิปอย่างน้อย 0.3 วินาที")
+                else { val part = Extra(source, duration, videoW, videoH, "คลิปแรก", firstFrame).also { it.from = at; it.to = end }
+                    extraCache.getOrPut(source.toString()) { Extra(source, duration, videoW, videoH, "คลิปแรก", firstFrame) }
+                    extras.add(0, part); setRange(start, at); split = -1; trim.split = -1; go(0) } },
+            EditorKit.action(this, copyIcon, "ทำสำเนา") {
+                if (speed != 1f || cutValid()) notice("สำเนาของคลิปแรกจะไม่มีความเร็วและการตัดช่วงกลาง")
+                extraCache.getOrPut(source.toString()) { Extra(source, duration, videoW, videoH, "คลิปแรก", firstFrame) }
+                extras.add(0, Extra(source, duration, videoW, videoH, "คลิปแรก", firstFrame).also { it.from = start; it.to = end }); go(1) })), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(2) })
     }
     private fun transitionTools(col: LinearLayout) {
         val icons = listOf(EditorKit.SCISSORS, "M4 12h16 M4 6h16 M4 18h16", "M12 3v4 M12 17v4 M3 12h4 M17 12h4 M6 6l2.5 2.5 M15.5 15.5L18 18 M18 6l-2.5 2.5 M8.5 15.5L6 18", "M10 4H4v6 M14 4h6v6 M10 20H4v-6 M14 20h6v-6")
@@ -719,11 +823,11 @@ class VideoEditorActivity : ComponentActivity() {
     // ---------- Layers ----------
     private fun cutMs() = if (cutValid()) cutTo - cutFrom else 0L
     /** Length of the finished video in ms (main clip after cut and speed, then the added clips). */
-    private fun totalOut() = ((end - start - cutMs()) / speed).toLong() + extras.sumOf { it.duration }
+    private fun totalOut() = ((end - start - cutMs()) / speed).toLong() + extras.sumOf { it.len }
     /** Where the preview is, in ms of the finished video. */
     private fun outNow(): Long {
         val main = ((end - start - cutMs()) / speed).toLong()
-        if (playIndex > 0) return main + extras.take(playIndex - 1).sumOf { it.duration } + (player?.currentPosition?.toLong() ?: 0L)
+        if (playIndex > 0) return main + extras.take(playIndex - 1).sumOf { it.len } + (trim.playhead - extras[playIndex - 1].from).coerceAtLeast(0)
         var t = trim.playhead - start
         if (cutValid() && trim.playhead >= cutTo) t -= cutMs()
         return (t.coerceAtLeast(0) / speed).toLong()
@@ -912,11 +1016,10 @@ class VideoEditorActivity : ComponentActivity() {
         applying = true
         val keepTool = tool; val keepPick = layerPick
         restore(b); tool = keepTool; layerPick = keepPick.coerceAtMost(layers.size - 1)
-        trim.start = start; trim.end = end; trim.split = split
         prepareMusic(); applySound(); applyLook(); layoutVideo(); rebuildStickers(); rebuildLayers(); loadLayerThumbs()
         val uris = b.getStringArrayList("extras") ?: arrayListOf()
-        fun done() { if (playIndex > extras.size) playClip(0, false); showTool(tool, false); showTime(); committed = state(); committedKey = StudioProjects.key(committed!!); pendingKey = committedKey; applying = false }
-        if (uris.all { it in extraCache }) { extras.clear(); extras += uris.map { extraCache[it]!! }; done() } else restoreExtras(b) { done() }
+        fun done() { if (playIndex > extras.size) playClip(0, false) else { showClipOnBar(); trim.playhead = trim.playhead.coerceIn(trim.start, trim.end) }; showTool(tool, false); showTime(); committed = state(); committedKey = StudioProjects.key(committed!!); pendingKey = committedKey; applying = false }
+        if (uris.all { it in extraCache }) { extras.clear(); extras += buildExtras(uris, b.getStringArrayList("extraRanges")) { extraCache[it] }; done() } else restoreExtras(b) { done() }
         if (playIndex == 0) seek(trim.playhead.coerceIn(start, end))
     }
     private fun saveProject() {
@@ -1053,7 +1156,7 @@ class VideoEditorActivity : ComponentActivity() {
         return VideoEdit.composition(VideoEditSpec(f?.let { Uri.fromFile(it.file) } ?: source, at(from), at(to), if (turns % 2 == 1) vh else vw, if (turns % 2 == 1) vw else vh,
         speed * n, CROPS[cropIndex].second, caption, place, textColor, textBig, if (looked()) colour() else null, music, f == null && hasAudio && keepSound && speed in SOUND_MIN..SOUND_MAX,
         turns, mirror, volume, musicVolume, if (cut) at(cutFrom) else -1L, if (cut) at(cutTo) else -1L, textBox,
-        extras.map { VideoPart(it.uri, 0, it.duration) }, if (extras.isEmpty()) 0 else transition, stickers.toList(), clampedLayers(), shrinkShort, shrinkFps), applicationContext)
+        extras.map { VideoPart(it.uri, it.from, it.to) }, if (extras.isEmpty()) 0 else transition, stickers.toList(), clampedLayers(), shrinkShort, shrinkFps), applicationContext)
     }
 
     /** Export problems stay on screen until dismissed, so the reason can be read (and reported). */
@@ -1077,7 +1180,7 @@ class VideoEditorActivity : ComponentActivity() {
         out.putBoolean("sound", keepSound); out.putInt("tool", tool)
         out.putFloatArray("adjust", adjust); out.putInt("turns", turns); out.putBoolean("mirror", mirror); out.putFloat("volume", volume); out.putFloat("musicVolume", musicVolume)
         out.putLong("cutFrom", cutFrom); out.putLong("cutTo", cutTo); out.putBoolean("textBox", textBox)
-        out.putStringArrayList("extras", ArrayList(extras.map { it.uri.toString() })); out.putInt("transition", transition)
+        out.putStringArrayList("extras", ArrayList(extras.map { it.uri.toString() })); out.putStringArrayList("extraRanges", ArrayList(extras.map { "${it.from},${it.to}" })); out.putInt("transition", transition)
         out.putStringArrayList("stickers", ArrayList(stickers.map { "${it.x}|${it.y}|${it.big}|${it.text}" }))
         out.putString("layers", VideoLayer.save(layers)); out.putInt("layerPick", layerPick); out.putBoolean("smooth", smooth)
     }
