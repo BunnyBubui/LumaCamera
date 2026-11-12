@@ -353,7 +353,7 @@ class CameraActivity : ComponentActivity() {
         editor = GlassSheet(host, { handlePivot() }) { pushBack(it) }
         lookSheet = GlassSheet(host, { handlePivot() }) { pushBack(it) }
         // Safety net: once every sheet and menu is gone the backdrop must be gone too, whatever animation ran late.
-        val calm = { host.postDelayed({ calmBackdrop() }, 520) }
+        val calm: () -> Unit = { host.postDelayed({ calmBackdrop() }, 520) }
         panel.onClosed = calm; editor.onClosed = calm; lookSheet.onClosed = calm
         // One modal owner: a menu over a sheet adds no second dim, and the sheet below keeps its push-back.
         menu.over = { panel.showing || editor.showing || lookSheet.showing }
