@@ -121,7 +121,7 @@ class InlineVideo(c: Context, private val uri: Uri, still: Bitmap?, private val 
     }
     /** A tiny, blurred copy of a frame: shrink to 24 px wide, shrink again, grow back. The source is left untouched. */
     private fun soft(b: Bitmap): Bitmap? = runCatching {
-        val w = 24; val h = (24f * b.height / b.width).toInt().coerceIn(4, 96)
+        val w = 32; val h = (32f * b.height / b.width).toInt().coerceIn(6, 128)
         val small = Bitmap.createScaledBitmap(b, w, h, true); val tiny = Bitmap.createScaledBitmap(small, (w / 3).coerceAtLeast(2), (h / 3).coerceAtLeast(2), true)
         Bitmap.createScaledBitmap(tiny, w, h, true).also { if (it !== small && small !== b) small.recycle(); if (it !== tiny) tiny.recycle() }
     }.getOrNull()
@@ -149,7 +149,7 @@ class InlineVideo(c: Context, private val uri: Uri, still: Bitmap?, private val 
     private class Reflection(c: Context) : View(c) {
         var aspect = 0f
         private var g: Bitmap? = null
-        private val paint = Paint(Paint.FILTER_BITMAP_FLAG).apply { colorFilter = android.graphics.ColorMatrixColorFilter(android.graphics.ColorMatrix().apply { setSaturation(1.35f); postConcat(android.graphics.ColorMatrix().apply { setScale(0.6f, 0.6f, 0.6f, 1f) }) }) }
+        private val paint = Paint(Paint.FILTER_BITMAP_FLAG).apply { colorFilter = android.graphics.ColorMatrixColorFilter(android.graphics.ColorMatrix().apply { setSaturation(1.5f); postConcat(android.graphics.ColorMatrix().apply { setScale(0.78f, 0.78f, 0.78f, 1f) }) }) }
         private val r = RectF()
         init { importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }
         fun set(b: Bitmap?) { mixAnim?.cancel(); old = null; mix = 1f; g = b; invalidate() }
@@ -167,18 +167,18 @@ class InlineVideo(c: Context, private val uri: Uri, still: Bitmap?, private val 
             g?.let { paint.alpha = if (o != null && mix < 1f) (255 * mix).toInt() else 255; drawGlow(cv, it) }
             paint.alpha = 255
         }
+        private val dst = RectF()
+        /**
+         * Ambient light over the whole screen, like the Chrome extensions for YouTube: the small blurred frame is
+         * stretched across the entire view, so the top of the screen takes the colours of the top of the picture, the
+         * sides take the sides, and the glow reaches every corner (the old mirror stopped one picture-height away
+         * from the clip, which left dark bands above and below a wide video).
+         */
         private fun drawGlow(cv: Canvas, b: Bitmap) {
             val w = width.toFloat(); val h = height.toFloat()
-            if (!b.isRecycled && aspect > 0f && w > 0f) {
-                val fw: Float; val fh: Float
-                if (w / h > aspect) { fh = h; fw = h * aspect } else { fw = w; fh = w / aspect }
-                r.set((w - fw) / 2, (h - fh) / 2, (w + fw) / 2, (h + fh) / 2)
-                val reach = maxOf(w, h)
-                if (r.top > 0.5f) { cv.save(); cv.clipRect(0f, 0f, w, r.top); cv.scale(1f, -1f, 0f, r.top); cv.drawBitmap(b, null, RectF(r.left - reach, r.top, r.right + reach, r.bottom), paint); cv.restore() }
-                if (r.bottom < h - 0.5f) { cv.save(); cv.clipRect(0f, r.bottom, w, h); cv.scale(1f, -1f, 0f, r.bottom); cv.drawBitmap(b, null, RectF(r.left - reach, r.top, r.right + reach, r.bottom), paint); cv.restore() }
-                if (r.left > 0.5f) { cv.save(); cv.clipRect(0f, r.top, r.left, r.bottom); cv.scale(-1f, 1f, r.left, 0f); cv.drawBitmap(b, null, r, paint); cv.restore() }
-                if (r.right < w - 0.5f) { cv.save(); cv.clipRect(r.right, r.top, w, r.bottom); cv.scale(-1f, 1f, r.right, 0f); cv.drawBitmap(b, null, r, paint); cv.restore() }
-            }
+            if (b.isRecycled || w <= 0f || h <= 0f) return
+            dst.set(0f, 0f, w, h)
+            cv.drawBitmap(b, null, dst, paint)
         }
     }
     /** Soft dark bands over the clip where the bars float, so the buttons read on any picture. */

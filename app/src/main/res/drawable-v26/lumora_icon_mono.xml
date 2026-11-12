@@ -1,5 +1,6 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
-    <path android:strokeColor="#FFFFFFFF" android:strokeWidth="4.6" android:fillColor="#00000000" android:pathData="M54,35a19,19 0,1 1,0 38a19,19 0,1 1,0 -38"/>
-    <path android:fillColor="#FFFFFFFF" android:pathData="M54,44a10,10 0,1 1,0 20a10,10 0,1 1,0 -20"/>
-    <path android:fillColor="#FFFFFFFF" android:pathData="M72,26Q73.1,33.9 80,35Q73.1,36.1 72,44Q70.9,36.1 64,35Q70.9,33.9 72,26Z"/>
+    <!-- Camera body with a bump, a lens ring and a small star of light, for themed icons. -->
+    <path android:strokeColor="#FFFFFFFF" android:strokeWidth="4" android:strokeLineJoin="round" android:fillColor="#00000000" android:pathData="M30,40h9l4,-7h22l4,7h9a4,4 0 0,1 4,4v28a4,4 0 0,1 -4,4h-48a4,4 0 0,1 -4,-4v-28a4,4 0 0,1 4,-4z"/>
+    <path android:strokeColor="#FFFFFFFF" android:strokeWidth="4" android:fillColor="#00000000" android:pathData="M54,46a12,12 0,1 1,0 24a12,12 0,1 1,0 -24"/>
+    <path android:fillColor="#FFFFFFFF" android:pathData="M60,50Q60.7,53.3 64,54Q60.7,54.7 60,58Q59.3,54.7 56,54Q59.3,53.3 60,50Z"/>
 </vector>

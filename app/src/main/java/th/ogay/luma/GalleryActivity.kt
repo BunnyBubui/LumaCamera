@@ -78,6 +78,17 @@ class GalleryActivity : ComponentActivity() {
         r.data?.getStringExtra("open")?.let { if (r.resultCode == RESULT_OK) { selected = it; useAi = false; viewerFromCamera = false; reload() } }
     }
     private var queryText = ""
+    /**
+     * Where each grid page was scrolled to: the first row on screen (by item, so new photos do not shift it) and how far
+     * it sits from the top. A page is one combination of tab, album, kind and search, so every page remembers its own
+     * place and a picture opened and closed again brings the grid back to where it was.
+     */
+    private class Spot(val key: String?, val pos: Int, val top: Int)
+    private val gridSpots = HashMap<String, Spot>()
+    private var albumsSpot = 0
+    /** The picture last on screen in the viewer, brought into view when the grid comes back. */
+    private var lastViewed: String? = null
+    private fun spotKey() = "$section|$albumKind|$album|$category|${queryText.trim().lowercase()}"
     private var lastItems: List<Item> = emptyList()
     private lateinit var host: FrameLayout
     private lateinit var root: LinearLayout
@@ -190,6 +201,7 @@ class GalleryActivity : ComponentActivity() {
 
     private fun reload() {
         val id = selected; val version = ++readVersion
+        if (id != null) lastViewed = id
         val kind = albumKind; val albumsTab = section == 1 && kind == null
         favouritesOnly = kind == "fav"
         luma.readIo.execute {
@@ -620,7 +632,40 @@ class GalleryActivity : ComponentActivity() {
             override fun getView(position: Int, previous: View?, parent: ViewGroup?): View = cell(previous as? FrameLayout, shown[position], grid.width)
         }
         grid.adapter = adapter
+        // Scroll memory: written only while armed, so the old list's position never lands on a new page's key.
+        var armed = false
+        fun restore(first: Boolean) {
+            val spot = gridSpots[spotKey()]; val want = if (first) lastViewed else null
+            grid.post {
+                if (isDestroyed) return@post
+                var pos = 0; var top = 0
+                if (spot != null) {
+                    val i = spot.key?.let { k -> shown.indexOfFirst { itemKey(it) == k } } ?: -1
+                    pos = if (i >= 0) i else spot.pos.coerceAtMost((shown.size - 1).coerceAtLeast(0)); top = spot.top
+                }
+                if (shown.isNotEmpty()) grid.setSelectionFromTop(pos, top)
+                grid.post {
+                    // Coming back from the viewer after swiping on to another picture: make sure that one is on screen.
+                    if (want != null) {
+                        val idx = shown.indexOfFirst { itemKey(it) == want }
+                        if (idx >= 0 && (idx < grid.firstVisiblePosition || idx > grid.lastVisiblePosition)) grid.setSelectionFromTop(idx, grid.height / 3)
+                        lastViewed = null
+                    }
+                    armed = true
+                }
+            }
+        }
+        grid.setOnScrollListener(object : AbsListView.OnScrollListener {
+            override fun onScrollStateChanged(v: AbsListView, state: Int) {}
+            override fun onScroll(v: AbsListView, first: Int, visible: Int, total: Int) {
+                if (!armed || shown.isEmpty()) return
+                val c = v.getChildAt(0) ?: return
+                gridSpots[spotKey()] = Spot(shown.getOrNull(first)?.let { itemKey(it) }, first, c.top)
+            }
+        })
+        var firstApply = true
         fun apply() {
+            armed = false
             val q = queryText.trim().lowercase()
             val picked = all.filter(cats[category].second).filter { inAlbum(it) }.filter { pickAllows(it) }
                 .filter { q.isEmpty() || q in "${it.name} ${it.album} ${formatTime(it.time)} ${it.note} ${it.shot?.captureNote ?: ""} ${it.shot?.reason?.description ?: ""}".lowercase() }
@@ -640,12 +685,13 @@ class GalleryActivity : ComponentActivity() {
             empty.text = if (all.isEmpty()) (if (device) "ไม่พบรูปหรือวิดีโอในเครื่อง" else "รูปและวิดีโอที่ถ่ายด้วย Lumora จะปรากฏที่นี่") else "ไม่พบรายการที่ตรงกัน"
             empty.visibility = if (shown.isEmpty()) View.VISIBLE else View.GONE
             if (!Glass.reduced(this)) { grid.alpha = 0.4f; grid.scaleX = 0.97f; grid.scaleY = 0.97f; grid.animate().alpha(1f).scaleX(1f).scaleY(1f).setInterpolator(Glass.SPRING).setDuration(360).start() }
+            restore(firstApply); firstApply = false
         }
         strip.onSelect = { i -> category = i; apply() }
         // Sort order: a glass dropdown on the count at the right of the grid heading.
         (gridHead.getChildAt(1) as TextView).apply {
             isClickable = true; minHeight = dp(48); gravity = Gravity.CENTER_VERTICAL; setPadding(dp(10), 0, 0, 0); contentDescription = "เรียงลำดับรายการ"
-            pressMenu(sortMenu) { v -> sortMenu.show(v, "เรียงตาม", SORTS.mapIndexed { i, n -> GlassMenu.Option(n, SORT_ICONS[i]) }, sortOrder) { i -> sortOrder = i; apply(); grid.setSelection(0) } }
+            pressMenu(sortMenu) { v -> sortMenu.show(v, "เรียงตาม", SORTS.mapIndexed { i, n -> GlassMenu.Option(n, SORT_ICONS[i]) }, sortOrder) { i -> sortOrder = i; gridSpots.remove(spotKey()); apply() } }
         }
         field.addTextChangedListener(object : TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
@@ -830,6 +876,8 @@ class GalleryActivity : ComponentActivity() {
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, 0, 0, dp(16)) }
         val scroll = ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(col) }
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        // The albums page remembers how far it was scrolled; the listener starts only after the place is restored.
+        scroll.post { if (!isDestroyed) { scroll.scrollTo(0, albumsSpot); scroll.setOnScrollChangeListener { _, _, y, _, _ -> albumsSpot = y } } }
         val buckets = if (device) ordered(albums(items)) else emptyList()
         val hidden = prefList("album_hidden"); val pinned = prefList("album_pinned")
         if (managing) {
@@ -1033,7 +1081,7 @@ class GalleryActivity : ComponentActivity() {
         val next = neighbourItem(dir)
         if (next == null) { if (::inspect.isInitialized) inspect.stay(); return }
         stepping = true
-        selected = next.shot?.id ?: next.key; useAi = false
+        selected = next.shot?.id ?: next.key; useAi = false; lastViewed = selected
         val same = !next.video && ::inspect.isInitialized && inspect.isAttachedToWindow && viewerKind == (if (next.shot != null) "shot" else "device")
         if (!same) { reload(); return }
         inspect.show(next.uri, near[next.key] ?: cache.get(next.key))
