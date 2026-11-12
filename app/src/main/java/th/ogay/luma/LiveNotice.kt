@@ -48,8 +48,9 @@ object LiveNotice {
             val b = Notification.Builder(c, CHANNEL)
                 .setSmallIcon(R.drawable.ic_stat_ai).setContentTitle(title).setContentText(text)
                 .setStyle(style).setOngoing(true).setOnlyAlertOnce(true).setCategory(Notification.CATEGORY_PROGRESS)
-                .setRequestPromotedOngoing(true).setShortCriticalText(if (p < 0) "…" else "$p%")
                 .setColor(Glass.ACCENT).setContentIntent(open)
+                // Live-update request and the status-bar chip text (the same extras the builder setters write).
+                .addExtras(android.os.Bundle().apply { putBoolean("android.requestPromotedOngoing", true); putString("android.shortCriticalText", if (p < 0) "…" else "$p%") })
             icon(c)?.let { b.setLargeIcon(Icon.createWithBitmap(it)) }
             cancel?.let { b.addAction(Notification.Action.Builder(Icon.createWithResource(c, android.R.drawable.ic_menu_close_clear_cancel), "ยกเลิก", it).build()) }
             return b.build()
