@@ -64,7 +64,7 @@ python model/benchmark_sr3.py --manifest /private/sr3/manifest.json --output /pr
 
 ### Checkpoint results and evidence
 
-- **Local synthetic test (Python/Pillow/NumPy):** 9/9 unit tests passed, for shape/provenance/CER/JSON behaviors. This is **not** a natural-image accuracy assessment.
+- **Local synthetic test (Python/Pillow/NumPy):** 10/10 unit tests passed, for shape/provenance/CER/JSON behaviors. This is **not** a natural-image accuracy assessment.
 - **Android + emulator:** must be verified on this PR's final commit by GitHub Actions; prior successful PR #22 checks do not cover this branch.
 - **Reno 15 / non-OPPO human A/B:** **not performed** in this phase; no real-quality scores asserted.
 - **New trained SR3 x2 or x4 weights:** **not present**. Phase 2 is dataset engineering; Phase 3/4 cover training.
