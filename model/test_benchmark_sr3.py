@@ -39,6 +39,16 @@ class BenchmarkSR3Tests(unittest.TestCase):
         self.assertEqual(report["summary"]["scale:2"]["independentHR"], 1)
         json.dumps(report, allow_nan=False)
 
+    def test_valid_three_and_four_times_scales(self):
+        for scale in (3, 4):
+            Image.new("RGB", (5 * scale, 4 * scale), (70, 100, 130)).save(self.root / "classic.png")
+            Image.new("RGB", (5 * scale, 4 * scale), (72, 102, 132)).save(self.root / "natural.png")
+            Image.new("RGB", (5 * scale, 4 * scale), (71, 101, 131)).save(self.root / "reference.png")
+            self.case["scale"] = scale
+            report = run_manifest(self.manifest())
+            self.assertEqual(report["cases"][0]["natural"]["width"], 5 * scale)
+            self.assertIn(f"scale:{scale}", report["summary"])
+
     def test_reject_mismatched_export_size(self):
         self.case["scale"] = 3
         with self.assertRaisesRegex(ValueError, "expected both exports"):
