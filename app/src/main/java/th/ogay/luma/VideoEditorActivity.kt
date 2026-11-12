@@ -80,6 +80,7 @@ class VideoEditorActivity : ComponentActivity() {
         private const val ADD = "M12 5v14 M5 12h14"
         private const val LAYERS = "M12 3l9 5-9 5-9-5z M3 12.5l9 5 9-5 M3 17l9 5 9-5"
         private const val LAYER_TOOL = 13
+        private const val SMOOTH = "M3 17c3 0 4-10 9-10s6 10 9 10"
         private const val LEFT = "M15 6l-6 6 6 6"
         private const val RIGHT = "M9 6l6 6-6 6"
     }
@@ -113,6 +114,10 @@ class VideoEditorActivity : ComponentActivity() {
     private var layerPick = -1
     private var lanes: LayerLanes? = null
     private var pendingKind = VideoLayer.VIDEO
+    // ---- Smooth slow motion (optical flow, made at export) ----
+    private var smooth = false
+    private var flow: SlowFlow.Result? = null
+    private val flowCancel = java.util.concurrent.atomic.AtomicBoolean(false)
     private fun cutValid() = cutFrom >= 0 && cutTo > cutFrom
 
     // ---- Views ----
@@ -440,7 +445,7 @@ class VideoEditorActivity : ComponentActivity() {
         val dir = if (animate) i.compareTo(tool) else 0
         tool = i; toolBar.select(i, animate)
         // The layer lanes need room; the preview gives way smoothly.
-        val want = dp(if (i == LAYER_TOOL) 276 else 124)
+        val want = dp(if (i == LAYER_TOOL) 276 else if (i == 2 && speed < 1f) 150 else 124)
         if (tools.layoutParams.height != want) {
             if (!animate || Glass.reduced(this)) { tools.layoutParams.height = want; tools.requestLayout() }
             else android.animation.ValueAnimator.ofInt(tools.layoutParams.height, want).apply { duration = 260; interpolator = Glass.EASE
@@ -520,6 +525,11 @@ class VideoEditorActivity : ComponentActivity() {
         col.addView(slider, LinearLayout.LayoutParams(-1, dp(46)).apply { setMargins(dp(12), 0, dp(12), 0) })
         col.addView(android.widget.HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(presets) }, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.CENTER_HORIZONTAL })
         describe(speed)
+        // Below 1×: optionally make new in-between frames by optical flow, so slow motion runs smoothly.
+        if (speed < 1f) col.addView(EditorKit.chip(this, if (smooth) "สโลว์ลื่น (Optical flow) · เปิด" else "สโลว์ลื่น (Optical flow) · ปิด", SMOOTH, smooth) {
+            smooth = !smooth; showTool(2, false)
+            if (smooth) notice("สร้างเฟรมแทรก ${SlowFlow.factor(speed) - 1} เฟรมต่อเฟรมตอนส่งออก · ใช้เวลานานขึ้น · ไม่มีเสียงคลิป")
+        }, LinearLayout.LayoutParams(-2, dp(32)).apply { gravity = Gravity.CENTER_HORIZONTAL; topMargin = dp(4) })
     }
     private fun speedName(s: Float) = (if (s == s.toInt().toFloat()) "${s.toInt()}" else "$s") + "×"
     private fun setRange(s: Long, e: Long) {
@@ -843,7 +853,7 @@ class VideoEditorActivity : ComponentActivity() {
     }
 
     private fun leave() {
-        if (transformer != null) { cancelExport(); return }
+        if (transformer != null || overlay != null) { cancelExport(); return }
         if (!changed()) { finish(); return }
         EditorKit.askSave(this, "บันทึกการตัดต่อไหม", "ส่งออกเป็นคลิปใหม่ วิดีโอต้นฉบับยังอยู่ครบ", "ส่งออก", { export() }, { finish() })
     }
@@ -859,7 +869,26 @@ class VideoEditorActivity : ComponentActivity() {
         if (split >= 0 && whole) notice("มีหลายคลิปหรือเลเยอร์ · ส่งออกรวมเป็นไฟล์เดียว ไม่แยก")
         val parts = if (split >= 0 && !whole) listOf(start to split, split to end) else listOf(start to end)
         showProgress()
-        exportPart(parts, 0, System.currentTimeMillis(), mutableListOf())
+        val id = System.currentTimeMillis()
+        if (smooth && speed < 1f) { renderFlow(id); return }
+        exportPart(parts, 0, id, mutableListOf())
+    }
+    /** Builds the in-between frames first (on its own thread), then exports the smooth clip like any other. */
+    private fun renderFlow(id: Long) {
+        flowCancel.set(false)
+        val n = SlowFlow.factor(speed)
+        overlayText?.text = "กำลังสร้างเฟรมลื่น · 0%"
+        val out = File(cacheDir, "slowflow-$id.mp4")
+        Thread {
+            var shown = -1
+            val r = runCatching { SlowFlow.render(this, source, start, end, n, out, flowCancel) { f ->
+                val pc = (f * 100).toInt(); if (pc != shown) { shown = pc; runOnUiThread { overlayText?.text = "กำลังสร้างเฟรมลื่น · $pc%" } } } }
+            runOnUiThread {
+                if (isDestroyed) { out.delete(); return@runOnUiThread }
+                r.onSuccess { flow = it; exportPart(listOf(start to end), 0, id, mutableListOf()) }
+                    .onFailure { out.delete(); if (!flowCancel.get()) { hideProgress(); failed("สร้างเฟรมลื่นไม่ได้ · ${it.message ?: it.javaClass.simpleName}") } }
+            }
+        }.apply { name = "slowflow"; priority = Thread.NORM_PRIORITY - 1 }.start()
     }
     private fun exportPart(parts: List<Pair<Long, Long>>, index: Int, id: Long, done: MutableList<File>) {
         val dir = File(filesDir, "video-exports/$id").apply { mkdirs() }
@@ -896,10 +925,18 @@ class VideoEditorActivity : ComponentActivity() {
         handler.postDelayed(this, 300)
     } }
 
-    private fun composition(from: Long, to: Long): Composition = VideoEdit.composition(VideoEditSpec(source, from, to, if (turns % 2 == 1) videoH else videoW, if (turns % 2 == 1) videoW else videoH,
-        speed, CROPS[cropIndex].second, caption, place, textColor, textBig, if (looked()) colour() else null, music, hasAudio && keepSound && speed in SOUND_MIN..SOUND_MAX,
-        turns, mirror, volume, musicVolume, if (cutValid() && cutFrom >= from && cutTo <= to) cutFrom else -1L, cutTo, textBox,
+    private fun composition(from: Long, to: Long): Composition {
+        // With smooth slow motion the main clip is the rendered file: n times longer, so times scale by n and the
+        // speed left to apply is speed × n (about 1×). It has no sound.
+        val f = flow; val n = f?.factor ?: 1
+        fun at(t: Long) = if (f == null) t else (t - start) * n
+        val vw = f?.width ?: videoW; val vh = f?.height ?: videoH
+        val cut = cutValid() && cutFrom >= from && cutTo <= to
+        return VideoEdit.composition(VideoEditSpec(f?.let { Uri.fromFile(it.file) } ?: source, at(from), at(to), if (turns % 2 == 1) vh else vw, if (turns % 2 == 1) vw else vh,
+        speed * n, CROPS[cropIndex].second, caption, place, textColor, textBig, if (looked()) colour() else null, music, f == null && hasAudio && keepSound && speed in SOUND_MIN..SOUND_MAX,
+        turns, mirror, volume, musicVolume, if (cut) at(cutFrom) else -1L, if (cut) at(cutTo) else -1L, textBox,
         extras.map { VideoPart(it.uri, 0, it.duration) }, if (extras.isEmpty()) 0 else transition, stickers.toList(), clampedLayers()), this)
+    }
 
     /** Export problems stay on screen until dismissed, so the reason can be read (and reported). */
     private fun failed(reason: String) { if (!isFinishing) GlassDialog.show(this, "ส่งออกไม่ได้", "$reason\nวิดีโอต้นฉบับยังอยู่ครบ ลองปิดฟิลเตอร์หรือข้อความแล้วส่งออกอีกครั้ง") }
@@ -915,12 +952,12 @@ class VideoEditorActivity : ComponentActivity() {
         layer.addView(card, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
         (window.decorView as FrameLayout).addView(layer, -1, -1); overlay = layer
     }
-    private fun hideProgress() { handler.removeCallbacks(poll); overlay?.let { (it.parent as? FrameLayout)?.removeView(it) }; overlay = null; overlayText = null; exportButton.alpha = 1f }
-    private fun cancelExport() { transformer?.cancel(); transformer = null; hideProgress(); notice("ยกเลิกการส่งออกแล้ว") }
+    private fun hideProgress() { flow?.file?.delete(); flow = null; handler.removeCallbacks(poll); overlay?.let { (it.parent as? FrameLayout)?.removeView(it) }; overlay = null; overlayText = null; exportButton.alpha = 1f }
+    private fun cancelExport() { flowCancel.set(true); transformer?.cancel(); transformer = null; hideProgress(); notice("ยกเลิกการส่งออกแล้ว") }
 
     // ---------- Lifecycle ----------
     override fun onPause() { player?.let { if (it.isPlaying) togglePlay() }; super.onPause() }
-    override fun onStop() { if (transformer != null) cancelExport(); super.onStop() }
+    override fun onStop() { if (transformer != null || overlay != null) cancelExport(); super.onStop() }
     override fun onDestroy() { handler.removeCallbacksAndMessages(null); releasePlayer(); musicPlayer?.runCatching { release() }; releaseLayerSound(); super.onDestroy() }
     override fun onSaveInstanceState(out: Bundle) {
         super.onSaveInstanceState(out)
@@ -932,7 +969,7 @@ class VideoEditorActivity : ComponentActivity() {
         out.putLong("cutFrom", cutFrom); out.putLong("cutTo", cutTo); out.putBoolean("textBox", textBox)
         out.putStringArrayList("extras", ArrayList(extras.map { it.uri.toString() })); out.putInt("transition", transition)
         out.putStringArrayList("stickers", ArrayList(stickers.map { "${it.x}|${it.y}|${it.big}|${it.text}" }))
-        out.putString("layers", VideoLayer.save(layers)); out.putInt("layerPick", layerPick)
+        out.putString("layers", VideoLayer.save(layers)); out.putInt("layerPick", layerPick); out.putBoolean("smooth", smooth)
     }
     private fun restore(s: Bundle) {
         start = s.getLong("start"); end = s.getLong("end", duration).coerceIn(start, duration); split = s.getLong("split", -1); speed = s.getFloat("speed", 1f); cropIndex = s.getInt("crop")
@@ -943,7 +980,7 @@ class VideoEditorActivity : ComponentActivity() {
         cutFrom = s.getLong("cutFrom", -1L); cutTo = s.getLong("cutTo", -1L); textBox = s.getBoolean("textBox")
         transition = s.getInt("transition"); stickers.clear()
         s.getStringArrayList("stickers")?.forEach { line -> val p = line.split("|", limit = 4); if (p.size == 4) stickers += VideoSticker(p[3], p[0].toFloatOrNull() ?: 0.5f, p[1].toFloatOrNull() ?: 0.5f, p[2] == "true") }
-        layers.clear(); layers += VideoLayer.load(s.getString("layers")); layerPick = s.getInt("layerPick", -1)
+        layers.clear(); layers += VideoLayer.load(s.getString("layers")); layerPick = s.getInt("layerPick", -1); smooth = s.getBoolean("smooth")
     }
 
     /** Darkens what the crop removes and outlines what stays. */

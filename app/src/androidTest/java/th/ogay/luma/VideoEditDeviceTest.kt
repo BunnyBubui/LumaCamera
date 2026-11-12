@@ -72,6 +72,19 @@ class VideoEditDeviceTest {
         assertTrue("Layer keeps clip length · ${results.first().second}", ms in 1700..2400)
     }
 
+    /** Optical-flow slow motion: ×4 frames from a 1 s clip gives about 4 s at the same frame rate, and it exports. */
+    @Test(timeout = 600_000) fun opticalFlowSlowMotion() {
+        val c = inst.targetContext
+        val clip = Uri.fromFile(TestMedia.clip(inst, 1000))
+        val out = File(c.cacheDir, "flow-test-${System.nanoTime()}.mp4")
+        val r = SlowFlow.render(c, clip, 0, 1000, 4, out, java.util.concurrent.atomic.AtomicBoolean(false))
+        val ms = android.media.MediaMetadataRetriever().run { try { setDataSource(out.path); extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)!!.toLong() } finally { release() } }
+        assertTrue("Smooth clip · ${r.frames} frames, ${ms} ms, ${r.width}x${r.height}", r.frames > 40 && ms in 3000..4700)
+        val exported = export(VideoEditSpec(Uri.fromFile(out), 0, ms, r.width, r.height, speed = 1f, keepAudio = false))
+        out.delete()
+        assertTrue("Smooth export · $exported", exported.startsWith("ok"))
+    }
+
     private fun export(spec: VideoEditSpec): String {
         val out = File(inst.targetContext.cacheDir, "edit-test-${System.nanoTime()}.mp4")
         val done = CountDownLatch(1); var result = "timeout"; var t: Transformer? = null
