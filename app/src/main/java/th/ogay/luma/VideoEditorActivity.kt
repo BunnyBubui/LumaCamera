@@ -1809,7 +1809,7 @@ class VideoEditorActivity : ComponentActivity() {
     private fun applyState(b: Bundle) {
         applying = true
         val keepTool = tool; val keepPick = layerPick; val oldSource = source
-        restore(b); if (source != oldSource && playIndex == 0) { showClipOnBar(); openPlayer() } tool = keepTool; layerPick = keepPick.coerceAtMost(layers.size - 1)
+        restore(b); if (source != oldSource && playIndex == 0) { showClipOnBar(); openPlayer() }; tool = keepTool; layerPick = keepPick.coerceAtMost(layers.size - 1)
         prepareMusic(); applySound(); applyLook(); layoutVideo(); rebuildStickers(); rebuildLayers(); loadLayerThumbs()
         val uris = b.getStringArrayList("extras") ?: arrayListOf()
         fun done() { if (playIndex > extras.size) playClip(0, false) else { showClipOnBar(); trim.playhead = trim.playhead.coerceIn(trim.start, trim.end) }; showTool(tool, false); showTime(); committed = state(); committedKey = StudioProjects.key(committed!!); pendingKey = committedKey; applying = false }
