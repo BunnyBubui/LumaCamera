@@ -1111,7 +1111,10 @@ class CameraActivity : ComponentActivity() {
      */
     private fun grabLookSample(): Bitmap? {
         val raw = preview.smallFrame(132) ?: return null
-        val active = Films.active(prefs, mode == PhotoMode.FILM)?.first ?: return raw
+        // TextureView.getBitmap() snapshots the camera surface, before View layer paint / AGSL.
+        // Film thumbnails need this clean source so each card grades exactly once.
+        if (mode == PhotoMode.FILM) return raw
+        val active = Films.active(prefs, false)?.first ?: return raw
         val inverse = invertColor(active) ?: run { raw.recycle(); return null }
         return runCatching { Bitmap.createBitmap(raw.width, raw.height, Bitmap.Config.ARGB_8888).also { out ->
             android.graphics.Canvas(out).drawBitmap(raw, 0f, 0f, Paint().apply { colorFilter = ColorMatrixColorFilter(inverse) }) } }.getOrNull().also { raw.recycle() }
