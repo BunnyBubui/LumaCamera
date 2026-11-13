@@ -46,7 +46,7 @@ class SpecialVideoActivity:ComponentActivity(){
         texture.surfaceTextureListener=object:TextureView.SurfaceTextureListener{override fun onSurfaceTextureAvailable(s:SurfaceTexture,w:Int,h:Int){if(visible)open()};override fun onSurfaceTextureSizeChanged(s:SurfaceTexture,w:Int,h:Int){};override fun onSurfaceTextureUpdated(s:SurfaceTexture){};override fun onSurfaceTextureDestroyed(s:SurfaceTexture):Boolean{handler.post{close()};return true}}
         status=text("กำลังตรวจกล้อง…",13f).apply{gravity=Gravity.CENTER;background=glass(18);setPadding(dp(14),dp(7),dp(14),dp(7));maxLines=4}
         stage.addView(status,FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply{topMargin=dp(62);leftMargin=dp(16);rightMargin=dp(16)})
-        config=text("ทุก 1 วิ · 30 fps",13f,Color.WHITE,true).apply{gravity=Gravity.CENTER;minHeight=dp(48);background=glass(22);setPadding(dp(14),0,dp(14),0);isClickable=true;contentDescription="ช่วงห่างเฟรม";glassTouch();setOnClickListener{settings()}}
+        config=text("ทุก 1 วิ · 30 fps",13f,Glass.TEXT,true).apply{gravity=Gravity.CENTER;minHeight=dp(48);background=glass(22);setPadding(dp(14),0,dp(14),0);isClickable=true;contentDescription="ช่วงห่างเฟรม";glassTouch();setOnClickListener{settings()}}
         stage.addView(config,FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.END).apply{setMargins(0,dp(6),dp(12),0)})
         stage.addView(text("Time-lapse · ไม่มีเสียง",12.5f,Glass.TEXT2,true).apply{gravity=Gravity.CENTER;minHeight=dp(48);background=glass(22);setPadding(dp(14),0,dp(14),0)},FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.START).apply{setMargins(dp(12),dp(6),0,0)})
         val dock=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setBackgroundColor(BG)}

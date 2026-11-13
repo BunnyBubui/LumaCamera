@@ -77,14 +77,14 @@ object EnhanceUi {
         head.addView(FrameLayout(a).apply { background = a.glass(14, Glass.ACCENT_SOFT)
             addView(IconView(a, Icons.AI, 1.8f).apply { tint = Glass.ACCENT }, FrameLayout.LayoutParams(a.dp(22), a.dp(22), Gravity.CENTER)) }, a.dp(40), a.dp(40))
         head.addView(LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; setPadding(a.dp(12), 0, 0, 0)
-            addView(a.text("เพิ่มรายละเอียดด้วย AI", 18f, Color.WHITE, true))
+            addView(a.text("เพิ่มรายละเอียดด้วย AI", 18f, Glass.TEXT, true))
             addView(label("ประมวลผลในเครื่อง ไม่ส่งภาพออกไปไหน", 12f, Glass.TEXT3)) }, LinearLayout.LayoutParams(0, -2, 1f))
         column.addView(head, -1, -2)
 
         // Model dropdown: tap, or hold and slide, exactly like the other dropdown buttons.
         column.addView(label("โมเดล", 12.5f, Glass.TEXT3).apply { setPadding(a.dp(4), a.dp(16), 0, a.dp(6)) })
         val modelIcon = IconView(a, model.icon, 1.8f).apply { tint = Glass.ACCENT }
-        val modelName = a.text(model.name, 15.5f, Color.WHITE, true)
+        val modelName = a.text(model.name, 15.5f, Glass.TEXT, true)
         val modelBadge = a.text(model.badge, 11f, Glass.ON_ACCENT, true).apply { background = a.glass(9, Glass.ACCENT); setPadding(a.dp(7), a.dp(1), a.dp(7), a.dp(2)) }
         val modelShort = label(model.short, 12f).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }
         val picker = LinearLayout(a).apply { gravity = Gravity.CENTER_VERTICAL; background = a.glass(20, 0x1affffff); setPadding(a.dp(10), a.dp(10), a.dp(12), a.dp(10))
@@ -104,7 +104,7 @@ object EnhanceUi {
 
         // Scale: a sliding pill for ×2 / ×3 / ×4, in the same style as the gallery tabs.
         column.addView(label("ขนาด", 12.5f, Glass.TEXT3).apply { setPadding(a.dp(4), a.dp(14), 0, a.dp(6)) })
-        val size = a.text("", 14.5f, Color.WHITE, true).apply { maxLines = 3; ellipsize = null; setPadding(a.dp(4), a.dp(8), 0, a.dp(2)) }
+        val size = a.text("", 14.5f, Glass.TEXT, true).apply { maxLines = 3; ellipsize = null; setPadding(a.dp(4), a.dp(8), 0, a.dp(2)) }
         fun updateSize() {
             size.text = runCatching { spec().output(shot.size).let { "${it.w} × ${it.h} px · ${pixelsText(it.pixels)}" } }.getOrElse { it.message ?: "ขนาดเกินขีดจำกัด" }
         }
@@ -112,7 +112,7 @@ object EnhanceUi {
         val knob = View(a).apply { background = a.glass(17, Glass.ACCENT_SOFT) }
         seg.addView(knob, FrameLayout.LayoutParams(0, -1))
         val cells = LinearLayout(a)
-        val cellViews = (2..4).map { n -> a.text("×$n", 15f, Color.WHITE, true).apply { gravity = Gravity.CENTER; isClickable = true; contentDescription = "ขยาย ×$n" }.also { cells.addView(it, LinearLayout.LayoutParams(0, -1, 1f)) } }
+        val cellViews = (2..4).map { n -> a.text("×$n", 15f, Glass.TEXT, true).apply { gravity = Gravity.CENTER; isClickable = true; contentDescription = "ขยาย ×$n" }.also { cells.addView(it, LinearLayout.LayoutParams(0, -1, 1f)) } }
         seg.addView(cells, FrameLayout.LayoutParams(-1, -1))
         fun place(animate: Boolean) { val w = (seg.width - a.dp(6)) / 3f; knob.layoutParams = (knob.layoutParams as FrameLayout.LayoutParams).apply { width = w.toInt() }; knob.requestLayout()
             val x = (scale - 2) * w; if (animate) knob.animate().translationX(x).setInterpolator(Glass.EASE).setDuration(280).start() else knob.translationX = x }
@@ -178,7 +178,7 @@ object EnhanceUi {
         val stopped = AtomicBoolean(false)
         val name = if (spec.profile == EnhanceProfile.NATURAL) "Natural SR3" else "Classic SR2"
         val compare = CompareView(activity)
-        val title = activity.text("กำลังสร้างตัวอย่าง…", 17f, Color.WHITE, true)
+        val title = activity.text("กำลังสร้างตัวอย่าง…", 17f, Glass.TEXT, true)
         val sheet = activity.screenSheet()
         parent?.recede(true)
         sheet.onClosed.let { closed -> sheet.onClosed = { stopped.set(true); parent?.recede(false); compare.release(); closed() } }

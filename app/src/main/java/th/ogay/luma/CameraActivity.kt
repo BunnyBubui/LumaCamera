@@ -397,7 +397,7 @@ class CameraActivity : ComponentActivity() {
             isClickable = true; contentDescription = "หน้าหลัก"; glassTouch()
             addView(IconView(this@CameraActivity, HomeActivity.BACK_SMALL, 2.2f).apply { alpha = 0.7f }, dp(14), dp(14))
             addView(IconView(this@CameraActivity, HomeActivity.HOUSE, 2f).apply { tag = IconTurner.TAG }, LinearLayout.LayoutParams(dp(21), dp(21)).apply { leftMargin = dp(3) })
-            addView(text("หน้าหลัก", 13.5f, Color.WHITE, true).apply { setPadding(dp(7), 0, 0, 0) })
+            addView(text("หน้าหลัก", 13.5f, Glass.TEXT, true).apply { setPadding(dp(7), 0, 0, 0) })
             setOnClickListener { Glass.tick(this); openHome() }
         }, FrameLayout.LayoutParams(-2, dp(48), Gravity.TOP or Gravity.START).apply { setMargins(dp(10), dp(6), 0, 0) })
         statusRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL or Gravity.END; contentDescription = "สิ่งที่เปิดอยู่"; minimumWidth = dp(48); isClickable = true; setOnClickListener { openPanel() } }
@@ -442,7 +442,7 @@ class CameraActivity : ComponentActivity() {
         buildDial()
         // Self-timer countdown: one big number in the middle of the picture, turned with the phone.
         countdown = TextView(this).apply {
-            setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 120f); setTextColor(Color.WHITE); typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 120f); setTextColor(Glass.TEXT); typeface = android.graphics.Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER; setShadowLayer(24f, 0f, 3f, 0xaa000000.toInt()); alpha = 0f; visibility = View.GONE
             accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE; elevation = dp(6).toFloat()
         }
@@ -500,7 +500,7 @@ class CameraActivity : ComponentActivity() {
         val lp = dock.layoutParams as LinearLayout.LayoutParams
         val want = if (tall) -dock.height else 0
         if (lp.topMargin != want) { lp.topMargin = want; dock.layoutParams = lp }
-        dock.setBackgroundColor(if (tall) 0x66070b16 else BG)
+        dock.setBackgroundColor(if (tall) Glass.alpha(BG, 0x66) else BG)
         stage.clipToPadding = false
         val pad = if (tall) dock.height else 0
         if (stage.paddingBottom != pad) stage.setPadding(0, 0, 0, pad)
@@ -597,7 +597,7 @@ class CameraActivity : ComponentActivity() {
         nightCount = text("", 30f, Glass.ACCENT, true).apply { gravity = Gravity.CENTER }
         nightCard.addView(IconView(this, "M12 4v16 M4 12h16 M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z", 1.6f).apply { tint = Glass.ACCENT }, dp(56), dp(56))
         nightCard.addView(nightCount, -2, -2)
-        nightCard.addView(text("ถือกล้องให้นิ่ง", 13f, Color.WHITE, true), -2, -2)
+        nightCard.addView(text("ถือกล้องให้นิ่ง", 13f, Glass.TEXT, true), -2, -2)
         nightCard.addView(text("กำลังรวมแสงกลางคืน · แตะชัตเตอร์เพื่อหยุด", 11.5f, Glass.TEXT2).apply { maxLines = 3; ellipsize = null; gravity = Gravity.CENTER }, -2, -2)
         stage.addView(nightCard, FrameLayout.LayoutParams(dp(230), -2, Gravity.CENTER))
     }
@@ -608,8 +608,8 @@ class CameraActivity : ComponentActivity() {
     private fun buildDial() {
         dial = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = glass(24); setPadding(dp(16), dp(12), dp(16), dp(12)); visibility = View.GONE }
         val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        dialTitle = text("", 13f, Glass.TEXT2); dialValue = text("", 20f, Color.WHITE, true).apply { gravity = Gravity.CENTER }
-        dialReset = text("AUTO", 12f, Color.WHITE, true).apply { gravity = Gravity.CENTER; background = glass(16, 0x1fffffff); setPadding(dp(12), 0, dp(12), 0); isClickable = true; setOnClickListener { resetChip() }; glassTouch() }
+        dialTitle = text("", 13f, Glass.TEXT2); dialValue = text("", 20f, Glass.TEXT, true).apply { gravity = Gravity.CENTER }
+        dialReset = text("AUTO", 12f, Glass.TEXT, true).apply { gravity = Gravity.CENTER; background = glass(16, 0x1fffffff); setPadding(dp(12), 0, dp(12), 0); isClickable = true; setOnClickListener { resetChip() }; glassTouch() }
         head.addView(dialTitle, LinearLayout.LayoutParams(0, -2, 1f)); head.addView(dialValue, LinearLayout.LayoutParams(0, -2, 1f)); dialReset.minWidth = dp(64); head.addView(dialReset, -2, dp(48))
         dial.addView(head, -1, -2)
         slider = GlassSlider(this).apply { onChange = { i -> sliderChanged(i) } }
@@ -866,7 +866,7 @@ class CameraActivity : ComponentActivity() {
         if (keys.isEmpty()) { chipFrame.visibility = View.GONE; closeDial(); return }
         chipFrame.visibility = View.VISIBLE
         val items = keys.map { k ->
-            val t = text(chipTitle(k), 10.5f, Glass.TEXT2).apply { gravity = Gravity.CENTER }; val v = text(chipValue(k), 13f, Color.WHITE, true).apply { gravity = Gravity.CENTER }
+            val t = text(chipTitle(k), 10.5f, Glass.TEXT2).apply { gravity = Gravity.CENTER }; val v = text(chipValue(k), 13f, Glass.TEXT, true).apply { gravity = Gravity.CENTER }
             chipTexts += t to v
             // Width follows the longest text at the current font scale so large fonts are not clipped.
             val wDp = (chipValues(k).plus(chipTitle(k)).maxOf { v.paint.measureText(it) } / resources.displayMetrics.density + 24).roundToInt().coerceAtLeast(72)
@@ -938,7 +938,7 @@ class CameraActivity : ComponentActivity() {
         "WB" -> intArrayOf(0xffff9a3d.toInt(), 0xffffd9a8.toInt(), Color.WHITE, 0xffcfe5ff.toInt(), 0xff7db8ff.toInt())
         "AF" -> intArrayOf(0xff8e8e93.toInt(), 0xffbbf0ff.toInt(), 0xff5ac8fa.toInt())
         "TINT" -> intArrayOf(0xff5fd38a.toInt(), Color.WHITE, 0xffe57bd8.toInt())
-        "CON", "SHP", "NR" -> intArrayOf(0xff5a6b8f.toInt(), 0xffb9c6e6.toInt(), Glass.ACCENT)
+        "CON", "SHP", "NR" -> intArrayOf(0xff5a5a5e.toInt(), 0xffc8c8cc.toInt(), Glass.ACCENT)
         else -> intArrayOf(0xff3a3a3c.toInt(), 0xff8e8e93.toInt(), Color.WHITE)
     }
     private fun chipColor(k: String): Int { val i = chipIndex(k); if (i == chipAuto(k)) return Color.WHITE; val n = chipValues(k).size; val lo = if (chipSep(k)) 1 else 0; return Glass.mix(chipGrad(k), (i - lo).toFloat() / (n - 1 - lo).coerceAtLeast(1)) }
@@ -1150,8 +1150,8 @@ class CameraActivity : ComponentActivity() {
             if (film) { buildFilmSheet(box, sheet); return@open }
             val head = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(4), dp(4), 0, dp(10)) }
             if (film) head.addView(LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL
-                addView(IconView(this@CameraActivity, Icons.AI).apply { tint = Glass.ACCENT }, dp(18), dp(18)); addView(text("Lumora", 13f, Color.WHITE).apply { setPadding(dp(6), 0, 0, 0) }) })
-            head.addView(text(if (film) "ฟิล์มและกล้องเก่า" else "ปรับแต่งภาพ", 24f, Color.WHITE, true))
+                addView(IconView(this@CameraActivity, Icons.AI).apply { tint = Glass.ACCENT }, dp(18), dp(18)); addView(text("Lumora", 13f, Glass.TEXT).apply { setPadding(dp(6), 0, 0, 0) }) })
+            head.addView(text(if (film) "ฟิล์มและกล้องเก่า" else "ปรับแต่งภาพ", 24f, Glass.TEXT, true))
             if (film) head.addView(text("จำลองโทนภาพจากกล้องฟิล์มและกล้องคลาสสิก", 12.5f, Glass.TEXT2).apply { setPadding(0, dp(2), 0, 0) })
             box.addView(head)
             val lookBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; clipChildren = false; clipToPadding = false }
@@ -1160,7 +1160,7 @@ class CameraActivity : ComponentActivity() {
             // Footer: reset on the left, the orange "use this look" button closes the sheet (the look already applies as you pick it).
             val foot = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(10), 0, dp(4)) }
             foot.addView(LinearLayout(this).apply { gravity = Gravity.CENTER; background = glass(22, 0x14ffffff); setPadding(dp(18), 0, dp(20), 0); isClickable = true; glassTouch(); contentDescription = "รีเซ็ต"
-                addView(IconView(this@CameraActivity, Icons.RESET, 2f).apply { tint = Color.WHITE }, dp(18), dp(18)); addView(text("รีเซ็ต", 14f, Color.WHITE).apply { setPadding(dp(8), 0, 0, 0) })
+                addView(IconView(this@CameraActivity, Icons.RESET, 2f).apply { tint = Glass.TEXT }, dp(18), dp(18)); addView(text("รีเซ็ต", 14f, Glass.TEXT).apply { setPadding(dp(8), 0, 0, 0) })
                 setOnClickListener { prefs.edit().putInt("look", 0).putInt("look_bright", 0).putInt("look_warm", 0).remove("film").apply(); applyLook(); sheet.refresh() } }, LinearLayout.LayoutParams(-2, dp(52)))
             foot.addView(View(this), LinearLayout.LayoutParams(dp(12), 1))
             foot.addView(LinearLayout(this).apply { gravity = Gravity.CENTER; background = glass(22, Glass.ACCENT); isClickable = true; glassTouch(); contentDescription = "ใช้โทนนี้"
@@ -1174,7 +1174,7 @@ class CameraActivity : ComponentActivity() {
     private fun lookThumb(m: ColorMatrix, label: String, key: String, cells: MutableList<LookCell>, size: Int = 80, onTap: () -> Unit): View {
         val cell = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; isClickable = true; contentDescription = label; setOnClickListener { onTap() }; glassTouch() }
         val frame = FrameLayout(this).apply { setPadding(dp(3), dp(3), dp(3), dp(3)) }
-        val img = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP; lookSampleCache?.let { setImageBitmap(it) } ?: setBackgroundColor(0xff34506a.toInt()); colorFilter = ColorMatrixColorFilter(m); clipToOutline = true; outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: android.graphics.Outline) { o.setRoundRect(0, 0, v.width, v.height, dp(15).toFloat()) } } }
+        val img = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP; lookSampleCache?.let { setImageBitmap(it) } ?: setBackgroundColor(0xff4a4a4d.toInt()); colorFilter = ColorMatrixColorFilter(m); clipToOutline = true; outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: android.graphics.Outline) { o.setRoundRect(0, 0, v.width, v.height, dp(15).toFloat()) } } }
         lookImages += img
         frame.addView(img, -1, -1)
         val name = text(label, 11f, Glass.TEXT2).apply { gravity = Gravity.CENTER; maxLines = 2; ellipsize = null; setPadding(0, dp(6), 0, 0) }
@@ -1222,11 +1222,11 @@ class CameraActivity : ComponentActivity() {
         // ---- header ----
         val titleCol = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         titleCol.addView(LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL
-            addView(IconView(this@CameraActivity, Icons.AI).apply { tint = Glass.ACCENT }, dp(18), dp(18)); addView(text("Lumora", 13f, Color.WHITE).apply { setPadding(dp(6), 0, 0, 0); setSingleLine() }) })
-        titleCol.addView(text("ฟิล์มและกล้องเก่า", 24f, Color.WHITE, true).apply { setSingleLine(); ellipsize = null })
+            addView(IconView(this@CameraActivity, Icons.AI).apply { tint = Glass.ACCENT }, dp(18), dp(18)); addView(text("Lumora", 13f, Glass.TEXT).apply { setPadding(dp(6), 0, 0, 0); setSingleLine() }) })
+        titleCol.addView(text("ฟิล์มและกล้องเก่า", 24f, Glass.TEXT, true).apply { setSingleLine(); ellipsize = null })
         titleCol.addView(text("จำลองโทนภาพจากกล้องฟิล์มและกล้องคลาสสิก", 12.5f, Glass.TEXT2).apply { setSingleLine(); ellipsize = null; setPadding(0, dp(2), 0, 0) })
         val searchBox = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; background = glass(22, 0x40ffffff); setPadding(dp(14), 0, dp(6), 0); contentDescription = "ค้นหาฟิล์ม" }
-        val field = EditText(this).apply { hint = "ค้นหาฟิล์มหรือกล้อง"; setHintTextColor(Glass.TEXT3); setTextColor(Color.WHITE); textSize = 15f; background = null; setSingleLine(); visibility = View.GONE; setPadding(dp(8), 0, dp(4), 0)
+        val field = EditText(this).apply { hint = "ค้นหาฟิล์มหรือกล้อง"; setHintTextColor(Glass.TEXT3); setTextColor(Glass.TEXT); textSize = 15f; background = null; setSingleLine(); visibility = View.GONE; setPadding(dp(8), 0, dp(4), 0)
             imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
             setOnEditorActionListener { v, _, _ -> (getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).hideSoftInputFromWindow(v.windowToken, 0); v.clearFocus(); true } }
         val closeX = IconView(this, Icons.CLOSE, 2f).apply { tint = Glass.TEXT2; setPadding(dp(11), dp(11), dp(11), dp(11)); visibility = View.GONE; contentDescription = "ปิดการค้นหา"; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES; isClickable = true }
@@ -1242,10 +1242,10 @@ class CameraActivity : ComponentActivity() {
         // ---- families, strip, detail ----
         val tabRow = LinearLayout(this).apply { setPadding(dp(2), dp(2), dp(2), dp(2)) }
         val tabScroll = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; overScrollMode = View.OVER_SCROLL_NEVER; addView(tabRow, -2, -2) }
-        val sectionName = text("", 16f, Color.WHITE, true).apply { setPadding(dp(4), dp(12), 0, 0) }
+        val sectionName = text("", 16f, Glass.TEXT, true).apply { setPadding(dp(4), dp(12), 0, 0) }
         val strip = LinearLayout(this).apply { setPadding(dp(2), dp(10), dp(2), dp(8)); clipChildren = false; clipToPadding = false }
         val stripScroll = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; clipChildren = false; clipToPadding = false; overScrollMode = View.OVER_SCROLL_NEVER; addView(strip, -2, -2) }
-        val nowName = text("", 16f, Color.WHITE, true).apply { setSingleLine() }
+        val nowName = text("", 16f, Glass.TEXT, true).apply { setSingleLine() }
         val nowNote = text("", 12.5f, Glass.TEXT2).apply { maxLines = 2; ellipsize = null }
         val nowBest = text("", 12f, Glass.ACCENT, true)
         val detailIcon = IconView(this, Films.groupIcon(current().group), 1.9f).apply { tint = Glass.ACCENT }
@@ -1283,7 +1283,7 @@ class CameraActivity : ComponentActivity() {
             clipToOutline = true; outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: Outline) { o.setRoundRect(0, 0, v.width, v.height, dp(20).toFloat()) } }
             val img = ImageView(this@CameraActivity).apply {
                 scaleType = ImageView.ScaleType.CENTER_CROP
-                lookSampleCache?.let { setImageBitmap(it) } ?: setBackgroundColor(0xff34506a.toInt())
+                lookSampleCache?.let { setImageBitmap(it) } ?: setBackgroundColor(0xff4a4a4d.toInt())
                 val saved = Films.fx(prefs, f)
                 if (!FilmGpuPreview.apply(this, f, saved)) colorFilter = ColorMatrixColorFilter(Films.matrix(f, saved.strength))
                 // The view needs its real size for the film-edge falloff; do not change the layout.
@@ -1292,7 +1292,7 @@ class CameraActivity : ComponentActivity() {
             lookImages += img
             addView(img, -1, -1)
             addView(View(this@CameraActivity).apply { background = android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.BOTTOM_TOP, intArrayOf(0xcc000000.toInt(), 0x00000000)) }, FrameLayout.LayoutParams(-1, dp(56), Gravity.BOTTOM))
-            addView(text(f.name.removePrefix("Lumora "), 12.5f, Color.WHITE, true).apply { maxLines = 2; ellipsize = null; setPadding(dp(10), 0, dp(8), dp(9)) }, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+            addView(text(f.name.removePrefix("Lumora "), 12.5f, Glass.TEXT, true).apply { maxLines = 2; ellipsize = null; setPadding(dp(10), 0, dp(8), dp(9)) }, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
             addView(IconView(this@CameraActivity, HEART, 2.2f).apply { tint = Glass.ACCENT; tag = "heart"; visibility = View.GONE }, FrameLayout.LayoutParams(dp(18), dp(18), Gravity.TOP or Gravity.START).apply { setMargins(dp(8), dp(8), 0, 0) })
             addView(FrameLayout(this@CameraActivity).apply { tag = "check"; background = glass(11, Glass.ACCENT); addView(IconView(this@CameraActivity, Icons.CHECK, 2.6f).apply { tint = Glass.ON_ACCENT }, FrameLayout.LayoutParams(dp(13), dp(13), Gravity.CENTER)) },
                 FrameLayout.LayoutParams(dp(22), dp(22), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(7), dp(7), 0) })
@@ -1401,7 +1401,7 @@ class CameraActivity : ComponentActivity() {
         // ---- footer ----
         val foot = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(12), 0, dp(4)) }
         foot.addView(LinearLayout(this).apply { gravity = Gravity.CENTER; background = glass(22, 0x14ffffff); setPadding(dp(16), 0, dp(18), 0); isClickable = true; glassTouch(); contentDescription = "รีเซ็ตการปรับของฟิล์มนี้"
-            addView(IconView(this@CameraActivity, Icons.RESET, 2f).apply { tint = Color.WHITE }, dp(18), dp(18)); addView(text("รีเซ็ต", 14f, Color.WHITE).apply { setPadding(dp(8), 0, 0, 0) })
+            addView(IconView(this@CameraActivity, Icons.RESET, 2f).apply { tint = Glass.TEXT }, dp(18), dp(18)); addView(text("รีเซ็ต", 14f, Glass.TEXT).apply { setPadding(dp(8), 0, 0, 0) })
             setOnClickListener { Films.resetFx(prefs, current()); fx = FilmFx(); applyLook(); renderFx(); Glass.tick(this) } }, LinearLayout.LayoutParams(-2, dp(52)))
         val dice = IconView(this, DICE, 2f)
         foot.addView(FrameLayout(this).apply { background = glass(22, 0x14ffffff); isClickable = true; glassTouch(); contentDescription = "สุ่มฟิล์ม"; addView(dice, FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER))
@@ -1426,7 +1426,7 @@ class CameraActivity : ComponentActivity() {
         s.onChange = { i -> value.text = values[i]; prefs.edit().putInt(key, i * 10 - 100).apply(); applyLook() }
         value.apply { gravity = Gravity.CENTER; background = glass(12, 0x14ffffff) }
         addView(IconView(this@CameraActivity, icon).apply { tint = Glass.TEXT2 }, dp(22), dp(22))
-        addView(text(title, 13.5f, Color.WHITE).apply { maxLines = 1; setPadding(dp(10), 0, 0, 0) }, dp(86), -2)
+        addView(text(title, 13.5f, Glass.TEXT).apply { maxLines = 1; setPadding(dp(10), 0, 0, 0) }, dp(86), -2)
         addView(s, LinearLayout.LayoutParams(0, dp(48), 1f))
         addView(value, dp(48), dp(36))
     }
@@ -1473,7 +1473,7 @@ class CameraActivity : ComponentActivity() {
     private fun openEditor() {
         editor.open { box, sheet ->
             val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-            head.addView(text("ปรับแต่งแถบโหมด", 20f, Color.WHITE, true), LinearLayout.LayoutParams(0, -2, 1f))
+            head.addView(text("ปรับแต่งแถบโหมด", 20f, Glass.TEXT, true), LinearLayout.LayoutParams(0, -2, 1f))
             head.addView(text("เสร็จ", 14f, Glass.ON_ACCENT, true).apply { gravity = Gravity.CENTER; background = glass(22, Glass.ACCENT); setPadding(dp(16), 0, dp(16), 0); isClickable = true; glassTouch(); setOnClickListener { sheet.close() } }, -2, dp(48))
             box.addView(head, -1, dp(52))
             // Short and visual: rows show icon + name; the grip, − and + explain themselves (TalkBack gets actions).
@@ -1490,7 +1490,7 @@ class CameraActivity : ComponentActivity() {
                     row.addView(grip, dp(52), dp(52)); row.addView(IconView(this, m.icon), dp(22), dp(22))
                     // Dragging near the screen edge must not turn into the system back gesture (which left the app).
                     if (android.os.Build.VERSION.SDK_INT >= 29) grip.addOnLayoutChangeListener { v, l, t, r, b, _, _, _, _ -> v.systemGestureExclusionRects = listOf(android.graphics.Rect(0, 0, r - l, b - t)) }
-                    row.addView(text(m.title, 14f, Color.WHITE, true).apply { setPadding(dp(10), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
+                    row.addView(text(m.title, 14f, Glass.TEXT, true).apply { setPadding(dp(10), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
                     if (k == "PHOTO") row.addView(IconView(this, Icons.LOCK, 2f).apply { tint = Glass.TEXT3; contentDescription = "ภาพถ่าย ล็อกไว้ในแถบ" }, dp(48), dp(16))
                     else row.addView(glassButton(IconView(this, Icons.MINUS, 2.4f), 48, "นำ${m.title}ออกจากแถบ") { saveBar(bar.filter { it != k }); render() }, dp(48), dp(48))
                     var startY = 0f
@@ -1552,7 +1552,7 @@ class CameraActivity : ComponentActivity() {
             zooms.removeAllViews(); renderedZooms = stops; zooms.post { turnNow() }
             stops.forEach { v ->
                 val cell = FrameLayout(this).apply { isClickable = true; isFocusable = true; contentDescription = "ซูม ${zoomText(v)} ลากซ้ายขวาเพื่อซูมละเอียด" }
-                cell.addView(text(zoomText(v), 12f, Color.WHITE, true).apply { setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 12f); gravity = Gravity.CENTER; background = GlassDrawable(0x1affffff, dp(20).toFloat(), resources.displayMetrics.density) }, FrameLayout.LayoutParams(dp(32), dp(32), Gravity.CENTER))
+                cell.addView(text(zoomText(v), 12f, Glass.TEXT, true).apply { setTextSize(android.util.TypedValue.COMPLEX_UNIT_DIP, 12f); gravity = Gravity.CENTER; background = GlassDrawable(0x1affffff, dp(20).toFloat(), resources.displayMetrics.density) }, FrameLayout.LayoutParams(dp(32), dp(32), Gravity.CENTER))
                 cell.setOnClickListener { if (!zoomLocked()) animateZoom(v) }
                 zooms.addView(cell, LinearLayout.LayoutParams(dp(48), dp(48)).apply { setMargins(dp(1), 0, dp(1), 0) })
             }

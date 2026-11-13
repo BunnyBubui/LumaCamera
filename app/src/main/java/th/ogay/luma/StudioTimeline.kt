@@ -213,7 +213,7 @@ class StudioTimeline(context: Context) : View(context) {
             if (x1 < 0 || x0 > w || x1 <= x0) return@forEachIndexed
             rect.set(x0, top, x1, bottom); clipPath.reset(); clipPath.addRoundRect(rect, r, r, Path.Direction.CW)
             c.save(); c.clipPath(clipPath)
-            paint.color = 0xff1b2238.toInt(); paint.alpha = 255; c.drawRect(rect, paint)
+            paint.color = Glass.PANEL; paint.alpha = 255; c.drawRect(rect, paint)
             if (clip.frames.isNotEmpty() && clip.duration > 0) {
                 val tile = clipH * 1.25f; var k = floor(((0f - x0) / tile).coerceAtLeast(0f)).toInt()
                 while (x0 + k * tile < x1 && x0 + k * tile < w) {

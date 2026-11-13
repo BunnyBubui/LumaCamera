@@ -57,7 +57,7 @@ class HomeActivity : ComponentActivity() {
         requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         val host = FrameLayout(this)
         installRoot(host)
-        host.background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(0xff131a38.toInt(), 0xff0b0f1e.toInt(), 0xff140d26.toInt()))
+        host.background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(Theme.bgTop, Glass.BG, Glass.BG_DEEP))
         val aurora = Aurora(this)
         host.addView(aurora, -1, -1)
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(18), dp(12), dp(18), dp(32)) }
@@ -67,7 +67,7 @@ class HomeActivity : ComponentActivity() {
         val scroll = ScrollView(this).apply { isVerticalScrollBarEnabled = false; clipToPadding = false; overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS; addView(col) }
         host.addView(scroll, -1, -1)
         val shade = View(this).apply { importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
-            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0xf2131a38.toInt(), 0xa0131a38.toInt(), 0x00131a38)) }
+            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(Glass.alpha(Theme.bgTop, 0xf2), Glass.alpha(Theme.bgTop, 0xa0), Glass.alpha(Theme.bgTop, 0))) }
         host.addView(shade, FrameLayout.LayoutParams(-1, dp(40)))
         androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(host) { _, insets ->
             val bars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars() or androidx.core.view.WindowInsetsCompat.Type.displayCutout())
@@ -85,7 +85,7 @@ class HomeActivity : ComponentActivity() {
         val logo = LumoraLogoView(this).apply { progress = if (Glass.reduced(this@HomeActivity)) 1f else 0f }
         brand.addView(logo, dp(66), dp(66))
         val names = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, 0, 0) }
-        val title = text("Lumora", 31f, Color.WHITE, true)
+        val title = text("Lumora", 31f, Glass.TEXT, true)
         names.addView(title); names.addView(text("เลือกสิ่งที่อยากทำ", 14f, Glass.TEXT2))
         brand.addView(names)
         col.addView(brand, -1, -2)
@@ -141,7 +141,7 @@ class HomeActivity : ComponentActivity() {
         val badge = FrameLayout(this@HomeActivity).apply { background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0x38ffffff) }
             addView(IconView(this@HomeActivity, icon, 2.2f), FrameLayout.LayoutParams(dp(if (stacked) 24 else 28), dp(if (stacked) 24 else 28), Gravity.CENTER)) }
         val words = LinearLayout(this@HomeActivity).apply { orientation = LinearLayout.VERTICAL }
-        words.addView(text(title, size, Color.WHITE, true)); words.addView(text(note, 12.5f, 0xe6ffffff.toInt()).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END })
+        words.addView(text(title, size, Glass.TEXT, true)); words.addView(text(note, 12.5f, 0xe6ffffff.toInt()).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END })
         if (stacked) {
             val c = LinearLayout(this@HomeActivity).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(16), dp(14), dp(14)) }
             c.addView(badge, dp(48), dp(48)); c.addView(View(this@HomeActivity), LinearLayout.LayoutParams(1, 0, 1f)); c.addView(words)
@@ -186,7 +186,7 @@ class HomeActivity : ComponentActivity() {
         top.addView(IconView(this@HomeActivity, "M9.5 6l6 6-6 6", 2f).apply { tint = 0x55ffffff }, dp(16), dp(16))
         c.addView(top, -1, -2)
         c.addView(View(this@HomeActivity), LinearLayout.LayoutParams(1, 0, 1f))
-        c.addView(text(t.title, 15f, Color.WHITE, true).apply { maxLines = 1 })
+        c.addView(text(t.title, 15f, Glass.TEXT, true).apply { maxLines = 1 })
         c.addView(text(t.note, 11.5f, Glass.TEXT3).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END })
         addView(c, -1, -1)
         setOnClickListener { Glass.tick(this); t.open() }

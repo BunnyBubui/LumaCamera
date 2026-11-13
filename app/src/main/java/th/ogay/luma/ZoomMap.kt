@@ -32,7 +32,7 @@ import kotlin.math.pow
  */
 class ZoomMap(c: Context) : FrameLayout(c), android.hardware.SensorEventListener {
     private val map = Board(c)
-    private val label: TextView = c.text("1×", 10.5f, Color.WHITE, true).apply { background = c.glass(9); setPadding(c.dp(7), c.dp(1), c.dp(7), c.dp(1)) }
+    private val label: TextView = c.text("1×", 10.5f, Glass.TEXT, true).apply { background = c.glass(9); setPadding(c.dp(7), c.dp(1), c.dp(7), c.dp(1)) }
     private var preview: PreviewView? = null
     private var live = false
     var busy: () -> Boolean = { false }
@@ -147,7 +147,7 @@ class ZoomMap(c: Context) : FrameLayout(c), android.hardware.SensorEventListener
         init { importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }
         override fun onDraw(cv: Canvas) {
             val w = width.toFloat(); val h = height.toFloat(); if (w <= 0f || h <= 0f) return
-            cv.drawColor(0xff0d1220.toInt())
+            cv.drawColor(Glass.BG)
             // The shown zoom glides toward the real one; keep drawing until it arrives.
             val gap = target - shownRatio
             if (abs(gap) > 0.01f) { shownRatio += gap * 0.18f; postInvalidateOnAnimation() } else shownRatio = target

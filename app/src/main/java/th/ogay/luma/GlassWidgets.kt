@@ -17,7 +17,7 @@ import android.widget.ScrollView
 import android.widget.TextView
 import kotlin.math.*
 
-fun Context.text(value: String, sp: Float, color: Int = Color.WHITE, bold: Boolean = false) = TextView(this).apply {
+fun Context.text(value: String, sp: Float, color: Int = Glass.TEXT, bold: Boolean = false) = TextView(this).apply {
     text = value; textSize = sp; setTextColor(color); includeFontPadding = false
     if (bold) typeface = Typeface.DEFAULT_BOLD
     maxLines = 1; ellipsize = TextUtils.TruncateAt.END
@@ -637,7 +637,7 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
                 val icon = o.icon.ifEmpty { Icons.forLabel(o.label) }
                 addView(IconView(c, icon).apply { tint = if (i == selected) Glass.ACCENT else Color.WHITE; inner = o.inner }, c.dp(22), c.dp(22))
                 val texts = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL; setPadding(c.dp(12), 0, c.dp(4), 0) }
-                texts.addView(c.text(o.label, 14f, Color.WHITE, i == selected))
+                texts.addView(c.text(o.label, 14f, Glass.TEXT, i == selected))
                 if (o.note.isNotEmpty()) texts.addView(c.text(o.note, 11.5f, Glass.TEXT2))
                 addView(texts, LinearLayout.LayoutParams(0, -2, 1f))
                 if (i == selected) addView(IconView(c, Icons.CHECK, 2.4f).apply { tint = Glass.ACCENT }, c.dp(18), c.dp(18))
@@ -1016,7 +1016,7 @@ class AiBadge(context: Context) : FrameLayout(context) {
     private val arc = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 3 * d; strokeCap = Paint.Cap.ROUND; color = Glass.ACCENT }
     private val box = RectF(); private var shown = 0f; private var anim: ValueAnimator? = null
     init {
-        setWillNotDraw(false); background = context.glass(23, 0xe6101a33.toInt()); visibility = GONE; isClickable = true; contentDescription = "AI กำลังทำงาน"; elevation = 6 * d
+        setWillNotDraw(false); background = context.glass(23, Glass.alpha(Glass.PANEL, 0xe6)); visibility = GONE; isClickable = true; contentDescription = "AI กำลังทำงาน"; elevation = 6 * d
         addView(IconView(context, Icons.AI, 2f).apply { tint = Glass.ACCENT }, LayoutParams(context.dp(18), context.dp(18), Gravity.CENTER))
     }
     fun update(percent: Float) {

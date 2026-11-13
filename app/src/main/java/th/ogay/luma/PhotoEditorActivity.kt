@@ -225,7 +225,7 @@ class PhotoEditorActivity : ComponentActivity() {
     private fun adjustTools(col: LinearLayout) {
         // One strip of dials (light, colour, effects in that order); swipe through them.
         val name = text("", 12f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER }
-        val value = text("", 15f, Color.WHITE, true).apply { gravity = Gravity.CENTER }
+        val value = text("", 15f, Glass.TEXT, true).apply { gravity = Gravity.CENTER }
         val dials = Develop.NAMES.mapIndexed { k, n -> EditorKit.Dial(this, Develop.ICONS[k], n).apply { amount = values[k] } }
         val slider = GlassSlider(this).apply { values = (-100..100).map { if (it > 0) "+$it" else "$it" }; grad = intArrayOf(0xff8e8e93.toInt(), Color.WHITE, Glass.ACCENT) }
         fun show(k: Int) {
@@ -262,7 +262,7 @@ class PhotoEditorActivity : ComponentActivity() {
         col.addView(dots, -1, -2)
         val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(18), 0, dp(12), 0) }
         head.addView(View(this).apply { background = android.graphics.drawable.GradientDrawable().apply { shape = android.graphics.drawable.GradientDrawable.OVAL; setColor(Develop.HSL_COLORS[hslColor]) } }, dp(10), dp(10))
-        head.addView(text("สี" + Develop.HSL_NAMES[hslColor], 13f, Color.WHITE, true).apply { setPadding(dp(8), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
+        head.addView(text("สี" + Develop.HSL_NAMES[hslColor], 13f, Glass.TEXT, true).apply { setPadding(dp(8), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
         // Reset: this colour first; when it is already untouched, every colour.
         val anyThis = (0 until 3).any { hsl[hslColor * 3 + it] != 0f }
         head.addView(EditorKit.chip(this, if (anyThis) "คืนค่าสีนี้" else "คืนค่าทุกสี", Icons.RESET) {
@@ -288,7 +288,7 @@ class PhotoEditorActivity : ComponentActivity() {
         val view = CurveView(this, curve).apply { channel = curveChannel; histogram = curveHistogram; onChange = { canvasView.refresh() }; onRelease = { commit() } }
         if (curveHistogram == null) canvasView.bitmap?.let { b -> luma.readIo.execute { val h = CurveView.histogram(b); runOnUiThread { curveHistogram = h; view.histogram = h } } }
         val top = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), 0, dp(12), 0) }
-        val name = text(Develop.CURVE_NAMES[curveChannel], 13f, Color.WHITE, true)
+        val name = text(Develop.CURVE_NAMES[curveChannel], 13f, Glass.TEXT, true)
         val dots = ArrayList<View>()
         fun paint() = dots.forEachIndexed { k, v ->
             (v.background as android.graphics.drawable.GradientDrawable).setStroke(dp(if (k == curveChannel) 3 else 0), Glass.ACCENT)
