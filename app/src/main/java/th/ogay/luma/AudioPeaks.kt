@@ -19,6 +19,10 @@ object AudioPeaks {
     private val loading = HashSet<String>()
 
     fun get(uri: Uri): FloatArray? = synchronized(cache) { cache[uri.toString()] }
+    /** Like [load], but on the calling thread: returns the waveform, decoding it first when needed. Call it off the main thread. */
+    fun getOrDecode(c: Context, uri: Uri): FloatArray { get(uri)?.let { return it }
+        val peaks = runCatching { decode(c.applicationContext, uri) }.getOrDefault(FloatArray(0))
+        synchronized(cache) { cache[uri.toString()] = peaks }; return peaks }
 
     /** Starts decoding if it has not been done; [done] runs on the calling executor's thread when the waveform is ready. */
     fun load(c: Context, uri: Uri, io: Executor, done: () -> Unit) {

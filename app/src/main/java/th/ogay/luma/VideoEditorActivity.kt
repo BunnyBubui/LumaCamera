@@ -358,6 +358,62 @@ class VideoEditorActivity : ComponentActivity() {
             contentResolver.openOutputStream(uri)?.use { it.write(lines.toByteArray()) }; notice("บันทึกไฟล์ซับแล้ว")
         }.onFailure { notice("บันทึกไฟล์ซับไม่สำเร็จ") }
     }
+    /** Puts caption lines on the video as text layers low on the picture; returns how many fit inside the video. */
+    private fun addCaptionLayers(made: List<Pair<VideoLayer, Bitmap>>): Int {
+        val total = totalOut(); var added = 0
+        made.forEach { (l, pic) -> if (l.at < total - 200) { layerThumbs[l.source] = pic
+            layers += l.copy(length = l.length.coerceAtMost(total - l.at), x = 0.5f, y = 0.86f, size = (pic.width.toFloat() / TEXT_PREVIEW * 0.62f).coerceIn(0.1f, 0.95f), aspect = pic.width.toFloat() / pic.height); added++ } }
+        layerPick = layers.size - 1; rebuildLayers(); showTool(LAYER_TOOL, false)
+        return added
+    }
+    // ---- Automatic captions ----
+    private var speech: Any? = null
+    /** The finished video as pieces of files: (file, from, to, where it starts in the video, speed). A middle part taken out of the first clip splits it in two. */
+    private fun soundPieces(): List<SpeechPiece> {
+        val out = ArrayList<SpeechPiece>(); var at = 0L
+        for (k in order()) {
+            if (k == 0) {
+                val ranges = if (cutValid()) listOf(start to cutFrom, cutTo to end) else listOf(start to end)
+                ranges.forEach { (a, b) -> if (!mainMuted && keepSound) out += SpeechPiece(source, a, b, at, speed); at += ((b - a) / speed).toLong() }
+            } else { val e = extras[k - 1]; if (!e.muted && keepSound) out += SpeechPiece(e.uri, e.from, e.to, at, e.speed); at += e.len }
+        }
+        return out
+    }
+    private fun autoCaptions() {
+        if (android.os.Build.VERSION.SDK_INT < 33) { notice("คำบรรยายอัตโนมัติต้องใช้ Android 13 ขึ้นไป"); return }
+        if (speech != null) { (speech as StudioSpeech).stop(); speech = null; notice("หยุดสร้างคำบรรยายแล้ว"); return }
+        if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(android.Manifest.permission.RECORD_AUDIO), 72); notice("ระบบแปลงเสียงต้องได้สิทธิ์ไมโครโฟน · อนุญาตแล้วแตะอีกครั้ง"); return }
+        val langs = listOf("ภาษาไทย" to "th-TH", "English" to "en-US")
+        android.app.AlertDialog.Builder(this).setTitle("ภาษาที่พูดในวิดีโอ").setItems(langs.map { it.first }.toTypedArray()) { _, w -> startCaptions(langs[w].second) }.show()
+    }
+    @androidx.annotation.RequiresApi(33)
+    private fun startCaptions(lang: String) {
+        val whole = soundPieces()
+        if (whole.isEmpty()) { notice("วิดีโอนี้ไม่มีเสียงให้แปลง"); return }
+        notice("กำลังหาช่วงที่มีเสียงพูด…")
+        luma.readIo.execute {
+            // Each clip is cut at its pauses so every caption line gets its own start and end; long stretches are cut every 8 seconds.
+            val pieces = ArrayList<SpeechPiece>()
+            for (p in whole) {
+                val pk = AudioPeaks.getOrDecode(this, p.uri).takeIf { it.isNotEmpty() } ?: continue
+                for ((a, b) in StudioMath.keepRanges(pk, AudioPeaks.STEP_MS.toLong(), p.from, p.to, quiet = 0.1f, minMs = 350, padMs = 120)) {
+                    var x = a; while (x < b) { val y = if (b - x > 10_000) x + 8_000 else b; pieces += SpeechPiece(p.uri, x, y, p.outAt + ((x - p.from) / p.speed).toLong(), p.speed); x = y }
+                }
+            }
+            runOnUiThread {
+                if (isDestroyed) return@runOnUiThread
+                if (pieces.isEmpty()) { notice("ไม่พบช่วงที่มีเสียงพูด"); return@runOnUiThread }
+                val job = StudioSpeech(this, lang, pieces.take(80), { i, n -> notice("กำลังแปลงเสียงเป็นข้อความ ${i + 1}/$n · แตะคำบรรยายอัตโนมัติอีกครั้งเพื่อหยุด") }) { cues, problem ->
+                    speech = null; if (isDestroyed) return@StudioSpeech
+                    val made = cues.map { c -> val l = VideoLayer(VideoLayer.TEXT, VideoLayer.textSource(c.text, Color.WHITE, 1), c.from, c.to - c.from, text = c.text, style = 1); l to VideoLayers.textPicture(l, TEXT_PREVIEW) }
+                    val added = if (made.isNotEmpty()) addCaptionLayers(made) else 0
+                    notice(when { added > 0 && problem == null -> "เพิ่มคำบรรยาย $added บรรทัด · ตรวจคำและเวลาก่อนส่งออก"; added > 0 -> "เพิ่มคำบรรยาย $added บรรทัด · $problem"; else -> problem ?: "ไม่พบเสียงพูดที่แปลงได้" })
+                }
+                speech = job; job.start()
+            }
+        }
+    }
     /** Reads an .srt file and adds each line as a text layer at its time, low on the picture with a dark box behind. */
     private fun importSrt(uri: Uri) {
         luma.readIo.execute {
@@ -370,10 +426,7 @@ class VideoEditorActivity : ComponentActivity() {
             runOnUiThread {
                 if (isDestroyed) return@runOnUiThread
                 if (made.isEmpty()) { notice("อ่านไฟล์ซับนี้ไม่ได้ · ต้องเป็นไฟล์ .srt"); return@runOnUiThread }
-                val total = totalOut(); var added = 0
-                made.take(SRT_LIMIT).forEach { (l, pic) -> if (l.at < total - 200) { layerThumbs[l.source] = pic
-                    layers += l.copy(length = l.length.coerceAtMost(total - l.at), x = 0.5f, y = 0.86f, size = (pic.width.toFloat() / TEXT_PREVIEW * 0.62f).coerceIn(0.1f, 0.95f), aspect = pic.width.toFloat() / pic.height); added++ } }
-                layerPick = layers.size - 1; rebuildLayers(); showTool(LAYER_TOOL, false)
+                val added = addCaptionLayers(made.take(SRT_LIMIT))
                 notice(if (added == 0) "เวลาของซับอยู่นอกความยาววิดีโอ" else "เพิ่มซับ $added บรรทัด" + if (made.size > SRT_LIMIT) " · รับได้สูงสุด $SRT_LIMIT บรรทัดต่อครั้ง" else "")
             }
         }
@@ -1580,6 +1633,7 @@ class VideoEditorActivity : ComponentActivity() {
         // SRT is the common subtitle file: numbered lines of text, each with a start and an end time.
         chip("นำเข้าซับ SRT", EditorKit.START) { pickSrt.launch(arrayOf("*/*")) }
         if (layers.any { it.kind == VideoLayer.TEXT }) chip("ส่งออกซับ SRT", EditorKit.END) { saveSrt.launch("subtitles.srt") }
+        chip(if (speech != null) "หยุดคำบรรยาย" else "คำบรรยายอัตโนมัติ", "M4 6h16v10H8l-4 4z M8 10h8 M8 13h5") { autoCaptions() }
         col.gravity = Gravity.TOP
         col.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(add) }, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = dp(6); topMargin = dp(4) })
         if (layers.isEmpty()) {
@@ -1907,7 +1961,7 @@ class VideoEditorActivity : ComponentActivity() {
     // ---------- Lifecycle ----------
     override fun onPause() { player?.let { if (it.isPlaying) togglePlay() }; if (prog != null) th.ogay.luma.ai.AiPace.watching = false; super.onPause(); if (::trim.isInitialized && overlay == null) saveProject() }
     override fun onResume() { super.onResume(); if (prog != null) th.ogay.luma.ai.AiPace.watching = true }
-    override fun onDestroy() { fxEq?.runCatching { release() }; fxEq = null; recorder?.runCatching { stop() }; recorder?.runCatching { release() }; recorder = null; handler.removeCallbacksAndMessages(null); releasePlayer(); musicPlayer?.runCatching { release() }; releaseLayerSound(); super.onDestroy() }
+    override fun onDestroy() { if (android.os.Build.VERSION.SDK_INT >= 33) (speech as? StudioSpeech)?.stop(); speech = null; fxEq?.runCatching { release() }; fxEq = null; recorder?.runCatching { stop() }; recorder?.runCatching { release() }; recorder = null; handler.removeCallbacksAndMessages(null); releasePlayer(); musicPlayer?.runCatching { release() }; releaseLayerSound(); super.onDestroy() }
     override fun onSaveInstanceState(out: Bundle) {
         super.onSaveInstanceState(out); writeState(out)
         out.putString("projectId", projectId); out.putString("projectName", projectName)

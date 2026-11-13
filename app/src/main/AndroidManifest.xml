@@ -20,6 +20,9 @@
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false"/>
     <!-- The optional CameraUnit SDK declares minSdk 29; every call into it is guarded by SDK_INT >= 29. -->
     <uses-sdk tools:overrideLibrary="com.oplus.ocs.camera,com.oplus.ocs.base"/>
+    <queries>
+        <intent><action android:name="android.speech.RecognitionService"/></intent>
+    </queries>
     <application android:name=".LumaApp" android:label="@string/app_name" android:icon="@drawable/luma_icon" android:roundIcon="@drawable/luma_icon"
         android:allowBackup="false" android:supportsRtl="true" android:theme="@style/LumaTheme">
         <!-- OPPO CameraUnit authorisation; empty unless OPPO issues a code for this package and key. -->
