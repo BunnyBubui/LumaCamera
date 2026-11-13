@@ -81,6 +81,8 @@ class VideoEditorActivity : ComponentActivity() {
         private const val LAYERS = "M12 3l9 5-9 5-9-5z M3 12.5l9 5 9-5 M3 17l9 5 9-5"
         private const val LAYER_TOOL = 13
         private const val COLOR_TOOL = 14
+        /** Internal menu numbers in the order the tool bar shows them. */
+        private val TOOL_IDS = listOf(0, 2, 3, 4, 5, 14, 8, 9, 11, 12, 13, 15, 16)
         private val EASES = listOf("นุ่ม", "คงที่", "ค่อย ๆ เร่ง", "ค่อย ๆ หยุด", "หยุดนิ่ง")
         private const val GREEN_KEY = 0xff00b140.toInt()
         private const val BLUE_KEY = 0xff0047bb.toInt()
@@ -111,14 +113,27 @@ class VideoEditorActivity : ComponentActivity() {
         var speed = 1f
         /** True when this part plays without its own sound (for example after its sound was moved to a layer). */
         var muted = false
-        val len get() = ((to - from) / speed).toLong()
-        fun copy() = Extra(uri, duration, w, h, name, thumb).also { it.from = from; it.to = to; it.speed = speed; it.muted = muted }
+        /** Loudness of this part's own sound (0..2) and its speed curve (null = steady [speed]). */
+        var volume = 1f; var curve: FloatArray? = null
+        val len get() = StudioMath.outLen(to - from, speed, curve)
+        fun copy() = Extra(uri, duration, w, h, name, thumb).also { it.from = from; it.to = to; it.speed = speed; it.muted = muted; it.volume = volume; it.curve = curve?.copyOf() }
     }
     private var mainFrames: List<Bitmap> = emptyList()
     private val clipFrames = HashMap<String, List<Bitmap>>()
     private fun buildExtras(uris: List<String>, ranges: List<String>?, get: (String) -> Extra?): List<Extra> = uris.mapIndexedNotNull { i, u ->
         get(u)?.copy()?.also { e -> ranges?.getOrNull(i)?.split(",")?.takeIf { it.size >= 2 }?.let { r ->
-            e.from = (r[0].toLongOrNull() ?: 0L).coerceIn(0, e.duration); e.to = (r[1].toLongOrNull() ?: e.duration).coerceIn(e.from, e.duration); e.speed = (r.getOrNull(2)?.toFloatOrNull() ?: 1f).coerceIn(0.1f, 8f); e.muted = r.getOrNull(3) == "m" } } }
+            e.from = (r[0].toLongOrNull() ?: 0L).coerceIn(0, e.duration); e.to = (r[1].toLongOrNull() ?: e.duration).coerceIn(e.from, e.duration); e.speed = (r.getOrNull(2)?.toFloatOrNull() ?: 1f).coerceIn(0.001f, 5000f); e.muted = r.getOrNull(3) == "m"
+            e.volume = r.getOrNull(4)?.toFloatOrNull() ?: 1f; e.curve = r.getOrNull(5)?.split(';')?.mapNotNull { it.toFloatOrNull() }?.takeIf { it.size == 5 }?.toFloatArray() } } }
+    private var curveSpeedSet = 0f
+    /** While a clip with a speed curve plays, the preview's speed follows the curve (the player itself goes from 0.1× to 8×). */
+    private fun followCurve(p: MediaPlayer, pos: Long) {
+        val e = extras.getOrNull(playIndex - 1)
+        val c = if (e != null) e.curve else mainCurve; if (c == null) return
+        val sp = (if (e != null) StudioMath.speedAt(pos - e.from, e.to - e.from, e.speed, c) else StudioMath.speedAt(pos - start, end - start, speed, c)).coerceIn(0.1f, 8f)
+        if (abs(sp - curveSpeedSet) / sp > 0.02f) { curveSpeedSet = sp; runCatching { p.playbackParams = p.playbackParams.setSpeed(sp) } }
+    }
+    /** Speed curve of the first clip; null = steady speed. */
+    private var mainCurve: FloatArray? = null
     // ---- Playing order ----
     /** How many added clips play before the clip the editor was opened with. 0 = that clip is first, as before. */
     private var mainAt = 0
@@ -205,13 +220,15 @@ class VideoEditorActivity : ComponentActivity() {
     private var pendingSeek = -1L; private var lastSeekAt = 0L
     private var barBase: VideoLayer? = null
     private val layerLength = HashMap<Uri, Long>()
-    private fun mainLen() = ((end - start - cutMs()) / speed).toLong()
+    /** Every speed the video plays at (each step of a curve counts); sound is kept only when all stay between 0.25× and 4×. */
+    private fun allSpeeds(): List<Float> = StudioMath.partSpeeds(speed, if (cutValid()) null else mainCurve).toList() + extras.flatMap { StudioMath.partSpeeds(it.speed, it.curve).toList() }
+    private fun mainLen() = if (mainCurve != null && !cutValid()) StudioMath.outLen(end - start, speed, mainCurve) else ((end - start - cutMs()) / speed).toLong()
     private fun refreshTimeline() {
         if (!::timeline.isInitialized) return
         val list = ArrayList<StudioTimeline.Clip>(extras.size + 1)
         val seq = order()
-        seq.forEach { k -> if (k == 0) list += StudioTimeline.Clip(mainLen().coerceAtLeast(1), start, end, duration, speed, mainFrames.ifEmpty { listOfNotNull(firstFrame) }, extras.isNotEmpty())
-            else extras[k - 1].let { e -> ensureFrames(e); list += StudioTimeline.Clip(e.len.coerceAtLeast(1), e.from, e.to, e.duration, e.speed, framesOf(e), true) } }
+        seq.forEach { k -> if (k == 0) list += StudioTimeline.Clip(mainLen().coerceAtLeast(1), start, end, duration, ((end - start).toFloat() / mainLen().coerceAtLeast(1)).coerceAtLeast(0.0001f), mainFrames.ifEmpty { listOfNotNull(firstFrame) }, extras.isNotEmpty())
+            else extras[k - 1].let { e -> ensureFrames(e); list += StudioTimeline.Clip(e.len.coerceAtLeast(1), e.from, e.to, e.duration, ((e.to - e.from).toFloat() / e.len.coerceAtLeast(1)).coerceAtLeast(0.0001f), framesOf(e), true) } }
         // Lanes: the music first, then each layer on the first lane where it does not sit on top of another (four lanes at most).
         val lanes = ArrayList<MutableList<StudioTimeline.Bar>>()
         music?.let { m -> val pk = AudioPeaks.get(m); if (pk == null) AudioPeaks.load(this, m, luma.readIo) { runOnUiThread { if (!isDestroyed) refreshTimeline() } }
@@ -226,8 +243,8 @@ class VideoEditorActivity : ComponentActivity() {
             while (lanes.size <= at) lanes += mutableListOf<StudioTimeline.Bar>()
             lanes[at] += bar
         }
-        timeline.clips = list; timeline.lanes = lanes; timeline.selected = seq.indexOf(playIndex).coerceAtLeast(0); timeline.joined = transition != 0; timeline.marks = markers
-        timeline.selectedBar = if (tool == LAYER_TOOL && layerPick in layers.indices) layerPick else if (tool == 6 && music != null) -1 else -2
+        timeline.clips = list; timeline.lanes = lanes; timeline.selected = if (barActive) -1 else seq.indexOf(playIndex).coerceAtLeast(0); timeline.joined = transition != 0; timeline.marks = markers
+        timeline.selectedBar = if (barActive && layerPick in layers.indices) layerPick else -2
         if (lanes.size != laneCount) { laneCount = lanes.size; timeline.layoutParams = timeline.layoutParams.apply { height = dp(68 + 22 * lanes.size) } }
         timeline.playhead = outNow()
         timeline.invalidate()
@@ -237,8 +254,9 @@ class VideoEditorActivity : ComponentActivity() {
         var r = t.coerceAtLeast(0); val o = order()
         o.forEachIndexed { n, k -> val len = lenOf(k)
             if (r < len || n == o.size - 1) { r = r.coerceAtMost(len)
-                if (k == 0) { var at = start + (r * speed).toLong(); if (cutValid() && at >= cutFrom) at += cutMs(); return 0 to at.coerceIn(start, end) }
-                val e = extras[k - 1]; return k to (e.from + (r * e.speed).toLong()).coerceIn(e.from, e.to) }
+                if (k == 0) { if (mainCurve != null && !cutValid()) return 0 to (start + StudioMath.outToSrc(r, end - start, speed, mainCurve)).coerceIn(start, end)
+                    var at = start + (r * speed).toLong(); if (cutValid() && at >= cutFrom) at += cutMs(); return 0 to at.coerceIn(start, end) }
+                val e = extras[k - 1]; return k to (e.from + StudioMath.outToSrc(r, e.to - e.from, e.speed, e.curve)).coerceIn(e.from, e.to) }
             r -= len }
         return 0 to start
     }
@@ -316,6 +334,7 @@ class VideoEditorActivity : ComponentActivity() {
         val p = player ?: return
         if (prepared && p.isPlaying) {
             val pos = p.currentPosition.toLong()
+            followCurve(p, pos)
             if (playIndex == 0 && !switching) {
                 if (pos >= end - 30) { if (extras.isNotEmpty()) playClip(nextOf(0)) else { p.seekTo(start.toInt()); musicPlayer?.seekTo(0) } }
                 else if (cutValid() && pos in cutFrom until cutTo) p.seekTo(cutTo.toInt())
@@ -505,16 +524,15 @@ class VideoEditorActivity : ComponentActivity() {
         timeLabel = text("", 13f, Glass.TEXT2).apply { setPadding(dp(12), 0, 0, 0) }
         transport.addView(timeLabel, LinearLayout.LayoutParams(0, -2, 1f))
         timeLabel.maxLines = 2
-        transport.addView(EditorKit.round(this, EditorKit.SPLIT, "แยกคลิปตรงหัวอ่าน") { splitAtPlayhead() }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { rightMargin = dp(6) })
         transport.addView(EditorKit.round(this, "M7 4v16 M7 5h10l-2.5 3.5L17 12H7", "ปักหรือถอนมาร์กเกอร์ตรงหัวอ่าน") {
             val now = outNow(); val near = markers.firstOrNull { abs(it - now) <= 150 }
             if (near != null) markers.remove(near) else { markers += now; markers.sort() }
             Glass.tick(timeline); refreshTimeline() }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { rightMargin = dp(6) })
-        transport.addView(EditorKit.chip(this, "เพิ่มคลิป", ADD) { pickClip.launch(arrayOf("video/*")) }, LinearLayout.LayoutParams(-2, dp(44)))
         root.addView(transport, -1, -2)
         timeline = StudioTimeline(this).apply { contentDescription = "ไทม์ไลน์ ลากเพื่อเลื่อนเวลา แตะคลิปเพื่อเลือก ลากขอบคลิปที่เลือกเพื่อตัด กดค้างแล้วลากเพื่อสลับลำดับ" }
         timeline.onSeek = { t, done -> if (player?.isPlaying == true) togglePlay(); val (k, at) = locate(t); jumpTo(k, at, done) }
-        timeline.onPickBar = { id -> if (id >= 0) { layerPick = id; showTool(LAYER_TOOL, tool != LAYER_TOOL); placeLayers() } else showTool(6, tool != 6) }
+        timeline.onPickBar = { id -> if (id >= 0) pickBar(id) }
+        timeline.onAdd = { pickClip.launch(arrayOf("video/*")) }
         timeline.onBar = { id, at, len, shift, done -> layers.getOrNull(id)?.let { cur ->
             val base = barBase ?: cur.also { barBase = it }
             var from = base.from; var begin = at; var length = len
@@ -528,7 +546,9 @@ class VideoEditorActivity : ComponentActivity() {
             layers[id] = cur.copy(at = begin.coerceAtLeast(0), length = length.coerceAtLeast(200), from = from)
             if (done) barBase = null
             placeLayers(); refreshTimeline() } }
-        timeline.onSelect = { i -> val k = order().getOrNull(i) ?: 0; if (k != playIndex) jumpTo(k, if (k == 0) start else extras[k - 1].from); if (tool == 10) showTool(10, false) }
+        timeline.onSelect = { i -> val k = order().getOrNull(i) ?: 0; val was = barActive; barActive = false
+            if (k != playIndex) jumpTo(k, if (k == 0) start else extras[k - 1].from)
+            if (tool == 0 || tool == 2 || tool == 9 || was) showTool(tool, false); refreshTimeline() }
         timeline.onTrim = { i, f, t, done -> val k = order().getOrNull(i) ?: 0
             if (k == 0) { start = f; end = t; if (split !in (f + 300)..(t - 300)) split = -1; if (cutValid() && (cutFrom < f + 100 || cutTo > t - 100)) { cutFrom = -1; cutTo = -1 } }
             else extras.getOrNull(k - 1)?.let { it.from = f; it.to = t }
@@ -550,10 +570,14 @@ class VideoEditorActivity : ComponentActivity() {
         trim.onRange = { s, e -> val x = extras.getOrNull(playIndex - 1)
             if (x != null) { x.from = s; x.to = e; seek(trim.playhead.coerceIn(s, e)); showTime() } else { start = s; end = e; if (split !in (s + 300)..(e - 300)) split = -1; trim.split = split; seek(trim.playhead.coerceIn(s, e)); showTime() } }
         trim.onSeek = { ms -> seek(ms) }
-        root.addView(trim, LinearLayout.LayoutParams(-1, dp(64)).apply { setMargins(dp(12), dp(4), dp(12), dp(4)) })
+        // The old film strip still keeps the playhead and the picked clip's ends, but the timeline above is what is shown.
+        trim.visibility = View.GONE
+        root.addView(trim, LinearLayout.LayoutParams(-1, 0))
         tools = FrameLayout(this).apply { clipChildren = false }
         root.addView(tools, LinearLayout.LayoutParams(-1, dp(124)))
-        toolBar = EditorKit.ToolBar(this, listOf(EditorKit.SCISSORS to "ตัด", EditorKit.SPLIT to "แยกไฟล์", EditorKit.SPEED to "ความเร็ว", EditorKit.CROP to "ครอบ", EditorKit.TEXT to "ข้อความ", Icons.FILM to "ฟิลเตอร์", EditorKit.MUSIC to "เพลง", EditorKit.ADJUST to "ปรับ", EditorKit.ROTATE to "หมุน", Icons.SOUND to "เสียง", CLIPS to "คลิป", JOIN to "ทรานซิชัน", STICKER to "สติกเกอร์", LAYERS to "เลเยอร์", "M12 3a9 9 0 1 0 0 18c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.3 0-1.1.9-2 2-2h2.3A4.7 4.7 0 0 0 21 9.7C21 5.9 17 3 12 3z M7.5 11h.01 M10 7.5h.01 M14.5 7.5h.01" to "สี")) { showTool(it) }
+        toolBar = EditorKit.ToolBar(this, listOf(EditorKit.SCISSORS to "ตัด", EditorKit.SPEED to "ความเร็ว", EditorKit.CROP to "ครอป", EditorKit.TEXT to "ข้อความ", Icons.FILM to "ฟิลเตอร์",
+            EditorKit.ADJUST to "ปรับแต่งภาพ", EditorKit.ROTATE to "หมุน", Icons.SOUND to "เสียง", JOIN to "ทรานซิชัน", STICKER to "สติกเกอร์", LAYERS to "เลเยอร์",
+            "M4 6h16v10H8l-4 4z M8 10h8 M8 13h5" to "คำบรรยาย", "M12 4a3 3 0 0 0-3 3v5a3 3 0 0 0 6 0V7a3 3 0 0 0-3-3z M6 11a6 6 0 0 0 12 0 M12 17v3" to "อัดเสียง")) { showTool(TOOL_IDS[it]) }
         root.addView(toolBar, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(4), 0, dp(4), dp(8)) })
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) { override fun handleOnBackPressed() = leave() })
 
@@ -794,8 +818,8 @@ class VideoEditorActivity : ComponentActivity() {
     private fun clipStart(k: Int): Long { var at = 0L; for (o in order()) { if (o == k) break; at += lenOf(o) }; return at }
     /** The clip on screen as (file, from, to, speed); null when it cannot be cut into pieces (first clip with a speed change or a middle part taken out). */
     private fun clipSpan(k: Int): List<Any>? { val e = extras.getOrNull(k - 1)
-        if (e != null) return listOf(e.uri, e.from, e.to, e.speed)
-        if (speed != 1f || cutValid()) return null
+        if (e != null) return if (e.curve != null) null else listOf(e.uri, e.from, e.to, e.speed)
+        if (speed != 1f || cutValid() || mainCurve != null) return null
         return listOf(source, start, end, 1f) }
     /** Puts pieces [ranges] (ms of the source) in the place of clip [k], next to each other in the same order. */
     private fun replaceWithRanges(k: Int, ranges: List<Pair<Long, Long>>) {
@@ -920,7 +944,7 @@ class VideoEditorActivity : ComponentActivity() {
         val k = playIndex; val e = extras.getOrNull(k - 1)
         if (isMuted(k)) { notice("คลิปนี้ไม่มีเสียงให้แยกแล้ว"); return }
         val sp = e?.speed ?: speed
-        if (sp != 1f) { notice("แยกเสียงได้เฉพาะคลิปความเร็วปกติ"); return }
+        if (sp != 1f || (e?.curve ?: mainCurve) != null) { notice("แยกเสียงได้เฉพาะคลิปความเร็วปกติ"); return }
         if (e == null && cutValid()) { notice("คลิปนี้ตัดช่วงกลางออกแล้ว จึงแยกเสียงไม่ได้"); return }
         val src = e?.uri ?: source; val from = e?.from ?: start; val len = e?.len ?: mainLen()
         var at = 0L; for (o in order()) { if (o == k) break; at += lenOf(o) }
@@ -1143,15 +1167,98 @@ class VideoEditorActivity : ComponentActivity() {
         }
     }
 
+    // ---------- Cut menu: works on whatever is picked on the timeline ----------
+    /** True when a bar under the clips (a layer, text, sound or music) is picked; false when a clip is. */
+    private var barActive = false
+    /** Picks the bar of layer [i] on the timeline and opens the menu that edits it, unless the cut menu is open. */
+    private fun pickBar(i: Int) {
+        val l = layers.getOrNull(i) ?: return
+        barActive = true; layerPick = i
+        val home = when (l.kind) { VideoLayer.TEXT -> if (VideoLayers.shapeOf(l.text) >= 0) 12 else 4; VideoLayer.SOUND -> 9; else -> LAYER_TOOL }
+        if (tool == 0 || tool == home || (tool == 15 && l.caption) || (tool == 16 && l.kind == VideoLayer.SOUND)) showTool(tool, false) else showTool(home)
+        placeLayers(); refreshTimeline()
+    }
+    private fun pickClip() { if (barActive) { barActive = false; if (tool == 0 || tool == 2 || tool == 9) showTool(tool, false); refreshTimeline() } }
+    /** Splits layer [i] at [t] (ms of the video) into two layers that follow each other; keyframes go to the half they belong to. */
+    private fun splitLayer(i: Int, t: Long) {
+        val l = layers[i]; val off = t - l.at
+        if (off < 200 || l.length - off < 200) { notice("เลื่อนหัวอ่านให้อยู่ในแถบนี้ ห่างจากขอบอย่างน้อย 0.2 วินาที"); return }
+        val first = l.withKeys(l.keyList.filter { it.t <= off }).copy(length = off, fadeOut = 0)
+        val second = l.withKeys(l.keyList.filter { it.t >= off }.map { VideoLayer.Key(it.t - off, it.x, it.y, it.size, it.opacity, it.ease) })
+            .copy(at = t, length = l.length - off, from = if (l.still) l.from else l.from + off, fadeIn = 0)
+        layers[i] = first; layers.add(i + 1, second); layerPick = i + 1; rebuildLayers(); refreshTimeline()
+    }
+    /** Cuts the start (or the end) of layer [i] off at [t]. */
+    private fun trimLayer(i: Int, t: Long, head: Boolean) {
+        val l = layers[i]; val off = t - l.at
+        if (off < 100 || l.length - off < 100) { notice("เลื่อนหัวอ่านให้อยู่ในแถบนี้ก่อน"); return }
+        layers[i] = if (head) l.withKeys(l.keyList.filter { it.t >= off }.map { VideoLayer.Key(it.t - off, it.x, it.y, it.size, it.opacity, it.ease) })
+            .copy(at = t, length = l.length - off, from = if (l.still) l.from else l.from + off)
+        else l.withKeys(l.keyList.filter { it.t <= off }).copy(length = off)
+        rebuildLayers(); refreshTimeline()
+    }
+    /** Cuts the start ([head]) or the end of the clip on screen off at the playhead. */
+    private fun trimClip(head: Boolean) {
+        val e = extras.getOrNull(playIndex - 1); val at = trim.playhead
+        if (e != null) {
+            if (head) { if (e.to - at < 100) { notice("หัวอ่านอยู่ใกล้ท้ายคลิปเกินไป"); return }; e.from = at.coerceIn(0, e.to - 100) }
+            else { if (at - e.from < 100) { notice("หัวอ่านอยู่ใกล้ต้นคลิปเกินไป"); return }; e.to = at.coerceIn(e.from + 100, e.duration) }
+            showClipOnBar(); jumpTo(playIndex, if (head) e.from else (e.to - 1).coerceAtLeast(e.from))
+        } else {
+            if (head) { if (end - at < 100) { notice("หัวอ่านอยู่ใกล้ท้ายคลิปเกินไป"); return }; setRange(at, end) }
+            else { if (at - start < 100) { notice("หัวอ่านอยู่ใกล้ต้นคลิปเกินไป"); return }; setRange(start, at) }
+        }
+        showTime(); Glass.tick(timeline)
+    }
+    private fun cutTools(col: LinearLayout) {
+        val l = layers.getOrNull(layerPick)
+        if (barActive && l != null) {
+            col.addView(text("แถบ: " + layerName(l), 12f, Glass.TEXT2, true).apply { maxLines = 1; gravity = Gravity.CENTER; setPadding(dp(16), 0, dp(16), dp(6)) }, -1, -2)
+            col.addView(EditorKit.actionRow(this, listOf(
+                EditorKit.action(this, EditorKit.SPLIT, "แยกตรงนี้") { splitLayer(layerPick, outNow()); showTool(0, false) },
+                EditorKit.action(this, EditorKit.START, "เริ่มที่นี่") { trimLayer(layerPick, outNow(), true); showTool(0, false) },
+                EditorKit.action(this, EditorKit.END, "จบที่นี่") { trimLayer(layerPick, outNow(), false); showTool(0, false) },
+                EditorKit.action(this, "M8 8h11v11H8z M5 16V5h11", "ทำสำเนา") { val c = layers[layerPick]; val total = totalOut()
+                    layers.add(layerPick + 1, c.copy(at = c.end.coerceAtMost((total - c.length).coerceAtLeast(0)))); layerPick++; rebuildLayers(); refreshTimeline(); showTool(0, false) },
+                EditorKit.action(this, "M5 7h14 M9 7V4h6v3 M7 7l1 13h8l1-13", "ลบ") { layers.removeAt(layerPick); layerPick = -1; barActive = false; rebuildLayers(); refreshTimeline(); showTool(0, false) })), -1, -2)
+            return
+        }
+        val e = extras.getOrNull(playIndex - 1)
+        val list = mutableListOf(
+            EditorKit.action(this, EditorKit.SPLIT, "แยกตรงนี้") { splitAtPlayhead() },
+            EditorKit.action(this, EditorKit.START, "เริ่มที่นี่") { trimClip(true) },
+            EditorKit.action(this, EditorKit.END, "จบที่นี่") { trimClip(false) },
+            EditorKit.action(this, Icons.RESET, "ความยาวเดิม") { if (e != null) { e.from = 0; e.to = e.duration; showClipOnBar() } else { setRange(0, duration); cutFrom = -1; cutTo = -1 }; showTime(); showTool(0, false) },
+            EditorKit.action(this, "M8 8h11v11H8z M5 16V5h11", "ทำสำเนา") {
+                if (e != null) { extras.add(playIndex, e.copy()); if (playIndex - 1 < mainPos()) mainAt = mainPos() + 1 }
+                else { extraCache.getOrPut(source.toString()) { Extra(source, duration, videoW, videoH, "คลิปแรก", firstFrame) }
+                    extras.add(mainPos(), Extra(source, duration, videoW, videoH, "คลิปแรก", firstFrame).also { it.from = start; it.to = end; it.speed = speed; it.curve = mainCurve?.copyOf(); it.volume = volume }) }
+                showTime(); showTool(0, false) },
+            EditorKit.action(this, "M4 12h6 M14 12h6 M10 8v8 M14 8v8", "แยกเสียง") { detachSound(); showTool(0, false) },
+            EditorKit.action(this, "M3 5h18v14H3z M12 5v14", "หาฉาก") { findScenes() },
+            EditorKit.action(this, "M7 4v16 M7 5h10l-2.5 3.5L17 12H7", "แยกตามมาร์กเกอร์") { splitAtMarkers() },
+            EditorKit.action(this, "M3 12h3 M18 12h3 M8 8v8 M12 5v14 M16 8v8", "ตัดช่วงเงียบ") { cutSilence() })
+        if (e != null) {
+            // Slip: the clip keeps its length and place, and shows an earlier or later part of its file.
+            list += EditorKit.action(this, "M9 7l-5 5 5 5 M4 12h12 M20 5v14", "เนื้อหา −0.5 วิ") { val d = minOf(500L, e.from); if (d <= 0) notice("อยู่ที่ต้นไฟล์แล้ว") else { e.from -= d; e.to -= d; showClipOnBar(); jumpTo(playIndex, (trim.playhead - d).coerceIn(e.from, e.to)); showTime() } }
+            list += EditorKit.action(this, "M15 7l5 5-5 5 M20 12H8 M4 5v14", "เนื้อหา +0.5 วิ") { val d = minOf(500L, e.duration - e.to); if (d <= 0) notice("อยู่ที่ท้ายไฟล์แล้ว") else { e.from += d; e.to += d; showClipOnBar(); jumpTo(playIndex, (trim.playhead + d).coerceIn(e.from, e.to)); showTime() } }
+        }
+        list += EditorKit.action(this, "M5 7h14 M9 7V4h6v3 M7 7l1 13h8l1-13", "ลบ") {
+            if (e == null) deleteMain() else { val c = playIndex - 1; extras.removeAt(c); if (c < mainPos()) mainAt = mainPos() - 1
+                playIndex = order().getOrNull(order().indexOf(0).coerceAtLeast(0)) ?: 0; jumpTo(0, start); showTime(); showTool(0, false) } }
+        col.addView(text("คลิป ${order().indexOf(playIndex) + 1} จาก ${extras.size + 1} · ${clock(lenOf(playIndex))}", 12f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; setPadding(dp(16), 0, dp(16), dp(6)) }, -1, -2)
+        col.addView(EditorKit.actionRow(this, list), -1, -2)
+    }
+
     // ---------- Tools ----------
-    private fun showTool(i: Int, animate: Boolean = true) {
-        val dir = if (animate) i.compareTo(tool) else 0
-        tool = i; toolBar.select(i, animate)
-        // Cut, split-into-two-files and speed belong to the first clip, so the preview goes back to it.
-        if (i in 0..2 && playIndex != 0 && !switching) playClip(0, false)
+    private fun showTool(req: Int, animate: Boolean = true) {
+        // Older menus now live inside others: split-file and clips in cut, music in sound, adjust in the image menu.
+        val i = when (req) { 1, 10 -> 0; 6 -> 9; 7 -> COLOR_TOOL; else -> req }
+        val dir = if (animate) TOOL_IDS.indexOf(i).compareTo(TOOL_IDS.indexOf(tool)) else 0
+        tool = i; toolBar.select(TOOL_IDS.indexOf(i).coerceAtLeast(0), animate)
         // The layer lanes need room; the preview gives way smoothly.
         if (i != COLOR_TOOL) { handler.removeCallbacks(histTick); hist = null }
-        val want = dp(if (i == LAYER_TOOL) 276 else if (i == COLOR_TOOL) 268 else if (i == 9) 236 else if (i == 2 && speed < 1f) 150 else 124)
+        val want = dp(when (i) { LAYER_TOOL -> 276; COLOR_TOOL -> 268; 9 -> 260; 2 -> if (speedTab == 1) 236 else 178; 4 -> 236; 3, 5 -> 150; 12, 15, 16 -> 220; else -> 124 })
         if (tools.layoutParams.height != want) {
             if (!animate || Glass.reduced(this)) { tools.layoutParams.height = want; tools.requestLayout() }
             else android.animation.ValueAnimator.ofInt(tools.layoutParams.height, want).apply { duration = 260; interpolator = Glass.EASE
@@ -1161,7 +1268,8 @@ class VideoEditorActivity : ComponentActivity() {
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_VERTICAL }
         fun note(s: String) = col.addView(text(s, 12f, Glass.TEXT2, true).apply { maxLines = 1; gravity = Gravity.CENTER; setPadding(dp(16), 0, dp(16), dp(6)) }, -1, -2)
         when (i) {
-            0 -> { if (cutValid()) note("ตัดช่วง ${clock(cutFrom - start)}–${clock(cutTo - start)} ออก")
+            0 -> cutTools(col)
+            -100 -> { if (cutValid()) note("ตัดช่วง ${clock(cutFrom - start)}–${clock(cutTo - start)} ออก")
                 // One row that scrolls sideways: two rows of buttons did not fit above the tool bar.
                 col.addView(EditorKit.actionRow(this, listOf(
                     EditorKit.action(this, EditorKit.START, "เริ่มที่นี่") { setRange(trim.playhead, end) },
@@ -1191,7 +1299,6 @@ class VideoEditorActivity : ComponentActivity() {
                     EditorKit.action(this, Icons.MIRROR, "กลับด้าน", mirror) { mirror = !mirror; layoutVideo(); showTool(8, false) },
                     EditorKit.action(this, Icons.RESET, "คืนค่า") { turns = 0; mirror = false; layoutVideo(); showTool(8, false) })), -1, -2)
             9 -> soundTools(col)
-            10 -> clipTools(col)
             11 -> transitionTools(col)
             12 -> stickerTools(col)
             else -> layerTools(col)
@@ -1199,48 +1306,71 @@ class VideoEditorActivity : ComponentActivity() {
         EditorKit.swap(tools, col, dir)
     }
     /** Speed as one slider, like the photo adjustments: 0.1× (slow) through 1× to 500× (fast). */
+    private var speedTab = 0
+    /** Speed of the clip on screen: a steady speed (any value, or set by the length the clip should take) or a speed curve. */
     private fun speedTools(col: LinearLayout) {
-        val value = text(speedName(speed), 17f, if (speed == 1f) Color.WHITE else Glass.ACCENT, true).apply { gravity = Gravity.CENTER }
-        val note = text("", 11.5f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; maxLines = 1 }
-        fun describe(v: Float) {
-            value.text = speedName(v); value.setTextColor(if (v == 1f) Color.WHITE else Glass.ACCENT)
-            note.text = when {
-                v == 1f -> "ความเร็วปกติ"
-                hasAudio && (v < SOUND_MIN || v > SOUND_MAX) -> "ช้ากว่า 0.25× หรือเร็วกว่า 4× จะไม่มีเสียง"
-                v < 1f -> "ช้าลง · ได้คลิป ${clock(((end - start) / v).toLong())}"
-                else -> "เร็วขึ้น · ได้คลิป ${clock(((end - start) / v).toLong())}"
-            }
+        col.gravity = Gravity.TOP
+        val e = extras.getOrNull(playIndex - 1)
+        val src = if (e != null) e.to - e.from else end - start
+        fun base() = e?.speed ?: speed
+        fun curve() = if (e != null) e.curve else mainCurve
+        fun setBase(v: Float) { if (e != null) e.speed = v else speed = v; showTime(); player?.let { p -> if (p.isPlaying) runCatching { p.playbackParams = p.playbackParams.setSpeed(v.coerceIn(0.1f, 8f)) } } }
+        fun setCurve(c: FloatArray?) { if (e != null) e.curve = c else { mainCurve = c; if (c != null) smooth = false }; curveSpeedSet = 0f; showTime() }
+        val head = text("คลิป ${order().indexOf(playIndex) + 1} · ยาว ${clock(lenOf(playIndex))}" + (if (curve() == null) " · ${speedName(base())}" else " · เส้นโค้ง"), 13f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; setPadding(0, dp(2), 0, dp(4)) }
+        col.addView(head, -1, -2)
+        if (e == null && cutValid()) { col.addView(text("คลิปนี้ตัดช่วงกลางออกไว้ จึงใช้ได้เฉพาะความเร็วคงที่", 11.5f, Glass.TEXT3).apply { gravity = Gravity.CENTER }, -1, -2) }
+        val tabs = LinearLayout(this).apply { gravity = Gravity.CENTER }
+        listOf("ความเร็วคงที่", "เส้นโค้งความเร็ว").forEachIndexed { i, n -> val on = i == speedTab
+            tabs.addView(text(n, 12.5f, if (on) Glass.ACCENT else Color.WHITE, on).apply { gravity = Gravity.CENTER; background = glass(16, if (on) Glass.ACCENT_SOFT else 0x1fffffff); setPadding(dp(14), 0, dp(14), 0)
+                isClickable = true; glassTouch(); contentDescription = n; setOnClickListener { if (i == 1 && e == null && cutValid()) notice("เอาการตัดช่วงกลางออกก่อน") else { speedTab = i; showTool(2, false) } } }, LinearLayout.LayoutParams(-2, dp(32)).apply { setMargins(dp(3), 0, dp(3), 0) }) }
+        col.addView(tabs, -1, -2)
+        if (speedTab == 0) {
+            val slider = GlassSlider(this).apply { values = SPEEDS.map { speedName(it) }; index = SPEEDS.indices.minByOrNull { abs(SPEEDS[it] - base()) } ?: 10
+                grad = intArrayOf(0xff64d2ff.toInt(), Color.WHITE, Glass.ACCENT); contentDescription = "ความเร็ววิดีโอ"
+                onChange = { k -> setCurve(null); setBase(SPEEDS[k]); head.text = "คลิป ${order().indexOf(playIndex) + 1} · ยาว ${clock(lenOf(playIndex))} · ${speedName(SPEEDS[k])}" } }
+            col.addView(slider, LinearLayout.LayoutParams(-1, dp(44)).apply { setMargins(dp(12), dp(2), dp(12), 0) })
+            val row = LinearLayout(this).apply { gravity = Gravity.CENTER }
+            // Any length: the speed follows from how long the clip should take, down to a hundredth of a second.
+            row.addView(EditorKit.chip(this, "กำหนดความยาว", "M12 7v5l3 2 M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18") {
+                val field = EditText(this).apply { inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL; setText(String.format(Locale.US, "%.2f", lenOf(playIndex) / 1000f)); selectAll() }
+                android.app.AlertDialog.Builder(this).setTitle("ความยาวของคลิป (วินาที)").setMessage("ตั้งได้ตั้งแต่ 0.01 วินาที · ความเร็วจะปรับตามเอง").setView(FrameLayout(this).apply { setPadding(dp(20), 0, dp(20), 0); addView(field) })
+                    .setPositiveButton("ตกลง") { _, _ -> val sec = field.text.toString().toFloatOrNull()
+                        if (sec == null || sec < 0.01f) notice("ใส่ตัวเลขตั้งแต่ 0.01 ขึ้นไป") else { setCurve(null); setBase((src / (sec * 1000f)).coerceIn(0.001f, 5000f)); showTool(2, false) } }
+                    .setNegativeButton("ยกเลิก", null).show() }, LinearLayout.LayoutParams(-2, dp(34)).apply { setMargins(dp(3), 0, dp(3), 0) })
+            row.addView(EditorKit.chip(this, "ใส่ตัวเลขความเร็ว", EditorKit.SPEED) {
+                val field = EditText(this).apply { inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL; setText(base().toString()); selectAll() }
+                android.app.AlertDialog.Builder(this).setTitle("ความเร็ว (เท่า)").setView(FrameLayout(this).apply { setPadding(dp(20), 0, dp(20), 0); addView(field) })
+                    .setPositiveButton("ตกลง") { _, _ -> val v = field.text.toString().toFloatOrNull()
+                        if (v == null || v <= 0f) notice("ใส่ตัวเลขมากกว่า 0") else { setCurve(null); setBase(v.coerceIn(0.001f, 5000f)); showTool(2, false) } }
+                    .setNegativeButton("ยกเลิก", null).show() }, LinearLayout.LayoutParams(-2, dp(34)).apply { setMargins(dp(3), 0, dp(3), 0) })
+            col.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(row) }, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.CENTER_HORIZONTAL; topMargin = dp(4) })
+            val sp = allSpeeds()
+            if (hasAudio && sp.any { it !in SOUND_MIN..SOUND_MAX }) col.addView(text("มีบางคลิปช้ากว่า 0.25× หรือเร็วกว่า 4× · วิดีโอที่ส่งออกจะไม่มีเสียงคลิป", 11f, Glass.TEXT3).apply { gravity = Gravity.CENTER; setPadding(dp(16), dp(4), dp(16), 0) }, -1, -2)
+            if (e == null && speed < 1f && mainCurve == null) col.addView(EditorKit.chip(this, if (smooth) "สโลว์ลื่น (Optical flow) · เปิด" else "สโลว์ลื่น (Optical flow) · ปิด", SMOOTH, smooth) {
+                smooth = !smooth; showTool(2, false)
+                if (smooth) notice("สร้างเฟรมแทรก ${SlowFlow.factor(speed) - 1} เฟรมต่อเฟรมตอนส่งออก · ใช้เวลานานขึ้น · ไม่มีเสียงคลิป")
+            }, LinearLayout.LayoutParams(-2, dp(32)).apply { gravity = Gravity.CENTER_HORIZONTAL; topMargin = dp(4) })
+        } else {
+            // Ready-made curves (the middle line is the clip's own speed; up is faster, down is slower), then bend it by hand.
+            val presets = listOf("มอนทาจ" to floatArrayOf(0.8f, 0.75f, 0.25f, 0.75f, 0.8f), "ฮีโร่" to floatArrayOf(0.5f, 0.5f, 0.1f, 0.5f, 0.5f),
+                "บูลเล็ต" to floatArrayOf(0.85f, 0.85f, 0.05f, 0.85f, 0.85f), "ค่อย ๆ เร็วขึ้น" to floatArrayOf(0.35f, 0.45f, 0.55f, 0.7f, 0.85f),
+                "ค่อย ๆ ช้าลง" to floatArrayOf(0.85f, 0.7f, 0.55f, 0.45f, 0.35f), "จางเข้า-ออก" to floatArrayOf(0.25f, 0.5f, 0.6f, 0.5f, 0.25f))
+            val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(10), 0, dp(10), 0) }
+            presets.forEach { (n, c) -> row.addView(EditorKit.chip(this, n, "", curve()?.contentEquals(c) == true) { setCurve(c.copyOf()); showTool(2, false) }, LinearLayout.LayoutParams(-2, dp(32)).apply { setMargins(dp(3), 0, dp(3), 0) }) }
+            if (curve() != null) row.addView(EditorKit.chip(this, "ล้างเส้นโค้ง", Icons.CLOSE) { setCurve(null); showTool(2, false) }, LinearLayout.LayoutParams(-2, dp(32)).apply { setMargins(dp(3), 0, dp(3), 0) })
+            col.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(row) }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
+            val points = curve()?.copyOf() ?: floatArrayOf(0.5f, 0.5f, 0.5f, 0.5f, 0.5f)
+            val edit = CurveEdit(this).apply { this.points = points; at = 0; color = Glass.ACCENT; contentDescription = "เส้นโค้งความเร็ว ลากจุดขึ้นเพื่อเร็วขึ้น ลงเพื่อช้าลง"
+                onChange = { setCurve(points.copyOf()); head.text = "คลิป ${order().indexOf(playIndex) + 1} · ยาว ${clock(lenOf(playIndex))} · เส้นโค้ง" } }
+            col.addView(edit, LinearLayout.LayoutParams(-1, 0, 1f).apply { setMargins(dp(24), dp(4), dp(24), 0) })
+            col.addView(LinearLayout(this).apply { setPadding(dp(24), 0, dp(24), 0)
+                addView(text("ช้าลง 8×", 10.5f, Glass.TEXT3), LinearLayout.LayoutParams(0, -2, 1f)); addView(text("เส้นกลาง = ${speedName(base())}", 10.5f, Glass.TEXT3).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(0, -2, 1f))
+                addView(text("เร็วขึ้น 8×", 10.5f, Glass.TEXT3).apply { gravity = Gravity.END }, LinearLayout.LayoutParams(0, -2, 1f)) }, -1, -2)
         }
-        val slider = GlassSlider(this).apply {
-            values = SPEEDS.map { speedName(it) }; index = SPEEDS.indexOfFirst { it >= speed }.coerceAtLeast(0)
-            grad = intArrayOf(0xff64d2ff.toInt(), Color.WHITE, Glass.ACCENT); contentDescription = "ความเร็ววิดีโอ"
-            onChange = { k ->
-                var v = SPEEDS[k]
-                // Keep at least one second of video.
-                if ((end - start) / v < 1000f) { v = SPEEDS.last { (end - start) / it >= 1000f || it == 1f }; index = SPEEDS.indexOf(v); notice("คลิปช่วงนี้เร่งได้สูงสุด ${speedName(v)}") }
-                if ((v == 1f) != (speed == 1f) && v == 1f) Glass.tick(this, android.view.HapticFeedbackConstants.CONTEXT_CLICK)
-                speed = v; describe(v); showTime()
-                player?.let { p -> if (p.isPlaying && playIndex == 0) runCatching { p.playbackParams = p.playbackParams.setSpeed(v.coerceIn(0.1f, 8f)) } }
-            }
-        }
-        val presets = LinearLayout(this).apply { gravity = Gravity.CENTER }
-        listOf(0.1f, 0.5f, 1f, 2f, 10f, 100f, 500f).forEach { p ->
-            presets.addView(EditorKit.chip(this, speedName(p), "", speed == p) { slider.index = SPEEDS.indexOf(p); slider.onChange(SPEEDS.indexOf(p)); showTool(2, false) },
-                LinearLayout.LayoutParams(-2, dp(30)).apply { setMargins(dp(3), 0, dp(3), 0) })
-        }
-        col.addView(LinearLayout(this).apply { gravity = Gravity.CENTER; addView(value); addView(note.apply { setPadding(dp(10), 0, 0, 0) }) }, -1, -2)
-        col.addView(slider, LinearLayout.LayoutParams(-1, dp(46)).apply { setMargins(dp(12), 0, dp(12), 0) })
-        col.addView(android.widget.HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(presets) }, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.CENTER_HORIZONTAL })
-        describe(speed)
-        // Below 1×: optionally make new in-between frames by optical flow, so slow motion runs smoothly.
-        if (speed < 1f) col.addView(EditorKit.chip(this, if (smooth) "สโลว์ลื่น (Optical flow) · เปิด" else "สโลว์ลื่น (Optical flow) · ปิด", SMOOTH, smooth) {
-            smooth = !smooth; showTool(2, false)
-            if (smooth) notice("สร้างเฟรมแทรก ${SlowFlow.factor(speed) - 1} เฟรมต่อเฟรมตอนส่งออก · ใช้เวลานานขึ้น · ไม่มีเสียงคลิป")
-        }, LinearLayout.LayoutParams(-2, dp(32)).apply { gravity = Gravity.CENTER_HORIZONTAL; topMargin = dp(4) })
     }
-    private fun speedName(s: Float) = (if (s == s.toInt().toFloat()) "${s.toInt()}" else "$s") + "×"
+    private fun speedName(s: Float) = (if (s == s.toInt().toFloat()) "${s.toInt()}" else if (s >= 10) String.format(Locale.US, "%.1f", s) else String.format(Locale.US, "%.2f", s).trimEnd('0').trimEnd('.')) + "×"
     private fun setRange(s: Long, e: Long) {
-        if (e - s < 500) { notice("ช่วงสั้นเกินไป"); return }
+        if (e - s < 100) { notice("ช่วงสั้นเกินไป"); return }
         start = s; end = e; if (split !in (s + 300)..(e - 300)) split = -1
         trim.start = s; trim.end = e; trim.split = split; seek(s)
     }
@@ -1419,13 +1549,14 @@ class VideoEditorActivity : ComponentActivity() {
     private fun splitAtPlayhead() {
         val at = trim.playhead; val c = playIndex - 1; val e = extras.getOrNull(c)
         if (e != null) {
-            if (at - e.from < 300 || e.to - at < 300) { notice("เลื่อนหัวอ่านให้ห่างจากขอบคลิปอย่างน้อย 0.3 วินาที"); return }
+            if (e.curve != null) { notice("คลิปที่มีเส้นโค้งความเร็วแยกไม่ได้ · ล้างเส้นโค้งก่อน"); return }
+            if (at - e.from < 100 || e.to - at < 100) { notice("เลื่อนหัวอ่านให้ห่างจากขอบคลิปอย่างน้อย 0.1 วินาที"); return }
             val second = e.copy().also { it.from = at }; e.to = at; extras.add(c + 1, second); if (c < mainPos()) mainAt = mainPos() + 1
         } else {
-            if (speed != 1f || cutValid()) { notice("คลิปนี้ปรับความเร็วหรือตัดช่วงกลางออกแล้ว จึงแยกเป็นสองคลิปไม่ได้"); return }
-            if (at - start < 300 || end - at < 300) { notice("เลื่อนหัวอ่านให้ห่างจากขอบคลิปอย่างน้อย 0.3 วินาที"); return }
+            if (cutValid() || mainCurve != null) { notice("คลิปนี้ตัดช่วงกลางหรือมีเส้นโค้งความเร็ว จึงแยกไม่ได้"); return }
+            if (at - start < 100 || end - at < 100) { notice("เลื่อนหัวอ่านให้ห่างจากขอบคลิปอย่างน้อย 0.1 วินาที"); return }
             extraCache.getOrPut(source.toString()) { Extra(source, duration, videoW, videoH, "คลิปแรก", firstFrame) }
-            extras.add(mainPos(), Extra(source, duration, videoW, videoH, "คลิปแรก", firstFrame).also { it.from = at; it.to = end })
+            extras.add(mainPos(), Extra(source, duration, videoW, videoH, "คลิปแรก", firstFrame).also { it.from = at; it.to = end; it.speed = speed; it.volume = volume; it.muted = mainMuted })
             end = at; split = -1
         }
         Glass.tick(timeline); showClipOnBar(); trim.playhead = trim.playhead.coerceIn(trim.start, trim.end); showTime(); if (tool == 10) showTool(10, false)
@@ -1490,7 +1621,8 @@ class VideoEditorActivity : ComponentActivity() {
         var before = 0L
         for (k in order()) { if (k == playIndex) break; before += lenOf(k) }
         val e = extras.getOrNull(playIndex - 1)
-        if (e != null) return before + ((trim.playhead - e.from).coerceAtLeast(0) / e.speed).toLong()
+        if (e != null) return before + StudioMath.srcToOut((trim.playhead - e.from).coerceAtLeast(0), e.to - e.from, e.speed, e.curve)
+        if (mainCurve != null && !cutValid()) return before + StudioMath.srcToOut((trim.playhead - start).coerceAtLeast(0), end - start, speed, mainCurve)
         var t = trim.playhead - start
         if (cutValid() && trim.playhead >= cutTo) t -= cutMs()
         return before + (t.coerceAtLeast(0) / speed).toLong()
@@ -1601,7 +1733,7 @@ class VideoEditorActivity : ComponentActivity() {
                             dx = e.rawX; dy = e.rawY; placeLayers()
                         }
                     }
-                    MotionEvent.ACTION_UP -> if (!moved) { layerPick = i; Glass.tick(view); showTool(LAYER_TOOL, tool != LAYER_TOOL) }
+                    MotionEvent.ACTION_UP -> if (!moved) { Glass.tick(view); pickBar(i) }
                 }
                 true
             }
@@ -1973,9 +2105,9 @@ class VideoEditorActivity : ComponentActivity() {
         val vw = f?.width ?: videoW; val vh = f?.height ?: videoH
         val cut = cutValid() && cutFrom >= from && cutTo <= to
         return VideoEdit.composition(VideoEditSpec(f?.let { Uri.fromFile(it.file) } ?: source, at(from), at(to), if (turns % 2 == 1) vh else vw, if (turns % 2 == 1) vw else vh,
-        speed * n, CROPS[cropIndex].second, caption, place, textColor, textBig, if (looked()) colour() else null, music, f == null && hasAudio && keepSound && speed in SOUND_MIN..SOUND_MAX,
+        speed * n, CROPS[cropIndex].second, caption, place, textColor, textBig, if (looked()) colour() else null, music, f == null && hasAudio && keepSound && allSpeeds().all { it in SOUND_MIN..SOUND_MAX },
         turns, mirror, volume, musicVolume, if (cut) at(cutFrom) else -1L, if (cut) at(cutTo) else -1L, textBox,
-        extras.map { VideoPart(it.uri, it.from, it.to, it.speed, it.muted) }, if (extras.isEmpty()) 0 else transition, stickers.toList(), clampedLayers(), shrinkShort, shrinkFps, mainPos(), fx[0], fx[1], fx[2], grade = if (grade.active()) gradeCube(33) else null, audio = audioSettings(), mainMuted = mainMuted, duck = duck && music != null), applicationContext)
+        extras.map { VideoPart(it.uri, it.from, it.to, it.speed, it.muted, it.volume, it.curve) }, if (extras.isEmpty()) 0 else transition, stickers.toList(), clampedLayers(), shrinkShort, shrinkFps, mainPos(), fx[0], fx[1], fx[2], grade = if (grade.active()) gradeCube(33) else null, audio = audioSettings(), mainMuted = mainMuted, mainCurve = if (f == null) mainCurve else null, duck = duck && music != null), applicationContext)
     }
 
     /** Export problems stay on screen until dismissed, so the reason can be read (and reported). */
@@ -2000,7 +2132,8 @@ class VideoEditorActivity : ComponentActivity() {
         out.putBoolean("sound", keepSound); out.putInt("tool", tool)
         out.putFloatArray("adjust", adjust); out.putFloatArray("fx", fx); out.putFloatArray("curves", grade.curves.copyOf()); out.putFloatArray("hsl", grade.hsl.copyOf()); out.putFloatArray("wheels", grade.wheels.copyOf()); out.putString("lutPath", lutPath); out.putString("lutName", lutName); out.putFloat("lutAmount", grade.lutAmount); out.putFloatArray("eq", eq.copyOf()); out.putBoolean("lowCut", lowCut); out.putBoolean("voice", voice); out.putBoolean("duck", duck); out.putBoolean("mainMuted", mainMuted); out.putInt("turns", turns); out.putBoolean("mirror", mirror); out.putFloat("volume", volume); out.putFloat("musicVolume", musicVolume)
         out.putLong("cutFrom", cutFrom); out.putLong("cutTo", cutTo); out.putBoolean("textBox", textBox)
-        out.putStringArrayList("extras", ArrayList(extras.map { it.uri.toString() })); out.putStringArrayList("extraRanges", ArrayList(extras.map { "${it.from},${it.to},${it.speed}," + (if (it.muted) "m" else "") })); out.putInt("mainAt", mainAt); out.putStringArrayList("markers", ArrayList(markers.map { it.toString() })); out.putInt("transition", transition)
+        out.putStringArrayList("extras", ArrayList(extras.map { it.uri.toString() })); out.putStringArrayList("extraRanges", ArrayList(extras.map { "${it.from},${it.to},${it.speed}," + (if (it.muted) "m" else "") + ",${it.volume}," + (it.curve?.joinToString(";") ?: "") }));
+        mainCurve?.let { out.putFloatArray("mainCurve", it.copyOf()) } out.putInt("mainAt", mainAt); out.putStringArrayList("markers", ArrayList(markers.map { it.toString() })); out.putInt("transition", transition)
         out.putStringArrayList("stickers", ArrayList(stickers.map { "${it.x}|${it.y}|${it.big}|${it.text}" }))
         out.putString("layers", VideoLayer.save(layers)); out.putInt("layerPick", layerPick); out.putBoolean("smooth", smooth)
     }
@@ -2010,7 +2143,7 @@ class VideoEditorActivity : ComponentActivity() {
         caption = s.getString("caption") ?: ""; place = s.getInt("place", 2); textColor = s.getInt("textColor", Color.WHITE); textBig = s.getBoolean("big")
         film = Films.byId(s.getString("film")); filmStrength = s.getFloat("strength", 1f); music = s.getString("music")?.let { Uri.parse(it) }; musicName = s.getString("musicName") ?: ""
         keepSound = s.getBoolean("sound", true); tool = s.getInt("tool")
-        s.getFloatArray("adjust")?.takeIf { it.size == adjust.size }?.copyInto(adjust); fx.fill(0f); restoreGrade(s); eq.fill(0f); s.getFloatArray("eq")?.takeIf { it.size == 3 }?.copyInto(eq); lowCut = s.getBoolean("lowCut"); voice = s.getBoolean("voice"); duck = s.getBoolean("duck", true); mainMuted = s.getBoolean("mainMuted"); s.getFloatArray("fx")?.takeIf { it.size == fx.size }?.copyInto(fx); turns = s.getInt("turns"); mirror = s.getBoolean("mirror"); volume = s.getFloat("volume", 1f); musicVolume = s.getFloat("musicVolume", 1f)
+        s.getFloatArray("adjust")?.takeIf { it.size == adjust.size }?.copyInto(adjust); fx.fill(0f); restoreGrade(s); mainCurve = s.getFloatArray("mainCurve")?.takeIf { it.size == 5 }?.copyOf(); eq.fill(0f); s.getFloatArray("eq")?.takeIf { it.size == 3 }?.copyInto(eq); lowCut = s.getBoolean("lowCut"); voice = s.getBoolean("voice"); duck = s.getBoolean("duck", true); mainMuted = s.getBoolean("mainMuted"); s.getFloatArray("fx")?.takeIf { it.size == fx.size }?.copyInto(fx); turns = s.getInt("turns"); mirror = s.getBoolean("mirror"); volume = s.getFloat("volume", 1f); musicVolume = s.getFloat("musicVolume", 1f)
         cutFrom = s.getLong("cutFrom", -1L); cutTo = s.getLong("cutTo", -1L); textBox = s.getBoolean("textBox")
         transition = s.getInt("transition"); stickers.clear(); mainAt = s.getInt("mainAt")
         markers.clear(); s.getStringArrayList("markers")?.mapNotNullTo(markers) { it.toLongOrNull() }

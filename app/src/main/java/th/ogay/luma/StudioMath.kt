@@ -107,4 +107,33 @@ object StudioMath {
         }
         return out
     }
+
+    // ---- Speed curves ----
+    /** A speed curve is 5 points (0..1) across the clip; 0.5 is the clip's own speed, 1 is 8× faster, 0 is 8× slower. It plays as this many steps of steady speed. */
+    const val CURVE_PARTS = 10
+    fun curveMul(curve: FloatArray, x: Float): Float = Math.pow(2.0, 3.0 * (StudioGrade.curve(curve, 0, x) * 2 - 1)).toFloat()
+    fun partSpeeds(base: Float, curve: FloatArray?): FloatArray = FloatArray(CURVE_PARTS) { k -> base * (if (curve == null) 1f else curveMul(curve, (k + 0.5f) / CURVE_PARTS)) }
+    /** Time a clip [src] ms of its file long takes in the finished video. */
+    fun outLen(src: Long, base: Float, curve: FloatArray?): Long {
+        if (curve == null) return (src / base).toLong()
+        val sp = partSpeeds(base, curve); var t = 0.0; for (k in 0 until CURVE_PARTS) t += src.toDouble() / CURVE_PARTS / sp[k]; return t.toLong()
+    }
+    /** Where [off] ms into the file part falls in the finished clip. */
+    fun srcToOut(off: Long, src: Long, base: Float, curve: FloatArray?): Long {
+        if (curve == null) return (off / base).toLong()
+        val sp = partSpeeds(base, curve); val part = src.toDouble() / CURVE_PARTS; var t = 0.0; var left = off.toDouble().coerceIn(0.0, src.toDouble())
+        for (k in 0 until CURVE_PARTS) { val d = minOf(left, part); t += d / sp[k]; left -= d; if (left <= 0) break }
+        return t.toLong()
+    }
+    /** The reverse of [srcToOut]: which ms of the file part plays [t] ms into the finished clip. */
+    fun outToSrc(t: Long, src: Long, base: Float, curve: FloatArray?): Long {
+        if (curve == null) return (t * base).toLong()
+        val sp = partSpeeds(base, curve); val part = src.toDouble() / CURVE_PARTS; var left = t.toDouble().coerceAtLeast(0.0); var s = 0.0
+        for (k in 0 until CURVE_PARTS) { val d = part / sp[k]; if (left <= d) return (s + left * sp[k]).toLong().coerceAtMost(src); left -= d; s += part }
+        return src
+    }
+    fun speedAt(off: Long, src: Long, base: Float, curve: FloatArray?): Float {
+        if (curve == null || src <= 0) return base
+        return partSpeeds(base, curve)[((off.toDouble() / src) * CURVE_PARTS).toInt().coerceIn(0, CURVE_PARTS - 1)]
+    }
 }

@@ -72,10 +72,12 @@ data class VideoEditSpec(
     /** The whole colour (filter, adjustments and colour studio) as one [r][g][b] table; when set it replaces [look]. */
     val grade: Array<Array<IntArray>>? = null,
     /** Shaping of the clips' own sound (equaliser, low cut, voice), silence for the first clip, and ducking of the music under sound layers. */
-    val audio: StudioAudio.Settings = StudioAudio.Settings(), val mainMuted: Boolean = false, val duck: Boolean = false)
+    val audio: StudioAudio.Settings = StudioAudio.Settings(), val mainMuted: Boolean = false, val duck: Boolean = false,
+    /** Speed curve of the main clip (5 points, see [StudioMath.curveMul]); null = steady [speed]. */
+    val mainCurve: FloatArray? = null)
 
 /** A clip appended after the main one. [from]/[to] in ms of that clip. */
-data class VideoPart(val source: Uri, val from: Long, val to: Long, val speed: Float = 1f, val muted: Boolean = false)
+data class VideoPart(val source: Uri, val from: Long, val to: Long, val speed: Float = 1f, val muted: Boolean = false, val volume: Float = 1f, val curve: FloatArray? = null)
 
 /** An emoji on the picture: [x], [y] are 0..1 across the visible (cropped) frame, [big] doubles its size. */
 data class VideoSticker(val text: String, val x: Float, val y: Float, val big: Boolean = false)
@@ -152,9 +154,6 @@ object VideoEdit {
         val multi = s.extras.isNotEmpty()
         val effects = mutableListOf<Effect>()
         if (s.turns % 4 != 0 || s.mirror) effects += ScaleAndRotateTransformation.Builder().setScale(if (s.mirror) -1f else 1f, 1f).setRotationDegrees(360f - (s.turns % 4) * 90f).build()
-        if (s.speed != 1f && !s.keepAudio) effects += SpeedChangeEffect(s.speed)
-        // Fast speeds (up to 500×) would hand the encoder hundreds of frames per second; keep about 30 of them.
-        if (s.speed > 1f) effects += FrameDropEffect.createDefaultFrameDropEffect(30f)
         // One clip: look and text belong to the clip. Several clips: they belong to the whole video (below), so they
         // run across the joins and every clip is brought to the first clip's frame.
         val table = s.grade ?: s.look?.let { EditorKit.cube(it) }
@@ -167,13 +166,20 @@ object VideoEdit {
         val sound = if (s.keepAudio && s.volume != 1f) listOf(gain(s.volume)) else emptyList()
         // Each clip with its length after the speed change, and which clip (0 = main) it comes from.
         data class Piece(val item: MediaItem, val clip: Int, val durationUs: Long, val speed: Float)
-        val mainPieces = ranges.map { (a, b) -> Piece(clipped(s.source, a, b), 0, ((b - a) * 1000 / s.speed).toLong(), s.speed) }
-        val extraPieces = s.extras.mapIndexed { i, p -> Piece(clipped(p.source, p.from, p.to), i + 1, ((p.to - p.from) * 1000 / p.speed).toLong(), p.speed) }
+        // A clip with a speed curve becomes several pieces of steady speed that follow each other.
+        fun pieces(uri: Uri, a: Long, b: Long, base: Float, curve: FloatArray?, clip: Int): List<Piece> {
+            if (curve == null) return listOf(Piece(clipped(uri, a, b), clip, ((b - a) * 1000 / base).toLong(), base))
+            val sp = StudioMath.partSpeeds(base, curve); val n = StudioMath.CURVE_PARTS
+            return (0 until n).map { k -> val x = a + (b - a) * k / n; val y = a + (b - a) * (k + 1) / n; Piece(clipped(uri, x, y), clip, ((y - x) * 1000 / sp[k]).toLong().coerceAtLeast(1), sp[k]) }
+        }
+        val mainPieces = ranges.flatMap { (a, b) -> pieces(s.source, a, b, s.speed, if (ranges.size == 1) s.mainCurve else null, 0) }
+        val extraPieces = s.extras.flatMapIndexed { i, p -> pieces(p.source, p.from, p.to, p.speed, p.curve, i + 1) }
         val lead = s.mainAt.coerceIn(0, extraPieces.size)
         val pieces = extraPieces.take(lead) + mainPieces + extraPieces.drop(lead)
         val items = pieces.mapIndexed { i, piece ->
             val own: MutableList<Effect> = if (piece.clip == 0) effects.toMutableList() else mutableListOf()
-            if (piece.clip != 0 && piece.speed != 1f) { if (!s.keepAudio) own += SpeedChangeEffect(piece.speed); if (piece.speed > 1f) own += FrameDropEffect.createDefaultFrameDropEffect(30f) }
+            // Fast speeds (up to thousands ×) would hand the encoder hundreds of frames per second; keep about 30 of them.
+            if (piece.speed != 1f) { if (!s.keepAudio) own += SpeedChangeEffect(piece.speed); if (piece.speed > 1f) own += FrameDropEffect.createDefaultFrameDropEffect(30f) }
             if (s.transition != 0) {
                 val joinIn = i > 0 && pieces[i - 1].clip != piece.clip; val joinOut = i < pieces.size - 1 && pieces[i + 1].clip != piece.clip
                 when (s.transition) {
@@ -185,7 +191,8 @@ object VideoEdit {
                 }
             }
             val muted = if (piece.clip == 0) s.mainMuted else s.extras[piece.clip - 1].muted
-            val own_sound = if (muted) listOf(gain(0f)) else (if (piece.clip == 0) sound else emptyList()) + listOfNotNull(if (s.audio.active) StudioAudio.Shape(s.audio) else null)
+            val partVolume = if (piece.clip == 0) 1f else s.extras[piece.clip - 1].volume
+            val own_sound = if (muted) listOf(gain(0f)) else (if (piece.clip == 0) sound else if (partVolume != 1f) listOf(gain(partVolume)) else emptyList()) + listOfNotNull(if (s.audio.active) StudioAudio.Shape(s.audio) else null)
             val edited = EditedMediaItem.Builder(piece.item).setEffects(Effects(own_sound, own)).setRemoveAudio(!s.keepAudio)
             // With sound, setSpeed changes picture and sound together. Without a sound track it stalls the export (no
             // output sample ever reaches the muxer), so a picture-only clip changes speed through a video effect instead.

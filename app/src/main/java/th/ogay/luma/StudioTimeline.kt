@@ -50,6 +50,10 @@ class StudioTimeline(context: Context) : View(context) {
     /** Clip index, new source in/out, and whether the finger has lifted. */
     var onTrim: (Int, Long, Long, Boolean) -> Unit = { _, _, _, _ -> }
     var onMove: (Int, Int) -> Unit = { _, _ -> }
+    /** The rounded "+" square after the last clip: adds a clip. */
+    var onAdd: () -> Unit = {}
+    private fun addRect(r: RectF) { val x0 = x(total()) + 8 * d; r.set(x0, rulerH + 4 * d, x0 + clipH - 8 * d, rulerH + clipH - 4 * d) }
+    private val addBox = RectF()
 
     private var ph = 0L
     /** Where the middle line is. While a finger is down the view owns it, so playback ticks cannot fight the drag. */
@@ -111,7 +115,9 @@ class StudioTimeline(context: Context) : View(context) {
     private val gestures = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
         override fun onDown(e: MotionEvent) = true
         override fun onSingleTapUp(e: MotionEvent): Boolean {
-            if (inClipRow(e.y)) { val i = clipAt(e.x); if (i >= 0) { onSelect(i); performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) } }
+            addRect(addBox)
+            if (inClipRow(e.y) && e.x >= addBox.left - 6 * d && e.x <= addBox.right + 6 * d) { onAdd(); performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) }
+            else if (inClipRow(e.y)) { val i = clipAt(e.x); if (i >= 0) { onSelect(i); performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) } }
             else barAt(e.x, e.y)?.let { onPickBar(it.id); performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) }
             return true
         }
@@ -159,10 +165,10 @@ class StudioTimeline(context: Context) : View(context) {
                         onBar(selectedBar, startAt, barAt + barLen - startAt, startAt - barAt, false); invalidate() }
                     TRIM_L, TRIM_R -> clips.getOrNull(selected)?.let { c ->
                         val delta = ((e.x - downX) / pxPerMs * c.speed).toLong()
-                        if (mode == TRIM_L) { val f = (trimFrom + delta).coerceIn(0, trimTo - 500)
+                        if (mode == TRIM_L) { val f = (trimFrom + delta).coerceIn(0, trimTo - 100)
                             // The right edge stays where it is on screen and the left edge follows the finger.
                             ph = trimPh - ((f - trimFrom) / c.speed).toLong(); onTrim(selected, f, trimTo, false) }
-                        else onTrim(selected, trimFrom, (trimTo + delta).coerceIn(trimFrom + 500, c.duration), false)
+                        else onTrim(selected, trimFrom, (trimTo + delta).coerceIn(trimFrom + 100, c.duration), false)
                         invalidate() }
                     MOVE -> { moveX = e.x; invalidate() }
                 }
@@ -231,6 +237,12 @@ class StudioTimeline(context: Context) : View(context) {
                 c.drawRoundRect(x1 - hw * 0.6f, top + 6 * d, x1 + hw * 0.4f, bottom - 6 * d, hw / 2, hw / 2, accent)
             }
             if (joined && i > 0) { paint.color = Color.WHITE; c.drawCircle(x0 - 1 * d, (top + bottom) / 2, 4.5f * d, paint); c.drawCircle(x0 - 1 * d, (top + bottom) / 2, 2.2f * d, accent) }
+        }
+        addRect(addBox)
+        if (addBox.right > 0 && addBox.left < w) {
+            paint.color = 0x33ffffff; c.drawRoundRect(addBox, 9 * d, 9 * d, paint)
+            paint.color = Color.WHITE; val cx = addBox.centerX(); val cy = addBox.centerY(); val a = 8 * d
+            c.drawRoundRect(cx - a, cy - 1.2f * d, cx + a, cy + 1.2f * d, d, d, paint); c.drawRoundRect(cx - 1.2f * d, cy - a, cx + 1.2f * d, cy + a, d, d, paint)
         }
         if (moveIndex >= 0) { accent.alpha = 200; c.drawRoundRect(moveX - 2 * d, top - 3 * d, moveX + 2 * d, bottom + 3 * d, 2 * d, 2 * d, accent); accent.alpha = 255 }
         // Lanes: music and layers as bars at their place in time, with the waveform of a sound and a dot for each keyframe.
