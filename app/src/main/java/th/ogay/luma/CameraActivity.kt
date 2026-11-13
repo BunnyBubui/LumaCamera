@@ -1278,7 +1278,14 @@ class CameraActivity : ComponentActivity() {
         fun card(f: Film): FrameLayout = FrameLayout(this).apply {
             isClickable = true; contentDescription = f.name; glassTouch()
             clipToOutline = true; outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: Outline) { o.setRoundRect(0, 0, v.width, v.height, dp(20).toFloat()) } }
-            val img = ImageView(this@CameraActivity).apply { scaleType = ImageView.ScaleType.CENTER_CROP; lookSampleCache?.let { setImageBitmap(it) } ?: setBackgroundColor(0xff34506a.toInt()); colorFilter = ColorMatrixColorFilter(Films.matrix(f)) }
+            val img = ImageView(this@CameraActivity).apply {
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                lookSampleCache?.let { setImageBitmap(it) } ?: setBackgroundColor(0xff34506a.toInt())
+                val saved = Films.fx(prefs, f)
+                if (!FilmGpuPreview.apply(this, f, saved)) colorFilter = ColorMatrixColorFilter(Films.matrix(f, saved.strength))
+                // The view needs its real size for the film-edge falloff; do not change the layout.
+                post { if (isAttachedToWindow && FilmGpuPreview.apply(this, f, Films.fx(prefs, f))) colorFilter = null }
+            }
             lookImages += img
             addView(img, -1, -1)
             addView(View(this@CameraActivity).apply { background = android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.BOTTOM_TOP, intArrayOf(0xcc000000.toInt(), 0x00000000)) }, FrameLayout.LayoutParams(-1, dp(56), Gravity.BOTTOM))
@@ -1319,7 +1326,18 @@ class CameraActivity : ComponentActivity() {
             val values = (0..10).map { "${it * 10}%" }
             val value = text(values[Math.round(fx.strength * 10)], 13f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; background = glass(12, 0x14ffffff) }
             val sl = GlassSlider(this).apply { this.values = values; grad = intArrayOf(0xff3a3a3c.toInt(), Glass.ACCENT); index = Math.round(fx.strength * 10); contentDescription = "ความแรงของสีฟิล์ม" }
-            sl.onChange = { i -> value.text = values[i]; fx = fx.copy(strength = i / 10f); Films.saveFx(prefs, current(), fx); applyLook() }
+            sl.onChange = { i ->
+                value.text = values[i]
+                fx = fx.copy(strength = i / 10f)
+                Films.saveFx(prefs, current(), fx)
+                applyLook()
+                // Keep the selected thumbnail's GPU strength in step with the unchanged slider.
+                val thumb = cards.firstOrNull { it.first.id == current().id }?.second?.getChildAt(0) as? ImageView
+                if (thumb != null) {
+                    if (FilmGpuPreview.apply(thumb, current(), fx)) thumb.colorFilter = null
+                    else thumb.colorFilter = ColorMatrixColorFilter(Films.matrix(current(), fx.strength))
+                }
+            }
             fxBody.addView(sl, LinearLayout.LayoutParams(0, dp(48), 1f)); fxBody.addView(value, LinearLayout.LayoutParams(dp(56), dp(36)).apply { leftMargin = dp(10) })
         }
 
@@ -1426,6 +1444,14 @@ class CameraActivity : ComponentActivity() {
     private fun applyLook() {
         val tv = (0 until preview.childCount).map { preview.getChildAt(it) }.firstOrNull { it is TextureView } as? TextureView ?: return
         val active = Films.active(prefs, mode == PhotoMode.FILM)
+        val film = if (mode == PhotoMode.FILM) active?.second else null
+        // The AGSL pass includes the full colour matrix. Never stack the old layer matrix on top.
+        if (film != null) {
+            tv.setLayerPaint(null)
+            if (FilmGpuPreview.apply(tv, film, Films.fx(prefs, film))) return
+        }
+        // Camera devices below Android 13 (or with unsupported shaders) keep the proven matrix path.
+        FilmGpuPreview.clear(tv)
         tv.setLayerPaint(if (active == null) null else Paint().apply { colorFilter = ColorMatrixColorFilter(active.first) })
     }
     private fun setOutput(choice: CaptureOutput) {
