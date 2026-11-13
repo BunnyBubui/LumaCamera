@@ -30,7 +30,7 @@ private val SLOTS = listOf(
     Slot("สีเน้น", "ปุ่มหลัก แถบเลื่อน และสิ่งที่เลือกอยู่", Icons.SUN, { it.accent }, { p, c -> p.copy(accent = c) }),
     Slot("พื้นหลัง", "พื้นของทุกหน้า", Icons.PHOTO, { it.background }, { p, c -> p.copy(background = c) }),
     Slot("แผงและเมนู", "แผงกระจก เมนูหล่นลง และชีตที่เลื่อนขึ้น", Icons.STACK, { it.panel }, { p, c -> p.copy(panel = c) }),
-    Slot("ตัวอักษรและไอคอน", "ข้อความและไอคอนทั้งแอป", Icons.TAG, { it.text }, { p, c -> p.copy(text = c) }),
+    Slot("ตัวอักษรและไอคอน", "ข้อความและไอคอนทั้งแอป", Icons.MARK, { it.text }, { p, c -> p.copy(text = c) }),
     Slot("โฟกัสและตัวช่วย", "กรอบโฟกัส ระดับน้ำ และเส้นช่วยบนภาพ", Icons.FRAME, { it.focus }, { p, c -> p.copy(focus = c) })
 )
 
