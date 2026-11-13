@@ -36,6 +36,8 @@ import androidx.media3.transformer.Codec
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.DefaultAssetLoaderFactory
 import androidx.media3.transformer.DefaultDecoderFactory
+import androidx.media3.transformer.DefaultEncoderFactory
+import androidx.media3.transformer.VideoEncoderSettings
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.Effects
@@ -252,6 +254,9 @@ object VideoEdit {
         }
         return Transformer.Builder(c).setAssetLoaderFactory(DefaultAssetLoaderFactory(c, decoder, Clock.DEFAULT, null))
             .setMaxDelayBetweenMuxerSamplesMs(90_000).setVideoMimeType(if (c.getSharedPreferences("camera", Context.MODE_PRIVATE).getBoolean("export_hevc", false)) MimeTypes.VIDEO_H265 else MimeTypes.VIDEO_H264).setPortraitEncodingEnabled(true).addListener(listener)
-            .apply { if (looper != null) setLooper(looper) }.build()
+            .apply { if (looper != null) setLooper(looper)
+                // A fixed bitrate chosen in the export sheet (0 = let the encoder decide).
+                val mbps = c.getSharedPreferences("camera", Context.MODE_PRIVATE).getInt("export_mbps", 0)
+                if (mbps > 0) setEncoderFactory(DefaultEncoderFactory.Builder(c).setRequestedVideoEncoderSettings(VideoEncoderSettings.Builder().setBitrate(mbps * 1_000_000).build()).build()) }.build()
     }
 }

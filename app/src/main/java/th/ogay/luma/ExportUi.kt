@@ -127,6 +127,17 @@ object ExportSheet {
             pickRow("การบีบอัด", codecValue, codecNote) { v -> pickMenu.show(v, "การบีบอัดวิดีโอ", listOf(GlassMenu.Option("H.264", "", "เปิดได้ทุกเครื่อง"), GlassMenu.Option("H.265", "", "ไฟล์เล็กกว่า")), if (prefs.getBoolean("export_hevc", false)) 1 else 0) { k ->
                 prefs.edit().putBoolean("export_hevc", k == 1).apply(); paintCodec(k) } }
         } else if (!hevcOk && prefs.getBoolean("export_hevc", false)) prefs.edit().putBoolean("export_hevc", false).apply()
+        // Bitrate: how many megabits each second of video may use. More = sharper and bigger; automatic leaves it to the phone.
+        if (!upscale) {
+            val mbpsList = listOf(0, 8, 16, 30, 50)
+            val mbpsValue = a.text("", 14f, Glass.TEXT, true); val mbpsNote = a.text("", 12f, Glass.TEXT3)
+            fun paintRate(k: Int) { mbpsValue.text = if (mbpsList[k] == 0) "อัตโนมัติ" else "${mbpsList[k]} Mbps"
+                val mb = if (mbpsList[k] == 0) null else mbpsList[k] / 8.0 * src.durationMs / 1000.0
+                mbpsNote.text = if (mb == null) "แอปเลือกให้ตามขนาดภาพ" else String.format(java.util.Locale.US, "ขนาดไฟล์ประมาณ %.0f MB · ยิ่งสูงยิ่งคมและไฟล์ใหญ่", mb) }
+            paintRate(mbpsList.indexOf(prefs.getInt("export_mbps", 0)).coerceAtLeast(0))
+            pickRow("บิตเรต", mbpsValue, mbpsNote) { v -> pickMenu.show(v, "บิตเรตวิดีโอ", mbpsList.map { GlassMenu.Option(if (it == 0) "อัตโนมัติ" else "$it Mbps", Icons.FPS, if (it == 0) "แนะนำ" else if (it <= 8) "ประหยัดที่" else if (it <= 16) "สมดุล" else "คมที่สุด") }, mbpsList.indexOf(prefs.getInt("export_mbps", 0)).coerceAtLeast(0)) { k ->
+                prefs.edit().putInt("export_mbps", mbpsList[k]).apply(); paintRate(k) } }
+        }
         val names = listOf("ไม่ใช้ AI · เร็วที่สุด", "Natural SR3 · แนะนำ", "Classic SR2 · คมชัด")
         val notes = listOf("ขยายภาพแบบปกติ เร็วที่สุด", "คน ใบหน้า ตัวหนังสือ · เนียนตา", "วิว ตึก ใบไม้ · คมเต็มที่")
         val icons = listOf(Icons.PHOTO, th.ogay.luma.ai.EnhanceUi.LEAF, th.ogay.luma.ai.EnhanceUi.GEM)

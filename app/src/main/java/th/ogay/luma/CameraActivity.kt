@@ -346,9 +346,26 @@ class CameraActivity : ComponentActivity() {
     }
 
     // ---------- Screen ----------
+    private var splashDone = false
+    /** Opening animation: the Lumora mark draws itself on the dark page, then the page lifts away and fades to reveal the camera. */
+    private fun launchSplash() {
+        if (isDestroyed || Glass.reduced(this)) return
+        val cover = FrameLayout(this).apply { setBackgroundColor(Glass.BG); isClickable = true; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
+        val logo = LumoraLogoView(this).apply { progress = 0f }
+        val word = text("Lumora", 22f, Glass.TEXT, true).apply { alpha = 0f; gravity = Gravity.CENTER; letterSpacing = 0.08f }
+        val stack = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; addView(logo, dp(96), dp(96)); addView(word, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(14) }) }
+        cover.addView(stack, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
+        host.addView(cover, FrameLayout.LayoutParams(-1, -1))
+        cover.elevation = 60 * resources.displayMetrics.density
+        android.animation.ValueAnimator.ofFloat(0f, 1f).apply { duration = 700; interpolator = Glass.EASE; addUpdateListener { logo.progress = it.animatedValue as Float } }.start()
+        word.animate().alpha(1f).setStartDelay(350).setDuration(350).start()
+        stack.animate().scaleX(1.25f).scaleY(1.25f).alpha(0f).setStartDelay(1050).setDuration(380).setInterpolator(Glass.EASE).start()
+        cover.animate().alpha(0f).setStartDelay(1050).setDuration(420).setInterpolator(Glass.EASE).withEndAction { host.removeView(cover) }.start()
+    }
     private fun buildScreen() {
         host = FrameLayout(this)
         installRoot(host)
+        if (!splashDone) { splashDone = true; host.post { launchSplash() } }
         menu = GlassMenu(host) { on -> if (panel.showing || editor.showing || lookSheet.showing) { panel.recede(on); editor.recede(on); lookSheet.recede(on) } else pushBackSmooth(on) }
         panel = GlassSheet(host, { handlePivot() }) { pushBack(it) }
         editor = GlassSheet(host, { handlePivot() }) { pushBack(it) }

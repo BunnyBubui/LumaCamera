@@ -1404,7 +1404,7 @@ class VideoEditorActivity : ComponentActivity() {
                 "บูลเล็ต" to floatArrayOf(0.85f, 0.85f, 0.05f, 0.85f, 0.85f), "ค่อย ๆ เร็วขึ้น" to floatArrayOf(0.35f, 0.45f, 0.55f, 0.7f, 0.85f),
                 "ค่อย ๆ ช้าลง" to floatArrayOf(0.85f, 0.7f, 0.55f, 0.45f, 0.35f), "จางเข้า-ออก" to floatArrayOf(0.25f, 0.5f, 0.6f, 0.5f, 0.25f))
             val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(10), 0, dp(10), 0) }
-            presets.forEach { (n, c) -> row.addView(EditorKit.chip(this, n, "", curve()?.contentEquals(c) == true) { setCurve(c.copyOf()); showTool(2, false) }, LinearLayout.LayoutParams(-2, dp(32)).apply { setMargins(dp(3), 0, dp(3), 0) }) }
+            presets.forEach { (n, c) -> row.addView(EditorKit.chip(this, n, curveIcon(c), curve()?.contentEquals(c) == true) { setCurve(c.copyOf()); showTool(2, false) }, LinearLayout.LayoutParams(-2, dp(32)).apply { setMargins(dp(3), 0, dp(3), 0) }) }
             if (curve() != null) row.addView(EditorKit.chip(this, "ล้างเส้นโค้ง", Icons.CLOSE) { setCurve(null); showTool(2, false) }, LinearLayout.LayoutParams(-2, dp(32)).apply { setMargins(dp(3), 0, dp(3), 0) })
             col.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(row) }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
             val points = curve()?.copyOf() ?: floatArrayOf(0.5f, 0.5f, 0.5f, 0.5f, 0.5f)
@@ -1426,6 +1426,8 @@ class VideoEditorActivity : ComponentActivity() {
     private val menu by lazy { GlassMenu(window.decorView as FrameLayout) }
     /** A glass pill with a label and a small down arrow; tapping it opens a [GlassMenu] list, like the other choosers in the app. */
     /** A small screen outline with a dot where the text will sit, so each position row shows its place. */
+    /** The preset drawn as a tiny graph (up = faster) so each chip shows its own shape. */
+    private fun curveIcon(c: FloatArray): String = c.indices.joinToString(" ") { i -> String.format(Locale.US, "%s%.1f %.1f", if (i == 0) "M" else "L", 3f + 18f * i / (c.size - 1), 20f - 16f * c[i]) } + " M3 20h18"
     private fun posIcon(x: Float, y: Float): String { val px = 4f + 16f * x; val py = 6f + 12f * y; return "M4 6h16v12H4z M$px $py h.01 M${px - 2.5f} $py h5" }
     private fun dropButton(label: String, click: (View) -> Unit): View = LinearLayout(this).apply {
         gravity = Gravity.CENTER_VERTICAL; background = glass(16, 0x26ffffff); setPadding(dp(12), 0, dp(10), 0); isClickable = true; glassTouch(); contentDescription = label
@@ -1690,6 +1692,13 @@ class VideoEditorActivity : ComponentActivity() {
         if (layers.any { it.kind == VideoLayer.TEXT && VideoLayers.shapeOf(it.text) < 0 }) srt.addView(EditorKit.chip(this, "ส่งออกไฟล์ SRT", EditorKit.END) { saveSrt.launch("subtitles.srt") }, LinearLayout.LayoutParams(-2, dp(34)).apply { setMargins(dp(3), 0, dp(3), 0) })
         col.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(srt) }, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.CENTER_HORIZONTAL })
         if (count == 0) return
+        // Show or hide every caption line on the video together (hidden lines stay, so they can still be exported as .srt).
+        val shown = layers.filter { it.caption }.none { it.hidden }
+        val showRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(18), dp(6), dp(18), 0) }
+        showRow.addView(IconView(this, "M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z", 2f).apply { tint = Glass.TEXT2 }, dp(20), dp(20))
+        showRow.addView(text("ใส่คำบรรยายบนวิดีโอ", 14f, Glass.TEXT, true).apply { setPadding(dp(10), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
+        showRow.addView(GlassSwitch(this).apply { set(shown, false); onToggle = { on -> layers.indices.filter { layers[it].caption }.forEach { i -> layers[i] = layers[i].copy(hidden = !on) }; rebuildLayers(); refreshTimeline(); showTool(15, false) } }, dp(52), dp(30))
+        col.addView(showRow, -1, dp(40))
         val drops = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(8), dp(14), 0) }
         drops.addView(text("คำบรรยาย $count บรรทัด", 12f, Glass.TEXT2, true).apply { setPadding(0, 0, dp(8), 0) })
         drops.addView(dropButton("ตำแหน่ง") { v -> menu.show(v, "ตำแหน่งคำบรรยาย", listOf(GlassMenu.Option("ล่าง", posIcon(0.5f, 0.86f)), GlassMenu.Option("กลาง", posIcon(0.5f, 0.5f)), GlassMenu.Option("บน", posIcon(0.5f, 0.14f))), -1) { k -> styleCaptions(y = listOf(0.86f, 0.5f, 0.14f)[k]) } }, LinearLayout.LayoutParams(-2, dp(34)).apply { rightMargin = dp(6) })
