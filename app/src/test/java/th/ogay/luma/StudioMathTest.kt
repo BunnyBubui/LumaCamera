@@ -92,6 +92,6 @@ class StudioMatteTest {
     @Test fun roundedCornersCutOnlyTheCorners() {
         val w = 40; val px = IntArray(w * w) { 0xffffffff.toInt() }
         StudioMatte.apply(px, w, w, StudioMatte.Spec(0, 0f, StudioMatte.NONE, 0f, 0.5f))
-        assertEquals(0, px[0] ushr 24); assertEquals(255, px[20 * w] ushr 24); assertEquals(255, px[20] ushr 24)
+        assertEquals(0, px[0] ushr 24); assertEquals(255, px[20 * w + 2] ushr 24); assertEquals(255, px[2 * w + 20] ushr 24)
     }
 }
