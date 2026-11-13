@@ -71,7 +71,14 @@ class EditorFlowTest {
         ActivityScenario.launch<VideoEditorActivity>(VideoEditorActivity.intent(context, Uri.fromFile(clip))).use {
             assertNotNull("Speed tab is missing · ${GlassNav.dump(device)}", device.wait(Until.findObject(By.desc("ความเร็ว")), 10000))
             device.findObject(By.desc("ความเร็ว")).click()
-            device.wait(Until.findObject(By.desc("2×")), 5000)!!.click()
+            // The speed tool now uses a slider plus an explicit numeric entry, not a "2×" chip.
+            assertNotNull("Numeric speed control missing · ${GlassNav.dump(device)}",
+                device.wait(Until.findObject(By.desc("ใส่ตัวเลขความเร็ว")), 10000))
+            device.findObject(By.desc("ใส่ตัวเลขความเร็ว")).click()
+            val speedInput = device.wait(Until.findObject(By.clazz("android.widget.EditText")), 5000)
+            assertNotNull("Speed input missing · ${GlassNav.dump(device)}", speedInput)
+            speedInput!!.text = "2"
+            device.findObject(By.text("ตกลง")).click()
             device.findObject(By.desc("ฟิลเตอร์")).click()
             device.wait(Until.findObject(By.descStartsWith("ฟิลเตอร์ ")), 5000)
             device.findObjects(By.descStartsWith("ฟิลเตอร์ ")).getOrNull(1)?.click()
