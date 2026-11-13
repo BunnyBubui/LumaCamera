@@ -22,6 +22,20 @@ internal object FilmToneEngine {
     )
 
     internal fun palette(film: Film): Palette = when (film.id) {
+        // Lumora Film Collection v2: restrained per-luminance split tones, not copied camera LUTs.
+        // Arguments: shadows RGB, highlights RGB, lifted black floor, highlight shoulder.
+        "Lumora Amber 200" -> Palette(-1, 0, 2, 6, 3, -3, 4, 10)
+        "Lumora Pocket CCD" -> Palette(-2, 1, 3, 2, 0, 1, 1, 3)
+        "Lumora Pixel '03" -> Palette(0, -2, 3, 4, 2, -1, 0, 3)
+        "Lumora Soft Diary" -> Palette(1, 1, 1, 5, 3, 1, 5, 13)
+        "Lumora Sakura Haze" -> Palette(3, 0, 3, 4, -1, 2, 5, 13)
+        "Lumora Silver Mist" -> Palette(-4, 0, 5, -1, 0, 3, 2, 8)
+        "Lumora Flash 2006" -> Palette(-2, -2, 0, 6, 2, -3, 0, 3)
+        "Lumora Street 400" -> Palette(-2, 0, 2, 3, 1, 0, 1, 4)
+        "Lumora Instant Paper" -> Palette(1, 0, 2, 5, 4, 0, 7, 13)
+        "Lumora Night Tungsten" -> Palette(-4, 1, 7, 5, 0, -2, 2, 7)
+        "Lumora Blue Weekend" -> Palette(-2, 2, 3, -1, 2, 4, 2, 10)
+        "Lumora Half Story" -> Palette(0, 1, 2, 5, 3, -2, 4, 10)
         "Lumora Sunday" -> Palette(-2, 0, 2, 5, 2, -3, 2, 9)
         "Lumora Mint" -> Palette(-2, 3, 2, -1, 2, 3, 3, 10)
         "Lumora 98" -> Palette(-1, 0, 3, 4, 1, -3, 0, 4)
