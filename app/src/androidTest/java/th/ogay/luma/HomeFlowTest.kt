@@ -15,7 +15,9 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class HomeFlowTest {
     private fun find(v: View, desc: String): View? {
-        if (v.contentDescription?.toString()?.startsWith(desc) == true) return v
+        val label = v.contentDescription?.toString()
+        // Match a complete title, not a shared prefix (e.g. "โปร" must not click "โปรเจกต์วิดีโอ").
+        if (label == desc || label?.startsWith("$desc ") == true) return v
         if (v is ViewGroup) for (i in 0 until v.childCount) find(v.getChildAt(i), desc)?.let { return it }
         return null
     }
