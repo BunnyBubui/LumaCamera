@@ -618,8 +618,8 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
         val c = host.context; val d = c.resources.displayMetrics.density
         val loc = IntArray(2); val hl = IntArray(2); anchor.getLocationInWindow(loc); host.getLocationInWindow(hl)
         val ax = loc[0] - hl[0]; val ay = loc[1] - hl[1]
-        val bars = if (android.os.Build.VERSION.SDK_INT >= 30) host.rootWindowInsets?.getInsets(android.view.WindowInsets.Type.systemBars()) else null
-        val nav = bars?.bottom ?: 0; val statusTop = bars?.top ?: 0
+        val nav = if (android.os.Build.VERSION.SDK_INT >= 30) host.rootWindowInsets?.getInsets(android.view.WindowInsets.Type.systemBars())?.bottom ?: 0 else 0
+        val statusTop = if (android.os.Build.VERSION.SDK_INT >= 30) host.rootWindowInsets?.getInsets(android.view.WindowInsets.Type.systemBars())?.top ?: 0 else 0
         // The top clearance counts the status bar even when the host is the window's decor view (its own padding is zero).
         val padT = max(host.paddingTop, statusTop) + c.dp(12); val padB = max(host.paddingBottom, nav) + c.dp(18)
         val avail = host.height - padT - padB
