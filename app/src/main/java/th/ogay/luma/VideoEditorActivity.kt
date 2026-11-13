@@ -414,6 +414,7 @@ class VideoEditorActivity : ComponentActivity() {
         startCaptions(captionLang()); showTool(15, false)
     }
     private var captionUi: CaptionProgress? = null
+    @androidx.annotation.RequiresApi(33)
     private fun stopCaptions() {
         (speech as? StudioSpeech)?.stop(); speech = null; captionUi?.remove(); captionUi = null
         notice("หยุดสร้างคำบรรยายแล้ว"); if (tool == 15) showTool(15, false)
