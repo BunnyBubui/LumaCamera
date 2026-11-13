@@ -1240,6 +1240,21 @@ class VideoEditorActivity : ComponentActivity() {
         }
         showTime(); Glass.tick(timeline)
     }
+    /** Extra cut actions for bars that play a file: pick another part of the file without moving the bar, and move a video layer's sound to its own bar. */
+    private fun barExtras(l: VideoLayer): List<View> {
+        if (l.still) return emptyList()
+        val i = layerPick; val out = ArrayList<View>()
+        fun slip(d: Long) { val c = layers[i]; val cap = layerLength.getOrPut(c.source) { VideoLayers.duration(this, c.source) }
+            val from = (c.from + d).coerceIn(0, (cap - c.length).coerceAtLeast(0))
+            if (from == c.from) notice(if (d < 0) "อยู่ที่ต้นไฟล์แล้ว" else "อยู่ที่ท้ายไฟล์แล้ว") else { layers[i] = c.copy(from = from); releaseLayerSound(); refreshTimeline(); notice("เล่นตั้งแต่ ${clock(from)} ของไฟล์") } }
+        out += EditorKit.action(this, "M9 7l-5 5 5 5 M4 12h12 M20 5v14", "เนื้อหา −1 วิ") { slip(-1000) }
+        out += EditorKit.action(this, "M15 7l5 5-5 5 M20 12H8 M4 5v14", "เนื้อหา +1 วิ") { slip(1000) }
+        if (l.kind == VideoLayer.VIDEO && l.volume > 0f && VideoLayers.hasAudio(this, l.source)) out += EditorKit.action(this, "M4 12h6 M14 12h6 M10 8v8 M14 8v8", "แยกเสียง") {
+            val c = layers[i]; layers[i] = c.copy(volume = 0f)
+            layers += VideoLayer(VideoLayer.SOUND, c.source, c.at, c.length, c.from, volume = c.volume, fadeIn = c.fadeIn, fadeOut = c.fadeOut)
+            layerPick = layers.size - 1; releaseLayerSound(); rebuildLayers(); refreshTimeline(); showTool(0, false); notice("แยกเสียงเป็นแถบสีม่วงแล้ว") }
+        return out
+    }
     private fun cutTools(col: LinearLayout) {
         val l = layers.getOrNull(layerPick)
         if (barActive && l != null) {
@@ -1250,7 +1265,7 @@ class VideoEditorActivity : ComponentActivity() {
                 EditorKit.action(this, EditorKit.END, "จบที่นี่") { trimLayer(layerPick, outNow(), false); showTool(0, false) },
                 EditorKit.action(this, "M8 8h11v11H8z M5 16V5h11", "ทำสำเนา") { val c = layers[layerPick]; val total = totalOut()
                     layers.add(layerPick + 1, c.copy(at = c.end.coerceAtMost((total - c.length).coerceAtLeast(0)))); layerPick++; rebuildLayers(); refreshTimeline(); showTool(0, false) },
-                EditorKit.action(this, "M5 7h14 M9 7V4h6v3 M7 7l1 13h8l1-13", "ลบ") { layers.removeAt(layerPick); layerPick = -1; barActive = false; rebuildLayers(); refreshTimeline(); showTool(0, false) })), -1, -2)
+                EditorKit.action(this, "M5 7h14 M9 7V4h6v3 M7 7l1 13h8l1-13", "ลบ") { layers.removeAt(layerPick); layerPick = -1; barActive = false; rebuildLayers(); refreshTimeline(); showTool(0, false) }) + barExtras(l)), -1, -2)
             return
         }
         val e = extras.getOrNull(playIndex - 1)
@@ -1447,7 +1462,7 @@ class VideoEditorActivity : ComponentActivity() {
     private fun textTools(col: LinearLayout) {
         col.gravity = Gravity.TOP
         // The single caption of older projects becomes a text layer, so all text is edited the same way.
-        if (caption.isNotBlank()) { val c = caption; caption = ""; applyLook(); addText(c, if (place == 0) 0.15f else if (place == 1) 0.5f else 0.85f, 0L, totalOut()); return }
+        if (caption.isNotBlank()) { val c = caption; caption = ""; applyLook(); handler.post { addText(c, if (place == 0) 0.15f else if (place == 1) 0.5f else 0.85f, 0L, totalOut()) }; return }
         val i = layerPick; val cur = layers.getOrNull(i)?.takeIf { barActive && it.kind == VideoLayer.TEXT && VideoLayers.shapeOf(it.text) < 0 }
         val field = EditText(this).apply {
             hint = if (cur == null) "พิมพ์ข้อความใหม่" else "แก้ข้อความ"; setHintTextColor(Glass.TEXT3); setTextColor(Color.WHITE); textSize = 15f; maxLines = 3; setText(cur?.text ?: "")
