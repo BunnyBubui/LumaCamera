@@ -1095,10 +1095,15 @@ class VideoEditorActivity : ComponentActivity() {
         top.addView(text("รีเซ็ต", 11f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; background = glass(14, 0x26ffffff); setPadding(dp(10), 0, dp(10), 0); isClickable = true; glassTouch(); contentDescription = "รีเซ็ตสีทั้งหมด"
             setOnClickListener { grade.reset(); lutPath = ""; lutName = ""; applyLook(); showTool(COLOR_TOOL, false) } }, LinearLayout.LayoutParams(-2, dp(30)).apply { leftMargin = dp(6) })
         col.addView(top, -1, -2)
+        // Five kinds of adjustment as icon tabs: light and finishing, colour wheels, curves, HSL and LUT.
         val tabs = LinearLayout(this).apply { gravity = Gravity.CENTER }
-        listOf("โทนสี", "เส้นโค้ง", "HSL", "LUT").forEachIndexed { i, n -> tabs.addView(text(n, 12.5f, if (i == colourTab) Glass.ACCENT else Color.WHITE, i == colourTab).apply { gravity = Gravity.CENTER
-            background = glass(16, if (i == colourTab) Glass.ACCENT_SOFT else 0x1fffffff); setPadding(dp(14), 0, dp(14), 0); isClickable = true; glassTouch(); contentDescription = n
-            setOnClickListener { colourTab = i; showTool(COLOR_TOOL, false) } }, LinearLayout.LayoutParams(-2, dp(32)).apply { setMargins(dp(3), 0, dp(3), 0) }) }
+        listOf(EditorKit.ADJUST to "ปรับแสง", "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M12 3v18 M3 12h18" to "โทนสี", "M4 20C9 20 9 4 20 4" to "เส้นโค้ง",
+            "M12 3c4 5 6 8 6 11a6 6 0 0 1-12 0c0-3 2-6 6-11z" to "HSL", "M4 4h16v16H4z M4 9h16 M4 14h16 M9 4v16 M14 4v16" to "LUT").forEachIndexed { i, (icon, n) -> val on = i == colourTab
+            tabs.addView(LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; isClickable = true; glassTouch(); contentDescription = n
+                background = if (on) glass(14, Glass.ACCENT_SOFT) else null
+                addView(IconView(this@VideoEditorActivity, icon, 2f).apply { tint = if (on) Glass.ACCENT else Color.WHITE }, dp(20), dp(20))
+                addView(text(n, 10.5f, if (on) Glass.ACCENT else Glass.TEXT2, true).apply { setPadding(0, dp(3), 0, 0) })
+                setOnClickListener { colourTab = i; showTool(COLOR_TOOL, false) } }, LinearLayout.LayoutParams(dp(62), dp(50)).apply { setMargins(dp(2), 0, dp(2), 0) }) }
         col.addView(tabs, -1, -2)
         val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(4), 0, 0) }
         col.addView(body, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -1123,20 +1128,37 @@ class VideoEditorActivity : ComponentActivity() {
         val rainbow = intArrayOf(0xffff3b30.toInt(), 0xffffcc00.toInt(), 0xff34c759.toInt(), 0xff32ade6.toInt(), 0xff5856d6.toInt(), 0xffff2d55.toInt(), 0xffff3b30.toInt())
         val dim = intArrayOf(0xff8e8e93.toInt(), Color.WHITE, Glass.ACCENT)
         when (colourTab) {
-            0 -> { // Colour wheels as three sliders each: which colour to push into the shadows, midtones or highlights, how strongly, and how much brighter or darker.
+            0 -> {
+                // Light, colour and finishing as dials: pick one, set it with the slider; tap a picked dial again to reset it.
+                val names = EditorKit.ADJUSTMENTS.dropLast(1) + listOf("ขอบมืด", "เกรนฟิล์ม", "คมชัด")
+                val icons = EditorKit.ADJUST_ICONS.take(6) + listOf(EditorKit.ADJUST_ICONS[6], "M6 7h.01 M12 5h.01 M18 8h.01 M8 13h.01 M15 12h.01 M6 18h.01 M12 17h.01 M18 16h.01", "M12 4l8 16H4z")
+                fun get(k: Int) = if (k < 6) adjust[k] else fx[k - 6]
+                fun set(k: Int, v: Float) { if (k < 6) adjust[k] = v else fx[k - 6] = v.coerceAtLeast(0f) }
+                val value = text("", 12.5f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER }
+                val dials = names.mapIndexed { k, n -> EditorKit.Dial(this, icons[k], n).apply { amount = get(k) } }
+                val slider = GlassSlider(this).apply { values = (-100..100).map { if (it > 0) "+$it" else "$it" }; grad = intArrayOf(0xff8e8e93.toInt(), Color.WHITE, Glass.ACCENT) }
+                fun show(k: Int) { adjustIndex = k; dials.forEachIndexed { j, d -> d.lit = j == k }; value.text = "${names[k]}  ${sign(get(k))}"; slider.index = (get(k) * 100).roundToInt() + 100; slider.contentDescription = names[k] }
+                body.addView(EditorKit.strip(this, dials.map { it to 58 }, adjustIndex.coerceIn(0, names.size - 1), 0, { k -> show(k) },
+                    tapAgain = { k -> set(k, 0f); dials[k].amount = 0f; show(k); applyLook() }) { k -> show(k) }, LinearLayout.LayoutParams(-1, dp(56)))
+                body.addView(value, -1, -2)
+                slider.onChange = { i -> set(adjustIndex, (i - 100) / 100f); dials[adjustIndex].amount = get(adjustIndex); value.text = "${names[adjustIndex]}  ${sign(get(adjustIndex))}"; applyLook() }
+                body.addView(slider, LinearLayout.LayoutParams(-1, dp(40)).apply { setMargins(dp(12), 0, dp(12), 0) })
+                show(adjustIndex.coerceIn(0, names.size - 1))
+            }
+            1 -> { // Colour wheels as three sliders each: which colour to push into the shadows, midtones or highlights, how strongly, and how much brighter or darker.
                 chips(listOf("เงา", "กลาง", "สว่าง"), null, wheelRange) { wheelRange = it; showTool(COLOR_TOOL, false) }
                 val k = wheelRange * 3
                 slider("สีที่เติม", grade.wheels[k], 0, rainbow) { grade.wheels[k] = it }
                 slider("ความแรงสี", grade.wheels[k + 1], 0, dim) { grade.wheels[k + 1] = it }
                 slider("ความสว่าง", grade.wheels[k + 2], -100, dim) { grade.wheels[k + 2] = it }
             }
-            1 -> {
+            2 -> {
                 chips(listOf("ทั้งหมด", "แดง", "เขียว", "น้ำเงิน"), null, curveChannel) { curveChannel = it; showTool(COLOR_TOOL, false) }
                 val edit = CurveEdit(this).apply { points = grade.curves; at = curveChannel * 5; color = intArrayOf(Color.WHITE, 0xffff5a5a.toInt(), 0xff52d96b.toInt(), 0xff5a9bff.toInt())[curveChannel]
                     onChange = { applyLook() } }
                 body.addView(edit, LinearLayout.LayoutParams(-1, 0, 1f).apply { setMargins(dp(24), dp(2), dp(24), dp(2)) })
             }
-            2 -> {
+            3 -> {
                 val names = listOf("แดง", "ส้ม", "เหลือง", "เขียว", "ฟ้า", "น้ำเงิน", "ม่วง", "ชมพู")
                 chips(names, StudioGrade.BANDS.map { StudioGrade.hueColour(it / 360f).let { c -> Color.rgb((c[0] * 255).toInt(), (c[1] * 255).toInt(), (c[2] * 255).toInt()) } }, hslBand) { hslBand = it; showTool(COLOR_TOOL, false) }
                 val k = hslBand * 3
@@ -1266,7 +1288,7 @@ class VideoEditorActivity : ComponentActivity() {
         tool = i; toolBar.select(TOOL_IDS.indexOf(i).coerceAtLeast(0), animate)
         // The layer lanes need room; the preview gives way smoothly.
         if (i != COLOR_TOOL) { handler.removeCallbacks(histTick); hist = null }
-        val want = dp(when (i) { LAYER_TOOL -> 276; COLOR_TOOL -> 268; 9 -> 260; 2 -> if (speedTab == 1) 236 else 178; 4 -> 236; 3, 5 -> 150; 12, 15, 16 -> 220; else -> 124 })
+        val want = dp(when (i) { LAYER_TOOL -> 276; COLOR_TOOL -> 286; 9 -> 260; 2 -> if (speedTab == 1) 236 else 178; 4 -> 236; 3, 5 -> 150; 12, 15, 16 -> 220; else -> 124 })
         if (tools.layoutParams.height != want) {
             if (!animate || Glass.reduced(this)) { tools.layoutParams.height = want; tools.requestLayout() }
             else android.animation.ValueAnimator.ofInt(tools.layoutParams.height, want).apply { duration = 260; interpolator = Glass.EASE
@@ -2228,6 +2250,7 @@ class VideoEditorActivity : ComponentActivity() {
     private fun startExport(c: ExportChoice, src: ExportSheet.Source) {
         if (ExportJob.running()) { notice("มีงานส่งออกอยู่แล้ว · รอให้เสร็จก่อน"); return }
         if (luma.shots.upscaling()) { notice("กำลังเพิ่มรายละเอียดภาพด้วย AI อยู่ · ส่งออกได้เมื่อเสร็จแล้ว"); return }
+        if (c.audioOnly) { exportAudio(); return }
         val bigger = c.shortSide > src.shortSide * 1.05f; val smoother = c.fps > src.fps * 1.05f
         if (!changed() && !bigger && !smoother && c.shortSide >= src.shortSide - 8 && c.fps >= src.fps - 0.6f) { notice("ยังไม่มีการแก้ไข"); return }
         enhance = if (bigger || smoother) VideoEnhancer.Plan(c.shortSide, c.fps, c.ai, c.profile) else null
@@ -2262,10 +2285,14 @@ class VideoEditorActivity : ComponentActivity() {
             parts = { f -> flow = f; ranges.mapIndexed { k, (from, to) -> composition(from, to) to File(dir, "Lumora_EDIT_${id}${if (ranges.size > 1) "_${k + 1}" else ""}${if (enhance != null) "_edit" else ""}.mp4") } },
             enhance = enhance, finalFile = enhance?.let { File(dir, "Lumora_EDIT_${id}.mp4") }, note = "ตัดต่อใน Lumora",
             cleanup = { slowFile.delete() }, kinds = kinds.toList())
+        startJob(plan, still)
+    }
+    private fun startJob(plan: ExportJob.Plan, still: Bitmap? = firstFrame) {
+        if (ExportJob.running()) { notice("มีงานส่งออกอยู่แล้ว · รอให้เสร็จก่อน"); return }
         LiveNotice.askPermissions(this)
         ExportJob.start(this, plan)
         exportButton.alpha = 0.5f
-        prog = ExportProgress(this, still, steps, kinds, { cancelExport() }, { goBackground() })
+        prog = ExportProgress(this, still, plan.steps, plan.kinds, { cancelExport() }, { goBackground() })
         overlay = prog?.view
         ExportJob.listen(jobListener); onJob()
     }
@@ -2291,7 +2318,18 @@ class VideoEditorActivity : ComponentActivity() {
         setResult(RESULT_OK); finish()
     }
 
-    private fun composition(from: Long, to: Long): Composition {
+    /** Exports only the sound of the edit (clips, music, voice and sound layers) as an .m4a file into the music folder. */
+    private fun exportAudio() {
+        val clipSound = hasAudio && keepSound && allSpeeds().all { it in SOUND_MIN..SOUND_MAX }
+        if (!clipSound && layers.none { it.audible && !it.hidden && it.volume > 0f }) { notice("วิดีโอนี้ไม่มีเสียงให้ส่งออก"); return }
+        enhance = null; shrinkShort = 0; shrinkFps = 0f
+        val id = System.currentTimeMillis(); val dir = File(filesDir, "video-exports/$id").apply { mkdirs() }
+        val plan = ExportJob.Plan(listOf("รวมเสียงทั้งหมด", "บันทึกลงโฟลเดอร์เพลง"), listOf(1f, 0.3f), firstFrame, 0, 0, -1, 1,
+            slow = null, parts = { _ -> flow = null; listOf(composition(start, end, audioOnly = true) to File(dir, "Lumora_AUDIO_$id.m4a")) },
+            enhance = null, finalFile = null, note = "เสียงจาก Lumora", cleanup = {}, kinds = listOf(ExportProgress.Backdrop.EDIT, ExportProgress.Backdrop.SAVE))
+        startJob(plan)
+    }
+    private fun composition(from: Long, to: Long, audioOnly: Boolean = false): Composition {
         // With smooth slow motion the main clip is the rendered file: n times longer, so times scale by n and the
         // speed left to apply is speed × n (about 1×). It has no sound.
         val f = flow; val n = f?.factor ?: 1
@@ -2301,7 +2339,7 @@ class VideoEditorActivity : ComponentActivity() {
         return VideoEdit.composition(VideoEditSpec(f?.let { Uri.fromFile(it.file) } ?: source, at(from), at(to), if (turns % 2 == 1) vh else vw, if (turns % 2 == 1) vw else vh,
         speed * n, cropRatio(), caption, place, textColor, textBig, if (looked()) colour() else null, music, f == null && hasAudio && keepSound && allSpeeds().all { it in SOUND_MIN..SOUND_MAX },
         turns, mirror, volume, musicVolume, if (cut) at(cutFrom) else -1L, if (cut) at(cutTo) else -1L, textBox,
-        extras.map { VideoPart(it.uri, it.from, it.to, it.speed, it.muted, it.volume, it.curve) }, if (extras.isEmpty()) 0 else transition, stickers.toList(), clampedLayers(), shrinkShort, shrinkFps, mainPos(), fx[0], fx[1], fx[2], grade = if (grade.active()) gradeCube(33) else null, audio = audioSettings(), mainMuted = mainMuted, mainCurve = if (f == null) mainCurve else null, duck = duck), applicationContext)
+        extras.map { VideoPart(it.uri, it.from, it.to, it.speed, it.muted, it.volume, it.curve) }, if (extras.isEmpty()) 0 else transition, stickers.toList(), clampedLayers(), shrinkShort, shrinkFps, mainPos(), fx[0], fx[1], fx[2], grade = if (grade.active()) gradeCube(33) else null, audio = audioSettings(), mainMuted = mainMuted, mainCurve = if (f == null) mainCurve else null, audioOnly = audioOnly, duck = duck), applicationContext)
     }
 
     /** Export problems stay on screen until dismissed, so the reason can be read (and reported). */

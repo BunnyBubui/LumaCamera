@@ -138,7 +138,7 @@ object ExportJob {
 
     private fun publish(app: Context, s: State, files: List<File>) {
         s.stage = s.plan.stageSave; s.fraction = 0.3f; s.detail = "กำลังบันทึกไฟล์"; changed()
-        runCatching { files.map { f -> MediaLedger.publishVideo(app, f, f.name, s.plan.note) } }
+        runCatching { files.map { f -> if (f.extension == "m4a") MediaLedger.publishAudio(app, f, f.name, s.plan.note) else MediaLedger.publishVideo(app, f, f.name, s.plan.note) } }
             .onSuccess { u -> s.uris = u; s.outputs = files; s.stage = s.plan.steps.size; s.fraction = 0f; s.finished = true; s.detail = "เสร็จแล้ว"; end() }
             .onFailure { fail(s, "บันทึกไฟล์ไม่ได้ · ${it.localizedMessage}") }
     }

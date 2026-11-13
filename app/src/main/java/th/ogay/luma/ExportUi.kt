@@ -18,7 +18,7 @@ import java.util.Locale
 import kotlin.math.ceil
 
 /** What the export sheet hands back: the short side in pixels, the frame rate and whether AI may enlarge. */
-data class ExportChoice(val shortSide: Int, val fps: Float, val ai: Boolean, val profile: th.ogay.luma.ai.EnhanceProfile = th.ogay.luma.ai.EnhanceProfile.NATURAL)
+data class ExportChoice(val shortSide: Int, val fps: Float, val ai: Boolean, val profile: th.ogay.luma.ai.EnhanceProfile = th.ogay.luma.ai.EnhanceProfile.NATURAL, val audioOnly: Boolean = false)
 
 /**
  * Export sheet in the style of TikTok's: the clip at the top, then two sliders (resolution and frame rate) like
@@ -103,13 +103,29 @@ object ExportSheet {
         }
         row("ความละเอียด", sideValue, sideNote, sides.map { sideName(it) }, side) { side = it }
         row("อัตราเฟรม", rateValue, rateNote, rates.map { fpsName(it) }, rate) { rate = it }
+        // Choices from a list open a glass menu, like the AI model below: the file type, and the compression.
+        val pickMenu = GlassMenu(a.window.decorView as FrameLayout) { on -> sheet.recede(on) }
+        fun pickRow(title: String, value: TextView, note: TextView, tap: (View) -> Unit) {
+            val top = LinearLayout(a).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, a.dp(16), 0, 0) }
+            top.addView(a.text(title, 14f, Glass.TEXT2, true), LinearLayout.LayoutParams(0, -2, 1f))
+            val pill = LinearLayout(a).apply { gravity = Gravity.CENTER_VERTICAL; background = a.glass(16, 0x26ffffff); setPadding(a.dp(14), 0, a.dp(10), 0); isClickable = true; glassTouch(); contentDescription = title
+                addView(value); addView(IconView(a, "M7 10l5 5 5-5", 2f).apply { tint = Glass.TEXT2 }, LinearLayout.LayoutParams(a.dp(16), a.dp(16)).apply { leftMargin = a.dp(6) }); setOnClickListener { tap(this) } }
+            top.addView(pill, LinearLayout.LayoutParams(-2, a.dp(38)))
+            card.addView(top, -1, -2); card.addView(note.apply { setPadding(0, a.dp(4), 0, 0) }, -1, -2)
+        }
+        var audioOnly = false
+        val typeValue = a.text("วิดีโอ", 14f, Color.WHITE, true); val typeNote = a.text("ภาพพร้อมเสียง .mp4", 12f, Glass.TEXT3)
+        var onType: () -> Unit = {}
+        if (!upscale) pickRow("ไฟล์ที่ได้", typeValue, typeNote) { v -> pickMenu.show(v, "ไฟล์ที่ได้", listOf(GlassMenu.Option("วิดีโอ", Icons.VIDEO, "ภาพพร้อมเสียง .mp4"), GlassMenu.Option("เสียงอย่างเดียว", Icons.SOUND, "ไฟล์เสียง .m4a ลงโฟลเดอร์เพลง")), if (audioOnly) 1 else 0) { k ->
+            audioOnly = k == 1; typeValue.text = if (audioOnly) "เสียงอย่างเดียว" else "วิดีโอ"; typeNote.text = if (audioOnly) "ไฟล์เสียง .m4a · ความละเอียดและอัตราเฟรมไม่มีผล" else "ภาพพร้อมเสียง .mp4"; onType() } }
         // H.265 makes a smaller file at the same quality; it is offered only when this phone can encode it.
         val hevcOk = runCatching { android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS).codecInfos.any { it.isEncoder && it.supportedTypes.any { t -> t.equals("video/hevc", true) } } }.getOrDefault(false)
         if (hevcOk && !upscale) {
             val codecValue = a.text("", 14f, Color.WHITE, true); val codecNote = a.text("", 12f, Glass.TEXT3)
             fun paintCodec(k: Int) { codecValue.text = if (k == 1) "H.265" else "H.264"; codecNote.text = if (k == 1) "ไฟล์เล็กกว่าที่คุณภาพเท่ากัน · เครื่องหรือแอปรุ่นเก่าบางตัวเปิดไม่ได้" else "เปิดได้ทุกเครื่อง" }
-            val k0 = if (prefs.getBoolean("export_hevc", false)) 1 else 0; paintCodec(k0)
-            row("การบีบอัด", codecValue, codecNote, listOf("H.264", "H.265"), k0) { prefs.edit().putBoolean("export_hevc", it == 1).apply(); paintCodec(it) }
+            paintCodec(if (prefs.getBoolean("export_hevc", false)) 1 else 0)
+            pickRow("การบีบอัด", codecValue, codecNote) { v -> pickMenu.show(v, "การบีบอัดวิดีโอ", listOf(GlassMenu.Option("H.264", "", "เปิดได้ทุกเครื่อง"), GlassMenu.Option("H.265", "", "ไฟล์เล็กกว่า")), if (prefs.getBoolean("export_hevc", false)) 1 else 0) { k ->
+                prefs.edit().putBoolean("export_hevc", k == 1).apply(); paintCodec(k) } }
         } else if (!hevcOk && prefs.getBoolean("export_hevc", false)) prefs.edit().putBoolean("export_hevc", false).apply()
         val names = listOf("ไม่ใช้ AI · เร็วที่สุด", "Natural SR3 · แนะนำ", "Classic SR2 · คมชัด")
         val notes = listOf("ขยายภาพแบบปกติ เร็วที่สุด", "คน ใบหน้า ตัวหนังสือ · เนียนตา", "วิว ตึก ใบไม้ · คมเต็มที่")
@@ -169,7 +185,7 @@ object ExportSheet {
                 }
             }
         }
-        go.setOnClickListener { Glass.tick(go); close(); onExport(ExportChoice(sides[side], rates[rate], ai(), if (model == 2) th.ogay.luma.ai.EnhanceProfile.CLASSIC else th.ogay.luma.ai.EnhanceProfile.NATURAL)) }
+        go.setOnClickListener { Glass.tick(go); close(); onExport(ExportChoice(sides[side], rates[rate], ai() && !audioOnly, if (model == 2) th.ogay.luma.ai.EnhanceProfile.CLASSIC else th.ogay.luma.ai.EnhanceProfile.NATURAL, audioOnly)) }
         card.addView(go, LinearLayout.LayoutParams(-1, a.dp(52)).apply { topMargin = a.dp(12) })
         card.addView(a.text("ยกเลิก", 14f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; isClickable = true; setPadding(0, a.dp(12), 0, 0); setOnClickListener { close() } }, -1, a.dp(44))
         refresh()

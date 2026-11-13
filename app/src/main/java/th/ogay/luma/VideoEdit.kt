@@ -74,7 +74,9 @@ data class VideoEditSpec(
     /** Shaping of the clips' own sound (equaliser, low cut, voice), silence for the first clip, and ducking of the music under sound layers. */
     val audio: StudioAudio.Settings = StudioAudio.Settings(), val mainMuted: Boolean = false, val duck: Boolean = false,
     /** Speed curve of the main clip (5 points, see [StudioMath.curveMul]); null = steady [speed]. */
-    val mainCurve: FloatArray? = null)
+    val mainCurve: FloatArray? = null,
+    /** Only the sound: no picture track, no picture effects. */
+    val audioOnly: Boolean = false)
 
 /** A clip appended after the main one. [from]/[to] in ms of that clip. */
 data class VideoPart(val source: Uri, val from: Long, val to: Long, val speed: Float = 1f, val muted: Boolean = false, val volume: Float = 1f, val curve: FloatArray? = null)
@@ -193,16 +195,17 @@ object VideoEdit {
             val muted = if (piece.clip == 0) s.mainMuted else s.extras[piece.clip - 1].muted
             val partVolume = if (piece.clip == 0) 1f else s.extras[piece.clip - 1].volume
             val own_sound = if (muted) listOf(gain(0f)) else (if (piece.clip == 0) sound else if (partVolume != 1f) listOf(gain(partVolume)) else emptyList()) + listOfNotNull(if (s.audio.active) StudioAudio.Shape(s.audio) else null)
-            val edited = EditedMediaItem.Builder(piece.item).setEffects(Effects(own_sound, own)).setRemoveAudio(!s.keepAudio)
+            val edited = EditedMediaItem.Builder(piece.item).setEffects(Effects(own_sound, if (s.audioOnly) emptyList() else own)).setRemoveAudio(!s.keepAudio).setRemoveVideo(s.audioOnly)
             // With sound, setSpeed changes picture and sound together. Without a sound track it stalls the export (no
             // output sample ever reaches the muxer), so a picture-only clip changes speed through a video effect instead.
             if (piece.speed != 1f && s.keepAudio) edited.setSpeed(object : SpeedProvider { override fun getSpeed(timeUs: Long) = piece.speed; override fun getNextSpeedChangeTimeUs(timeUs: Long) = C.TIME_UNSET })
             edited.build()
         }
-        val main = if (s.keepAudio) EditedMediaItemSequence.withAudioAndVideoFrom(items) else EditedMediaItemSequence.withVideoFrom(items)
+        val main = if (s.audioOnly) EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_AUDIO)).apply { items.forEach { addItem(it) } }.build()
+            else if (s.keepAudio) EditedMediaItemSequence.withAudioAndVideoFrom(items) else EditedMediaItemSequence.withVideoFrom(items)
         val whole = mutableListOf<Effect>()
         // Layers are measured on the finished frame, so they go last, over everything else.
-        val layerOverlays = if (s.layers.any { it.visual }) VideoLayers.overlays(requireNotNull(context) { "layers need a context" }, s.layers) else emptyList()
+        val layerOverlays = if (!s.audioOnly && s.layers.any { it.visual }) VideoLayers.overlays(requireNotNull(context) { "layers need a context" }, s.layers) else emptyList()
         if (multi) {
             val (w, h) = frameSize(s)
             whole += Presentation.createForWidthAndHeight(w / 2 * 2, h / 2 * 2, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP)
@@ -214,7 +217,8 @@ object VideoEdit {
         if (s.outShort > 0) whole += Presentation.createForShortSide(s.outShort)
         if (s.outFps > 0f) whole += FrameDropEffect.createDefaultFrameDropEffect(s.outFps)
         val song = s.music
-        val sequences = mutableListOf(main)
+        // Sound only and the clips have no sound to keep: the file is made from the music and sound layers alone.
+        val sequences = if (s.audioOnly && !s.keepAudio) mutableListOf() else mutableListOf(main)
         if (song != null) {
             val spans = if (s.duck) s.layers.filter { it.audible && it.volume > 0f }.map { it.at to it.end } else emptyList()
             val track = EditedMediaItem.Builder(MediaItem.fromUri(song)).setRemoveVideo(true).setEffects(Effects(listOfNotNull(if (s.musicVolume != 1f) gain(s.musicVolume) else null, if (spans.isNotEmpty()) StudioAudio.Duck(spans) else null), emptyList())).build()
@@ -222,7 +226,7 @@ object VideoEdit {
         }
         if (s.layers.any { it.audible }) sequences += VideoLayers.sounds(requireNotNull(context) { "layers need a context" }, s.layers, s.duck) { gain(it) }
         val builder = Composition.Builder(sequences)
-        if (whole.isNotEmpty()) builder.setEffects(Effects(emptyList(), whole))
+        if (whole.isNotEmpty() && !s.audioOnly) builder.setEffects(Effects(emptyList(), whole))
         return builder.build()
     }
     private fun clipped(uri: Uri, from: Long, to: Long) = MediaItem.Builder().setUri(uri)
