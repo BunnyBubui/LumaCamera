@@ -348,6 +348,8 @@ class ZoomWheel(context: Context) : View(context) {
     private var lastStep = Int.MIN_VALUE
     var zoom = 1f; set(v) { field = v; if (open > 0.05f) { val step = Math.round(ln(v) / ln(2f) * 14f); if (step != lastStep) { if (lastStep != Int.MIN_VALUE) Glass.tick(this, HapticFeedbackConstants.CLOCK_TICK); lastStep = step } }; invalidate() }
     var lenses = listOf(1f); var maxZoom = 10f; var minZoom = 1f
+    /** Moves the drawing down inside the view (dp) when the wheel should sit closer to the controls. */
+    var shiftDp = 0f
     private var open = 0f
     private val glass = context.glass(0)
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -363,6 +365,7 @@ class ZoomWheel(context: Context) : View(context) {
         if (open <= 0.01f) return
         val d = context.px(1f); val cx = width / 2f; val radius = 320 * d; val cy = 34 * d + radius
         val save = c.saveLayer(0f, 0f, width.toFloat(), height.toFloat(), null)
+        c.save(); c.translate(0f, shiftDp * d)
         glass.radius = radius; glass.setBounds((cx - radius).toInt(), (34 * d).toInt(), (cx + radius).toInt(), (cy + radius).toInt()); glass.draw(c)
         val degPerStop = 30f
         fun deg(z: Float) = ((ln(z) - ln(zoom)) / ln(2f)) * degPerStop
@@ -386,6 +389,7 @@ class ZoomWheel(context: Context) : View(context) {
         val label = zoomText(zoom); val tw = paint.measureText(label) + 24 * d
         glass.radius = 14 * d; glass.setBounds((cx - tw / 2).toInt(), 0, (cx + tw / 2).toInt(), (26 * d).toInt()); glass.draw(c)
         paint.color = Glass.ACCENT; paint.textSize = 15 * d; c.drawText(label, cx, 18.5f * d, paint)
+        c.restore()
         fade.shader = LinearGradient(0f, 0f, 0f, height.toFloat(), intArrayOf(Color.BLACK, Color.BLACK, 0x99000000.toInt(), 0), floatArrayOf(0f, 0.4f, 0.7f, 1f), Shader.TileMode.CLAMP)
         c.drawRect(0f, 0f, width.toFloat(), height.toFloat(), fade); c.restoreToCount(save)
     }

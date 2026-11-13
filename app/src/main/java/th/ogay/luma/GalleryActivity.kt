@@ -121,7 +121,7 @@ class GalleryActivity : ComponentActivity() {
         if (r.resultCode == RESULT_OK) afterGrant?.invoke()
         if (r.resultCode == RESULT_OK) pendingNext?.let { selected = it.ifEmpty { null }; useAi = false }
         pendingNext = null
-        afterGrant = null; pendingForget = emptyList(); endSelection(); reload()
+        afterGrant = null; pendingForget = emptyList(); endSelection(false); reload()
     }
     private var afterGrant: (() -> Unit)? = null
     /** After a system delete request: the picture to show next ("" = back to the grid). */
@@ -159,7 +159,7 @@ class GalleryActivity : ComponentActivity() {
             override fun handleOnBackPressed() {
                 when {
                     sortMenu.showing -> sortMenu.dismiss(true)
-                    selecting -> endSelection()
+                    selecting && !(pickKind != null && albumKind != null) -> endSelection()
                     peek != null -> closePeek()
                     // The newest photo opened straight from the camera: Back returns to the camera, not to the grid.
                     selected != null && viewerFromCamera -> finish()
@@ -269,8 +269,9 @@ class GalleryActivity : ComponentActivity() {
     private fun startSelection(first: Item?) {
         selecting = true; first?.let { picked += it.key }; refreshCells(); updateSelectBar()
     }
-    private fun endSelection() {
-        if (pickKind != null) { finish(); return }
+    /** [cancel] true when the person closes selecting; false when the page only changes (an album opens) and a picker must stay open. */
+    private fun endSelection(cancel: Boolean = true) {
+        if (pickKind != null) { if (cancel) finish(); return }
         selecting = false; picked.clear(); refreshCells()
         selectBar?.let { b -> b.animate().translationY(b.height.toFloat() + dp(40)).alpha(0f).setDuration(200).withEndAction { (b.parent as? ViewGroup)?.removeView(b) }.start() }; selectBar = null
     }
@@ -760,7 +761,7 @@ class GalleryActivity : ComponentActivity() {
 
     // ---------- Albums tab (OPPO-style): my media first, then the phone's albums; pin, hide and reorder ----------
     private fun albumTitle() = when (albumKind) { "lumora" -> "ถ่ายด้วย Lumora"; "video" -> "วิดีโอ"; "fav" -> "รายการโปรด"; "raw" -> "RAW"; "ai" -> "ภาพ AI"; else -> album ?: "อัลบั้ม" }
-    private fun openAlbum(kind: String, name: String? = null) { albumKind = kind; album = name; category = 0; endSelection(); reload() }
+    private fun openAlbum(kind: String, name: String? = null) { albumKind = kind; album = name; category = 0; endSelection(false); reload() }
     private fun closeAlbum() { albumKind = null; album = null; section = 1; category = 0; reload() }
     private fun isRaw(i: Item) = i.shot?.output?.needsRaw == true || i.name.endsWith(".dng", true) || i.mime == "image/x-adobe-dng"
     /** Whether an item belongs on the open page. Hidden albums stay out of the รูปภาพ tab. */
@@ -784,7 +785,7 @@ class GalleryActivity : ComponentActivity() {
     }.also { navTabs = it }
     private fun switchSection(i: Int, swiped: Boolean) {
         tabMove = if (i > section) 1 else -1; swipeEnter = swiped
-        section = i; managing = false; albumKind = null; album = null; prefs.edit().putInt("gallery_section", i).apply(); endSelection()
+        section = i; managing = false; albumKind = null; album = null; prefs.edit().putInt("gallery_section", i).apply(); endSelection(false)
         if (swiped) reload() else root.postDelayed({ if (!isDestroyed) reload() }, if (Glass.reduced(this)) 0 else 120)
     }
 

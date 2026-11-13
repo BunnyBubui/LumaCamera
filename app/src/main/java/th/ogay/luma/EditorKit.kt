@@ -273,7 +273,10 @@ object EditorKit {
         override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) { super.onLayout(changed, l, t, r, b); if (changed) place(false) }
         /** A scrolling row shows six and a half tabs on any screen, so the half tab says there is more. */
         override fun onMeasure(widthSpec: Int, heightSpec: Int) {
-            if (scrolls) { val each = (MeasureSpec.getSize(widthSpec) / 6.5f).toInt().coerceAtLeast(context.dp(48)); tabs.forEach { it.minimumWidth = each } }
+            // Each tab is at least a share of the width and always as wide as its whole name, so a label is never cut.
+            if (scrolls) { val each = (MeasureSpec.getSize(widthSpec) / 6.5f).toInt().coerceAtLeast(context.dp(48))
+                tabs.forEach { t -> val tv = t.getChildAt(1) as TextView; tv.minWidth = Math.ceil(tv.paint.measureText(tv.text.toString()).toDouble()).toInt() + context.dp(2)
+                    t.minimumWidth = maxOf(each, tv.minWidth + context.dp(18)) } }
             super.onMeasure(widthSpec, heightSpec)
         }
     }

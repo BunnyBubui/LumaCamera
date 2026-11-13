@@ -311,7 +311,7 @@ class ExportProgress(private val a: Activity, thumb: Bitmap?, private val steps:
     fun remove() { layer.animate().alpha(0f).setDuration(200).withEndAction { (layer.parent as? FrameLayout)?.removeView(layer) }.start() }
 
     /** Rounded ring around the thumbnail; the lit part grows clockwise from the top. */
-    private class Ring(c: Context) : View(c) {
+    class Ring(c: Context) : View(c) {
         var progress = 0f; set(v) { field = v; invalidate() }
         private val d = c.resources.displayMetrics.density
         private val track = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 5 * d; color = 0x26ffffff }
@@ -401,4 +401,67 @@ class ExportProgress(private val a: Activity, thumb: Bitmap?, private val steps:
             }
         }
     }
+}
+
+
+/**
+ * Progress for making captions, in the same look as the export page: the clip's first picture in a ring, the percentage,
+ * what is happening now (finding speech, which language, which piece of how many, the last words heard) and the steps
+ * marked waiting / working / done, over the moving background.
+ */
+class CaptionProgress(private val a: Activity, thumb: Bitmap?, private val steps: List<String>, onCancel: () -> Unit) {
+    private val layer = FrameLayout(a).apply { setBackgroundColor(Glass.alpha(Glass.BG, 0xf2)); isClickable = true; alpha = 0f }
+    private val backdrop = ExportProgress.Backdrop(a)
+    private val ring = ExportProgress.Ring(a)
+    private val percent = a.text("0%", 40f, Glass.TEXT, true).apply { gravity = Gravity.CENTER }
+    private val detail = a.text("", 13.5f, Glass.TEXT2).apply { gravity = Gravity.CENTER; maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END }
+    private val heard = a.text("", 13f, Glass.TEXT).apply { gravity = Gravity.CENTER; maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END; alpha = 0.85f }
+    private val marks = ArrayList<TextView>(); private val labels = ArrayList<TextView>()
+    /** Which background the step uses, like the export's: finding the speech is FLOW, reading it is AI, placing lines is SAVE. */
+    private val kinds = listOf(ExportProgress.Backdrop.EDIT, ExportProgress.Backdrop.FLOW, ExportProgress.Backdrop.AI, ExportProgress.Backdrop.AI, ExportProgress.Backdrop.SAVE)
+
+    init {
+        layer.addView(backdrop, -1, -1)
+        val col = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; setPadding(a.dp(28), 0, a.dp(28), 0) }
+        val frame = FrameLayout(a)
+        frame.addView(ImageView(a).apply { scaleType = ImageView.ScaleType.CENTER_CROP; setImageBitmap(thumb); setBackgroundColor(0x22ffffff); clipToOutline = true
+            outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: android.graphics.Outline) = o.setRoundRect(0, 0, v.width, v.height, a.dp(18).toFloat()) } },
+            FrameLayout.LayoutParams(a.dp(132), a.dp(176), Gravity.CENTER))
+        frame.addView(ring, FrameLayout.LayoutParams(a.dp(150), a.dp(194), Gravity.CENTER))
+        col.addView(frame, a.dp(160), a.dp(200))
+        col.addView(percent, LinearLayout.LayoutParams(-2, -2).apply { topMargin = a.dp(10) })
+        col.addView(detail, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(2) })
+        col.addView(heard, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(8) })
+        val list = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; background = a.glass(20, 0x14ffffff); setPadding(a.dp(16), a.dp(10), a.dp(16), a.dp(10)) }
+        steps.forEach { st ->
+            val r = LinearLayout(a).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, a.dp(6), 0, a.dp(6)) }
+            val m = a.text("○", 15f, Glass.TEXT3, true).apply { gravity = Gravity.CENTER }; marks += m
+            r.addView(m, a.dp(26), -2)
+            val l = a.text(st, 14f, Glass.TEXT3); labels += l
+            r.addView(l, LinearLayout.LayoutParams(0, -2, 1f))
+            list.addView(r, -1, -2)
+        }
+        col.addView(list, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(16) })
+        col.addView(EditorKit.chip(a, "ยกเลิก", Icons.CLOSE) { onCancel() }, LinearLayout.LayoutParams(-2, a.dp(44)).apply { topMargin = a.dp(18) })
+        layer.addView(col, FrameLayout.LayoutParams(-1, -2, Gravity.CENTER))
+        (a.window.decorView as FrameLayout).addView(layer, -1, -1)
+        layer.animate().alpha(1f).setDuration(220).start()
+    }
+
+    /** [stage] is the step now working (earlier ones show done); [fraction] is 0..1 of the whole job. */
+    var lastFraction = 0f; private set
+    var lastNote = ""; private set
+    fun render(stage: Int, fraction: Float, note: String, lastWords: String = "") {
+        if (lastWords.isEmpty()) { lastFraction = fraction; lastNote = note }
+        ring.progress = fraction.coerceIn(0f, 1f); percent.text = "${(fraction.coerceIn(0f, 1f) * 100).toInt()}%"
+        backdrop.mode = kinds.getOrElse(stage) { ExportProgress.Backdrop.SAVE }
+        detail.text = note
+        if (lastWords.isNotEmpty()) heard.text = "“$lastWords”"
+        marks.forEachIndexed { k, m ->
+            m.text = if (k < stage) "✓" else if (k == stage) "●" else "○"
+            m.setTextColor(if (k < stage) 0xff30d158.toInt() else if (k == stage) Glass.ACCENT else Glass.TEXT3)
+            labels[k].setTextColor(if (k <= stage) Color.WHITE else Glass.TEXT3)
+        }
+    }
+    fun remove() { layer.animate().alpha(0f).setDuration(200).withEndAction { (layer.parent as? FrameLayout)?.removeView(layer) }.start() }
 }

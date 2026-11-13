@@ -65,6 +65,9 @@ object StudioPcm {
     }
 }
 
+/** The spoken-language choice that means "find it for me". */
+const val CAPTION_AUTO = "auto"
+
 /** A stretch of sound to turn into one caption line: (file, from ms, to ms, where it starts in the finished video, speed). */
 class SpeechPiece(val uri: Uri, val from: Long, val to: Long, val outAt: Long, val speed: Float)
 
@@ -74,17 +77,27 @@ class SpeechPiece(val uri: Uri, val from: Long, val to: Long, val outAt: Long, v
  * [pieces] are (file, from ms, to ms, where the piece starts in the finished video, speed).
  */
 @RequiresApi(33)
-class StudioSpeech(private val a: Activity, private val language: String, private val pieces: List<SpeechPiece>,
+class StudioSpeech(private val a: Activity, languageArg: String, private val pieces: List<SpeechPiece>,
                    private val progress: (Int, Int) -> Unit, private val finished: (List<StudioMath.Cue>, String?) -> Unit) {
+    companion object { const val AUTO = CAPTION_AUTO }
+    /** The language in use. With [AUTO] it is chosen first (see [detect]) and then replaced by the language found. */
+    private var language = languageArg
+    /** Tells what the job is doing in words ("ตรวจภาษา…") and which language it settled on. */
+    var onStage: (String) -> Unit = {}
+    var onDetected: (String) -> Unit = {}
+    /** The last text recognised, for showing while the job runs. */
+    var onText: (String) -> Unit = {}
     private var recognizer: SpeechRecognizer? = null
     private val cues = ArrayList<StudioMath.Cue>()
     private var index = 0; private var failures = 0; private var stopped = false
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
-    private val timeout = Runnable { recognizer?.cancel(); next(null) }
+    private val timeout = Runnable { recognizer?.cancel(); deliver(null, 0f) }
     private var pfd: ParcelFileDescriptor? = null; private var file: File? = null
+    /** Waiting for the recognizer to answer: receives the text (or null) and how sure it was. */
+    private var pending: ((String?, Float) -> Unit)? = null
 
-    private fun intent(extra: Intent.() -> Unit = {}) = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM); putExtra(RecognizerIntent.EXTRA_LANGUAGE, language)
+    private fun intent(lang: String = language, extra: Intent.() -> Unit = {}) = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM); putExtra(RecognizerIntent.EXTRA_LANGUAGE, if (lang == AUTO) "th-TH" else lang)
         putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true); extra() }
 
     fun start() {
@@ -94,6 +107,7 @@ class StudioSpeech(private val a: Activity, private val language: String, privat
         // Ask first whether the language is ready on this phone; if it can be downloaded, start the download.
         r.checkRecognitionSupport(intent(), a.mainExecutor, object : RecognitionSupportCallback {
             override fun onSupportResult(s: RecognitionSupport) {
+                if (language == AUTO) { detect(s.installedOnDeviceLanguages); return }
                 val tag = language.lowercase(); fun has(list: List<String>) = list.any { it.lowercase() == tag || it.lowercase().substringBefore('-') == tag.substringBefore('-') }
                 when {
                     has(s.installedOnDeviceLanguages) -> run()
@@ -101,45 +115,79 @@ class StudioSpeech(private val a: Activity, private val language: String, privat
                     else -> { stop(); finished(emptyList(), "ระบบแปลงเสียงในเครื่องนี้ยังไม่รองรับภาษานี้") }
                 }
             }
-            override fun onError(error: Int) { run() }
+            override fun onError(error: Int) { if (language == AUTO) language = "th-TH"; run() }
         })
     }
-    fun stop() { stopped = true; handler.removeCallbacks(timeout); recognizer?.runCatching { cancel(); destroy() }; recognizer = null; closeFile() }
+    fun stop() { stopped = true; handler.removeCallbacks(timeout); pending = null; recognizer?.runCatching { cancel(); destroy() }; recognizer = null; closeFile() }
     private fun closeFile() { runCatching { pfd?.close() }; pfd = null; file?.delete(); file = null }
+
+    /**
+     * Picks the spoken language: the longest of the first few pieces is read once in every language installed on the phone
+     * (at most six), and the language whose reading is longest and surest wins. The recogniser only reads one language at a
+     * time, so this is a measured guess, not a certain answer.
+     */
+    private fun detect(installed: List<String>) {
+        val candidates = installed.distinct().take(6)
+        if (candidates.isEmpty()) { stop(); finished(emptyList(), "ยังไม่มีภาษาใดติดตั้งในระบบแปลงเสียง · เลือกภาษาที่พูดเองแล้วลองใหม่"); return }
+        if (candidates.size == 1) { language = candidates[0]; onDetected(language); run(); return }
+        val sample = pieces.take(5).maxByOrNull { it.to - it.from }
+        if (sample == null) { language = candidates[0]; run(); return }
+        var best = candidates[0]; var bestScore = -1f; var at = 0
+        fun step() {
+            if (stopped) return
+            if (at >= candidates.size) { language = best; onDetected(best); run(); return }
+            val lang = candidates[at++]; onStage("ตรวจภาษาที่พูด · ลอง $lang (${at}/${candidates.size})")
+            recognize(sample, 1000 + at, lang) { text, conf -> val score = (text?.trim()?.length ?: 0) * (if (conf > 0f) conf else 0.5f); if (score > bestScore) { bestScore = score; best = lang }; handler.post { step() } }
+        }
+        step()
+    }
 
     private fun run() {
         if (stopped) return
         if (index >= pieces.size) { stop(); finished(cues, if (cues.isEmpty()) (if (failures > 0) "แปลงเสียงไม่สำเร็จ" else "ไม่พบเสียงพูดที่แปลงได้") else null); return }
         progress(index, pieces.size)
-        val p = pieces[index]
+        recognize(pieces[index], index, language) { text, _ -> next(text) }
+    }
+    /** Reads the sound of one piece in [lang]; [done] runs once with what came out. */
+    private fun recognize(p: SpeechPiece, key: Int, lang: String, done: (String?, Float) -> Unit) {
         Thread {
             val pcm = runCatching { StudioPcm.extract(a, p.uri, p.from, p.to) }.getOrDefault(ShortArray(0))
-            val f = File(a.cacheDir, "speech_$index.pcm")
+            val f = File(a.cacheDir, "speech_$key.pcm")
             runCatching { f.outputStream().use { o -> val b = ByteBuffer.allocate(pcm.size * 2).order(ByteOrder.LITTLE_ENDIAN); pcm.forEach { b.putShort(it) }; o.write(b.array()) } }
             a.runOnUiThread {
                 if (stopped) { f.delete(); return@runOnUiThread }
-                if (pcm.size < StudioPcm.RATE / 4) { f.delete(); next(null); return@runOnUiThread }
+                if (pcm.size < StudioPcm.RATE / 4) { f.delete(); done(null, 0f); return@runOnUiThread }
                 file = f; pfd = ParcelFileDescriptor.open(f, ParcelFileDescriptor.MODE_READ_ONLY)
-                val i = intent { putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, pfd); putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_CHANNEL_COUNT, 1)
+                val i = intent(lang) { putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, pfd); putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_CHANNEL_COUNT, 1)
                     putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_ENCODING, AudioFormat.ENCODING_PCM_16BIT); putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_SAMPLING_RATE, StudioPcm.RATE) }
+                pending = done
                 handler.postDelayed(timeout, 25_000)
-                runCatching { recognizer?.startListening(i) }.onFailure { next(null) }
+                runCatching { recognizer?.startListening(i) }.onFailure { deliver(null, 0f) }
             }
         }.start()
     }
-    private fun next(text: String?) {
+    private fun deliver(text: String?, conf: Float) {
         handler.removeCallbacks(timeout); closeFile()
+        val cb = pending; pending = null; cb?.invoke(text, conf)
+    }
+    private fun next(text: String?) {
         val p = pieces.getOrNull(index)
-        if (p != null && !text.isNullOrBlank()) cues += StudioMath.Cue(p.outAt, p.outAt + ((p.to - p.from) / p.speed).toLong(), text.trim())
+        if (p != null && !text.isNullOrBlank()) { cues += StudioMath.Cue(p.outAt, p.outAt + ((p.to - p.from) / p.speed).toLong(), text.trim()); onText(text.trim()) }
         index++; handler.post { run() }
     }
     private val listener = object : RecognitionListener {
-        override fun onResults(b: Bundle?) { next(b?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()) }
+        override fun onResults(b: Bundle?) {
+            val text = b?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()
+            val conf = b?.getFloatArray(SpeechRecognizer.CONFIDENCE_SCORES)?.firstOrNull() ?: 0f
+            deliver(text, conf)
+        }
         override fun onError(error: Int) {
+            // While the language is still being guessed, a language the recogniser cannot read just counts as "nothing heard".
+            if (language == AUTO) { deliver(null, 0f); return }
             if (error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED || error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE) { stop(); finished(cues, "ระบบแปลงเสียงในเครื่องนี้ยังไม่รองรับภาษานี้"); return }
             if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) { stop(); finished(cues, "ต้องอนุญาตให้ใช้ไมโครโฟนก่อน"); return }
             if (error != SpeechRecognizer.ERROR_NO_MATCH && error != SpeechRecognizer.ERROR_SPEECH_TIMEOUT) failures++
-            next(null)
+            deliver(null, 0f)
         }
         override fun onReadyForSpeech(p: Bundle?) {}; override fun onBeginningOfSpeech() {}; override fun onRmsChanged(v: Float) {}
         override fun onBufferReceived(b: ByteArray?) {}; override fun onEndOfSpeech() {}; override fun onPartialResults(b: Bundle?) {}; override fun onEvent(t: Int, b: Bundle?) {}

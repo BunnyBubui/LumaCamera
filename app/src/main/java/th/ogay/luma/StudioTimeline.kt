@@ -279,3 +279,37 @@ class StudioTimeline(context: Context) : View(context) {
         clipPath.reset(); clipPath.moveTo(w / 2 - 5 * d, 0f); clipPath.lineTo(w / 2 + 5 * d, 0f); clipPath.lineTo(w / 2, 7 * d); clipPath.close(); c.drawPath(clipPath, paint)
     }
 }
+
+/**
+ * Window for a timeline that is taller than the space given to it (many lanes): the timeline sits inside and a vertical
+ * drag slides it up and down. Sideways drags and taps still go to the timeline itself.
+ */
+class LaneWindow(context: Context) : android.widget.FrameLayout(context) {
+    private val slop = android.view.ViewConfiguration.get(context).scaledTouchSlop
+    private var downX = 0f; private var downY = 0f; private var lastY = 0f; private var dragging = false
+    private val child get() = getChildAt(0)
+    private fun range() = ((child?.height ?: 0) - height).coerceAtLeast(0)
+    init { clipChildren = true }
+    override fun onInterceptTouchEvent(e: MotionEvent): Boolean {
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> { downX = e.x; downY = e.y; lastY = e.y; dragging = false }
+            MotionEvent.ACTION_MOVE -> if (!dragging && range() > 0 && e.pointerCount == 1) {
+                val dx = abs(e.x - downX); val dy = abs(e.y - downY)
+                if (dy > slop * 1.5f && dy > dx * 1.5f) { dragging = true; lastY = e.y; parent?.requestDisallowInterceptTouchEvent(true); return true }
+            }
+        }
+        return false
+    }
+    override fun onTouchEvent(e: MotionEvent): Boolean {
+        val c = child ?: return false
+        when (e.actionMasked) {
+            MotionEvent.ACTION_MOVE -> if (dragging) { c.translationY = (c.translationY + (e.y - lastY)).coerceIn(-range().toFloat(), 0f); lastY = e.y }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> dragging = false
+        }
+        return dragging
+    }
+    override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
+        super.onLayout(changed, l, t, r, b)
+        child?.let { it.translationY = it.translationY.coerceIn(-range().toFloat(), 0f) }
+    }
+}

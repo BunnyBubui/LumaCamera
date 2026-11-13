@@ -873,7 +873,7 @@ class CameraActivity : ComponentActivity() {
     }
 
     // ---------- Pro chips and dial ----------
-    private fun chipKeys(): List<String> = if (mode in QUICK_MODES) listOf("KIND") else if (mode != PhotoMode.PRO) emptyList() else buildList {
+    private fun chipKeys(): List<String> = if (mode in QUICK_MODES) QUICK_NAMES.indices.map { "Q$it" } else if (mode != PhotoMode.PRO) emptyList() else buildList {
         val m = manual; add("ALL"); if (m != null && m.canManual) { add("ISO"); add("S") }
         add("WB"); if (m != null && m.canKelvin) add("TINT"); if ((m?.minFocus ?: 0f) > 0f) add("AF"); add("EV")
         if (m != null) { if (m.contrastValues.isNotEmpty()) add("CON"); if (m.edgeValues.size > 1) add("SHP"); if (m.nrValues.size > 1) add("NR") }
@@ -883,6 +883,17 @@ class CameraActivity : ComponentActivity() {
         val keys = chipKeys(); chipTexts.clear(); valuesCache.clear()
         if (keys.isEmpty()) { chipFrame.visibility = View.GONE; closeDial(); return }
         chipFrame.visibility = View.VISIBLE
+        if (mode in QUICK_MODES) {
+            // The quick-shot kinds are a sliding strip like the manual values: swipe to the kind and the camera switches to it.
+            val quick = QUICK_NAMES.mapIndexed { i, n ->
+                val t = text("รูปแบบ", 10.5f, Glass.TEXT2).apply { gravity = Gravity.CENTER }; val v = text(n, 13f, Glass.TEXT, true).apply { gravity = Gravity.CENTER }
+                chipTexts += t to v
+                val wDp = (v.paint.measureText(n) / resources.displayMetrics.density + 32).roundToInt().coerceAtLeast(96)
+                CenterStrip.Item(keys[i], if (sideways) 52 else wDp, turnCell(LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; addView(t, -2, -2); addView(v, -2, -2) }, wDp, n))
+            }
+            chips.post { turnNow() }
+            chips.setItems(quick, QUICK_MODES.indexOf(mode).coerceAtLeast(0)); return
+        }
         val items = keys.map { k ->
             val t = text(chipTitle(k), 10.5f, Glass.TEXT2).apply { gravity = Gravity.CENTER }; val v = text(chipValue(k), 13f, Glass.TEXT, true).apply { gravity = Gravity.CENTER }
             chipTexts += t to v
@@ -894,6 +905,8 @@ class CameraActivity : ComponentActivity() {
         chips.setItems(items, keys.indexOf(openChip ?: prefs.getString("pro_chip", "ISO")).coerceAtLeast(0))
     }
     private fun styleChips(live: Int) {
+        if (mode in QUICK_MODES) { chipTexts.forEachIndexed { i, (t, v) -> val on = i == live; t.setTextColor(if (on) Color.WHITE else Glass.TEXT3); v.setTextColor(if (on) Glass.ACCENT else Glass.TEXT)
+            (v.parent as? View)?.animate()?.scaleX(if (on) 1f else 0.92f)?.scaleY(if (on) 1f else 0.92f)?.setDuration(300)?.start() }; return }
         val keys = chipKeys()
         chipTexts.forEachIndexed { i, (t, v) -> val on = i == live; t.setTextColor(if (on) Color.WHITE else Glass.TEXT3); v.text = chipValue(keys[i]); v.setTextColor(chipColor(keys[i])); (v.parent as? View)?.animate()?.scaleX(if (on) 1f else 0.92f)?.scaleY(if (on) 1f else 0.92f)?.setDuration(300)?.start() }
     }
@@ -961,6 +974,7 @@ class CameraActivity : ComponentActivity() {
     }
     private fun chipColor(k: String): Int { val i = chipIndex(k); if (i == chipAuto(k)) return Color.WHITE; val n = chipValues(k).size; val lo = if (chipSep(k)) 1 else 0; return Glass.mix(chipGrad(k), (i - lo).toFloat() / (n - 1 - lo).coerceAtLeast(1)) }
     private fun chipSelected(i: Int) {
+        if (mode in QUICK_MODES) { val pm = QUICK_MODES.getOrNull(i) ?: return; if (pm != mode && !busy) { prefs.edit().putString("quick_kind", pm.name).apply(); selectMode(pm) }; return }
         val k = chipKeys().getOrNull(i) ?: return; prefs.edit().putString("pro_chip", k).apply()
         if (openChip == k) closeDial() else openDial(k)
     }
@@ -1619,7 +1633,7 @@ class CameraActivity : ComponentActivity() {
         if (chipped && (chipFrame.visibility != View.VISIBLE || chipKeys().size != chipTexts.size)) rebuildChips()
         if (!chipped && chipFrame.visibility == View.VISIBLE) { chipFrame.visibility = View.GONE; closeDial() }
         if (chipFrame.visibility == View.VISIBLE) styleChips(chips.selected)
-        val dlp = dial.layoutParams as FrameLayout.LayoutParams; val want = if (chipFrame.visibility == View.VISIBLE) dp(78 + 56 * grow()) else dp(70)
+        val dlp = dial.layoutParams as FrameLayout.LayoutParams; val want = if (chipFrame.visibility == View.VISIBLE) dp(24 + 56 * grow()) else dp(70)
         if (dlp.bottomMargin != want) { dlp.bottomMargin = want; dial.layoutParams = dlp }
     }
     private var hintVersion=0

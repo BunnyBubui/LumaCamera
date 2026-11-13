@@ -425,7 +425,7 @@ class VideoActivity:ComponentActivity(){
         if(slow)stage.addView(text("Slow-motion · ไม่มีเสียง",12.5f,Glass.TEXT2,true).apply{gravity=Gravity.CENTER;maxLines=3;ellipsize=null;maxWidth=dp(170);minHeight=dp(48);background=glass(22);setPadding(dp(14),0,dp(14),0)},FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.START).apply{setMargins(dp(12),dp(6),0,0)})
         // The same small wide-view map as photo mode, shown past 10×.
         zoomMap=ZoomMap(this).also{m->m.busy={false};stage.addView(m,FrameLayout.LayoutParams(dp(98),dp(130),Gravity.TOP or Gravity.END).apply{setMargins(0,dp(64),dp(12),0)})}
-        wheel=ZoomWheel(this).apply{alpha=0f;visibility=android.view.View.VISIBLE};stage.addView(wheel,FrameLayout.LayoutParams(-1,dp(150),Gravity.BOTTOM).apply{bottomMargin=dp(4)})
+        wheel=ZoomWheel(this).apply{alpha=0f;visibility=android.view.View.VISIBLE;shiftDp=44f};stage.addView(wheel,FrameLayout.LayoutParams(-1,dp(150),Gravity.BOTTOM).apply{bottomMargin=dp(4)})
         zooms=ZoomCapsule(this).apply{background=glass(28);setPadding(dp(4),dp(4),dp(4),dp(4));contentDescription="ระยะเลนส์ ลากซ้ายขวาเพื่อซูมละเอียด"}
         stage.addView(zooms,FrameLayout.LayoutParams(-2,dp(56),Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply{bottomMargin=dp(8)});zooms.visibility=android.view.View.GONE
         installZoomDrag()

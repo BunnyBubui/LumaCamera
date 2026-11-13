@@ -342,9 +342,9 @@ class HomeActivity : ComponentActivity() {
                 background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Glass.alpha(hue, 46)); setStroke(dp(1), Glass.alpha(hue, 120)) }
                 addView(IconView(this@HomeActivity, icon, 2f).apply { tint = hue }, FrameLayout.LayoutParams(dp(44), dp(44), Gravity.CENTER)) }, dp(96), dp(96))
             addView(text(title, 22f, Glass.TEXT, true).apply { gravity = Gravity.CENTER; setPadding(0, dp(18), 0, dp(6)) })
-            addView(text(desc, 13f, Glass.TEXT2).apply { gravity = Gravity.CENTER })
-            steps.forEach { st -> addView(text(st, 12f, hue, true).apply { gravity = Gravity.CENTER; setPadding(dp(12), 0, dp(12), 0); background = GradientDrawable().apply { cornerRadius = dp(14).toFloat(); setColor(Glass.alpha(hue, 36)) } },
-                LinearLayout.LayoutParams(-2, dp(28)).apply { topMargin = dp(8) }) }
+            addView(text(desc, 13f, Glass.TEXT2).apply { gravity = Gravity.CENTER; maxLines = 4; ellipsize = null; setLineSpacing(0f, 1.15f) },
+                LinearLayout.LayoutParams(-1, -2).apply { leftMargin = dp(6); rightMargin = dp(6) })
+            addView(stepFlow(steps, hue), LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(22) })
             addView(View(this@HomeActivity), LinearLayout.LayoutParams(1, 0, 1.3f))
             setOnClickListener { Glass.tick(this); hideAiChooser(); go(video) }
         }
@@ -355,7 +355,11 @@ class HomeActivity : ComponentActivity() {
         root.addView(row, -1, -1)
         root.addView(text("แต่งชัดด้วย AI", 18f, Glass.TEXT, true).apply { gravity = Gravity.CENTER_VERTICAL }, FrameLayout.LayoutParams(-2, dp(48), Gravity.TOP or Gravity.START).apply { leftMargin = dp(20); topMargin = dp(10) })
         root.addView(roundButton(Icons.CLOSE, "ปิด") { hideAiChooser() }, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP or Gravity.END).apply { topMargin = dp(10); rightMargin = dp(12) })
-        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets -> val b = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars()); v.setPadding(b.left, b.top, b.right, b.bottom); insets }
+        // Keep clear of the status bar even before the first inset pass reaches this view.
+        val sbId = resources.getIdentifier("status_bar_height", "dimen", "android")
+        val sbH = if (sbId > 0) resources.getDimensionPixelSize(sbId) else dp(28)
+        root.setPadding(0, sbH, 0, 0)
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets -> val b = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars()); v.setPadding(b.left, maxOf(b.top, sbH), b.right, b.bottom); insets }
         host.addView(root, -1, -1); aiOverlay = root
         if (!Glass.reduced(this)) {
             root.alpha = 0f; root.animate().alpha(1f).setDuration(260).start()
@@ -365,6 +369,23 @@ class HomeActivity : ComponentActivity() {
             r.animate().translationX(0f).alpha(1f).setStartDelay(60).setDuration(520).setInterpolator(Glass.SPRING).start()
         }
     }
+    /** The three steps as a small vertical flow: numbered nodes joined by a line, each with its label. */
+    private fun stepFlow(steps: List<String>, hue: Int): View = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        steps.forEachIndexed { i, st ->
+            addView(LinearLayout(this@HomeActivity).apply {
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+                addView(text("${i + 1}", 12f, Color.BLACK, true).apply { gravity = Gravity.CENTER
+                    background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(hue) } }, LinearLayout.LayoutParams(dp(24), dp(24)))
+                addView(text(st, 13f, Glass.TEXT, true).apply { setPadding(dp(12), dp(6), dp(14), dp(6))
+                    background = GradientDrawable().apply { cornerRadius = dp(14).toFloat(); setColor(Glass.alpha(hue, 30)); setStroke(dp(1), Glass.alpha(hue, 70)) } },
+                    LinearLayout.LayoutParams(-2, -2).apply { leftMargin = dp(10) })
+            })
+            if (i < steps.size - 1) addView(View(this@HomeActivity).apply { setBackgroundColor(Glass.alpha(hue, 110)) },
+                LinearLayout.LayoutParams(dp(2), dp(16)).apply { leftMargin = dp(11) })
+        }
+    }
+
     private fun hideAiChooser() {
         val v = aiOverlay ?: return; aiOverlay = null
         if (Glass.reduced(this)) hostRef?.removeView(v) else v.animate().alpha(0f).setDuration(180).withEndAction { hostRef?.removeView(v) }.start()
