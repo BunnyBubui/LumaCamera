@@ -117,18 +117,19 @@ object EditorKit {
         orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; isClickable = true; isFocusable = true; contentDescription = label
         val disc = FrameLayout(c).apply { background = c.glass(24, if (on) Glass.ACCENT_SOFT else 0x26ffffff); addView(IconView(c, icon, 2f).apply { tint = if (on) Glass.ACCENT else Color.WHITE }, FrameLayout.LayoutParams(c.dp(21), c.dp(21), Gravity.CENTER)) }
         addView(disc, LinearLayout.LayoutParams(c.dp(48), c.dp(48)))
-        addView(c.text(label, 10.5f, if (on) Glass.ACCENT else Glass.TEXT2, true).apply { gravity = Gravity.CENTER; maxLines = 2; ellipsize = null; setPadding(0, c.dp(4), 0, 0) })
+        addView(c.text(label, 12f, if (on) Glass.ACCENT else Glass.TEXT2, true).apply { gravity = Gravity.CENTER; maxLines = 1; ellipsize = null; setPadding(c.dp(4), c.dp(4), c.dp(4), 0) })
+        minimumWidth = c.dp(72)
         isSelected = on; ViewCompat.setStateDescription(this, if (on) "เลือกอยู่" else null)
         glassTouch(); setOnClickListener { click() }
     }
     /** A centred row of [action] buttons. */
     fun actions(c: Context, items: List<View>): LinearLayout = LinearLayout(c).apply {
-        gravity = Gravity.CENTER; items.forEach { addView(it, LinearLayout.LayoutParams(c.dp(72), -2)) }
+        gravity = Gravity.CENTER; items.forEach { addView(it, LinearLayout.LayoutParams(-2, -2)) }
     }
     /** Like [actions] but in one row that scrolls sideways when the buttons do not fit the width. */
     fun actionRow(c: Context, items: List<View>): View = android.widget.HorizontalScrollView(c).apply {
         isHorizontalScrollBarEnabled = false; isFillViewport = true; clipToPadding = false; setPadding(c.dp(6), 0, c.dp(6), 0)
-        addView(LinearLayout(c).apply { gravity = Gravity.CENTER; items.forEach { addView(it, LinearLayout.LayoutParams(c.dp(64), -2)) } }, -1, -2)
+        addView(LinearLayout(c).apply { gravity = Gravity.CENTER; items.forEach { addView(it, LinearLayout.LayoutParams(-2, -2)) } }, -1, -2)
     }
     /** Accent round button with an icon (save, export). */
     fun roundAccent(c: Context, icon: String, desc: String, click: () -> Unit) = FrameLayout(c).apply {
@@ -241,13 +242,13 @@ object EditorKit {
         val tabs: List<LinearLayout> = list.mapIndexed { i, (icon, name) -> LinearLayout(c).apply {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; isClickable = true; isFocusable = true; contentDescription = name; minimumHeight = c.dp(60)
             addView(IconView(c, icon, 2f), LinearLayout.LayoutParams(c.dp(22), c.dp(22)))
-            addView(c.text(name, 10.5f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; maxLines = 2; ellipsize = null; setPadding(0, c.dp(5), 0, 0) })
+            addView(c.text(name, 11.5f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; maxLines = 1; ellipsize = null; setPadding(0, c.dp(5), 0, 0) })
             glassTouch(); setOnClickListener { if (i != selected) pick(i) }
         } }
         init {
             clipChildren = false
             inner.addView(pill, LayoutParams(c.dp(52), c.dp(32)))
-            tabs.forEach { row.addView(it, if (scrolls) LinearLayout.LayoutParams(c.dp(66), -2) else LinearLayout.LayoutParams(0, -2, 1f)) }
+            tabs.forEach { it.setPadding(c.dp(8), 0, c.dp(8), 0); it.minimumWidth = c.dp(66); row.addView(it, if (scrolls) LinearLayout.LayoutParams(-2, -2) else LinearLayout.LayoutParams(0, -2, 1f)) }
             inner.addView(row, LayoutParams(if (scrolls) -2 else -1, -2))
             if (scroller != null) { scroller.addView(inner, LayoutParams(-2, -2)); addView(scroller, LayoutParams(-1, -2)) } else addView(inner, LayoutParams(-1, -2))
         }
@@ -272,7 +273,7 @@ object EditorKit {
         override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) { super.onLayout(changed, l, t, r, b); if (changed) place(false) }
         /** A scrolling row shows six and a half tabs on any screen, so the half tab says there is more. */
         override fun onMeasure(widthSpec: Int, heightSpec: Int) {
-            if (scrolls) { val each = (MeasureSpec.getSize(widthSpec) / 6.5f).toInt().coerceAtLeast(context.dp(48)); tabs.forEach { it.layoutParams.width = each } }
+            if (scrolls) { val each = (MeasureSpec.getSize(widthSpec) / 6.5f).toInt().coerceAtLeast(context.dp(48)); tabs.forEach { it.minimumWidth = each } }
             super.onMeasure(widthSpec, heightSpec)
         }
     }

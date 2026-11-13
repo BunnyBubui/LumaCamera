@@ -80,7 +80,8 @@ class CameraActivity : ComponentActivity() {
             BarMode("PORTRAIT", "บุคคล", Icons.PORTRAIT), BarMode("PHOTO", "ภาพถ่าย", Icons.PHOTO),
             BarMode("VIDEO", "วิดีโอ", Icons.VIDEO), BarMode("PRO", "โปร", Icons.PRO),
             BarMode("HIRES", "ความละเอียดสูง", Icons.HIRES),
-            BarMode("QUICK", "ถ่ายเร็ว", Icons.FLASH), BarMode("FILM", "ฟิล์ม", Icons.FILM))
+            BarMode("QUICK", "ถ่ายเร็ว", Icons.FLASH), BarMode("FILM", "ฟิล์ม", Icons.FILM),
+            BarMode("NIGHT", "กลางคืน", Icons.NIGHT), BarMode("PANORAMA", "พาโนรามา", Icons.PANO), BarMode("DOCUMENT", "เอกสาร", Icons.DOC))
         /** Flash-fast, flash-quick and sport share one bar entry; a chip picks which. */
         /** Modes where the long-exposure button is offered (they share the multi-frame capture path). */
         // Long exposure merges frames, so it fits every mode that takes one still picture. Not offered where it would fight
@@ -91,7 +92,7 @@ class CameraActivity : ComponentActivity() {
         val QUICK_MODES = listOf(PhotoMode.FLASH_NIGHT, PhotoMode.FLASH_FAST, PhotoMode.SPORT)
         val QUICK_NAMES = listOf("แฟลชเร็ว", "แฟลชเร็วพิเศษ", "ถ่ายเร็ว")
         fun barKey(m: PhotoMode) = if (m in QUICK_MODES) "QUICK" else m.name
-        const val DEFAULT_BAR = "PORTRAIT,PHOTO,VIDEO,PRO"
+        const val DEFAULT_BAR = "PORTRAIT,PHOTO,VIDEO"
         val LOOKS = listOf("มาตรฐาน", "สดใส", "อบอุ่น", "เย็น", "ฟิล์ม", "ขาวดำ")
         val NIGHT_FRAMES = listOf(6, 9, 12)
     }
@@ -435,7 +436,7 @@ class CameraActivity : ComponentActivity() {
         lookButton = glassButton(IconView(this, Icons.FILM), 48, "ปรับแต่งภาพและฟิล์ม") { openLookSheet() }
         stage.addView(lookButton, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.BOTTOM or Gravity.END).apply { setMargins(0, 0, dp(14), dp(12)) })
 
-        chipFrame = FrameLayout(this).apply { background = glass(24); visibility = View.GONE }
+        chipFrame = FrameLayout(this).apply { visibility = View.GONE }
         chips = CenterStrip(this).apply { capsuleHeightDp = 44; onSelect = { i -> chipSelected(i) }; onLive = { i -> styleChips(i) } }
         chipFrame.addView(chips, FrameLayout.LayoutParams(-1, -1).apply { setMargins(dp(1), dp(1), dp(1), dp(1)) })
         stage.addView(chipFrame, FrameLayout.LayoutParams(-1, dp(56 * grow()), Gravity.BOTTOM).apply { setMargins(dp(16), 0, dp(16), dp(70)) })
@@ -500,7 +501,7 @@ class CameraActivity : ComponentActivity() {
         val lp = dock.layoutParams as LinearLayout.LayoutParams
         val want = if (tall) -dock.height else 0
         if (lp.topMargin != want) { lp.topMargin = want; dock.layoutParams = lp }
-        dock.setBackgroundColor(if (tall) Glass.alpha(BG, 0x66) else BG)
+        dock.setBackgroundColor(if (tall) 0 else BG)
         stage.clipToPadding = false
         val pad = if (tall) dock.height else 0
         if (stage.paddingBottom != pad) stage.setPadding(0, 0, 0, pad)

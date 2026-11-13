@@ -518,6 +518,57 @@ object GlassDialog {
                 LinearLayout.LayoutParams(0, a.dp(48), 1f).apply { if (i > 0) leftMargin = a.dp(8) })
         }
     }
+    /** A styled text/number field that sits well on the glass card. */
+    fun field(a: android.app.Activity, hint: String, initial: String = "", number: Boolean = false, lines: Int = 1): android.widget.EditText = android.widget.EditText(a).apply {
+        setText(initial); setSelection(initial.length); this.hint = hint; setHintTextColor(Glass.TEXT3); setTextColor(Glass.TEXT); textSize = 17f
+        background = a.glass(16, 0x1fffffff); setPadding(a.dp(14), a.dp(10), a.dp(14), a.dp(10))
+        if (number) { inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL; setSingleLine() } else if (lines > 1) { minLines = lines; maxLines = lines + 3; gravity = Gravity.TOP or Gravity.START } else setSingleLine()
+    }
+    /**
+     * One dialog for every question in the app: a round icon, a title, an optional line of explanation, any content
+     * (field, choices, colours) and two buttons. [onOk] returns false to keep the dialog open (e.g. an invalid number).
+     * [danger] paints the main button red for deletes. A null [ok] shows no buttons (used by pick-one lists).
+     */
+    fun ask(a: android.app.Activity, title: String, icon: String = Icons.INFO, message: String? = null, content: View? = null, ok: String? = "ตกลง", cancel: String? = "ยกเลิก",
+        danger: Boolean = false, focus: View? = null, onOk: () -> Boolean = { true }): android.app.Dialog {
+        val d = android.app.Dialog(a); d.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
+        val hue = if (danger) 0xffff6b5f.toInt() else Glass.ACCENT
+        val box = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; background = a.glass(28, Glass.FILL_STRONG); setPadding(a.dp(20), a.dp(20), a.dp(20), a.dp(16)) }
+        val head = LinearLayout(a).apply { gravity = Gravity.CENTER_VERTICAL }
+        head.addView(android.widget.FrameLayout(a).apply { background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = a.dp(14).toFloat(); setColor(Glass.alpha(hue, 40)) }
+            addView(IconView(a, icon, 2f).apply { tint = hue }, android.widget.FrameLayout.LayoutParams(a.dp(22), a.dp(22), Gravity.CENTER)) }, a.dp(44), a.dp(44))
+        head.addView(a.text(title, 18f, Glass.TEXT, true).apply { setPadding(a.dp(12), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
+        box.addView(head, -1, -2)
+        if (message != null) box.addView(a.text(message, 13.5f, Glass.TEXT2).apply { setLineSpacing(0f, 1.15f) }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(12) })
+        if (content != null) box.addView(android.widget.ScrollView(a).apply { isVerticalScrollBarEnabled = false; addView(content) }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(14) })
+        if (ok != null || cancel != null) {
+            val row = LinearLayout(a)
+            if (cancel != null) row.addView(a.text(cancel, 15f, Color.WHITE, true).apply { gravity = Gravity.CENTER; background = a.glass(24, 0x1affffff); isClickable = true; glassTouch(); contentDescription = cancel; setOnClickListener { d.dismiss() } }, LinearLayout.LayoutParams(0, a.dp(48), 1f))
+            if (ok != null) row.addView(a.text(ok, 15f, if (danger) Color.WHITE else Glass.ON_ACCENT, true).apply { gravity = Gravity.CENTER; background = a.glass(24, hue); isClickable = true; glassTouch(); contentDescription = ok
+                setOnClickListener { if (onOk()) d.dismiss() } }, LinearLayout.LayoutParams(0, a.dp(48), 1f).apply { if (cancel != null) leftMargin = a.dp(10) })
+            box.addView(row, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(18) })
+        }
+        d.setContentView(android.widget.FrameLayout(a).apply { setPadding(a.dp(12), a.dp(12), a.dp(12), a.dp(12)); addView(box, -1, -2) })
+        d.window?.apply { setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)); setLayout(minOf(a.resources.displayMetrics.widthPixels, (a.resources.displayMetrics.widthPixels * 0.92f).toInt()), android.view.WindowManager.LayoutParams.WRAP_CONTENT); setDimAmount(0.55f)
+            setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE or (if (focus != null) android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE else 0)) }
+        d.setOnShowListener { if (!Glass.reduced(a)) { box.alpha = 0f; box.scaleX = 0.94f; box.scaleY = 0.94f; box.translationY = a.dp(16).toFloat(); box.animate().alpha(1f).scaleX(1f).scaleY(1f).translationY(0f).setDuration(320).setInterpolator(Glass.SPRING).start() }; focus?.requestFocus() }
+        d.show(); return d
+    }
+    /** Yes/no question; [danger] for things that cannot be undone. */
+    fun confirm(a: android.app.Activity, title: String, message: String, ok: String, icon: String = Icons.INFO, danger: Boolean = false, onOk: () -> Unit) { ask(a, title, icon, message, null, ok, "ยกเลิก", danger) { onOk(); true } }
+    /** Pick one of several rows, each with its own icon; the chosen row closes the dialog. */
+    fun choose(a: android.app.Activity, title: String, icon: String, rows: List<Pair<String, String>>, selected: Int = -1, pick: (Int) -> Unit) {
+        lateinit var d: android.app.Dialog
+        val list = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
+        rows.forEachIndexed { i, (label, ic) -> val on = i == selected
+            list.addView(LinearLayout(a).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(a.dp(12), 0, a.dp(12), 0); isClickable = true; glassTouch(); contentDescription = label
+                background = a.glass(16, if (on) Glass.ACCENT_SOFT else 0x14ffffff)
+                addView(IconView(a, ic, 2f).apply { tint = if (on) Glass.ACCENT else Color.WHITE }, a.dp(22), a.dp(22))
+                addView(a.text(label, 15f, if (on) Glass.ACCENT else Glass.TEXT, on).apply { setPadding(a.dp(12), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
+                if (on) addView(IconView(a, Icons.CHECK, 2.4f).apply { tint = Glass.ACCENT }, a.dp(18), a.dp(18))
+                setOnClickListener { d.dismiss(); pick(i) } }, LinearLayout.LayoutParams(-1, a.dp(50)).apply { topMargin = if (i == 0) 0 else a.dp(6) }) }
+        d = ask(a, title, icon, null, list, null, "ปิด")
+    }
     fun show(a: android.app.Activity, title: String, message: String, button: String = "ปิด") {
         val d = android.app.Dialog(a)
         d.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)

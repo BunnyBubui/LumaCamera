@@ -59,14 +59,17 @@ class HomeActivity : ComponentActivity() {
         }
     }
 
+    private var hostRef: FrameLayout? = null
+    private var aiOverlay: View? = null
     private val cards = ArrayList<View>()
     private val loader = Executors.newSingleThreadExecutor()
     private val prefs by lazy { getSharedPreferences("camera", MODE_PRIVATE) }
 
+    @android.annotation.SuppressLint("NewApi")
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
         requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-        val host = FrameLayout(this)
+        val host = FrameLayout(this); hostRef = host
         installRoot(host)
         host.setBackgroundColor(Glass.BG)
         // One still, faint light in the theme colour at the top right (the old moving blue/purple lights are gone).
@@ -114,30 +117,33 @@ class HomeActivity : ComponentActivity() {
 
         // Row 2: the video editor across the full width, with the saved projects as a chip.
         gap(10)
-        col.addView(videoBlock { pickFor("video", "video") }, LinearLayout.LayoutParams(-1, dp(104)))
+        col.addView(videoBlock { startActivity(Intent(this, StudioProjectsActivity::class.java)) }, LinearLayout.LayoutParams(-1, dp(104)))
 
         // Row 3: photo editor and AI (photo or video picked by the small switch).
         gap(10)
         val third = LinearLayout(this)
         third.addView(photoBlock { pickFor("image", "image") }, LinearLayout.LayoutParams(0, dp(100), 1f))
         third.addView(View(this), dp(10), 1)
-        third.addView(aiBlock { video -> if (video) pickFor("video", "ai_video") else pickFor("image", "ai_image") }, LinearLayout.LayoutParams(0, dp(100), 1f))
+        third.addView(aiBlock { showAiChooser { video -> if (video) pickFor("video", "ai_video") else pickFor("image", "ai_image") } }, LinearLayout.LayoutParams(0, dp(100), 1f))
         col.addView(third, -1, -2)
 
         // Photo modes as short chips, two per row.
         col.addView(text("โหมดถ่าย", 15f, Glass.TEXT2, true).apply { setPadding(dp(4), dp(24), 0, dp(10)) }, -1, -2)
-        listOf(
-            listOf(modeCard("PORTRAIT", Icons.PORTRAIT, "บุคคล", 0xffff9a7a, Motif.HALO) { returnMode(PhotoMode.PORTRAIT) },
-                modeCard("PRO", Icons.PRO, "โปร", 0xff5fd3c6, Motif.GRID) { returnMode(PhotoMode.PRO) }),
-            listOf(modeCard("HIRES", Icons.HIRES, "ความละเอียดสูง", 0xffc9d2e0, Motif.GRID) { returnMode(PhotoMode.HIRES) },
-                modeCard("VIDEO", Icons.VIDEO, "วิดีโอ", 0xffff5b50, Motif.NONE) { startActivity(Intent(this, VideoActivity::class.java).putExtra("mode", "VIDEO")) }),
-            listOf(modeCard("SLOW", Icons.SLOWMO, "สโลว์โมชัน", 0xff6cc8e8, Motif.STREAK) { startActivity(Intent(this, VideoActivity::class.java).putExtra("mode", "SLOW")) },
-                modeCard("NIGHT", Icons.NIGHT, "กลางคืน", 0xffb9a6ff, Motif.DOTS) { returnMode(PhotoMode.NIGHT) }),
-        ).forEach { pair ->
+        val cardsList = listOf(
+            modeCard("PORTRAIT", Icons.PORTRAIT, "บุคคล", 0xffff9a7a, Motif.HALO) { returnMode(PhotoMode.PORTRAIT) },
+            modeCard("PRO", Icons.PRO, "โปร", 0xff5fd3c6, Motif.GRID) { returnMode(PhotoMode.PRO) },
+            modeCard("HIRES", Icons.HIRES, "ความละเอียดสูง", 0xffc9d2e0, Motif.GRID) { returnMode(PhotoMode.HIRES) },
+            modeCard("VIDEO", Icons.VIDEO, "วิดีโอ", 0xffff5b50, Motif.STREAK) { startActivity(Intent(this, VideoActivity::class.java).putExtra("mode", "VIDEO")) },
+            modeCard("SLOW", Icons.SLOWMO, "สโลว์โมชัน", 0xff6cc8e8, Motif.STREAK) { startActivity(Intent(this, VideoActivity::class.java).putExtra("mode", "SLOW")) },
+            modeCard("NIGHT", Icons.NIGHT, "กลางคืน", 0xffb9a6ff, Motif.DOTS) { returnMode(PhotoMode.NIGHT) },
+            modeCard("PANORAMA", Icons.PANO, "พาโนรามา", 0xff7fd18b, Motif.STREAK) { returnMode(PhotoMode.PANORAMA) },
+            modeCard("DOCUMENT", Icons.DOC, "เอกสาร", 0xffe8d27a, Motif.GRID) { returnMode(PhotoMode.DOCUMENT) },
+            modeCard("QUICK", Icons.FLASH, "ถ่ายเร็ว", 0xffffb347, Motif.HALO) { returnMode(PhotoMode.SPORT) })
+        cardsList.chunked(2).forEach { pair ->
             val row = LinearLayout(this)
             row.addView(pair[0], LinearLayout.LayoutParams(0, dp(96), 1f))
             row.addView(View(this), dp(10), 1)
-            row.addView(pair[1], LinearLayout.LayoutParams(0, dp(96), 1f))
+            if (pair.size > 1) row.addView(pair[1], LinearLayout.LayoutParams(0, dp(96), 1f)) else row.addView(View(this), LinearLayout.LayoutParams(0, dp(96), 1f))
             col.addView(row, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
         }
 
@@ -145,10 +151,15 @@ class HomeActivity : ComponentActivity() {
         if (!Glass.reduced(this)) {
             ValueAnimator.ofFloat(0f, 1f).apply { duration = 1100; startDelay = 100; addUpdateListener { logo.progress = it.animatedValue as Float } }.start()
             title.alpha = 0f; title.translationX = -dp(12).toFloat(); title.animate().alpha(1f).translationX(0f).setStartDelay(500).setDuration(500).setInterpolator(Glass.EASE).start()
-            cards.forEachIndexed { i, v -> v.alpha = 0f; v.translationY = dp(26).toFloat(); v.scaleX = 0.96f; v.scaleY = 0.96f
-                v.animate().alpha(1f).translationY(0f).scaleX(1f).scaleY(1f).setStartDelay(180L + i * 45L).setDuration(460).setInterpolator(Glass.SPRING).start() }
+            // Cards grow from 0.9 and settle without ever leaving the screen; on Android 12+ they also lose a soft blur as they land.
+            cards.forEachIndexed { i, v -> v.alpha = 0f; v.scaleX = 0.9f; v.scaleY = 0.9f
+                val blur = Build.VERSION.SDK_INT >= 31
+                if (blur) v.setRenderEffect(android.graphics.RenderEffect.createBlurEffect(18f, 18f, Shader.TileMode.CLAMP))
+                ValueAnimator.ofFloat(0f, 1f).apply { startDelay = 120L + i * 40L; duration = 620; interpolator = Glass.EASE
+                    addUpdateListener { a -> val f = a.animatedValue as Float; v.alpha = f; val sc = 0.9f + 0.1f * f; v.scaleX = sc; v.scaleY = sc
+                        if (blur) { val b = 18f * (1f - f); v.setRenderEffect(if (b < 0.5f) null else android.graphics.RenderEffect.createBlurEffect(b, b, Shader.TileMode.CLAMP)) } } }.start() }
         }
-        onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) { override fun handleOnBackPressed() = close() })
+        onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) { override fun handleOnBackPressed() { if (aiOverlay != null) hideAiChooser() else close() } })
     }
 
     override fun onDestroy() { loader.shutdownNow(); super.onDestroy() }
@@ -186,21 +197,22 @@ class HomeActivity : ComponentActivity() {
         glassTouch(); setOnClickListener { Glass.tick(this); click() }
     }
 
-    /** The camera block: tall, in the theme colour, with dark text on it. */
+    /** The camera block: same dark card as the others, a little stronger: bigger glow, larger icon, thin outline in the theme colour. */
     private fun hero(): View = FrameLayout(this).apply {
-        val hsv = FloatArray(3); Color.colorToHSV(Glass.ACCENT, hsv)
-        val light = Theme.mix(Glass.ACCENT, 0xffffffff.toInt(), 0.22f)
-        val deep = Color.HSVToColor(floatArrayOf((hsv[0] - 10f + 360f) % 360f, (hsv[1] + 0.12f).coerceAtMost(1f), hsv[2]))
-        background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(light, deep)).apply { cornerRadius = dp(24).toFloat() }
+        val acc = Glass.ACCENT
+        background = android.graphics.drawable.LayerDrawable(arrayOf(ModeBackdrop(this@HomeActivity, acc, Motif.HALO, 24),
+            GradientDrawable().apply { cornerRadius = dp(24).toFloat(); setColor(0); setStroke(dp(1), Glass.alpha(acc, 110)) }))
+        clipToOutline = true
+        outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: android.graphics.Outline) = o.setRoundRect(0, 0, v.width, v.height, dp(24).toFloat()) }
         isClickable = true; contentDescription = "ถ่ายภาพ กลับไปที่กล้อง"; glassTouch()
-        val on = Glass.ON_ACCENT
-        val c = LinearLayout(this@HomeActivity).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(16), dp(16), dp(16)) }
-        c.addView(FrameLayout(this@HomeActivity).apply { background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0x52ffffff) }
-            addView(IconView(this@HomeActivity, Icons.PHOTO, 2f).apply { tint = on }, FrameLayout.LayoutParams(dp(28), dp(28), Gravity.CENTER)) }, dp(56), dp(56))
-        c.addView(View(this@HomeActivity), LinearLayout.LayoutParams(1, 0, 1f))
-        c.addView(text("ถ่ายภาพ", 24f, on, true))
-        c.addView(text("กลับไปที่กล้อง · ${CameraActivity.ALL.size} โหมด", 12.5f, Glass.alpha(on, 0xcc)).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END })
-        addView(c, -1, -1)
+        addView(IconView(this@HomeActivity, Icons.PHOTO, 1.2f).apply { tint = Glass.alpha(acc, 0x30) }, FrameLayout.LayoutParams(dp(120), dp(120), Gravity.TOP or Gravity.END).apply { topMargin = dp(18); rightMargin = dp(-14) })
+        addView(FrameLayout(this@HomeActivity).apply {
+            background = GradientDrawable().apply { cornerRadius = dp(18).toFloat(); setColor(Glass.alpha(acc, 60)); setStroke(dp(1), Glass.alpha(acc, 140)) }
+            addView(IconView(this@HomeActivity, Icons.PHOTO, 2f).apply { tint = acc }, FrameLayout.LayoutParams(dp(28), dp(28), Gravity.CENTER)) }, FrameLayout.LayoutParams(dp(52), dp(52), Gravity.TOP or Gravity.START).apply { topMargin = dp(16); leftMargin = dp(16) })
+        val words = LinearLayout(this@HomeActivity).apply { orientation = LinearLayout.VERTICAL }
+        words.addView(text("ถ่ายภาพ", 22f, Glass.TEXT, true))
+        words.addView(text("กลับไปที่กล้อง", 12.5f, Glass.TEXT2).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END })
+        addView(words, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM or Gravity.START).apply { leftMargin = dp(16); rightMargin = dp(12); bottomMargin = dp(16) })
         setOnClickListener { Glass.tick(this); returnMode(PhotoMode.PHOTO) }
         cards += this
     }
@@ -306,34 +318,70 @@ class HomeActivity : ComponentActivity() {
     }
 
     /** AI sharpening: magenta light with faint sparkles and a small photo / video switch that decides what the gallery shows. */
-    private fun aiBlock(open: (video: Boolean) -> Unit): View {
+    private fun aiBlock(open: () -> Unit): View {
         val mg = 0xffe58ae0.toInt()
-        var video = prefs.getBoolean("home_ai_video", false)
-        lateinit var self: FrameLayout
-        lateinit var refresh: () -> Unit
-        val seg = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(2), dp(2), dp(2), dp(2))
-            background = GradientDrawable().apply { cornerRadius = dp(13).toFloat(); setColor(0x14ffffff) } }
-        val parts = listOf("ภาพ" to false, "วิดีโอ" to true).map { (label, v) ->
-            text(label, 11f, Glass.TEXT2).apply { gravity = Gravity.CENTER; setPadding(dp(8), 0, dp(8), 0); isClickable = true
-                contentDescription = "แต่งชัด AI แบบ$label"
-                setOnClickListener { Glass.tick(this); video = v; prefs.edit().putBoolean("home_ai_video", v).apply(); refresh() } } to v
-        }
-        parts.forEach { (t, _) -> seg.addView(t, LinearLayout.LayoutParams(-2, dp(22))) }
-        refresh = {
-            parts.forEach { (t: TextView, v) -> val on = v == video
-                t.setTextColor(if (on) mg else Glass.TEXT2)
-                t.background = if (on) GradientDrawable().apply { cornerRadius = dp(11).toFloat(); setColor(Glass.alpha(mg, 46)) } else null }
-            self.contentDescription = "แต่งชัดด้วย AI ${if (video) "วิดีโอ" else "ภาพ"}"
-        }
-        self = toolCard(mg, "แต่งชัดด้วย AI", "แต่งชัดด้วย AI", { open(video) }) {
+        return toolCard(mg, "แต่งชัดด้วย AI", "แต่งชัดด้วย AI เลือกภาพหรือวิดีโอ", open) {
             for ((x, y, sz, a) in listOf(listOf(100, 36, 30, 0x2e), listOf(140, 62, 16, 0x38), listOf(84, 66, 12, 0x2e)))
                 addView(IconView(this@HomeActivity, Icons.AI, 1.6f).apply { tint = Glass.alpha(mg, a) }, FrameLayout.LayoutParams(dp(sz), dp(sz), Gravity.TOP or Gravity.START).apply { leftMargin = dp(x); topMargin = dp(y) })
             putChip(Icons.AI, mg, Gravity.TOP or Gravity.START)
-            addView(FrameLayout(this@HomeActivity).apply { addView(seg, FrameLayout.LayoutParams(-2, dp(26), Gravity.CENTER)) },
-                FrameLayout.LayoutParams(-2, dp(40), Gravity.TOP or Gravity.END).apply { topMargin = dp(8); rightMargin = dp(10) })
         }
-        refresh()
-        return self
+    }
+
+    /** Full-screen chooser for AI enhance: photo on the left, video on the right, over a slowly drifting aurora. */
+    private fun showAiChooser(go: (Boolean) -> Unit) {
+        val host = hostRef ?: return
+        if (aiOverlay != null) return
+        val photoHue = 0xffe58ae0.toInt(); val videoHue = 0xffff6f91.toInt()
+        val root = FrameLayout(this).apply { setBackgroundColor(Glass.BG); isClickable = true }
+        root.addView(Aurora(this, photoHue, videoHue), -1, -1)
+        fun half(icon: String, hue: Int, title: String, desc: String, steps: List<String>, video: Boolean) = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; setPadding(dp(14), dp(24), dp(14), dp(24)); isClickable = true; glassTouch()
+            contentDescription = "$title $desc"
+            addView(View(this@HomeActivity), LinearLayout.LayoutParams(1, 0, 1f))
+            addView(FrameLayout(this@HomeActivity).apply {
+                background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Glass.alpha(hue, 46)); setStroke(dp(1), Glass.alpha(hue, 120)) }
+                addView(IconView(this@HomeActivity, icon, 2f).apply { tint = hue }, FrameLayout.LayoutParams(dp(44), dp(44), Gravity.CENTER)) }, dp(96), dp(96))
+            addView(text(title, 22f, Glass.TEXT, true).apply { gravity = Gravity.CENTER; setPadding(0, dp(18), 0, dp(6)) })
+            addView(text(desc, 13f, Glass.TEXT2).apply { gravity = Gravity.CENTER })
+            steps.forEach { st -> addView(text(st, 12f, hue, true).apply { gravity = Gravity.CENTER; setPadding(dp(12), 0, dp(12), 0); background = GradientDrawable().apply { cornerRadius = dp(14).toFloat(); setColor(Glass.alpha(hue, 36)) } },
+                LinearLayout.LayoutParams(-2, dp(28)).apply { topMargin = dp(8) }) }
+            addView(View(this@HomeActivity), LinearLayout.LayoutParams(1, 0, 1.3f))
+            setOnClickListener { Glass.tick(this); hideAiChooser(); go(video) }
+        }
+        val row = LinearLayout(this)
+        row.addView(half(Icons.PHOTO, photoHue, "ภาพ", "เพิ่มรายละเอียดและความคมชัดให้ภาพนิ่ง", listOf("เลือกภาพ", "เลือกโมเดล", "ดูตัวอย่าง"), false), LinearLayout.LayoutParams(0, -1, 1f))
+        row.addView(View(this).apply { setBackgroundColor(0x1fffffff) }, LinearLayout.LayoutParams(dp(1), -1).apply { topMargin = dp(120); bottomMargin = dp(60) })
+        row.addView(half(Icons.VIDEO, videoHue, "วิดีโอ", "เพิ่มความคมชัดให้คลิป แล้วส่งออกเป็นไฟล์ใหม่", listOf("เลือกคลิป", "ปรับแต่ง", "ส่งออก"), true), LinearLayout.LayoutParams(0, -1, 1f))
+        root.addView(row, -1, -1)
+        root.addView(text("แต่งชัดด้วย AI", 18f, Glass.TEXT, true).apply { gravity = Gravity.CENTER_VERTICAL }, FrameLayout.LayoutParams(-2, dp(48), Gravity.TOP or Gravity.START).apply { leftMargin = dp(20); topMargin = dp(10) })
+        root.addView(roundButton(Icons.CLOSE, "ปิด") { hideAiChooser() }, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP or Gravity.END).apply { topMargin = dp(10); rightMargin = dp(12) })
+        androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets -> val b = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars()); v.setPadding(b.left, b.top, b.right, b.bottom); insets }
+        host.addView(root, -1, -1); aiOverlay = root
+        if (!Glass.reduced(this)) {
+            root.alpha = 0f; root.animate().alpha(1f).setDuration(260).start()
+            val l = row.getChildAt(0); val r = row.getChildAt(2)
+            l.translationX = -dp(40).toFloat(); r.translationX = dp(40).toFloat(); l.alpha = 0f; r.alpha = 0f
+            l.animate().translationX(0f).alpha(1f).setDuration(520).setInterpolator(Glass.SPRING).start()
+            r.animate().translationX(0f).alpha(1f).setStartDelay(60).setDuration(520).setInterpolator(Glass.SPRING).start()
+        }
+    }
+    private fun hideAiChooser() {
+        val v = aiOverlay ?: return; aiOverlay = null
+        if (Glass.reduced(this)) hostRef?.removeView(v) else v.animate().alpha(0f).setDuration(180).withEndAction { hostRef?.removeView(v) }.start()
+    }
+
+    /** Two soft coloured lights that drift slowly across a dark page (one per side of the AI chooser). */
+    private class Aurora(c: Context, private val left: Int, private val right: Int) : View(c) {
+        private val p = Paint(Paint.ANTI_ALIAS_FLAG); private var t = 0f
+        private val anim = ValueAnimator.ofFloat(0f, 1f).apply { duration = 9000; repeatCount = ValueAnimator.INFINITE; addUpdateListener { t = it.animatedValue as Float; invalidate() } }
+        override fun onAttachedToWindow() { super.onAttachedToWindow(); if (!Glass.reduced(context)) anim.start() }
+        override fun onDetachedFromWindow() { anim.cancel(); super.onDetachedFromWindow() }
+        override fun onDraw(cv: Canvas) {
+            val w = width.toFloat(); val h = height.toFloat(); val a = (t * 2 * Math.PI).toFloat()
+            fun light(cx: Float, cy: Float, rad: Float, col: Int) { p.shader = RadialGradient(cx, cy, rad, Glass.alpha(col, 90), Glass.alpha(col, 0), Shader.TileMode.CLAMP); cv.drawCircle(cx, cy, rad, p) }
+            light(w * 0.25f + kotlin.math.sin(a) * w * 0.08f, h * 0.35f + kotlin.math.cos(a) * h * 0.05f, w * 0.7f, left)
+            light(w * 0.75f + kotlin.math.cos(a) * w * 0.08f, h * 0.6f + kotlin.math.sin(a) * h * 0.05f, w * 0.7f, right)
+        }
     }
 
     /** Light patterns drawn over a mode card's glow. */

@@ -1,6 +1,5 @@
 package th.ogay.luma
 
-import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.BitmapFactory
 import android.graphics.Canvas
@@ -13,7 +12,6 @@ import android.net.Uri
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
-import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -47,9 +45,17 @@ class StudioProjectsActivity : ComponentActivity() {
     /** New project: choose a video in Lumora's gallery, then the editor opens on it (the project file appears with the first edit). */
     private val pickNew = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
         @Suppress("DEPRECATION") val uri = r.data?.getParcelableArrayListExtra<Uri>(GalleryActivity.RESULT_URIS)?.firstOrNull() ?: return@registerForActivityResult
-        startActivity(VideoEditorActivity.intent(this, uri))
+        startActivity(VideoEditorActivity.intent(this, uri).putExtra("name", newName))
     }
-    private fun create() = pickNew.launch(Intent(this, GalleryActivity::class.java).putExtra(GalleryActivity.EXTRA_PICK, "video"))
+    private var newName = ""
+    /** Step 1 names the project, step 2 picks its video, then the editor opens already carrying that name. */
+    private fun create() {
+        val field = GlassDialog.field(this, "ชื่อโปรเจกต์", "โปรเจกต์ ${StudioProjects.list(this).size + 1}"); field.selectAll()
+        GlassDialog.ask(this, "โปรเจกต์ใหม่", Icons.PLUS, "ตั้งชื่อก่อน แล้วเลือกวิดีโอที่จะตัดต่อ", field, "เลือกวิดีโอ", focus = field) {
+            newName = field.text.toString().trim().ifEmpty { "โปรเจกต์ใหม่" }; pick()
+            true }
+    }
+    private fun pick() = pickNew.launch(Intent(this, GalleryActivity::class.java).putExtra(GalleryActivity.EXTRA_PICK, "video"))
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
@@ -198,13 +204,11 @@ class StudioProjectsActivity : ComponentActivity() {
         }.show()
     }
     private fun rename(p: StudioProjects.Info) {
-        val field = EditText(this).apply { setText(p.name); setSingleLine(); setSelection(p.name.length) }
-        AlertDialog.Builder(this).setTitle("ชื่อโปรเจกต์").setView(field)
-            .setPositiveButton("บันทึก") { _, _ -> val n = field.text.toString().trim(); if (n.isNotEmpty()) { StudioProjects.rename(this, p.id, n); fill() } }.setNegativeButton("ยกเลิก", null).show()
+        val field = GlassDialog.field(this, "ชื่อโปรเจกต์", p.name)
+        GlassDialog.ask(this, "ชื่อโปรเจกต์", Icons.FILE, null, field, "บันทึก", focus = field) { val n = field.text.toString().trim(); if (n.isEmpty()) false else { StudioProjects.rename(this, p.id, n); fill(); true } }
     }
     private fun confirmDelete(p: StudioProjects.Info) {
-        AlertDialog.Builder(this).setTitle("ลบโปรเจกต์นี้?").setMessage("ลบเฉพาะการตัดต่อที่บันทึกไว้ วิดีโอต้นฉบับยังอยู่ครบ")
-            .setPositiveButton("ลบ") { _, _ -> StudioProjects.delete(this, p.id); fill() }.setNegativeButton("ยกเลิก", null).show()
+        GlassDialog.confirm(this, "ลบโปรเจกต์นี้?", "ลบเฉพาะการตัดต่อที่บันทึกไว้ วิดีโอต้นฉบับยังอยู่ครบ", "ลบ", Icons.CLOSE, true) { StudioProjects.delete(this, p.id); fill() }
     }
 
     // ---------- Drawn pieces ----------

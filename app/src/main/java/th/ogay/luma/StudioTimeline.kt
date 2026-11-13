@@ -63,7 +63,7 @@ class StudioTimeline(context: Context) : View(context) {
 
     private val d = resources.displayMetrics.density
     private var pxPerMs = 64f * d / 1000f
-    private val rulerH = 16f * d; private val clipH = 46f * d; private val laneH = 22f * d
+    private val rulerH = 16f * d; private val clipH = 46f * d; private val laneH = 30f * d
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x99ffffff.toInt(); textSize = 9.5f * d }
     private val accent = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Glass.ACCENT }
@@ -133,7 +133,8 @@ class StudioTimeline(context: Context) : View(context) {
         if (mode != ZOOM) gestures.onTouchEvent(e)
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                parent?.requestDisallowInterceptTouchEvent(true)
+                // On the lane rows a vertical drag scrolls the lanes (the parent scroller); everything else keeps the touch.
+                parent?.requestDisallowInterceptTouchEvent(e.y < lanesTop())
                 downX = e.x; lastX = e.x; moved = false; mode = SCRUB; lastSnap = -1
                 scroller.forceFinished(true); flinging = false
                 velocity?.recycle(); velocity = android.view.VelocityTracker.obtain()
@@ -141,7 +142,7 @@ class StudioTimeline(context: Context) : View(context) {
                 barAt(e.x, e.y)?.takeIf { it.id == selectedBar && it.movable }?.let { b ->
                     val x0 = x(b.at); val x1 = x(b.at + b.len); val edge = 16 * d; val wide = x1 - x0 > 44 * d
                     mode = if (wide && e.x < x0 + edge) BAR_L else if (wide && e.x > x1 - edge) BAR_R else BAR
-                    barAt = b.at; barLen = b.len
+                    barAt = b.at; barLen = b.len; parent?.requestDisallowInterceptTouchEvent(true)
                 }
                 val c = clips.getOrNull(selected)
                 if (c != null && inClipRow(e.y)) {
@@ -151,7 +152,7 @@ class StudioTimeline(context: Context) : View(context) {
                 }
             }
             MotionEvent.ACTION_MOVE -> {
-                if (abs(e.x - downX) > 6 * d) moved = true
+                if (abs(e.x - downX) > 6 * d) { moved = true; parent?.requestDisallowInterceptTouchEvent(true) }
                 velocity?.addMovement(e)
                 val drag = ((e.x - downX) / pxPerMs).toLong()
                 when (mode) {
