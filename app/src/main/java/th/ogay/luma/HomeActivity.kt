@@ -6,6 +6,7 @@ import android.content.Intent
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Bitmap
+import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.RadialGradient
 import android.graphics.RectF
@@ -127,15 +128,17 @@ class HomeActivity : ComponentActivity() {
         // Photo modes as short chips, two per row.
         col.addView(text("โหมดถ่าย", 15f, Glass.TEXT2, true).apply { setPadding(dp(4), dp(24), 0, dp(10)) }, -1, -2)
         listOf(
-            listOf(modeChip(Icons.PORTRAIT, "บุคคล", "หน้าชัด หลังเบลอ") { returnMode(PhotoMode.PORTRAIT) }, modeChip(Icons.PRO, "โปร", "ปรับ ISO ชัตเตอร์ โฟกัส") { returnMode(PhotoMode.PRO) }),
-            listOf(modeChip(Icons.HIRES, "ความละเอียดสูง", "ใช้เซนเซอร์เต็มที่") { returnMode(PhotoMode.HIRES) },
-                modeChip(Icons.VIDEO, "วิดีโอ", "ถ่ายวิดีโอ") { startActivity(Intent(this, VideoActivity::class.java).putExtra("mode", "VIDEO")) }),
-            listOf(modeChip(Icons.FLASH, "ถ่ายเร็ว", "จับจังหวะที่ขยับเร็ว") { returnMode(PhotoMode.SPORT) }, modeChip(Icons.PHOTO, "ภาพถ่าย", "ถ่ายยาวหลายวินาทีได้") { returnMode(PhotoMode.PHOTO) }),
+            listOf(modeCard("PORTRAIT", Icons.PORTRAIT, "บุคคล", 0xffff9a7a, Motif.HALO) { returnMode(PhotoMode.PORTRAIT) },
+                modeCard("PRO", Icons.PRO, "โปร", 0xff5fd3c6, Motif.GRID) { returnMode(PhotoMode.PRO) }),
+            listOf(modeCard("HIRES", Icons.HIRES, "ความละเอียดสูง", 0xffc9d2e0, Motif.GRID) { returnMode(PhotoMode.HIRES) },
+                modeCard("VIDEO", Icons.VIDEO, "วิดีโอ", 0xffff5b50, Motif.NONE) { startActivity(Intent(this, VideoActivity::class.java).putExtra("mode", "VIDEO")) }),
+            listOf(modeCard("SLOW", Icons.SLOWMO, "สโลว์โมชัน", 0xff6cc8e8, Motif.STREAK) { startActivity(Intent(this, VideoActivity::class.java).putExtra("mode", "SLOW")) },
+                modeCard("NIGHT", Icons.NIGHT, "กลางคืน", 0xffb9a6ff, Motif.DOTS) { returnMode(PhotoMode.NIGHT) }),
         ).forEach { pair ->
             val row = LinearLayout(this)
-            row.addView(pair[0], LinearLayout.LayoutParams(0, dp(60), 1f))
+            row.addView(pair[0], LinearLayout.LayoutParams(0, dp(96), 1f))
             row.addView(View(this), dp(10), 1)
-            row.addView(pair[1], LinearLayout.LayoutParams(0, dp(60), 1f))
+            row.addView(pair[1], LinearLayout.LayoutParams(0, dp(96), 1f))
             col.addView(row, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
         }
 
@@ -309,13 +312,62 @@ class HomeActivity : ComponentActivity() {
         return self
     }
 
-    private fun modeChip(icon: String, title: String, note: String, open: () -> Unit): View = LinearLayout(this).apply {
-        gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), 0, dp(10), 0); background = cardBg(20)
-        isClickable = true; contentDescription = "$title $note"; glassTouch()
-        addView(IconView(this@HomeActivity, icon, 1.8f).apply { tint = Glass.TEXT }, dp(20), dp(20))
-        addView(text(title, 14f, Glass.TEXT).apply { setPadding(dp(10), 0, 0, 0); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }, LinearLayout.LayoutParams(0, -2, 1f))
+    /** Light patterns drawn over a mode card's glow. */
+    private enum class Motif { NONE, GRID, DOTS, STREAK, HALO }
+
+    /**
+     * A mode card with its own backdrop: a dark base, a soft light in the mode's colour, a faint pattern, and the
+     * mode icon large and faint in the corner. The colours belong to the mode, not to the theme.
+     */
+    private fun modeCard(key: String, icon: String, title: String, tint: Long, motif: Motif, open: () -> Unit): View = FrameLayout(this).apply {
+        val t = tint.toInt()
+        background = ModeBackdrop(this@HomeActivity, t, motif)
+        clipToOutline = true
+        outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: android.graphics.Outline) = o.setRoundRect(0, 0, v.width, v.height, dp(22).toFloat()) }
+        isClickable = true; contentDescription = title; glassTouch()
+        addView(IconView(this@HomeActivity, icon, 1.2f).apply { tint = Glass.alpha(t, 0x2a) }, FrameLayout.LayoutParams(dp(52), dp(52), Gravity.TOP or Gravity.END).apply { topMargin = dp(14); rightMargin = dp(12) })
+        addView(FrameLayout(this@HomeActivity).apply {
+            background = GradientDrawable().apply { cornerRadius = dp(12).toFloat(); setColor(0x47000000); setStroke(dp(1), 0x1affffff) }
+            addView(IconView(this@HomeActivity, icon, 2f).apply { tint = t }, FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER))
+        }, FrameLayout.LayoutParams(dp(36), dp(36), Gravity.TOP or Gravity.START).apply { topMargin = dp(12); leftMargin = dp(12) })
+        addView(text(title, 15f, Glass.TEXT, true).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END },
+            FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM or Gravity.START).apply { leftMargin = dp(14); rightMargin = dp(10); bottomMargin = dp(12) })
         setOnClickListener { Glass.tick(this); open() }
         cards += this
+    }
+
+    private class ModeBackdrop(c: Context, private val tint: Int, private val motif: Motif) : android.graphics.drawable.Drawable() {
+        private val d = c.resources.displayMetrics.density
+        private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val r = RectF()
+        private val rim = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = d; color = 0x1affffff }
+        private var glow: RadialGradient? = null
+        private var gw = 0f
+        override fun draw(cv: Canvas) {
+            val w = bounds.width().toFloat(); val h = bounds.height().toFloat(); val rad = 22 * d
+            val base = Theme.mix(Glass.BG, tint, 0.07f)
+            r.set(0f, 0f, w, h)
+            p.shader = null; p.style = Paint.Style.FILL; p.color = base; cv.drawRoundRect(r, rad, rad, p)
+            if (glow == null || gw != w) { gw = w
+                glow = RadialGradient(w * 0.82f, h * 0.18f, w * 0.85f, Glass.alpha(tint, 0x4d), Glass.alpha(tint, 0), Shader.TileMode.CLAMP) }
+            p.shader = glow; cv.drawRoundRect(r, rad, rad, p); p.shader = null
+            cv.save(); cv.clipRect(0f, 0f, w, h)
+            p.color = 0x0dffffff; p.strokeWidth = d; p.style = Paint.Style.STROKE
+            when (motif) {
+                Motif.GRID -> { var x = 0f; while (x < w) { cv.drawLine(x, 0f, x, h, p); x += 22 * d }; var y = 0f; while (y < h) { cv.drawLine(0f, y, w, y, p); y += 22 * d } }
+                Motif.DOTS -> { p.style = Paint.Style.FILL; p.color = 0x38ffffff; var y = 8 * d; while (y < h) { var x = 8 * d; while (x < w) { cv.drawCircle(x, y, 0.7f * d, p); x += 16 * d }; y += 16 * d } }
+                Motif.STREAK -> { p.color = 0x12ffffff; p.strokeWidth = 2 * d; var x = -h; while (x < w) { cv.drawLine(x, h, x + h * 0.18f, 0f, p); x += 20 * d } }
+                Motif.HALO -> { p.style = Paint.Style.FILL; p.color = Glass.alpha(tint, 0x29); cv.drawCircle(w * 0.5f, h * 0.38f, h * 0.45f, p) }
+                Motif.NONE -> {}
+            }
+            cv.restore()
+            // Darken toward the bottom so the title stays readable over any glow.
+            p.style = Paint.Style.FILL; p.shader = LinearGradient(0f, h * 0.45f, 0f, h, 0x00000000, 0x66000000, Shader.TileMode.CLAMP); cv.drawRoundRect(r, rad, rad, p); p.shader = null
+            r.inset(d / 2, d / 2); cv.drawRoundRect(r, rad, rad, rim)
+        }
+        override fun setAlpha(a: Int) {}
+        override fun setColorFilter(f: android.graphics.ColorFilter?) {}
+        @Suppress("OVERRIDE_DEPRECATION") override fun getOpacity() = android.graphics.PixelFormat.TRANSLUCENT
     }
 
     /** Three clips and a playhead: only a picture of the editor, it does nothing on its own. */
