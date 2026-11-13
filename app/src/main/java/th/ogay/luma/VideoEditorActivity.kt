@@ -428,7 +428,7 @@ class VideoEditorActivity : ComponentActivity() {
             runOnUiThread {
                 if (isDestroyed) return@runOnUiThread
                 if (pieces.isEmpty()) { notice("ไม่พบช่วงที่มีเสียงพูด"); return@runOnUiThread }
-                val job = StudioSpeech(this, lang, pieces.take(80), { i, n -> val t = "กำลังแปลงเสียงเป็นข้อความ ${i + 1}/$n"; captionStatus?.takeIf { tool == 15 }?.let { it.text = t } ?: notice(t)) }) { cues, problem ->
+                val job = StudioSpeech(this, lang, pieces.take(80), { i, n -> val t = "กำลังแปลงเสียงเป็นข้อความ ${i + 1}/$n"; captionStatus?.takeIf { tool == 15 }?.let { it.text = t } ?: notice(t) }) { cues, problem ->
                     speech = null; if (isDestroyed) return@StudioSpeech
                     if (tool == 15) showTool(15, false)
                     val made = cues.map { c -> val l = VideoLayer(VideoLayer.TEXT, VideoLayer.textSource(c.text, Color.WHITE, 1), c.from, c.to - c.from, text = c.text, style = 1); l to VideoLayers.textPicture(l, TEXT_PREVIEW) }
