@@ -97,7 +97,30 @@ data class VideoLayer(
 object VideoLayers {
     /** Picture layers as overlays for the whole video (their times are times of the finished video). */
     fun overlays(c: Context, layers: List<VideoLayer>): List<BitmapOverlay> = layers.filter { it.visual }.map { l ->
-        when (l.kind) { VideoLayer.IMAGE -> TimedOverlay(l, matted(picture(c, l.source, 1280), l.matte)); VideoLayer.TEXT -> TimedOverlay(l, textPicture(l)); else -> MovingOverlay(c, l) }
+        when (l.kind) { VideoLayer.IMAGE -> gif(c, l) ?: TimedOverlay(l, matted(picture(c, l.source, 1280), l.matte)); VideoLayer.TEXT -> TimedOverlay(l, textPicture(l)); else -> MovingOverlay(c, l) }
+    }
+    /** True when the file starts like a GIF picture. */
+    fun isGif(c: Context, uri: Uri): Boolean = runCatching { c.contentResolver.openInputStream(uri)?.use { val b = ByteArray(4); it.read(b) == 4 && String(b, Charsets.US_ASCII) == "GIF8" } ?: false }.getOrDefault(false)
+    @Suppress("DEPRECATION")
+    private fun gif(c: Context, l: VideoLayer): BitmapOverlay? {
+        if (!isGif(c, l.source)) return null
+        val bytes = c.contentResolver.openInputStream(l.source)?.use { it.readBytes() } ?: return null
+        val movie = android.graphics.Movie.decodeByteArray(bytes, 0, bytes.size) ?: return null
+        if (movie.width() <= 0 || movie.height() <= 0) return null
+        return GifOverlay(l, movie)
+    }
+    /** An animated GIF: the frame for each moment is drawn from the GIF's own timing, looping while the layer is on. */
+    @Suppress("DEPRECATION")
+    private class GifOverlay(private val layer: VideoLayer, private val movie: android.graphics.Movie) : Placed(layer) {
+        private val bitmap = Bitmap.createBitmap(movie.width(), movie.height(), Bitmap.Config.ARGB_8888)
+        private val canvas = android.graphics.Canvas(bitmap)
+        override val pixelWidth get() = bitmap.width
+        override fun getBitmap(presentationTimeUs: Long): Bitmap {
+            val d = movie.duration().coerceAtLeast(100)
+            movie.setTime((((presentationTimeUs / 1000 - layer.at).coerceAtLeast(0)) % d).toInt())
+            bitmap.eraseColor(0); movie.draw(canvas, 0f, 0f)
+            return bitmap
+        }
     }
     /** A copy of [b] with the layer's chroma key and mask applied ([b] itself when there is nothing to apply). */
     fun matted(b: Bitmap, m: StudioMatte.Spec): Bitmap {
@@ -107,10 +130,11 @@ object VideoLayers {
         return Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).apply { setPixels(px, 0, w, 0, 0, w, h) }
     }
 
-    /** Fonts a text layer can use (bits 8–9 of [VideoLayer.style]) and alignments (bits 12–13). */
-    val FONTS = listOf("sans-serif", "serif", "monospace", "sans-serif-condensed")
-    fun font(style: Int) = (style shr 8) and 3
-    fun align(style: Int) = (style shr 12) and 3
+    /** Fonts a text layer can use (bits 8–11 of [VideoLayer.style]) and alignments (bits 16–17). */
+    val FONTS = listOf("sans-serif", "serif", "monospace", "sans-serif-condensed", "sans-serif-light", "sans-serif-medium", "sans-serif-black", "cursive", "casual", "serif-monospace", "sans-serif-smallcaps")
+    val FONT_NAMES = listOf("ปกติ", "มีเชิง", "พิมพ์ดีด", "แคบ", "บาง", "กลาง", "หนามาก", "ลายมือ", "สบาย ๆ", "พิมพ์ดีดมีเชิง", "ตัวพิมพ์เล็ก")
+    fun font(style: Int) = ((style shr 8) and 15).coerceAtMost(FONTS.size - 1)
+    fun align(style: Int) = (style shr 16) and 3
     /** A text layer whose words start with this mark is a shape: the number after it picks which one. */
     const val SHAPE = "\u0001shape:"
     val SHAPES = listOf("สี่เหลี่ยม", "วงกลม", "ลูกศร", "ดาว", "หัวใจ", "เส้น")

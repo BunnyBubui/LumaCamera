@@ -531,7 +531,9 @@ object GlassDialog {
 fun aspectIconPath(name: String): String {
     val p = name.split(':').mapNotNull { it.trim().toFloatOrNull() }
     val r = if (p.size == 2 && p[1] > 0f) maxOf(p[0], p[1]) / minOf(p[0], p[1]) else 4f / 3f
-    val h = 20f; val w = h / r; val x = 12f - w / 2; val y = 12f - h / 2
+    // Wider than tall (16:9, 2.39:1) is drawn lying down; taller than wide (9:16, 4:5) standing up.
+    val wide = p.size == 2 && p[0] > p[1]
+    val h = if (wide) 20f / r else 20f; val w = if (wide) 20f else 20f / r; val x = 12f - w / 2; val y = 12f - h / 2
     return String.format(java.util.Locale.US, "M%.2f %.2fh%.2fv%.2fh%.2fz", x, y, w, h, -w)
 }
 
