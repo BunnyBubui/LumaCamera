@@ -512,7 +512,7 @@ class VideoEditorActivity : ComponentActivity() {
         stage.addView(texture, FrameLayout.LayoutParams(0, 0, Gravity.CENTER))
         fxView = FxView(this).also { stage.addView(it, -1, -1) }
         mask = CropMask(this); stage.addView(mask, -1, -1)
-        captionView = text("", 20f, Color.WHITE, true).apply { gravity = Gravity.CENTER; maxLines = 3; setShadowLayer(6f, 0f, 2f, 0x99000000.toInt()); importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
+        captionView = text("", 20f, Glass.TEXT, true).apply { gravity = Gravity.CENTER; maxLines = 3; setShadowLayer(6f, 0f, 2f, 0x99000000.toInt()); importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
         stage.addView(captionView, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
         // Covers the picture for a moment when the preview moves to the next clip (fade or flash transitions).
         dip = View(this).apply { alpha = 0f; isClickable = false; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
@@ -1424,7 +1424,7 @@ class VideoEditorActivity : ComponentActivity() {
     /** A glass pill with a label and a small down arrow; tapping it opens a [GlassMenu] list, like the other choosers in the app. */
     private fun dropButton(label: String, click: (View) -> Unit): View = LinearLayout(this).apply {
         gravity = Gravity.CENTER_VERTICAL; background = glass(16, 0x26ffffff); setPadding(dp(12), 0, dp(10), 0); isClickable = true; glassTouch(); contentDescription = label
-        addView(text(label, 12.5f, Color.WHITE, true).apply { maxLines = 1 })
+        addView(text(label, 12.5f, Glass.TEXT, true).apply { maxLines = 1 })
         addView(IconView(this@VideoEditorActivity, "M7 10l5 5 5-5", 2f).apply { tint = Glass.TEXT2 }, LinearLayout.LayoutParams(dp(16), dp(16)).apply { leftMargin = dp(4) })
         setOnClickListener { click(this) }
     }
@@ -1433,7 +1433,7 @@ class VideoEditorActivity : ComponentActivity() {
     /** Colour picker: hue, saturation and brightness sliders with a live swatch and its hex code. */
     private fun pickColor(initial: Int, done: (Int) -> Unit) {
         val hsv = FloatArray(3); Color.colorToHSV(initial, hsv)
-        val swatch = View(this); val hex = text("", 14f, Color.WHITE, true).apply { gravity = Gravity.CENTER }
+        val swatch = View(this); val hex = text("", 14f, Glass.TEXT, true).apply { gravity = Gravity.CENTER }
         fun paint() { val c = Color.HSVToColor(hsv); swatch.background = GradientDrawable().apply { cornerRadius = dp(14).toFloat(); setColor(c); setStroke(dp(1), 0x55ffffff) }; hex.text = String.format("#%06X", c and 0xffffff) }
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(10), dp(20), 0) }
         box.addView(LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; addView(swatch, dp(56), dp(40)); addView(hex, LinearLayout.LayoutParams(0, -2, 1f)) }, -1, -2)
@@ -1465,7 +1465,7 @@ class VideoEditorActivity : ComponentActivity() {
         if (caption.isNotBlank()) { val c = caption; caption = ""; applyLook(); handler.post { addText(c, if (place == 0) 0.15f else if (place == 1) 0.5f else 0.85f, 0L, totalOut()) }; return }
         val i = layerPick; val cur = layers.getOrNull(i)?.takeIf { barActive && it.kind == VideoLayer.TEXT && VideoLayers.shapeOf(it.text) < 0 }
         val field = EditText(this).apply {
-            hint = if (cur == null) "พิมพ์ข้อความใหม่" else "แก้ข้อความ"; setHintTextColor(Glass.TEXT3); setTextColor(Color.WHITE); textSize = 15f; maxLines = 3; setText(cur?.text ?: "")
+            hint = if (cur == null) "พิมพ์ข้อความใหม่" else "แก้ข้อความ"; setHintTextColor(Glass.TEXT3); setTextColor(Glass.TEXT); textSize = 15f; maxLines = 3; setText(cur?.text ?: "")
             background = glass(20, 0x24ffffff); setPadding(dp(14), dp(8), dp(14), dp(8)); contentDescription = "ข้อความบนวิดีโอ"
             if (cur != null) addTextChangedListener(object : TextWatcher {
                 override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
@@ -1616,7 +1616,7 @@ class VideoEditorActivity : ComponentActivity() {
         val l = layers.getOrNull(layerPick)?.takeIf { barActive && it.audible }
         if (l != null) {
             val i = layerPick
-            head.addView(text((if (l.music) "เพลง: " else "เสียง: ") + layerName(l), 13f, Color.WHITE, true).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }, LinearLayout.LayoutParams(0, -2, 1f))
+            head.addView(text((if (l.music) "เพลง: " else "เสียง: ") + layerName(l), 13f, Glass.TEXT, true).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }, LinearLayout.LayoutParams(0, -2, 1f))
             head.addView(muteButton(l.volume == 0f) { layers[i] = layers[i].copy(volume = if (layers[i].volume == 0f) 1f else 0f); releaseLayerSound(); showTool(9, false) })
             box.addView(head, -1, -2)
             slider("ความดัง", pct, (l.volume * 20).roundToInt()) { v -> layers[i] = layers[i].copy(volume = v / 20f); layerSound[i]?.runCatching { val x = (v / 20f).coerceAtMost(1f); setVolume(x, x) } }
@@ -1625,7 +1625,7 @@ class VideoEditorActivity : ComponentActivity() {
             slider("ค่อย ๆ เบาลง", sec, (l.fadeOut / 100).toInt()) { v -> layers[i] = layers[i].copy(fadeOut = v * 100L) }
         } else {
             val k = playIndex
-            head.addView(text("เสียงคลิป ${order().indexOf(k) + 1}", 13f, Color.WHITE, true), LinearLayout.LayoutParams(0, -2, 1f))
+            head.addView(text("เสียงคลิป ${order().indexOf(k) + 1}", 13f, Glass.TEXT, true), LinearLayout.LayoutParams(0, -2, 1f))
             head.addView(muteButton(isMuted(k) || !keepSound) { if (!keepSound) { keepSound = true; setMuted(k, false) } else setMuted(k, !isMuted(k)); showTool(9, false) })
             box.addView(head, -1, -2)
             slider("ความดังคลิปนี้", pct, (clipVolume(k) * 20).roundToInt()) { v -> setClipVolume(k, v / 20f) }
@@ -1750,8 +1750,8 @@ class VideoEditorActivity : ComponentActivity() {
         val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(12), 0, dp(12), 0) }
         fun card(thumb: Bitmap?, label: String, on: Boolean, click: () -> Unit) = FrameLayout(this).apply {
             background = glass(14, if (on) Glass.ACCENT_SOFT else 0x26ffffff); setPadding(dp(3), dp(3), dp(3), dp(3)); isClickable = true; contentDescription = label; glassTouch(); setOnClickListener { click() }
-            addView(ImageView(this@VideoEditorActivity).apply { scaleType = ImageView.ScaleType.CENTER_CROP; setImageBitmap(thumb); clipToOutline = true; background = glass(11, 0xff151d33.toInt()) }, -1, -1)
-            addView(text(label, 10.5f, Color.WHITE, true).apply { setShadowLayer(4f, 0f, 1f, 0xcc000000.toInt()); setPadding(dp(5), 0, dp(5), dp(3)) }, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.START))
+            addView(ImageView(this@VideoEditorActivity).apply { scaleType = ImageView.ScaleType.CENTER_CROP; setImageBitmap(thumb); clipToOutline = true; background = glass(11, Glass.PANEL) }, -1, -1)
+            addView(text(label, 10.5f, Glass.TEXT, true).apply { setShadowLayer(4f, 0f, 1f, 0xcc000000.toInt()); setPadding(dp(5), 0, dp(5), dp(3)) }, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.START))
         }
         order().forEachIndexed { n, k ->
             if (k == 0) row.addView(card(firstFrame, "${n + 1} · " + clock(mainLen()), playIndex == 0) { playClip(0, false); showTool(10, false) }, LinearLayout.LayoutParams(dp(76), dp(56)).apply { rightMargin = dp(6) })
@@ -2126,7 +2126,7 @@ class VideoEditorActivity : ComponentActivity() {
         slider("ค่อย ๆ ออก", (0..3000 step 100).toList(), l.fadeOut.toInt(), seconds) { v -> layers[i] = layers[i].copy(fadeOut = v.toLong()); refresh() }
         if (l.visual) {
             val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(6), dp(12), dp(2)) }
-            fun chip(name: String, f: () -> Unit) = row.addView(text(name, 12f, Color.WHITE).apply { gravity = Gravity.CENTER; background = glass(16, 0x26ffffff)
+            fun chip(name: String, f: () -> Unit) = row.addView(text(name, 12f, Glass.TEXT).apply { gravity = Gravity.CENTER; background = glass(16, 0x26ffffff)
                 setPadding(dp(12), 0, dp(12), 0); isClickable = true; glassTouch(); contentDescription = name; setOnClickListener { f(); refresh(); layerControls(box) } }, LinearLayout.LayoutParams(-2, dp(32)).apply { rightMargin = dp(6) })
             // Place presets set where the layer is and how big (as a keyframe at the playhead when the layer has keyframes).
             chip("กลางภาพ") { layers[i] = posed(layers[i], x = 0.5f, y = 0.5f) }
@@ -2436,7 +2436,7 @@ class VideoEditorActivity : ComponentActivity() {
             val top = 4 * d; val bottom = height - 4 * d; val left = handle; val right = width - handle
             val clip = Path().apply { addRoundRect(RectF(left, top, right, bottom), 8 * d, 8 * d, Path.Direction.CW) }
             c.save(); c.clipPath(clip)
-            c.drawColor(0xff151d33.toInt())
+            c.drawColor(Glass.PANEL)
             if (frames.isNotEmpty()) {
                 val cell = (right - left) / frames.size
                 frames.forEachIndexed { i, b ->

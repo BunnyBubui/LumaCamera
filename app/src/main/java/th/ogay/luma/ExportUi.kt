@@ -43,7 +43,7 @@ object ExportSheet {
         head.addView(ImageView(a).apply { scaleType = ImageView.ScaleType.CENTER_CROP; setImageBitmap(src.thumb); setBackgroundColor(0x22ffffff); clipToOutline = true
             outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: android.graphics.Outline) = o.setRoundRect(0, 0, v.width, v.height, a.dp(12).toFloat()) } }, a.dp(62), a.dp(84))
         val heads = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; setPadding(a.dp(14), 0, 0, 0) }
-        heads.addView(a.text("ส่งออกวิดีโอ", 20f, Color.WHITE, true))
+        heads.addView(a.text("ส่งออกวิดีโอ", 20f, Glass.TEXT, true))
         heads.addView(a.text("ยาว ${clock(src.durationMs)} · ต้นฉบับ ${sideName(src.shortSide)} ${fpsName(src.fps)} fps", 12.5f, Glass.TEXT2))
         head.addView(heads, LinearLayout.LayoutParams(0, -2, 1f))
         card.addView(head, -1, -2)
@@ -58,7 +58,7 @@ object ExportSheet {
         val prefs = a.getSharedPreferences("camera", 0)
         var model = prefs.getInt("video_ai_model", 1).coerceIn(0, 2)
         fun ai() = model != 0
-        val sideValue = a.text("", 15f, Color.WHITE, true); val rateValue = a.text("", 15f, Color.WHITE, true)
+        val sideValue = a.text("", 15f, Glass.TEXT, true); val rateValue = a.text("", 15f, Glass.TEXT, true)
         val sideNote = a.text("", 12f, Glass.TEXT2); val rateNote = a.text("", 12f, Glass.TEXT2)
         val aiChip = LinearLayout(a)
         val estimate = a.text("", 12.5f, Glass.TEXT2).apply { gravity = Gravity.CENTER }
@@ -114,14 +114,14 @@ object ExportSheet {
             card.addView(top, -1, -2); card.addView(note.apply { setPadding(0, a.dp(4), 0, 0) }, -1, -2)
         }
         var audioOnly = false
-        val typeValue = a.text("วิดีโอ", 14f, Color.WHITE, true); val typeNote = a.text("ภาพพร้อมเสียง .mp4", 12f, Glass.TEXT3)
+        val typeValue = a.text("วิดีโอ", 14f, Glass.TEXT, true); val typeNote = a.text("ภาพพร้อมเสียง .mp4", 12f, Glass.TEXT3)
         var onType: () -> Unit = {}
         if (!upscale) pickRow("ไฟล์ที่ได้", typeValue, typeNote) { v -> pickMenu.show(v, "ไฟล์ที่ได้", listOf(GlassMenu.Option("วิดีโอ", Icons.VIDEO, "ภาพพร้อมเสียง .mp4"), GlassMenu.Option("เสียงอย่างเดียว", Icons.SOUND, "ไฟล์เสียง .m4a ลงโฟลเดอร์เพลง")), if (audioOnly) 1 else 0) { k ->
             audioOnly = k == 1; typeValue.text = if (audioOnly) "เสียงอย่างเดียว" else "วิดีโอ"; typeNote.text = if (audioOnly) "ไฟล์เสียง .m4a · ความละเอียดและอัตราเฟรมไม่มีผล" else "ภาพพร้อมเสียง .mp4"; onType() } }
         // H.265 makes a smaller file at the same quality; it is offered only when this phone can encode it.
         val hevcOk = runCatching { android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS).codecInfos.any { it.isEncoder && it.supportedTypes.any { t -> t.equals("video/hevc", true) } } }.getOrDefault(false)
         if (hevcOk && !upscale) {
-            val codecValue = a.text("", 14f, Color.WHITE, true); val codecNote = a.text("", 12f, Glass.TEXT3)
+            val codecValue = a.text("", 14f, Glass.TEXT, true); val codecNote = a.text("", 12f, Glass.TEXT3)
             fun paintCodec(k: Int) { codecValue.text = if (k == 1) "H.265" else "H.264"; codecNote.text = if (k == 1) "ไฟล์เล็กกว่าที่คุณภาพเท่ากัน · เครื่องหรือแอปรุ่นเก่าบางตัวเปิดไม่ได้" else "เปิดได้ทุกเครื่อง" }
             paintCodec(if (prefs.getBoolean("export_hevc", false)) 1 else 0)
             pickRow("การบีบอัด", codecValue, codecNote) { v -> pickMenu.show(v, "การบีบอัดวิดีโอ", listOf(GlassMenu.Option("H.264", "", "เปิดได้ทุกเครื่อง"), GlassMenu.Option("H.265", "", "ไฟล์เล็กกว่า")), if (prefs.getBoolean("export_hevc", false)) 1 else 0) { k ->
@@ -133,7 +133,7 @@ object ExportSheet {
         var syncPrev: () -> Unit = {}
         val menu = GlassMenu(a.window.decorView as FrameLayout) { on -> sheet.recede(on) }
         val modelIcon = IconView(a, icons[model], 1.8f).apply { tint = Glass.ACCENT }
-        val modelName = a.text(names[model].substringBefore(" ·"), 15f, Color.WHITE, true)
+        val modelName = a.text(names[model].substringBefore(" ·"), 15f, Glass.TEXT, true)
         val modelNote = a.text(notes[model], 12f, Glass.TEXT2).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }
         aiChip.apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; background = a.glass(20, 0x1affffff); setPadding(a.dp(10), a.dp(8), a.dp(12), a.dp(8)); isClickable = true; glassTouch(); contentDescription = "โมเดล AI ${names[model]}" }
         aiChip.addView(FrameLayout(a).apply { background = a.glass(12, 0x24ffffff); addView(modelIcon, FrameLayout.LayoutParams(a.dp(20), a.dp(20), Gravity.CENTER)) }, a.dp(38), a.dp(38))
@@ -219,15 +219,15 @@ object ExportSheet {
  * "ทำงานเบื้องหลัง" leaves the page; the export goes on with a live notification.
  */
 class ExportProgress(private val a: Activity, thumb: Bitmap?, private val steps: List<String>, private val kinds: List<Int>, onCancel: () -> Unit, onBackground: () -> Unit) {
-    private val layer = FrameLayout(a).apply { setBackgroundColor(0xf20b0f1e.toInt()); isClickable = true; alpha = 0f }
+    private val layer = FrameLayout(a).apply { setBackgroundColor(Glass.alpha(Glass.BG, 0xf2)); isClickable = true; alpha = 0f }
     val view: View get() = layer
     private val backdrop = Backdrop(a)
     private val ring = Ring(a)
     private val still = ImageView(a)
     private var shownFrame: Bitmap? = null
-    private val percent = a.text("0%", 40f, Color.WHITE, true).apply { gravity = Gravity.CENTER }
+    private val percent = a.text("0%", 40f, Glass.TEXT, true).apply { gravity = Gravity.CENTER }
     private val frames = a.text("", 13.5f, Glass.TEXT2).apply { gravity = Gravity.CENTER }
-    private val eta = a.text("", 17f, Color.WHITE, true).apply { gravity = Gravity.CENTER }
+    private val eta = a.text("", 17f, Glass.TEXT, true).apply { gravity = Gravity.CENTER }
     private val etaBox = LinearLayout(a)
     private val marks = ArrayList<TextView>(); private val labels = ArrayList<TextView>()
 

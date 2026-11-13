@@ -30,7 +30,7 @@ class StudioProjectsActivity : ComponentActivity() {
         installRoot(root)
         val bar = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(10), dp(14), dp(10)) }
         bar.addView(EditorKit.round(this, Icons.CLOSE, "ปิด") { finish() }, dp(48), dp(48))
-        bar.addView(text("โปรเจกต์วิดีโอ", 20f, Color.WHITE, true).apply { setPadding(dp(14), 0, 0, 0) })
+        bar.addView(text("โปรเจกต์วิดีโอ", 20f, Glass.TEXT, true).apply { setPadding(dp(14), 0, 0, 0) })
         root.addView(bar, -1, -2)
         col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), dp(4), dp(14), dp(24)) }
         root.addView(ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(col) }, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -51,12 +51,12 @@ class StudioProjectsActivity : ComponentActivity() {
     private fun row(p: StudioProjects.Info): View = LinearLayout(this).apply {
         gravity = Gravity.CENTER_VERTICAL; background = glass(22, 0x14ffffff); setPadding(dp(10), dp(10), dp(6), dp(10)); isClickable = true; glassTouch()
         contentDescription = "เปิดโปรเจกต์ ${p.name}"
-        val pic = ImageView(this@StudioProjectsActivity).apply { scaleType = ImageView.ScaleType.CENTER_CROP; setBackgroundColor(0xff1b2238.toInt()); clipToOutline = true
+        val pic = ImageView(this@StudioProjectsActivity).apply { scaleType = ImageView.ScaleType.CENTER_CROP; setBackgroundColor(Glass.PANEL); clipToOutline = true
             outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: android.graphics.Outline) = o.setRoundRect(0, 0, v.width, v.height, dp(14).toFloat()) }
             if (p.thumb.exists()) setImageBitmap(BitmapFactory.decodeFile(p.thumb.path)) }
         addView(pic, dp(64), dp(64))
         val words = LinearLayout(this@StudioProjectsActivity).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, dp(4), 0) }
-        words.addView(text(p.name, 15.5f, Color.WHITE, true).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END })
+        words.addView(text(p.name, 15.5f, Glass.TEXT, true).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END })
         words.addView(text(if (p.missing) "ไม่พบวิดีโอต้นฉบับ · แตะเพื่อเลือกไฟล์แทน" else "แก้ไขล่าสุด " + android.text.format.DateFormat.format("d MMM HH:mm", p.updated), 12f, if (p.missing) 0xffff6b6b.toInt() else Glass.TEXT3))
         addView(words, LinearLayout.LayoutParams(0, -2, 1f))
         fun small(icon: String, desc: String, f: () -> Unit) = addView(FrameLayout(this@StudioProjectsActivity).apply { isClickable = true; glassTouch(); contentDescription = desc

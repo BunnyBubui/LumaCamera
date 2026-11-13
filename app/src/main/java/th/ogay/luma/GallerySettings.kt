@@ -37,7 +37,7 @@ class SettingsPage(private val a: Activity, title: String, private val changed: 
             addView(IconView(a, Icons.CHEVRON_LEFT, 2.2f), FrameLayout.LayoutParams(a.dp(20), a.dp(20), Gravity.CENTER))
             setOnClickListener { dialog.dismiss() }
         }, a.dp(48), a.dp(48))
-        top.addView(a.text(title, 17f, Color.WHITE, true).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(0, -2, 1f))
+        top.addView(a.text(title, 17f, Glass.TEXT, true).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(0, -2, 1f))
         top.addView(View(a), a.dp(48), a.dp(48))
         column.addView(top, -1, -2)
         column.addView(ScrollView(a).apply { isVerticalScrollBarEnabled = false; addView(body) }, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -84,6 +84,7 @@ class SettingsPage(private val a: Activity, title: String, private val changed: 
     fun action(title: String, icon: String, note: String = "", run: () -> Unit) {
         row(title, icon, note, IconView(a, Icons.CHEVRON_RIGHT, 2f).apply { tint = Glass.TEXT3; layoutParams = LinearLayout.LayoutParams(a.dp(18), a.dp(18)) }) { run() }
     }
+    fun close() = dialog.dismiss()
     fun show() {
         dialog.setContentView(host)
         dialog.window?.apply { setLayout(-1, -1); setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)) }

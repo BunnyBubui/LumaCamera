@@ -96,14 +96,14 @@ object LumoraIntro {
         val c = host.context
         val d = c.resources.displayMetrics.density
         val layer = FrameLayout(c).apply {
-            setBackgroundColor(0xff0b0f1e.toInt()); isClickable = true; elevation = 40 * d
+            setBackgroundColor(Glass.BG); isClickable = true; elevation = 40 * d
             contentDescription = "Lumora กำลังเปิด"
         }
         val col = LinearLayout(c).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL }
         val logo = LumoraLogoView(c).apply { progress = 0f }
         col.addView(logo, LinearLayout.LayoutParams((150 * d).toInt(), (150 * d).toInt()))
         val name = TextView(c).apply {
-            text = "Lumora"; setTextColor(Color.WHITE); textSize = 38f; typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.BOLD)
+            text = "Lumora"; setTextColor(Glass.TEXT); textSize = 38f; typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.BOLD)
             letterSpacing = 0.5f; alpha = 0f; gravity = Gravity.CENTER
         }
         col.addView(name, LinearLayout.LayoutParams(-2, -2).apply { topMargin = (6 * d).toInt() })

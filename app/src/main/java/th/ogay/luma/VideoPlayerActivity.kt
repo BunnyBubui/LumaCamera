@@ -37,7 +37,7 @@ class VideoPlayerActivity : ComponentActivity() {
 
         val top = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(12), dp(14), dp(6)) }
         top.addView(round(Icons.CHEVRON_LEFT, "ย้อนกลับ") { finish() }, dp(48), dp(48))
-        top.addView(text("วิดีโอ", 20f, Color.WHITE, true).apply { setPadding(dp(12), 0, dp(4), 0) }, LinearLayout.LayoutParams(0, -2, 1f))
+        top.addView(text("วิดีโอ", 20f, Glass.TEXT, true).apply { setPadding(dp(12), 0, dp(4), 0) }, LinearLayout.LayoutParams(0, -2, 1f))
         top.addView(round(EditorKit.SCISSORS, "ตัดต่อวิดีโอ") { startActivity(VideoEditorActivity.intent(this, uri)) }, LinearLayout.LayoutParams(dp(48), dp(48)).apply { rightMargin = dp(8) })
         top.addView(round(Icons.SHARE, "แชร์") { startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType("video/*").putExtra(Intent.EXTRA_STREAM, uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), "แชร์")) }, LinearLayout.LayoutParams(dp(48), dp(48)).apply { rightMargin = dp(8) })
         top.addView(round("M14 4h6v6 M20 4l-9 9 M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5", "เปิดในแอปอื่น") {
