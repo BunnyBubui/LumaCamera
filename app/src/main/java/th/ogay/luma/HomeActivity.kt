@@ -319,8 +319,8 @@ class HomeActivity : ComponentActivity() {
      * A mode card with its own backdrop: a dark base, a soft light in the mode's colour, a faint pattern, and the
      * mode icon large and faint in the corner. The colours belong to the mode, not to the theme.
      */
-    private fun modeCard(key: String, icon: String, title: String, tint: Long, motif: Motif, open: () -> Unit): View = FrameLayout(this).apply {
-        val t = tint.toInt()
+    private fun modeCard(key: String, icon: String, title: String, hue: Long, motif: Motif, open: () -> Unit): View = FrameLayout(this).apply {
+        val t = hue.toInt()
         background = ModeBackdrop(this@HomeActivity, t, motif)
         clipToOutline = true
         outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: android.graphics.Outline) = o.setRoundRect(0, 0, v.width, v.height, dp(22).toFloat()) }
