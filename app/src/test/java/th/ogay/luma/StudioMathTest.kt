@@ -2,6 +2,7 @@ package th.ogay.luma
 
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class StudioMathTest {
@@ -45,5 +46,29 @@ class StudioMathTest {
         assertEquals(listOf(StudioMath.Cue(1000, 2500, "สวัสดี"), StudioMath.Cue(60250, 63000, "two\nlines")), cues)
         assertEquals(cues, StudioMath.parseSrt(StudioMath.writeSrt(cues)))
         assertEquals("1\n00:00:01,000 --> 00:00:02,500\nสวัสดี\n", StudioMath.writeSrt(cues.take(1)))
+    }
+}
+
+class StudioAudioTest {
+    @Test fun duckLowersMusicInsideSpansWithSlopes() {
+        val spans = listOf(1000L to 2000L)
+        assertEquals(1f, StudioAudio.duck(0, spans), 1e-6f)
+        assertEquals(0.3f, StudioAudio.duck(1500, spans), 1e-6f)
+        assertEquals(0.65f, StudioAudio.duck(850, spans), 1e-6f)
+        assertEquals(0.65f, StudioAudio.duck(2150, spans), 1e-6f)
+        assertEquals(1f, StudioAudio.duck(2400, spans), 1e-6f)
+    }
+    @Test fun limiterKeepsQuietSoundAndNeverPassesOne() {
+        assertEquals(0.5, StudioAudio.limit(0.5), 1e-9)
+        assertEquals(-0.5, StudioAudio.limit(-0.5), 1e-9)
+        assertTrue(StudioAudio.limit(5.0) < 1.0); assertTrue(StudioAudio.limit(-5.0) > -1.0)
+        assertTrue(StudioAudio.limit(0.95) > 0.9)
+    }
+    @Test fun highPassRemovesSteadyOffsetAndShelfAtZeroDbChangesNothing() {
+        val hp = StudioAudio.Biquad.highPass(48000, 100.0)
+        var y = 0.0; repeat(48000) { y = hp.run(0, 0.5) }
+        assertEquals(0.0, y, 1e-4)
+        val flat = StudioAudio.Biquad.lowShelf(48000, 150.0, 0.0)
+        assertEquals(0.3, flat.run(0, 0.3), 1e-9)
     }
 }

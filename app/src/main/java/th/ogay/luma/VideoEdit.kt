@@ -70,10 +70,12 @@ data class VideoEditSpec(
     /** Finishing effects over the whole picture, each 0..1. */
     val vignette: Float = 0f, val grain: Float = 0f, val sharpen: Float = 0f,
     /** The whole colour (filter, adjustments and colour studio) as one [r][g][b] table; when set it replaces [look]. */
-    val grade: Array<Array<IntArray>>? = null)
+    val grade: Array<Array<IntArray>>? = null,
+    /** Shaping of the clips' own sound (equaliser, low cut, voice), silence for the first clip, and ducking of the music under sound layers. */
+    val audio: StudioAudio.Settings = StudioAudio.Settings(), val mainMuted: Boolean = false, val duck: Boolean = false)
 
 /** A clip appended after the main one. [from]/[to] in ms of that clip. */
-data class VideoPart(val source: Uri, val from: Long, val to: Long, val speed: Float = 1f)
+data class VideoPart(val source: Uri, val from: Long, val to: Long, val speed: Float = 1f, val muted: Boolean = false)
 
 /** An emoji on the picture: [x], [y] are 0..1 across the visible (cropped) frame, [big] doubles its size. */
 data class VideoSticker(val text: String, val x: Float, val y: Float, val big: Boolean = false)
@@ -182,7 +184,9 @@ object VideoEdit {
                     else -> if (joinIn || joinOut) own += Dip(piece.durationUs, joinIn, joinOut, s.transition == 2)
                 }
             }
-            val edited = EditedMediaItem.Builder(piece.item).setEffects(Effects(sound, own)).setRemoveAudio(!s.keepAudio)
+            val muted = if (piece.clip == 0) s.mainMuted else s.extras[piece.clip - 1].muted
+            val own_sound = if (muted) listOf(gain(0f)) else (if (piece.clip == 0) sound else emptyList()) + listOfNotNull(if (s.audio.active) StudioAudio.Shape(s.audio) else null)
+            val edited = EditedMediaItem.Builder(piece.item).setEffects(Effects(own_sound, own)).setRemoveAudio(!s.keepAudio)
             // With sound, setSpeed changes picture and sound together. Without a sound track it stalls the export (no
             // output sample ever reaches the muxer), so a picture-only clip changes speed through a video effect instead.
             if (piece.speed != 1f && s.keepAudio) edited.setSpeed(object : SpeedProvider { override fun getSpeed(timeUs: Long) = piece.speed; override fun getNextSpeedChangeTimeUs(timeUs: Long) = C.TIME_UNSET })
@@ -205,7 +209,8 @@ object VideoEdit {
         val song = s.music
         val sequences = mutableListOf(main)
         if (song != null) {
-            val track = EditedMediaItem.Builder(MediaItem.fromUri(song)).setRemoveVideo(true).setEffects(Effects(if (s.musicVolume != 1f) listOf(gain(s.musicVolume)) else emptyList(), emptyList())).build()
+            val spans = if (s.duck) s.layers.filter { it.audible && it.volume > 0f }.map { it.at to it.end } else emptyList()
+            val track = EditedMediaItem.Builder(MediaItem.fromUri(song)).setRemoveVideo(true).setEffects(Effects(listOfNotNull(if (s.musicVolume != 1f) gain(s.musicVolume) else null, if (spans.isNotEmpty()) StudioAudio.Duck(spans) else null), emptyList())).build()
             sequences += EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_AUDIO)).addItem(track).setIsLooping(true).build()
         }
         if (s.layers.any { it.audible }) sequences += VideoLayers.sounds(requireNotNull(context) { "layers need a context" }, s.layers) { gain(it) }

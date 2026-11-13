@@ -106,14 +106,16 @@ class VideoEditorActivity : ComponentActivity() {
         var from = 0L; var to = duration
         /** Playback speed of this part (1 = as recorded); [len] is the time it takes in the finished video. */
         var speed = 1f
+        /** True when this part plays without its own sound (for example after its sound was moved to a layer). */
+        var muted = false
         val len get() = ((to - from) / speed).toLong()
-        fun copy() = Extra(uri, duration, w, h, name, thumb).also { it.from = from; it.to = to; it.speed = speed }
+        fun copy() = Extra(uri, duration, w, h, name, thumb).also { it.from = from; it.to = to; it.speed = speed; it.muted = muted }
     }
     private var mainFrames: List<Bitmap> = emptyList()
     private val clipFrames = HashMap<String, List<Bitmap>>()
     private fun buildExtras(uris: List<String>, ranges: List<String>?, get: (String) -> Extra?): List<Extra> = uris.mapIndexedNotNull { i, u ->
         get(u)?.copy()?.also { e -> ranges?.getOrNull(i)?.split(",")?.takeIf { it.size >= 2 }?.let { r ->
-            e.from = (r[0].toLongOrNull() ?: 0L).coerceIn(0, e.duration); e.to = (r[1].toLongOrNull() ?: e.duration).coerceIn(e.from, e.duration); e.speed = (r.getOrNull(2)?.toFloatOrNull() ?: 1f).coerceIn(0.1f, 8f) } } }
+            e.from = (r[0].toLongOrNull() ?: 0L).coerceIn(0, e.duration); e.to = (r[1].toLongOrNull() ?: e.duration).coerceIn(e.from, e.duration); e.speed = (r.getOrNull(2)?.toFloatOrNull() ?: 1f).coerceIn(0.1f, 8f); e.muted = r.getOrNull(3) == "m" } } }
     // ---- Playing order ----
     /** How many added clips play before the clip the editor was opened with. 0 = that clip is first, as before. */
     private var mainAt = 0
@@ -567,14 +569,14 @@ class VideoEditorActivity : ComponentActivity() {
     // ---------- Playback ----------
     private fun openPlayer() {
         val s = surface ?: return
-        releasePlayer()
+        releasePlayer(); fxEq?.runCatching { release() }; fxEq = null
         if (playIndex > extras.size) playIndex = 0
         val clip = if (playIndex == 0) source else extras[playIndex - 1].uri
         player = MediaPlayer().apply {
             runCatching {
                 setDataSource(this@VideoEditorActivity, clip); setSurface(s); isLooping = false
                 setOnPreparedListener { mp ->
-                    prepared = true; if (playIndex == 0) seekTo(this@VideoEditorActivity.start.toInt()) else extras.getOrNull(playIndex - 1)?.let { if (it.from > 0) seekTo(it.from.toInt()) }; if (pendingSeek >= 0) { seekTo(pendingSeek.toInt()); pendingSeek = -1 }; applySound(); layoutVideo(); arrived()
+                    prepared = true; applySound(); if (playIndex == 0) seekTo(this@VideoEditorActivity.start.toInt()) else extras.getOrNull(playIndex - 1)?.let { if (it.from > 0) seekTo(it.from.toInt()) }; if (pendingSeek >= 0) { seekTo(pendingSeek.toInt()); pendingSeek = -1 }; applySound(); layoutVideo(); arrived()
                     if (autoPlay) { autoPlay = false; val sp = if (playIndex == 0) speed else extras.getOrNull(playIndex - 1)?.speed ?: 1f; if (sp != 1f) runCatching { mp.playbackParams = mp.playbackParams.setSpeed(sp) }; mp.start(); musicPlayer?.runCatching { start() }; playIcon.path = "M8 6v12 M16 6v12" }
                 }
                 setOnCompletionListener { if (playIndex == 0 && extras.isEmpty()) seekTo(this@VideoEditorActivity.start.toInt()) else playClip(nextOf(playIndex)) }
@@ -628,7 +630,12 @@ class VideoEditorActivity : ComponentActivity() {
         val m = music ?: return
         musicPlayer = runCatching { MediaPlayer().apply { setDataSource(this@VideoEditorActivity, m); isLooping = true; prepare() } }.getOrElse { notice("เปิดเพลงนี้ไม่ได้"); music = null; null }
     }
-    private fun applySound() { val v = if (keepSound) volume.coerceAtMost(1f) else 0f; player?.runCatching { setVolume(v, v) }; musicPlayer?.runCatching { setVolume(musicVolume.coerceAtMost(1f), musicVolume.coerceAtMost(1f)) } }
+    private fun applySound() {
+        val clipVol = if (playIndex == 0) volume.coerceAtMost(1f) else 1f
+        val v = if (keepSound && !isMuted(playIndex) && recorder == null) clipVol else 0f; player?.runCatching { setVolume(v, v) }
+        val m = if (recorder == null) musicVolume.coerceAtMost(1f) * duckGain() else 0f; musicPlayer?.runCatching { setVolume(m, m) }
+        previewEq()
+    }
     private fun togglePlay() {
         val p = player ?: return; if (!prepared) return
         if (p.isPlaying) { p.pause(); musicPlayer?.pause(); syncLayerSound(false); playIcon.path = "M9 6.5v11l9-5.5z" }
@@ -705,6 +712,48 @@ class VideoEditorActivity : ComponentActivity() {
         captionView.text = caption; captionView.setTextColor(textColor); captionView.visibility = if (caption.isBlank()) View.GONE else View.VISIBLE
         layoutVideo(); if (::timeLabel.isInitialized) showTime()
     }
+
+    // ---------- Sound studio ----------
+    /** Bass, middle and treble of the clips' own sound in dB (-12..12). */
+    private val eq = FloatArray(3)
+    private var lowCut = false; private var voice = false; private var duck = true; private var mainMuted = false
+    private var fxEq: android.media.audiofx.Equalizer? = null
+    private fun audioSettings() = StudioAudio.Settings(eq[0], eq[1], eq[2], lowCut, voice)
+    /** The equaliser on the preview: the phone's own equaliser on the player, its bands set from the three sliders. */
+    private fun previewEq() {
+        val p = player ?: return
+        if (eq.all { it == 0f }) { fxEq?.runCatching { enabled = false }; return }
+        val e = fxEq?.takeIf { runCatching { it.id; true }.getOrDefault(false) } ?: runCatching { android.media.audiofx.Equalizer(0, p.audioSessionId) }.getOrNull()?.also { fxEq = it } ?: return
+        runCatching {
+            val (lo, hi) = e.bandLevelRange.let { it[0].toInt() to it[1].toInt() }
+            for (b in 0 until e.numberOfBands) { val hz = e.getCenterFreq(b.toShort()) / 1000f
+                val db = when { hz < 400 -> eq[0]; hz < 3500 -> eq[1]; else -> eq[2] }
+                e.setBandLevel(b.toShort(), (db * 100).toInt().coerceIn(lo, hi).toShort()) }
+            e.enabled = true
+        }
+    }
+    /** Clip number [k] (0 = the first clip) plays without its sound or with it again. */
+    private fun setMuted(k: Int, on: Boolean) { if (k == 0) mainMuted = on else extras.getOrNull(k - 1)?.muted = on; applySound() }
+    private fun isMuted(k: Int) = if (k == 0) mainMuted else extras.getOrNull(k - 1)?.muted == true
+    /**
+     * Moves the sound of the clip on screen to a sound layer at the same time, and silences the clip. The layer can
+     * then be dragged earlier or later on the timeline, so the sound starts before the picture (J-cut) or carries on
+     * over the next clip (L-cut), or be trimmed and faded on its own.
+     */
+    private fun detachSound() {
+        val k = playIndex; val e = extras.getOrNull(k - 1)
+        if (isMuted(k)) { notice("คลิปนี้ไม่มีเสียงให้แยกแล้ว"); return }
+        val sp = e?.speed ?: speed
+        if (sp != 1f) { notice("แยกเสียงได้เฉพาะคลิปความเร็วปกติ"); return }
+        if (e == null && cutValid()) { notice("คลิปนี้ตัดช่วงกลางออกแล้ว จึงแยกเสียงไม่ได้"); return }
+        val src = e?.uri ?: source; val from = e?.from ?: start; val len = e?.len ?: mainLen()
+        var at = 0L; for (o in order()) { if (o == k) break; at += lenOf(o) }
+        layers += VideoLayer(VideoLayer.SOUND, src, at, len, from, volume = if (e == null) volume else 1f)
+        setMuted(k, true); layerPick = layers.size - 1; rebuildLayers(); refreshTimeline()
+        notice("แยกเสียงเป็นแถบสีม่วงแล้ว · ลากแถบเพื่อให้เสียงมาก่อนหรือต่อเลยภาพ")
+    }
+    /** The music goes down to 30 % while a sound layer plays, in the preview the same way as in the export. */
+    private fun duckGain(): Float = if (!duck) 1f else StudioAudio.duck(outNow(), layers.filter { it.audible && it.volume > 0f }.map { it.at to it.end })
 
     // ---------- Colour studio ----------
     private val grade = StudioGrade()
@@ -901,7 +950,7 @@ class VideoEditorActivity : ComponentActivity() {
         if (i in 0..2 && playIndex != 0 && !switching) playClip(0, false)
         // The layer lanes need room; the preview gives way smoothly.
         if (i != COLOR_TOOL) { handler.removeCallbacks(histTick); hist = null }
-        val want = dp(if (i == LAYER_TOOL) 276 else if (i == COLOR_TOOL) 268 else if (i == 2 && speed < 1f) 150 else 124)
+        val want = dp(if (i == LAYER_TOOL) 276 else if (i == COLOR_TOOL) 268 else if (i == 9) 236 else if (i == 2 && speed < 1f) 150 else 124)
         if (tools.layoutParams.height != want) {
             if (!animate || Glass.reduced(this)) { tools.layoutParams.height = want; tools.requestLayout() }
             else android.animation.ValueAnimator.ofInt(tools.layoutParams.height, want).apply { duration = 260; interpolator = Glass.EASE
@@ -1065,17 +1114,30 @@ class VideoEditorActivity : ComponentActivity() {
     }
     /** Loudness of the clip's sound and of the music, 0–200 %. */
     private fun soundTools(col: LinearLayout) {
-        fun row(icon: String, label: String, value: Float, enabled: Boolean, set: (Float) -> Unit) {
+        col.gravity = Gravity.TOP
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        col.addView(android.widget.ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(box) }, LinearLayout.LayoutParams(-1, 0, 1f))
+        fun row(icon: String, label: String, steps: List<String>, at: Int, enabled: Boolean, set: (Int) -> Unit) {
             val r = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), 0, dp(12), 0); alpha = if (enabled) 1f else 0.4f }
             r.addView(IconView(this, icon, 2f).apply { tint = Glass.TEXT2 }, dp(20), dp(20))
             r.addView(text(label, 12f, Glass.TEXT2, true).apply { setPadding(dp(8), 0, 0, 0) }, dp(84), -2)
-            r.addView(GlassSlider(this).apply { values = (0..200 step 5).map { "$it%" }; index = (value * 20).roundToInt(); grad = intArrayOf(0xff8e8e93.toInt(), Glass.ACCENT); contentDescription = label; isEnabled = enabled
-                onChange = { i -> set(i / 20f); applySound() } }, LinearLayout.LayoutParams(0, dp(44), 1f))
-            col.addView(r, -1, -2)
+            r.addView(GlassSlider(this).apply { values = steps; index = at; grad = intArrayOf(0xff8e8e93.toInt(), Glass.ACCENT); contentDescription = label; isEnabled = enabled
+                onChange = { i -> set(i); applySound() } }, LinearLayout.LayoutParams(0, dp(40), 1f))
+            box.addView(r, -1, -2)
         }
-        row(Icons.SOUND, "เสียงคลิป", volume, hasAudio && keepSound) { volume = it }
-        row(EditorKit.MUSIC, "เพลง", musicVolume, music != null) { musicVolume = it }
-        if (music == null) col.addView(text("เลือกเพลงได้ที่แท็บเพลง", 11.5f, Glass.TEXT3).apply { gravity = Gravity.CENTER }, -1, -2)
+        val pct = (0..200 step 5).map { "$it%" }
+        row(Icons.SOUND, "เสียงคลิปแรก", pct, (volume * 20).roundToInt(), hasAudio && keepSound) { volume = it / 20f }
+        row(EditorKit.MUSIC, "เพลง", pct, (musicVolume * 20).roundToInt(), music != null) { musicVolume = it / 20f }
+        val db = (-12..12).map { if (it > 0) "+$it dB" else "$it dB" }
+        listOf("เสียงทุ้ม", "เสียงกลาง", "เสียงแหลม").forEachIndexed { k, n -> row("M4 18V9 M12 18V5 M20 18v-7 M2 9h4 M10 5h4 M18 11h4", n, db, eq[k].roundToInt() + 12, keepSound) { eq[k] = (it - 12).toFloat() } }
+        val toggles = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(dp(8), dp(6), dp(8), dp(4)) }
+        fun toggle(label: String, on: Boolean, f: () -> Unit) = toggles.addView(text(label, 12f, if (on) Glass.ACCENT else Color.WHITE, on).apply { gravity = Gravity.CENTER; background = glass(16, if (on) Glass.ACCENT_SOFT else 0x26ffffff)
+            setPadding(dp(12), 0, dp(12), 0); isClickable = true; glassTouch(); contentDescription = label; setOnClickListener { f(); applySound(); showTool(9, false) } }, LinearLayout.LayoutParams(-2, dp(34)).apply { setMargins(dp(3), 0, dp(3), 0) })
+        toggle("ตัดเสียงลม/หึ่ง", lowCut) { lowCut = !lowCut }
+        toggle("เสียงพูดชัด", voice) { voice = !voice }
+        toggle("ลดเพลงตอนมีเสียงพูด", duck) { duck = !duck }
+        box.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(toggles) }, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.CENTER_HORIZONTAL })
+        box.addView(text("ตัดเสียงลมและเสียงพูดชัดมีผลในไฟล์ที่ส่งออก · พรีวิวได้ยินเฉพาะอีควอไลเซอร์และการลดเพลง", 11f, Glass.TEXT3).apply { gravity = Gravity.CENTER; setPadding(dp(16), dp(2), dp(16), dp(8)) }, -1, -2)
     }
     private fun musicTools(col: LinearLayout) {
         if (music != null) col.addView(text(musicName, 12f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.MIDDLE; setPadding(dp(16), 0, dp(16), dp(6)) }, -1, -2)
@@ -1095,7 +1157,7 @@ class VideoEditorActivity : ComponentActivity() {
         grade.lut = if (path.isEmpty()) null else if (path == lutPath && keep.lut != null) keep.lut else runCatching { java.io.File(path).reader().use { CubeLut.read(it) } }.getOrNull()
         lutPath = if (grade.lut == null) "" else path
     }
-    private fun changed() = start != 0L || end != duration || split >= 0 || speed != 1f || cropIndex != 0 || caption.isNotBlank() || film != null || music != null || !keepSound || looked() || turns != 0 || mirror || volume != 1f || cutValid() || extras.isNotEmpty() || stickers.isNotEmpty() || layers.isNotEmpty() || markers.isNotEmpty() || fx.any { it > 0f } || grade.active()
+    private fun changed() = start != 0L || end != duration || split >= 0 || speed != 1f || cropIndex != 0 || caption.isNotBlank() || film != null || music != null || !keepSound || looked() || turns != 0 || mirror || volume != 1f || cutValid() || extras.isNotEmpty() || stickers.isNotEmpty() || layers.isNotEmpty() || markers.isNotEmpty() || fx.any { it > 0f } || grade.active() || audioSettings().active || mainMuted
 
     // ---------- Clips, transitions, stickers ----------
     /** The clips in playing order: the main one, then the added ones, which can be moved or removed. */
@@ -1126,6 +1188,8 @@ class VideoEditorActivity : ComponentActivity() {
                 // "Earlier" and "later" follow the playing order, so a clip can also step over the clip the editor was opened with.
                 EditorKit.action(this, LEFT, "เลื่อนก่อน") { if (chosen == mainPos()) mainAt = mainPos() + 1 else if (chosen > 0) { extras.add(chosen - 1, extras.removeAt(chosen)); playIndex = chosen }; showTime(); showTool(10, false) },
                 EditorKit.action(this, RIGHT, "เลื่อนหลัง") { if (chosen == mainPos() - 1) mainAt = mainPos() - 1 else if (chosen < extras.size - 1) { extras.add(chosen + 1, extras.removeAt(chosen)); playIndex = chosen + 2 }; showTime(); showTool(10, false) },
+                EditorKit.action(this, Icons.SOUND, if (e.muted) "เปิดเสียง" else "ปิดเสียง", e.muted) { setMuted(chosen + 1, !e.muted); showTool(10, false) },
+                EditorKit.action(this, "M4 12h6 M14 12h6 M10 8v8 M14 8v8", "แยกเสียง") { detachSound(); showTool(10, false) },
                 EditorKit.action(this, Icons.CLOSE, "ลบ") { extras.removeAt(chosen); if (chosen < mainPos()) mainAt = mainPos() - 1; go(if (chosen < extras.size) chosen + 1 else chosen) })), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(2) })
         } else col.addView(EditorKit.actionRow(this, listOf(
             // Splitting the first clip turns its second half into a clip of its own, which can then be moved, trimmed or removed.
@@ -1135,7 +1199,9 @@ class VideoEditorActivity : ComponentActivity() {
                 extraCache.getOrPut(source.toString()) { Extra(source, duration, videoW, videoH, "คลิปแรก", firstFrame) }
                 extras.add(mainPos(), Extra(source, duration, videoW, videoH, "คลิปแรก", firstFrame).also { it.from = start; it.to = end }); go(mainPos() + 1) },
             EditorKit.action(this, LEFT, "เลื่อนก่อน") { if (mainPos() > 0) mainAt = mainPos() - 1; showTime(); showTool(10, false) },
-            EditorKit.action(this, RIGHT, "เลื่อนหลัง") { if (mainPos() < extras.size) mainAt = mainPos() + 1; showTime(); showTool(10, false) })), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(2) })
+            EditorKit.action(this, RIGHT, "เลื่อนหลัง") { if (mainPos() < extras.size) mainAt = mainPos() + 1; showTime(); showTool(10, false) },
+            EditorKit.action(this, Icons.SOUND, if (mainMuted) "เปิดเสียง" else "ปิดเสียง", mainMuted) { setMuted(0, !mainMuted); showTool(10, false) },
+            EditorKit.action(this, "M4 12h6 M14 12h6 M10 8v8 M14 8v8", "แยกเสียง") { detachSound(); showTool(10, false) })), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(2) })
     }
     /** Cuts the clip on screen in two at the playhead. The two halves stay next to each other and can then be moved, trimmed or removed separately. */
     private fun splitAtPlayhead() {
@@ -1342,6 +1408,7 @@ class VideoEditorActivity : ComponentActivity() {
     /** Plays layer sounds along with the preview. */
     private fun syncLayerSound(playing: Boolean) {
         if (layers.none { it.audible }) return
+        if (duck && music != null && recorder == null) musicPlayer?.runCatching { val m = musicVolume.coerceAtMost(1f) * duckGain(); setVolume(m, m) }
         val now = outNow()
         layers.forEachIndexed { i, l ->
             if (!l.audible) return@forEachIndexed
@@ -1621,7 +1688,7 @@ class VideoEditorActivity : ComponentActivity() {
         return VideoEdit.composition(VideoEditSpec(f?.let { Uri.fromFile(it.file) } ?: source, at(from), at(to), if (turns % 2 == 1) vh else vw, if (turns % 2 == 1) vw else vh,
         speed * n, CROPS[cropIndex].second, caption, place, textColor, textBig, if (looked()) colour() else null, music, f == null && hasAudio && keepSound && speed in SOUND_MIN..SOUND_MAX,
         turns, mirror, volume, musicVolume, if (cut) at(cutFrom) else -1L, if (cut) at(cutTo) else -1L, textBox,
-        extras.map { VideoPart(it.uri, it.from, it.to, it.speed) }, if (extras.isEmpty()) 0 else transition, stickers.toList(), clampedLayers(), shrinkShort, shrinkFps, mainPos(), fx[0], fx[1], fx[2], grade = if (grade.active()) gradeCube(33) else null), applicationContext)
+        extras.map { VideoPart(it.uri, it.from, it.to, it.speed, it.muted) }, if (extras.isEmpty()) 0 else transition, stickers.toList(), clampedLayers(), shrinkShort, shrinkFps, mainPos(), fx[0], fx[1], fx[2], grade = if (grade.active()) gradeCube(33) else null, audio = audioSettings(), mainMuted = mainMuted, duck = duck && music != null), applicationContext)
     }
 
     /** Export problems stay on screen until dismissed, so the reason can be read (and reported). */
@@ -1632,7 +1699,7 @@ class VideoEditorActivity : ComponentActivity() {
     // ---------- Lifecycle ----------
     override fun onPause() { player?.let { if (it.isPlaying) togglePlay() }; if (prog != null) th.ogay.luma.ai.AiPace.watching = false; super.onPause(); if (::trim.isInitialized && overlay == null) saveProject() }
     override fun onResume() { super.onResume(); if (prog != null) th.ogay.luma.ai.AiPace.watching = true }
-    override fun onDestroy() { recorder?.runCatching { stop() }; recorder?.runCatching { release() }; recorder = null; handler.removeCallbacksAndMessages(null); releasePlayer(); musicPlayer?.runCatching { release() }; releaseLayerSound(); super.onDestroy() }
+    override fun onDestroy() { fxEq?.runCatching { release() }; fxEq = null; recorder?.runCatching { stop() }; recorder?.runCatching { release() }; recorder = null; handler.removeCallbacksAndMessages(null); releasePlayer(); musicPlayer?.runCatching { release() }; releaseLayerSound(); super.onDestroy() }
     override fun onSaveInstanceState(out: Bundle) {
         super.onSaveInstanceState(out); writeState(out)
         out.putString("projectId", projectId); out.putString("projectName", projectName)
@@ -1643,9 +1710,9 @@ class VideoEditorActivity : ComponentActivity() {
         out.putString("caption", caption); out.putInt("place", place); out.putInt("textColor", textColor); out.putBoolean("big", textBig)
         out.putString("film", film?.id); out.putFloat("strength", filmStrength); out.putString("music", music?.toString()); out.putString("musicName", musicName)
         out.putBoolean("sound", keepSound); out.putInt("tool", tool)
-        out.putFloatArray("adjust", adjust); out.putFloatArray("fx", fx); out.putFloatArray("curves", grade.curves.copyOf()); out.putFloatArray("hsl", grade.hsl.copyOf()); out.putFloatArray("wheels", grade.wheels.copyOf()); out.putString("lutPath", lutPath); out.putString("lutName", lutName); out.putFloat("lutAmount", grade.lutAmount); out.putInt("turns", turns); out.putBoolean("mirror", mirror); out.putFloat("volume", volume); out.putFloat("musicVolume", musicVolume)
+        out.putFloatArray("adjust", adjust); out.putFloatArray("fx", fx); out.putFloatArray("curves", grade.curves.copyOf()); out.putFloatArray("hsl", grade.hsl.copyOf()); out.putFloatArray("wheels", grade.wheels.copyOf()); out.putString("lutPath", lutPath); out.putString("lutName", lutName); out.putFloat("lutAmount", grade.lutAmount); out.putFloatArray("eq", eq.copyOf()); out.putBoolean("lowCut", lowCut); out.putBoolean("voice", voice); out.putBoolean("duck", duck); out.putBoolean("mainMuted", mainMuted); out.putInt("turns", turns); out.putBoolean("mirror", mirror); out.putFloat("volume", volume); out.putFloat("musicVolume", musicVolume)
         out.putLong("cutFrom", cutFrom); out.putLong("cutTo", cutTo); out.putBoolean("textBox", textBox)
-        out.putStringArrayList("extras", ArrayList(extras.map { it.uri.toString() })); out.putStringArrayList("extraRanges", ArrayList(extras.map { "${it.from},${it.to},${it.speed}" })); out.putInt("mainAt", mainAt); out.putStringArrayList("markers", ArrayList(markers.map { it.toString() })); out.putInt("transition", transition)
+        out.putStringArrayList("extras", ArrayList(extras.map { it.uri.toString() })); out.putStringArrayList("extraRanges", ArrayList(extras.map { "${it.from},${it.to},${it.speed}," + (if (it.muted) "m" else "") })); out.putInt("mainAt", mainAt); out.putStringArrayList("markers", ArrayList(markers.map { it.toString() })); out.putInt("transition", transition)
         out.putStringArrayList("stickers", ArrayList(stickers.map { "${it.x}|${it.y}|${it.big}|${it.text}" }))
         out.putString("layers", VideoLayer.save(layers)); out.putInt("layerPick", layerPick); out.putBoolean("smooth", smooth)
     }
@@ -1654,7 +1721,7 @@ class VideoEditorActivity : ComponentActivity() {
         caption = s.getString("caption") ?: ""; place = s.getInt("place", 2); textColor = s.getInt("textColor", Color.WHITE); textBig = s.getBoolean("big")
         film = Films.byId(s.getString("film")); filmStrength = s.getFloat("strength", 1f); music = s.getString("music")?.let { Uri.parse(it) }; musicName = s.getString("musicName") ?: ""
         keepSound = s.getBoolean("sound", true); tool = s.getInt("tool")
-        s.getFloatArray("adjust")?.takeIf { it.size == adjust.size }?.copyInto(adjust); fx.fill(0f); restoreGrade(s); s.getFloatArray("fx")?.takeIf { it.size == fx.size }?.copyInto(fx); turns = s.getInt("turns"); mirror = s.getBoolean("mirror"); volume = s.getFloat("volume", 1f); musicVolume = s.getFloat("musicVolume", 1f)
+        s.getFloatArray("adjust")?.takeIf { it.size == adjust.size }?.copyInto(adjust); fx.fill(0f); restoreGrade(s); eq.fill(0f); s.getFloatArray("eq")?.takeIf { it.size == 3 }?.copyInto(eq); lowCut = s.getBoolean("lowCut"); voice = s.getBoolean("voice"); duck = s.getBoolean("duck", true); mainMuted = s.getBoolean("mainMuted"); s.getFloatArray("fx")?.takeIf { it.size == fx.size }?.copyInto(fx); turns = s.getInt("turns"); mirror = s.getBoolean("mirror"); volume = s.getFloat("volume", 1f); musicVolume = s.getFloat("musicVolume", 1f)
         cutFrom = s.getLong("cutFrom", -1L); cutTo = s.getLong("cutTo", -1L); textBox = s.getBoolean("textBox")
         transition = s.getInt("transition"); stickers.clear(); mainAt = s.getInt("mainAt")
         markers.clear(); s.getStringArrayList("markers")?.mapNotNullTo(markers) { it.toLongOrNull() }
