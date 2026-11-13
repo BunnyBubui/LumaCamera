@@ -936,6 +936,7 @@ class VideoEditorActivity : ComponentActivity() {
     private var lutPath = ""; private var lutName = ""
     private var colourTab = 0; private var curveChannel = 0; private var hslBand = 0; private var wheelRange = 1
     private var hist: HistView? = null
+    private var scopeMode = 0
     private var lastCube: Array<Array<IntArray>>? = null
     private fun gradeCube(n: Int) = grade.build(if (looked()) colour().array else null, n)
     @androidx.annotation.RequiresApi(33)
@@ -969,19 +970,32 @@ class VideoEditorActivity : ComponentActivity() {
         }
     }
     /** Brightness spread of the picture on screen, after the look: red, green and blue, dark on the left, bright on the right. */
+    /**
+     * Scopes of the picture on screen, after the look. Mode 0 histogram: how many pixels at each brightness, per colour.
+     * Mode 1 waveform: brightness (up) of every column of the picture (across). Mode 2 vectorscope: hue (angle) and
+     * saturation (distance from the centre) of every pixel, with a line where skin tones fall.
+     */
     private class HistView(c: Context) : View(c) {
+        var mode = 0
         private val bins = Array(3) { FloatArray(64) }
+        private var dots: FloatArray = FloatArray(0); private var dotCount = 0
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG); private val path = Path()
         private val colors = intArrayOf(0x99ff5a5a.toInt(), 0x9952d96b.toInt(), 0x995a9bff.toInt())
-        init { contentDescription = "ฮิสโตแกรม" }
+        init { contentDescription = "กราฟสีของภาพ แตะเพื่อเปลี่ยนแบบ" }
         fun feed(b: Bitmap, cube: Array<Array<IntArray>>?) {
             bins.forEach { it.fill(0f) }
             val w = b.width; val h = b.height; val px = IntArray(w * h); b.getPixels(px, 0, w, 0, 0, w, h)
             val n = cube?.size ?: 0
-            for (p in px) {
+            if (dots.size < px.size * 2) dots = FloatArray(px.size * 2); dotCount = 0
+            for ((idx, p) in px.withIndex()) {
                 var c = p
                 if (cube != null) c = cube[((p shr 16 and 255) * (n - 1) + 127) / 255][((p shr 8 and 255) * (n - 1) + 127) / 255][((p and 255) * (n - 1) + 127) / 255]
-                bins[0][(c shr 16 and 255) shr 2]++; bins[1][(c shr 8 and 255) shr 2]++; bins[2][(c and 255) shr 2]++
+                val r = c shr 16 and 255; val g = c shr 8 and 255; val bl = c and 255
+                bins[0][r shr 2]++; bins[1][g shr 2]++; bins[2][bl shr 2]++
+                when (mode) {
+                    1 -> { dots[dotCount++] = (idx % w).toFloat() / (w - 1); dots[dotCount++] = (0.2126f * r + 0.7152f * g + 0.0722f * bl) / 255f }
+                    2 -> { dots[dotCount++] = (-0.1687f * r - 0.3313f * g + 0.5f * bl) / 255f; dots[dotCount++] = (0.5f * r - 0.4187f * g - 0.0813f * bl) / 255f }
+                }
             }
             val top = bins.maxOf { a -> a.drop(1).dropLast(1).maxOrNull() ?: 1f }.coerceAtLeast(1f)
             bins.forEach { a -> for (i in a.indices) a[i] = (a[i] / top).coerceAtMost(1f) }
@@ -990,11 +1004,20 @@ class VideoEditorActivity : ComponentActivity() {
         override fun onDraw(c: Canvas) {
             val w = width.toFloat(); val h = height.toFloat()
             paint.style = Paint.Style.FILL; paint.color = 0x1fffffff; c.drawRoundRect(0f, 0f, w, h, h * 0.18f, h * 0.18f, paint)
-            paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.SCREEN)
-            bins.forEachIndexed { k, a -> path.reset(); path.moveTo(0f, h)
-                a.forEachIndexed { i, v -> path.lineTo(i * w / (a.size - 1), h - v * (h - 4)) }
-                path.lineTo(w, h); path.close(); paint.color = colors[k]; c.drawPath(path, paint) }
-            paint.xfermode = null
+            when (mode) {
+                0 -> { paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.SCREEN)
+                    bins.forEachIndexed { k, a -> path.reset(); path.moveTo(0f, h)
+                        a.forEachIndexed { i, v -> path.lineTo(i * w / (a.size - 1), h - v * (h - 4)) }
+                        path.lineTo(w, h); path.close(); paint.color = colors[k]; c.drawPath(path, paint) }
+                    paint.xfermode = null }
+                1 -> { paint.color = 0x55b4ffb4; var i = 0; while (i < dotCount) { c.drawRect(4 + dots[i] * (w - 8), h - 3 - dots[i + 1] * (h - 6), 5 + dots[i] * (w - 8), h - 2 - dots[i + 1] * (h - 6), paint); i += 2 } }
+                else -> { val cx = w / 2; val cy = h / 2; val r = h / 2 - 2
+                    paint.style = Paint.Style.STROKE; paint.strokeWidth = 1f; paint.color = 0x40ffffff; c.drawCircle(cx, cy, r, paint)
+                    // Skin tones sit near this line, whatever the skin colour.
+                    val a = Math.toRadians(123.0); paint.color = 0x80ffb070.toInt(); c.drawLine(cx, cy, cx + (r * Math.cos(a)).toFloat(), cy - (r * Math.sin(a)).toFloat(), paint)
+                    paint.style = Paint.Style.FILL; paint.color = 0x77ffffff
+                    var i = 0; while (i < dotCount) { val x = cx + dots[i] * 2 * r; val y = cy - dots[i + 1] * 2 * r; c.drawRect(x, y, x + 1.5f, y + 1.5f, paint); i += 2 } }
+            }
         }
     }
     private val histTick = object : Runnable { override fun run() {
@@ -1031,7 +1054,9 @@ class VideoEditorActivity : ComponentActivity() {
     private fun colourTools(col: LinearLayout) {
         col.gravity = Gravity.TOP
         val top = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(12), dp(2), dp(12), dp(4)) }
-        hist = HistView(this).also { top.addView(it, LinearLayout.LayoutParams(0, dp(40), 1f)) }
+        hist = HistView(this).also { v -> v.mode = scopeMode; v.isClickable = true
+            v.setOnClickListener { scopeMode = (scopeMode + 1) % 3; v.mode = scopeMode; notice(listOf("ฮิสโตแกรม", "เวฟฟอร์ม", "เวกเตอร์สโคป")[scopeMode]) }
+            top.addView(v, LinearLayout.LayoutParams(0, dp(40), 1f)) }
         top.addView(text("กดค้างดูต้นฉบับ", 11f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; background = glass(14, 0x26ffffff); setPadding(dp(10), 0, dp(10), 0); contentDescription = "กดค้างเพื่อดูภาพก่อนปรับสี"
             setOnTouchListener { v, e -> when (e.actionMasked) { MotionEvent.ACTION_DOWN -> { comparing = true; applyLook(); v.alpha = 0.6f }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { comparing = false; applyLook(); v.alpha = 1f } }; true } }, LinearLayout.LayoutParams(-2, dp(30)).apply { leftMargin = dp(8) })
