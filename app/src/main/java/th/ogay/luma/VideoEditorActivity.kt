@@ -716,6 +716,107 @@ class VideoEditorActivity : ComponentActivity() {
         layoutVideo(); if (::timeLabel.isInitialized) showTime()
     }
 
+    // ---------- Automatic analysis ----------
+    private var analysing = false
+    /** Where clip [k] starts in the finished video. */
+    private fun clipStart(k: Int): Long { var at = 0L; for (o in order()) { if (o == k) break; at += lenOf(o) }; return at }
+    /** The clip on screen as (file, from, to, speed); null when it cannot be cut into pieces (first clip with a speed change or a middle part taken out). */
+    private fun clipSpan(k: Int): List<Any>? { val e = extras.getOrNull(k - 1)
+        if (e != null) return listOf(e.uri, e.from, e.to, e.speed)
+        if (speed != 1f || cutValid()) return null
+        return listOf(source, start, end, 1f) }
+    /** Puts pieces [ranges] (ms of the source) in the place of clip [k], next to each other in the same order. */
+    private fun replaceWithRanges(k: Int, ranges: List<Pair<Long, Long>>) {
+        if (ranges.isEmpty()) return
+        val e = extras.getOrNull(k - 1)
+        if (e == null) {
+            start = ranges[0].first; end = ranges[0].second; split = -1
+            extraCache.getOrPut(source.toString()) { Extra(source, duration, videoW, videoH, "คลิปแรก", firstFrame) }
+            ranges.drop(1).forEachIndexed { j, (a, b) -> extras.add(mainPos() + j, Extra(source, duration, videoW, videoH, "คลิปแรก", firstFrame).also { it.from = a; it.to = b }) }
+        } else {
+            e.from = ranges[0].first; e.to = ranges[0].second; val wasBefore = k - 1 < mainPos()
+            ranges.drop(1).forEachIndexed { j, (a, b) -> extras.add(k + j, e.copy().also { it.from = a; it.to = b }) }
+            if (wasBefore) mainAt = mainPos() + ranges.size - 1
+        }
+        showClipOnBar(); trim.playhead = trim.playhead.coerceIn(trim.start, trim.end); showTime(); if (tool == 10) showTool(10, false)
+    }
+    /** Finds scene changes in the clip on screen by comparing the colours of frames 0.2 s apart, and marks them on the timeline. */
+    private fun findScenes() {
+        if (analysing) return
+        val k = playIndex; val span = clipSpan(k) ?: listOf(source, start, end, speed)
+        val uri = span[0] as Uri; val from = span[1] as Long; val to = span[2] as Long; val sp = span[3] as Float
+        analysing = true; notice("กำลังหาจุดเปลี่ยนฉาก…")
+        luma.readIo.execute {
+            val step = 200L
+            val cuts = runCatching {
+                LayerFrames(this, uri, from, 64).use { f ->
+                    var prev: FloatArray? = null; val diffs = ArrayList<Float>(); val px = IntArray(f.bitmap.width * f.bitmap.height); var t = 0L
+                    while (from + t < to && !isDestroyed) {
+                        f.advance(t * 1000); f.bitmap.getPixels(px, 0, f.bitmap.width, 0, 0, f.bitmap.width, f.bitmap.height)
+                        val h = FloatArray(48); for (p in px) { h[(p shr 16 and 255) shr 4]++; h[16 + ((p shr 8 and 255) shr 4)]++; h[32 + ((p and 255) shr 4)]++ }
+                        for (i in h.indices) h[i] /= px.size.toFloat()
+                        diffs += prev?.let { a -> var d = 0f; for (i in h.indices) d += abs(h[i] - a[i]); d / 6f } ?: 0f
+                        prev = h; t += step
+                    }
+                    StudioMath.sceneCuts(diffs.toFloatArray(), step)
+                }
+            }.getOrDefault(emptyList())
+            runOnUiThread {
+                analysing = false; if (isDestroyed) return@runOnUiThread
+                val base = clipStart(k); val added = cuts.map { base + (it / sp).toLong() }.filter { m -> markers.none { abs(it - m) < 200 } }
+                markers += added; markers.sort(); refreshTimeline()
+                notice(if (added.isEmpty()) "ไม่พบจุดเปลี่ยนฉากในคลิปนี้" else "พบ ${added.size} จุดเปลี่ยนฉาก · ปักมาร์กเกอร์ไว้แล้ว แตะ \"แยกตามมาร์กเกอร์\" เพื่อตัดเป็นคลิปย่อย")
+            }
+        }
+    }
+    /** Cuts the clip on screen at every marker inside it. */
+    private fun splitAtMarkers() {
+        val k = playIndex; val span = clipSpan(k) ?: run { notice("คลิปนี้ปรับความเร็วหรือตัดช่วงกลางแล้ว จึงแยกอัตโนมัติไม่ได้"); return }
+        val from = span[1] as Long; val to = span[2] as Long; val sp = span[3] as Float; val base = clipStart(k)
+        val cuts = markers.map { from + ((it - base) * sp).toLong() }.filter { it > from + 300 && it < to - 300 }.distinct().sorted()
+        if (cuts.isEmpty()) { notice("ไม่มีมาร์กเกอร์ในคลิปนี้"); return }
+        val edges = listOf(from) + cuts + to
+        replaceWithRanges(k, edges.zipWithNext())
+        notice("แยกเป็น ${edges.size - 1} คลิปแล้ว")
+    }
+    /** Takes the quiet stretches out of the clip on screen, leaving the pieces with sound next to each other. */
+    private fun cutSilence() {
+        if (analysing) return
+        val k = playIndex; val span = clipSpan(k) ?: run { notice("คลิปนี้ปรับความเร็วหรือตัดช่วงกลางแล้ว จึงตัดช่วงเงียบไม่ได้"); return }
+        val uri = span[0] as Uri; val from = span[1] as Long; val to = span[2] as Long
+        if (isMuted(k)) { notice("คลิปนี้ปิดเสียงอยู่"); return }
+        val done = { pk: FloatArray? ->
+            analysing = false
+            if (pk == null || pk.isEmpty()) notice("คลิปนี้ไม่มีเสียงให้วิเคราะห์")
+            else {
+                val keep = StudioMath.keepRanges(pk, AudioPeaks.STEP_MS.toLong(), from, to)
+                when {
+                    keep.isEmpty() -> notice("ทั้งคลิปเงียบเกินไป จึงไม่ตัด")
+                    keep.size == 1 && keep[0].first == from && keep[0].second == to -> notice("ไม่พบช่วงเงียบที่ยาวพอจะตัด")
+                    else -> { val removed = (to - from) - keep.sumOf { it.second - it.first }; replaceWithRanges(k, keep); notice("ตัดช่วงเงียบออก ${clock(removed)} · เหลือ ${keep.size} ช่วง") }
+                }
+            }
+        }
+        AudioPeaks.get(uri)?.let { done(it); return }
+        analysing = true; notice("กำลังฟังหาช่วงเงียบ…")
+        AudioPeaks.load(this, uri, luma.readIo) { runOnUiThread { if (!isDestroyed) done(AudioPeaks.get(uri)) } }
+    }
+    /** Marks the beats of the music on the timeline, so clip edges and layers snap to them. */
+    private fun markBeats() {
+        val m = music ?: run { notice("เลือกเพลงก่อน"); return }
+        val run = { pk: FloatArray ->
+            val loop = pk.size.toLong() * AudioPeaks.STEP_MS; val total = totalOut(); val beats = StudioMath.beats(pk, AudioPeaks.STEP_MS.toLong())
+            val all = ArrayList<Long>(); var base = 0L
+            while (loop > 0 && base < total && all.size < 400) { beats.forEach { if (base + it < total) all += base + it }; base += loop }
+            val added = all.filter { b -> markers.none { abs(it - b) < 120 } }
+            markers += added; markers.sort(); refreshTimeline()
+            notice(if (added.isEmpty()) "ไม่พบจังหวะที่ชัดในเพลงนี้" else "ปักมาร์กเกอร์ตามจังหวะเพลง ${added.size} จุด · ขอบคลิปและเลเยอร์จะดูดเข้าหาจังหวะ")
+        }
+        AudioPeaks.get(m)?.let { run(it); return }
+        notice("กำลังฟังจังหวะเพลง…")
+        AudioPeaks.load(this, m, luma.readIo) { runOnUiThread { if (!isDestroyed) AudioPeaks.get(m)?.takeIf { it.isNotEmpty() }?.let(run) ?: notice("อ่านเสียงเพลงนี้ไม่ได้") } }
+    }
+
     // ---------- Sound studio ----------
     /** Bass, middle and treble of the clips' own sound in dB (-12..12). */
     private val eq = FloatArray(3)
@@ -1146,6 +1247,7 @@ class VideoEditorActivity : ComponentActivity() {
         if (music != null) col.addView(text(musicName, 12f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.MIDDLE; setPadding(dp(16), 0, dp(16), dp(6)) }, -1, -2)
         val items = mutableListOf<View>(EditorKit.action(this, EditorKit.MUSIC, if (music == null) "เลือกเพลง" else "เปลี่ยนเพลง", music != null) { pickMusic.launch(arrayOf("audio/*")) })
         if (hasAudio) items += EditorKit.action(this, Icons.SOUND, "เสียงคลิป", keepSound) { keepSound = !keepSound; applySound(); showTool(6, false) }
+        if (music != null) items += EditorKit.action(this, "M9 18V6l10-2v12 M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0 M19 16a3 3 0 1 1-6 0 3 3 0 0 1 6 0", "มาร์กจังหวะ") { markBeats() }
         if (music != null) items += EditorKit.action(this, Icons.CLOSE, "ลบเพลง") { music = null; musicName = ""; musicPlayer?.runCatching { release() }; musicPlayer = null; showTool(6, false) }
         col.addView(EditorKit.actions(this, items), -1, -2)
     }
@@ -1193,6 +1295,9 @@ class VideoEditorActivity : ComponentActivity() {
                 EditorKit.action(this, RIGHT, "เลื่อนหลัง") { if (chosen == mainPos() - 1) mainAt = mainPos() - 1 else if (chosen < extras.size - 1) { extras.add(chosen + 1, extras.removeAt(chosen)); playIndex = chosen + 2 }; showTime(); showTool(10, false) },
                 EditorKit.action(this, Icons.SOUND, if (e.muted) "เปิดเสียง" else "ปิดเสียง", e.muted) { setMuted(chosen + 1, !e.muted); showTool(10, false) },
                 EditorKit.action(this, "M4 12h6 M14 12h6 M10 8v8 M14 8v8", "แยกเสียง") { detachSound(); showTool(10, false) },
+                EditorKit.action(this, "M3 5h18v14H3z M12 5v14", "หาฉาก") { findScenes() },
+                EditorKit.action(this, "M7 4v16 M7 5h10l-2.5 3.5L17 12H7", "แยกตามมาร์กเกอร์") { splitAtMarkers() },
+                EditorKit.action(this, "M3 12h3 M18 12h3 M8 8v8 M12 5v14 M16 8v8", "ตัดช่วงเงียบ") { cutSilence() },
                 EditorKit.action(this, Icons.CLOSE, "ลบ") { extras.removeAt(chosen); if (chosen < mainPos()) mainAt = mainPos() - 1; go(if (chosen < extras.size) chosen + 1 else chosen) })), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(2) })
         } else col.addView(EditorKit.actionRow(this, listOf(
             // Splitting the first clip turns its second half into a clip of its own, which can then be moved, trimmed or removed.
@@ -1204,7 +1309,10 @@ class VideoEditorActivity : ComponentActivity() {
             EditorKit.action(this, LEFT, "เลื่อนก่อน") { if (mainPos() > 0) mainAt = mainPos() - 1; showTime(); showTool(10, false) },
             EditorKit.action(this, RIGHT, "เลื่อนหลัง") { if (mainPos() < extras.size) mainAt = mainPos() + 1; showTime(); showTool(10, false) },
             EditorKit.action(this, Icons.SOUND, if (mainMuted) "เปิดเสียง" else "ปิดเสียง", mainMuted) { setMuted(0, !mainMuted); showTool(10, false) },
-            EditorKit.action(this, "M4 12h6 M14 12h6 M10 8v8 M14 8v8", "แยกเสียง") { detachSound(); showTool(10, false) })), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(2) })
+            EditorKit.action(this, "M4 12h6 M14 12h6 M10 8v8 M14 8v8", "แยกเสียง") { detachSound(); showTool(10, false) },
+            EditorKit.action(this, "M3 5h18v14H3z M12 5v14", "หาฉาก") { findScenes() },
+            EditorKit.action(this, "M7 4v16 M7 5h10l-2.5 3.5L17 12H7", "แยกตามมาร์กเกอร์") { splitAtMarkers() },
+            EditorKit.action(this, "M3 12h3 M18 12h3 M8 8v8 M12 5v14 M16 8v8", "ตัดช่วงเงียบ") { cutSilence() })), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(2) })
     }
     /** Cuts the clip on screen in two at the playhead. The two halves stay next to each other and can then be moved, trimmed or removed separately. */
     private fun splitAtPlayhead() {

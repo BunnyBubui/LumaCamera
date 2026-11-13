@@ -95,3 +95,20 @@ class StudioMatteTest {
         assertEquals(0, px[0] ushr 24); assertEquals(255, px[20 * w + 2] ushr 24); assertEquals(255, px[2 * w + 20] ushr 24)
     }
 }
+
+class StudioAnalysisTest {
+    @Test fun sceneCutsFindTheJumpsOnly() {
+        val d = FloatArray(40) { 0.02f }; d[10] = 0.6f; d[11] = 0.3f; d[25] = 0.5f
+        assertEquals(listOf(2000L, 5000L), StudioMath.sceneCuts(d, 200))
+    }
+    @Test fun keepRangesTakeOutLongQuietWithPadding() {
+        val p = FloatArray(100) { if (it in 20 until 40) 0.01f else 0.5f } // 50 ms steps: quiet from 1000 to 2000 ms
+        assertEquals(listOf(0L to 1150L, 1850L to 5000L), StudioMath.keepRanges(p, 50, 0, 5000))
+        val short = FloatArray(100) { if (it in 20 until 30) 0.01f else 0.5f } // only 500 ms of quiet: kept
+        assertEquals(listOf(0L to 5000L), StudioMath.keepRanges(short, 50, 0, 5000))
+    }
+    @Test fun beatsFollowLoudRises() {
+        val p = FloatArray(80) { if (it % 10 == 0) 0.9f else 0.1f }
+        assertEquals(listOf(500L, 1000L, 1500L, 2000L, 2500L, 3000L, 3500L), StudioMath.beats(p, 50))
+    }
+}

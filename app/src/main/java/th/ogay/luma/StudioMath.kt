@@ -62,4 +62,49 @@ object StudioMath {
         fun stamp(ms: Long) = String.format(java.util.Locale.US, "%02d:%02d:%02d,%03d", ms / 3600000, ms / 60000 % 60, ms / 1000 % 60, ms % 1000)
         return cues.sortedBy { it.from }.mapIndexed { n, c -> "${n + 1}\n${stamp(c.from)} --> ${stamp(c.to)}\n${c.text}\n" }.joinToString("\n")
     }
+
+    // ---- Automatic analysis ----
+    /**
+     * Scene changes from the colour difference between each sampled frame and the one before ([diff], 0..1, one per
+     * [stepMs]): a change is a jump well above the typical difference, at least [minGapMs] after the previous one.
+     * Returns times in ms from the first sample.
+     */
+    fun sceneCuts(diff: FloatArray, stepMs: Long, minGapMs: Long = 800): List<Long> {
+        if (diff.size < 3) return emptyList()
+        val sorted = diff.sorted(); val typical = sorted[sorted.size / 2]
+        val bar = maxOf(0.18f, typical * 4f)
+        val out = ArrayList<Long>(); var last = -minGapMs
+        for (i in 1 until diff.size) { val t = i * stepMs; if (diff[i] >= bar && t - last >= minGapMs && diff[i] >= diff[i - 1]) { out += t; last = t } }
+        return out
+    }
+    /**
+     * Parts of [from, to) (ms) to keep when quiet stretches are taken out. [peaks] is loudness 0..1 per [stepMs] from
+     * the start of the file. A stretch counts as quiet when it stays under [quiet] for at least [minMs]; [padMs] of
+     * the quiet is kept at each side so words are not clipped. Pieces shorter than 300 ms are dropped.
+     */
+    fun keepRanges(peaks: FloatArray, stepMs: Long, from: Long, to: Long, quiet: Float = 0.06f, minMs: Long = 700, padMs: Long = 150): List<Pair<Long, Long>> {
+        val silent = ArrayList<Pair<Long, Long>>(); var runStart = -1L
+        var t = from - from % stepMs
+        while (t < to) {
+            val v = peaks.getOrElse((t / stepMs).toInt()) { 0f }
+            if (v < quiet) { if (runStart < 0) runStart = t } else { if (runStart >= 0 && t - runStart >= minMs) silent += runStart to t; runStart = -1 }
+            t += stepMs
+        }
+        if (runStart >= 0 && to - runStart >= minMs) silent += runStart to to
+        val keep = ArrayList<Pair<Long, Long>>(); var at = from
+        for ((a, b) in silent) { val cutA = maxOf(a + padMs, from); val cutB = minOf(b - padMs, to); if (cutB <= cutA) continue
+            if (cutA - at >= 300) keep += at to cutA; at = cutB }
+        if (to - at >= 300) keep += at to to
+        return keep
+    }
+    /** Beats: moments where the loudness rises sharply above the average of the last half second. Times in ms. */
+    fun beats(peaks: FloatArray, stepMs: Long, minGapMs: Long = 280): List<Long> {
+        val out = ArrayList<Long>(); val window = (500 / stepMs).toInt().coerceAtLeast(2); var last = -minGapMs
+        for (i in window until peaks.size) {
+            var avg = 0f; for (k in i - window until i) avg += peaks[k]; avg /= window
+            val t = i * stepMs
+            if (peaks[i] > 0.3f && peaks[i] > avg * 1.45f && peaks[i] >= peaks[i - 1] && t - last >= minGapMs) { out += t; last = t }
+        }
+        return out
+    }
 }
