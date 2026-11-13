@@ -497,7 +497,9 @@ class VideoEditorActivity : ComponentActivity() {
 
         val bar = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(10), dp(14), dp(6)) }
         bar.addView(EditorKit.round(this, Icons.CLOSE, "ปิดตัวตัดต่อ") { leave() }, dp(48), dp(48))
-        bar.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+        // Quiet status that appears for a moment each time the project has been saved on its own.
+        saveLabel = text("", 12f, Glass.TEXT3).apply { alpha = 0f; setPadding(dp(10), 0, 0, 0); importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
+        bar.addView(saveLabel, LinearLayout.LayoutParams(0, -2, 1f))
         undoButton = EditorKit.round(this, "M9 14L4 9l5-5 M4 9h10a6 6 0 0 1 0 12h-3", "ย้อนกลับ") { stepHistory(true) }
         redoButton = EditorKit.round(this, "M15 14l5-5-5-5 M20 9H10a6 6 0 0 0 0 12h3", "ทำซ้ำ") { stepHistory(false) }
         bar.addView(undoButton, LinearLayout.LayoutParams(dp(48), dp(48)).apply { rightMargin = dp(8) })
@@ -2165,6 +2167,7 @@ class VideoEditorActivity : ComponentActivity() {
 
     // ---------- Undo, redo and the saved project ----------
     private var projectId = ""; private var projectName = ""
+    private var saveLabel: TextView? = null
     private val undo = ArrayDeque<Bundle>(); private val redo = ArrayDeque<Bundle>()
     private var committed: Bundle? = null; private var committedKey = ""; private var pendingKey = ""
     private var applying = false
@@ -2209,14 +2212,22 @@ class VideoEditorActivity : ComponentActivity() {
         // A project file appears only once something was really edited; just opening a video leaves no trace.
         if (!changed() && !StudioProjects.exists(this, projectId)) return
         val snap = state(); val pic = firstFrame; val id = projectId; val name = projectName
-        luma.readIo.execute { runCatching { StudioProjects.save(applicationContext, id, name, source, snap, pic) } }
+        luma.readIo.execute {
+            val ok = runCatching { StudioProjects.save(applicationContext, id, name, source, snap, pic) }.isSuccess
+            if (ok) runOnUiThread { if (!isDestroyed) saveLabel?.let { l -> l.text = "บันทึกอัตโนมัติแล้ว"; l.animate().cancel(); l.alpha = 1f; l.animate().alpha(0f).setStartDelay(1800).setDuration(500).start() } }
+        }
     }
 
+    /**
+     * Leaving never asks and never loses work: the edit has been saved as a project all along (after every change,
+     * and again here), so the latest state is what opens next time from Home. Exporting stays a separate choice.
+     */
     private fun leave() {
         if (overlay != null) { goBackground(); return }
         if (!changed()) { finish(); return }
         saveProject()
-        EditorKit.askSave(this, "ส่งออกเป็นคลิปใหม่ไหม", "งานตัดต่อถูกเก็บเป็นโปรเจกต์แล้ว กลับมาแก้ต่อได้จากหน้าหลัก · วิดีโอต้นฉบับยังอยู่ครบ", "ส่งออก", { export() }, { finish() })
+        notice("บันทึกงานล่าสุดแล้ว · กลับมาตัดต่อต่อได้จากหน้าหลัก")
+        finish()
     }
 
     // ---------- Export ----------

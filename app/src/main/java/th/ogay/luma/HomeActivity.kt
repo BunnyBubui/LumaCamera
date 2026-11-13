@@ -119,8 +119,7 @@ class HomeActivity : ComponentActivity() {
         // Row 3: photo editor and AI (photo or video picked by the small switch).
         gap(10)
         val third = LinearLayout(this)
-        third.addView(block("ตัดต่อภาพ", "สี เส้นโค้ง ครอป", { pickFor("image", "image") }) { c ->
-            c.addView(chip(EditorKit.ADJUST, false), dp(38), dp(38)) }, LinearLayout.LayoutParams(0, dp(100), 1f))
+        third.addView(photoBlock { pickFor("image", "image") }, LinearLayout.LayoutParams(0, dp(100), 1f))
         third.addView(View(this), dp(10), 1)
         third.addView(aiBlock { video -> if (video) pickFor("video", "ai_video") else pickFor("image", "ai_image") }, LinearLayout.LayoutParams(0, dp(100), 1f))
         col.addView(third, -1, -2)
@@ -158,27 +157,26 @@ class HomeActivity : ComponentActivity() {
     private fun returnMode(m: PhotoMode) { setResult(RESULT_OK, Intent().putExtra(RESULT_MODE, m.name)); close() }
 
     // ---------- Pieces ----------
-    private fun cardBg(r: Int) = GradientDrawable().apply { cornerRadius = dp(r).toFloat(); setColor(0x0dffffff); setStroke(dp(1), 0x14ffffff) }
-
-    /** A clickable block with the quiet card look; [top] fills the upper part, the title and note sit at the bottom. */
-    private fun block(title: String, note: String, open: () -> Unit, top: (LinearLayout) -> Unit): FrameLayout = FrameLayout(this).apply {
-        background = cardBg(24); isClickable = true; contentDescription = "$title $note"; glassTouch(); clipToOutline = true
-        val c = LinearLayout(this@HomeActivity).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), dp(13), dp(14), dp(12)) }
-        val upper = LinearLayout(this@HomeActivity).apply { gravity = Gravity.CENTER_VERTICAL }
-        top(upper)
-        c.addView(upper, -1, -2)
-        c.addView(View(this@HomeActivity), LinearLayout.LayoutParams(1, 0, 1f))
-        c.addView(text(title, 15f, Glass.TEXT, true).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END })
-        addView(c, -1, -1)
+    /** A tool block: dark base with a soft light in the tool's colour, as on the mode cards. [fill] adds what is drawn on it. */
+    private fun toolCard(tint: Int, title: String, desc: String, open: () -> Unit, fill: FrameLayout.() -> Unit): FrameLayout = FrameLayout(this).apply {
+        background = ModeBackdrop(this@HomeActivity, tint, Motif.NONE, 24); clipToOutline = true
+        outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: android.graphics.Outline) = o.setRoundRect(0, 0, v.width, v.height, dp(24).toFloat()) }
+        isClickable = true; contentDescription = desc; glassTouch()
+        fill()
+        if (title.isNotEmpty()) addView(text(title, 15f, Glass.TEXT, true).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END },
+            FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM or Gravity.START).apply { leftMargin = dp(14); rightMargin = dp(10); bottomMargin = dp(12) })
         setOnClickListener { Glass.tick(this); open() }
         cards += this
     }
 
-    /** The 38dp icon square: neutral for ordinary tools, theme colour for AI. */
-    private fun chip(icon: String, accent: Boolean) = FrameLayout(this).apply {
-        background = GradientDrawable().apply { cornerRadius = dp(12).toFloat(); setColor(if (accent) Glass.alpha(Glass.ACCENT, 46) else 0x14ffffff) }
-        addView(IconView(this@HomeActivity, icon, 2f).apply { tint = if (accent) Glass.ACCENT else Glass.TEXT }, FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER))
+    /** The 36dp icon square: a dark glass tile with the tool's colour on the icon. */
+    private fun iconChip(icon: String, tint: Int) = FrameLayout(this).apply {
+        background = GradientDrawable().apply { cornerRadius = dp(12).toFloat(); setColor(0x4d000000); setStroke(dp(1), 0x1affffff) }
+        addView(IconView(this@HomeActivity, icon, 2f).apply { this.tint = tint }, FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER))
     }
+
+    private fun FrameLayout.putChip(icon: String, tint: Int, gravity: Int, left: Int = 12, top: Int = 12) =
+        addView(iconChip(icon, tint), FrameLayout.LayoutParams(dp(36), dp(36), gravity).apply { leftMargin = dp(left); topMargin = dp(top); rightMargin = dp(left) })
 
     private fun roundButton(icon: String, desc: String, click: () -> Unit) = FrameLayout(this).apply {
         isClickable = true; contentDescription = desc
@@ -207,20 +205,27 @@ class HomeActivity : ComponentActivity() {
         cards += this
     }
 
-    /** Gallery: the four newest photos as a small collage (grey squares until they load, or without permission). */
-    private fun galleryBlock(): View = FrameLayout(this).apply {
-        background = cardBg(24); isClickable = true; contentDescription = "แกลเลอรี รูปและวิดีโอทั้งหมด"; glassTouch(); clipToOutline = true
+    /** Gallery: the newest photos fill the whole card as a 2 × 2 mosaic (grey tiles until they load, or without permission). */
+    private fun galleryBlock(): View {
         val shades = intArrayOf(0xff5f5f66.toInt(), 0xff6b5a46.toInt(), 0xff55604a.toInt(), 0xff6b4f46.toInt())
-        val tiles = (0 until 4).map { i -> ImageView(this@HomeActivity).apply {
-            scaleType = ImageView.ScaleType.CENTER_CROP; clipToOutline = true
-            background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(shades[i], Theme.mix(shades[i], 0xff000000.toInt(), 0.6f))).apply { cornerRadius = dp(8).toFloat() }
-            outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: android.graphics.Outline) = o.setRoundRect(0, 0, v.width, v.height, dp(8).toFloat()) }
+        val tiles = (0 until 4).map { i -> ImageView(this).apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(shades[i], Theme.mix(shades[i], 0xff000000.toInt(), 0.6f)))
         } }
-        tiles.forEachIndexed { i, v -> addView(v, FrameLayout.LayoutParams(dp(36), dp(30)).apply { leftMargin = dp(10 + (i % 2) * 40); topMargin = dp(10 + (i / 2) * 34) }) }
-        addView(text("แกลเลอรี", 15f, Glass.TEXT, true), FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.START).apply { leftMargin = dp(14); bottomMargin = dp(12) })
-        setOnClickListener { Glass.tick(this); startActivity(Intent(this@HomeActivity, GalleryActivity::class.java).putExtra("from", "home")) }
-        cards += this
-        loadRecent(tiles)
+        return toolCard(0xff5f5f66.toInt(), "แกลเลอรี", "แกลเลอรี รูปและวิดีโอทั้งหมด", {
+            startActivity(Intent(this, GalleryActivity::class.java).putExtra("from", "home")) }) {
+            val mosaic = LinearLayout(this@HomeActivity).apply { orientation = LinearLayout.VERTICAL }
+            for (r in 0 until 2) {
+                val line = LinearLayout(this@HomeActivity)
+                line.addView(tiles[r * 2], LinearLayout.LayoutParams(0, -1, 1f).apply { rightMargin = dp(1) })
+                line.addView(tiles[r * 2 + 1], LinearLayout.LayoutParams(0, -1, 1f).apply { leftMargin = dp(1) })
+                mosaic.addView(line, LinearLayout.LayoutParams(-1, 0, 1f).apply { if (r == 0) bottomMargin = dp(1) })
+            }
+            addView(mosaic, -1, -1)
+            addView(View(this@HomeActivity).apply { background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0x0d000000, 0xb8000000.toInt())) }, -1, -1)
+            putChip(Icons.LIBRARY, Glass.TEXT, Gravity.TOP or Gravity.END, 10, 8)
+            loadRecent(tiles)
+        }
     }
 
     private fun mediaGranted(): Boolean {
@@ -248,43 +253,61 @@ class HomeActivity : ComponentActivity() {
         }
     }
 
-    /** Film: four colour dots standing for the looks, and the film icon. */
-    private fun filmBlock(): View = block("ฟิล์ม", "โทนสีและเกรนฟิล์ม", { returnMode(PhotoMode.FILM) }) { c ->
+    /** Film: amber light, perforation holes down both edges and four dots for the looks. */
+    private fun filmBlock(): View = toolCard(0xffe8b04a.toInt(), "ฟิล์ม", "ฟิล์ม โทนสีและเกรนฟิล์ม", { returnMode(PhotoMode.FILM) }) {
+        addView(Perforations(this@HomeActivity), FrameLayout.LayoutParams(-1, -1))
+        val dots = LinearLayout(this@HomeActivity).apply { gravity = Gravity.CENTER_VERTICAL }
         listOf(0xffb8893a, 0xff5a6f8a, 0xffa8707a, 0xff707070).forEachIndexed { i, col ->
-            c.addView(View(this).apply { background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(col.toInt()) } },
+            dots.addView(View(this@HomeActivity).apply { background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(col.toInt()) } },
                 LinearLayout.LayoutParams(dp(16), dp(16)).apply { if (i > 0) leftMargin = dp(5) })
         }
-        c.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
-        c.addView(IconView(this, Icons.FILM, 1.8f).apply { tint = Glass.TEXT }, dp(20), dp(20))
+        addView(dots, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply { leftMargin = dp(22); topMargin = dp(16) })
     }
 
-    /** Video editor: title, a projects chip that opens saved work, and a small timeline picture. */
-    private fun videoBlock(open: () -> Unit): View = FrameLayout(this).apply {
-        background = cardBg(24); isClickable = true; contentDescription = "ตัดต่อวิดีโอ เลเยอร์ สโลว์ 4K"; glassTouch()
-        val c = LinearLayout(this@HomeActivity).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(14), dp(16), dp(12)) }
-        val top = LinearLayout(this@HomeActivity).apply { gravity = Gravity.CENTER_VERTICAL }
-        val words = LinearLayout(this@HomeActivity).apply { orientation = LinearLayout.VERTICAL }
-        words.addView(text("ตัดต่อวิดีโอ", 16f, Glass.TEXT, true)); words.addView(text("เลเยอร์ สโลว์ 4K", 11.5f, Glass.TEXT3))
-        top.addView(words, LinearLayout.LayoutParams(0, -2, 1f))
-        val count = runCatching { StudioProjects.list(this@HomeActivity).size }.getOrDefault(0)
-        val projects = text(if (count > 0) "โปรเจกต์ $count งาน" else "โปรเจกต์", 12f, Glass.ACCENT).apply {
-            gravity = Gravity.CENTER; setPadding(dp(11), 0, dp(11), 0)
-            background = GradientDrawable().apply { cornerRadius = dp(14).toFloat(); setColor(Glass.alpha(Glass.ACCENT, 46)) } }
-        top.addView(FrameLayout(this@HomeActivity).apply {
-            isClickable = true; contentDescription = "โปรเจกต์วิดีโอ งานตัดต่อที่ทำค้างไว้"; glassTouch()
-            addView(projects, FrameLayout.LayoutParams(-2, dp(28), Gravity.CENTER))
-            setOnClickListener { Glass.tick(this); startActivity(Intent(this@HomeActivity, StudioProjectsActivity::class.java)) }
-        }, -2, dp(48))
-        c.addView(top, -1, -2)
-        c.addView(View(this@HomeActivity), LinearLayout.LayoutParams(1, 0, 1f))
-        c.addView(MiniTimeline(this@HomeActivity), LinearLayout.LayoutParams(dp(218), dp(30)))
-        addView(c, -1, -1)
-        setOnClickListener { Glass.tick(this); open() }
-        cards += this
+    /**
+     * Video editor: coral light, a small timeline picture, a chip that opens the project list and (once a project
+     * exists) a chip that goes straight back into the latest one. The editor saves its work by itself, so the latest
+     * project is always where you stopped.
+     */
+    private fun videoBlock(open: () -> Unit): View {
+        val coral = 0xffff6f91.toInt()
+        val chips = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        fun pill(label: String, filled: Boolean, desc: String, go: () -> Unit) = FrameLayout(this).apply {
+            isClickable = true; contentDescription = desc; glassTouch()
+            addView(text(label, 12f, if (filled) Glass.ON_ACCENT else coral, filled).apply { gravity = Gravity.CENTER; setPadding(dp(11), 0, dp(11), 0)
+                background = GradientDrawable().apply { cornerRadius = dp(14).toFloat(); setColor(if (filled) coral else Glass.alpha(coral, 46)) } }, FrameLayout.LayoutParams(-2, dp(28), Gravity.CENTER))
+            setOnClickListener { Glass.tick(this); go() }
+        }
+        val card = toolCard(coral, "", "ตัดต่อวิดีโอ เลเยอร์ สโลว์ 4K", open) {
+            val words = LinearLayout(this@HomeActivity).apply { orientation = LinearLayout.VERTICAL }
+            words.addView(text("ตัดต่อวิดีโอ", 16f, Glass.TEXT, true)); words.addView(text("เลเยอร์ สโลว์ 4K", 11.5f, Glass.TEXT3))
+            addView(words, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START).apply { leftMargin = dp(16); topMargin = dp(14) })
+            addView(chips, FrameLayout.LayoutParams(-2, dp(48), Gravity.TOP or Gravity.END).apply { topMargin = dp(4); rightMargin = dp(6) })
+            addView(MiniTimeline(this@HomeActivity, coral), FrameLayout.LayoutParams(dp(226), dp(34), Gravity.BOTTOM or Gravity.START).apply { leftMargin = dp(16); bottomMargin = dp(10) })
+        }
+        loader.execute {
+            val list = runCatching { StudioProjects.list(this) }.getOrDefault(emptyList())
+            runOnUiThread {
+                if (isDestroyed || list.isEmpty()) return@runOnUiThread
+                val last = list.firstOrNull { !it.missing }
+                if (last != null) chips.addView(pill("ต่อจากเดิม", true, "ต่อโปรเจกต์ล่าสุด ${last.name}") {
+                    startActivity(VideoEditorActivity.intent(this, last.source).putExtra("project", last.id)) })
+                chips.addView(pill("โปรเจกต์ ${list.size}", false, "โปรเจกต์วิดีโอ งานตัดต่อที่ทำค้างไว้") { startActivity(Intent(this, StudioProjectsActivity::class.java)) },
+                    LinearLayout.LayoutParams(-2, -2).apply { if (last != null) leftMargin = dp(4) })
+            }
+        }
+        return card
     }
 
-    /** AI sharpening: one block, with a small photo / video switch that decides what the gallery shows. */
+    /** Photo editor: lime light and three slider lines drawn faintly on the right. */
+    private fun photoBlock(open: () -> Unit): View = toolCard(0xffa6e05a.toInt(), "ตัดต่อภาพ", "ตัดต่อภาพ สี เส้นโค้ง ครอป", open) {
+        addView(SlidersArt(this@HomeActivity, 0xffa6e05a.toInt()), FrameLayout.LayoutParams(-1, -1))
+        putChip(EditorKit.ADJUST, 0xffa6e05a.toInt(), Gravity.TOP or Gravity.START)
+    }
+
+    /** AI sharpening: magenta light with faint sparkles and a small photo / video switch that decides what the gallery shows. */
     private fun aiBlock(open: (video: Boolean) -> Unit): View {
+        val mg = 0xffe58ae0.toInt()
         var video = prefs.getBoolean("home_ai_video", false)
         lateinit var self: FrameLayout
         lateinit var refresh: () -> Unit
@@ -298,15 +321,16 @@ class HomeActivity : ComponentActivity() {
         parts.forEach { (t, _) -> seg.addView(t, LinearLayout.LayoutParams(-2, dp(22))) }
         refresh = {
             parts.forEach { (t: TextView, v) -> val on = v == video
-                t.setTextColor(if (on) Glass.ACCENT else Glass.TEXT2)
-                t.background = if (on) GradientDrawable().apply { cornerRadius = dp(11).toFloat(); setColor(Glass.alpha(Glass.ACCENT, 46)) } else null }
+                t.setTextColor(if (on) mg else Glass.TEXT2)
+                t.background = if (on) GradientDrawable().apply { cornerRadius = dp(11).toFloat(); setColor(Glass.alpha(mg, 46)) } else null }
             self.contentDescription = "แต่งชัดด้วย AI ${if (video) "วิดีโอ" else "ภาพ"}"
         }
-        self = block("แต่งชัดด้วย AI", "", { open(video) }) { c ->
-            c.addView(chip(Icons.AI, true), dp(38), dp(38))
-            c.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
-            // Taller hit area than the drawn switch so it is easy to tap.
-            c.addView(FrameLayout(this).apply { addView(seg, FrameLayout.LayoutParams(-2, dp(26), Gravity.CENTER)) }, -2, dp(40))
+        self = toolCard(mg, "แต่งชัดด้วย AI", "แต่งชัดด้วย AI", { open(video) }) {
+            for ((x, y, sz, a) in listOf(listOf(100, 36, 30, 0x2e), listOf(140, 62, 16, 0x38), listOf(84, 66, 12, 0x2e)))
+                addView(IconView(this@HomeActivity, Icons.AI, 1.6f).apply { tint = Glass.alpha(mg, a) }, FrameLayout.LayoutParams(dp(sz), dp(sz), Gravity.TOP or Gravity.START).apply { leftMargin = dp(x); topMargin = dp(y) })
+            putChip(Icons.AI, mg, Gravity.TOP or Gravity.START)
+            addView(FrameLayout(this@HomeActivity).apply { addView(seg, FrameLayout.LayoutParams(-2, dp(26), Gravity.CENTER)) },
+                FrameLayout.LayoutParams(-2, dp(40), Gravity.TOP or Gravity.END).apply { topMargin = dp(8); rightMargin = dp(10) })
         }
         refresh()
         return self
@@ -336,7 +360,7 @@ class HomeActivity : ComponentActivity() {
         cards += this
     }
 
-    private class ModeBackdrop(c: Context, private val tint: Int, private val motif: Motif) : android.graphics.drawable.Drawable() {
+    private class ModeBackdrop(c: Context, private val tint: Int, private val motif: Motif, private val radiusDp: Int = 22) : android.graphics.drawable.Drawable() {
         private val d = c.resources.displayMetrics.density
         private val p = Paint(Paint.ANTI_ALIAS_FLAG)
         private val r = RectF()
@@ -344,7 +368,7 @@ class HomeActivity : ComponentActivity() {
         private var glow: RadialGradient? = null
         private var gw = 0f
         override fun draw(cv: Canvas) {
-            val w = bounds.width().toFloat(); val h = bounds.height().toFloat(); val rad = 22 * d
+            val w = bounds.width().toFloat(); val h = bounds.height().toFloat(); val rad = radiusDp * d
             val base = Theme.mix(Glass.BG, tint, 0.07f)
             r.set(0f, 0f, w, h)
             p.shader = null; p.style = Paint.Style.FILL; p.color = base; cv.drawRoundRect(r, rad, rad, p)
@@ -370,18 +394,54 @@ class HomeActivity : ComponentActivity() {
         @Suppress("OVERRIDE_DEPRECATION") override fun getOpacity() = android.graphics.PixelFormat.TRANSLUCENT
     }
 
-    /** Three clips and a playhead: only a picture of the editor, it does nothing on its own. */
-    private class MiniTimeline(c: Context) : View(c) {
+    /** Three clips (the first with a little waveform) and a playhead, in the tool colour: only a picture of the editor. */
+    private class MiniTimeline(c: Context, private val tint: Int) : View(c) {
         private val p = Paint(Paint.ANTI_ALIAS_FLAG)
         private val r = RectF()
         private val d = c.resources.displayMetrics.density
         init { importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }
         override fun onDraw(cv: Canvas) {
-            val h = height.toFloat(); val y0 = 6 * d; val y1 = h - 2 * d; val rad = 6 * d
+            val h = height.toFloat(); val y0 = 6 * d; val y1 = h - 2 * d; val rad = 8 * d
             fun clip(x: Float, w: Float, fill: Int) { r.set(x * d, y0, (x + w) * d, y1); p.style = Paint.Style.FILL; p.color = fill; cv.drawRoundRect(r, rad, rad, p) }
-            clip(0f, 70f, 0x2effffff); clip(74f, 56f, 0x1fffffff); clip(134f, 84f, Glass.alpha(Glass.ACCENT, 46))
-            p.style = Paint.Style.STROKE; p.strokeWidth = d; p.color = Glass.alpha(Glass.ACCENT, 0x80); r.set(134 * d + d / 2, y0 + d / 2, 218 * d - d / 2, y1 - d / 2); cv.drawRoundRect(r, rad, rad, p)
-            p.style = Paint.Style.FILL; p.color = Glass.ACCENT; cv.drawRect(104 * d, 0f, 106 * d, h, p)
+            clip(0f, 70f, 0x24ffffff); clip(74f, 56f, 0x1affffff); clip(134f, 92f, Glass.alpha(tint, 56))
+            p.style = Paint.Style.STROKE; p.strokeWidth = d; p.color = Glass.alpha(tint, 0x88); r.set(134 * d + d / 2, y0 + d / 2, 226 * d - d / 2, y1 - d / 2); cv.drawRoundRect(r, rad, rad, p)
+            p.style = Paint.Style.FILL; p.color = 0x47ffffff
+            val mid = (y0 + y1) / 2
+            for (i in 0 until 10) { val bh = (6 + (i * 7) % 11 * 1.6f) * d / 2; cv.drawRoundRect(10 * d + i * 5 * d, mid - bh, 10 * d + i * 5 * d + 3 * d, mid + bh, d, d, p) }
+            p.color = tint; cv.drawRect(118 * d, 0f, 120 * d, h, p)
+            cv.drawRoundRect(113 * d, 0f, 125 * d, 6 * d, 3 * d, 3 * d, p)
+        }
+    }
+
+    /** Film perforation holes along the left and right edges. */
+    private class Perforations(c: Context) : View(c) {
+        private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x38ffffff }
+        private val r = RectF()
+        private val d = c.resources.displayMetrics.density
+        init { importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }
+        override fun onDraw(cv: Canvas) {
+            var y = 5 * d
+            while (y < height - 4 * d) {
+                r.set(3 * d, y, 8 * d, y + 6 * d); cv.drawRoundRect(r, d, d, p)
+                r.set(width - 8 * d, y, width - 3 * d, y + 6 * d); cv.drawRoundRect(r, d, d, p)
+                y += 12 * d
+            }
+        }
+    }
+
+    /** Three slider lines with round knobs, faint, as a picture of the colour tools. */
+    private class SlidersArt(c: Context, private val tint: Int) : View(c) {
+        private val p = Paint(Paint.ANTI_ALIAS_FLAG)
+        private val d = c.resources.displayMetrics.density
+        init { importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }
+        override fun onDraw(cv: Canvas) {
+            val x0 = width - 76 * d; val w = 62 * d
+            val knobs = floatArrayOf(0.30f, 0.70f, 0.48f)
+            for (i in 0 until 3) {
+                val y = 24 * d + i * 20 * d
+                p.color = 0x24ffffff; p.style = Paint.Style.FILL; cv.drawRoundRect(x0, y - d, x0 + w, y + d, d, d, p)
+                p.color = Glass.alpha(tint, 0xcc); cv.drawCircle(x0 + w * knobs[i], y, 6 * d, p)
+            }
         }
     }
 
