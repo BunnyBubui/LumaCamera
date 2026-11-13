@@ -9,13 +9,16 @@ object StudioMath {
      * Values at time [t] from keyframes at [times] (rising) with [values] each. Before the first keyframe the first
      * values hold, after the last the last; in between the values glide with a soft start and stop.
      */
-    fun glide(times: LongArray, values: Array<FloatArray>, t: Long): FloatArray {
+    /** Easing between two keyframes: 0 soft start and stop, 1 constant speed, 2 slow start, 3 slow stop, 4 hold (jump at the next keyframe). */
+    const val EASE_SMOOTH = 0; const val EASE_LINEAR = 1; const val EASE_IN = 2; const val EASE_OUT = 3; const val EASE_HOLD = 4
+    fun ease(kind: Int, f: Float): Float = when (kind) { EASE_LINEAR -> f; EASE_IN -> f * f * f; EASE_OUT -> 1 - (1 - f) * (1 - f) * (1 - f); EASE_HOLD -> if (f < 1f) 0f else 1f; else -> f * f * (3 - 2 * f) }
+    fun glide(times: LongArray, values: Array<FloatArray>, t: Long, eases: IntArray? = null): FloatArray {
         require(times.isNotEmpty() && times.size == values.size)
         if (t <= times.first()) return values.first().copyOf()
         if (t >= times.last()) return values.last().copyOf()
         var i = 0; while (i < times.size - 2 && times[i + 1] <= t) i++
         val a = values[i]; val b = values[i + 1]
-        var f = ((t - times[i]).toFloat() / (times[i + 1] - times[i]).coerceAtLeast(1)).coerceIn(0f, 1f); f = f * f * (3 - 2 * f)
+        val f = ease(eases?.getOrNull(i) ?: EASE_SMOOTH, ((t - times[i]).toFloat() / (times[i + 1] - times[i]).coerceAtLeast(1)).coerceIn(0f, 1f))
         return FloatArray(a.size) { a[it] + (b[it] - a[it]) * f }
     }
 

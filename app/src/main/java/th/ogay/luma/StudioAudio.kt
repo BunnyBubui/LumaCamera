@@ -78,8 +78,8 @@ object StudioAudio {
         override fun onFlush() { filters.forEach { it.reset() }; env = 0.0 }
     }
 
-    /** Ceiling: values stay between -1 and 1 and bend smoothly instead of clipping above 0.9. */
-    fun limit(x: Double): Double { val a = abs(x); if (a <= 0.9) return x; val y = 0.9 + 0.1 * kotlin.math.tanh((a - 0.9) / 0.1); return if (x < 0) -y else y }
+    /** Ceiling: values stay below 0.99 and bend smoothly instead of clipping above 0.9. */
+    fun limit(x: Double): Double { val a = abs(x); if (a <= 0.9) return x; val y = 0.9 + 0.09 * kotlin.math.tanh((a - 0.9) / 0.09); return if (x < 0) -y else y }
 
     /** How much of the music remains at [ms] when it ducks under the [spans] (start, end in ms): 30 % inside, with 300 ms slopes. */
     fun duck(ms: Long, spans: List<Pair<Long, Long>>): Float {

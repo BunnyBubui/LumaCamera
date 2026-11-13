@@ -81,6 +81,9 @@ class VideoEditorActivity : ComponentActivity() {
         private const val LAYERS = "M12 3l9 5-9 5-9-5z M3 12.5l9 5 9-5 M3 17l9 5 9-5"
         private const val LAYER_TOOL = 13
         private const val COLOR_TOOL = 14
+        private val EASES = listOf("นุ่ม", "คงที่", "ค่อย ๆ เร่ง", "ค่อย ๆ หยุด", "หยุดนิ่ง")
+        private const val GREEN_KEY = 0xff00b140.toInt()
+        private const val BLUE_KEY = 0xff0047bb.toInt()
         /** Looks each picture colour up in a [n]³ colour table laid out as n slices side by side (x = blue·n + red, y = green), blending the 8 nearest entries. */
         private const val LUT_AGSL = """uniform shader content; uniform shader lut; uniform float n;
             half3 at(float r, float g, float b) { return lut.eval(float2(b * n + r + 0.5, g + 0.5)).rgb; }
@@ -218,7 +221,7 @@ class VideoEditorActivity : ComponentActivity() {
         layers.forEachIndexed { i, l ->
             val pk = if (l.kind == VideoLayer.SOUND) AudioPeaks.get(l.source) ?: run { AudioPeaks.load(this, l.source, luma.readIo) { runOnUiThread { if (!isDestroyed) refreshTimeline() } }; null } else null
             val bar = StudioTimeline.Bar(i, l.at, l.length, when (l.kind) { VideoLayer.VIDEO -> 0xff4dc3ff.toInt(); VideoLayer.IMAGE -> 0xffff6fb5.toInt(); VideoLayer.TEXT -> 0xffffd60a.toInt(); else -> 0xffa78bfa.toInt() },
-                layerName(l), true, pk, l.from, 0L, l.keyList.map { it.t })
+                (if (l.hidden) "(ซ่อน) " else "") + layerName(l), !l.locked, pk, l.from, 0L, l.keyList.map { it.t })
             val at = firstLayerLane + laneOf[i]
             while (lanes.size <= at) lanes += mutableListOf<StudioTimeline.Bar>()
             lanes[at] += bar
@@ -753,7 +756,7 @@ class VideoEditorActivity : ComponentActivity() {
         notice("แยกเสียงเป็นแถบสีม่วงแล้ว · ลากแถบเพื่อให้เสียงมาก่อนหรือต่อเลยภาพ")
     }
     /** The music goes down to 30 % while a sound layer plays, in the preview the same way as in the export. */
-    private fun duckGain(): Float = if (!duck) 1f else StudioAudio.duck(outNow(), layers.filter { it.audible && it.volume > 0f }.map { it.at to it.end })
+    private fun duckGain(): Float = if (!duck) 1f else StudioAudio.duck(outNow(), layers.filter { it.audible && it.volume > 0f && !it.hidden }.map { it.at to it.end })
 
     // ---------- Colour studio ----------
     private val grade = StudioGrade()
@@ -1284,7 +1287,7 @@ class VideoEditorActivity : ComponentActivity() {
         return before + (t.coerceAtLeast(0) / speed).toLong()
     }
     private fun clampedLayers(): List<VideoLayer> { val total = totalOut()
-        return layers.mapNotNull { l -> val at = l.at.coerceIn(0, (total - 200).coerceAtLeast(0)); val len = l.length.coerceAtMost(total - at); if (len < 200) null else l.copy(at = at, length = len) } }
+        return layers.filter { !it.hidden }.mapNotNull { l -> val at = l.at.coerceIn(0, (total - 200).coerceAtLeast(0)); val len = l.length.coerceAtMost(total - at); if (len < 200) null else l.copy(at = at, length = len) } }
     private fun layerName(l: VideoLayer) = if (l.kind == VideoLayer.TEXT) l.text.replace('\n', ' ') else when (l.kind) { VideoLayer.VIDEO -> "วิดีโอ"; VideoLayer.IMAGE -> "รูป"; else -> "เสียง" } + " · " + clock(l.length)
     /** Changes where a layer is, how big or how solid. With keyframes the change is written as a keyframe at the playhead; without, it changes the whole layer. */
     private fun posed(l: VideoLayer, x: Float? = null, y: Float? = null, size: Float? = null, opacity: Float? = null): VideoLayer {
@@ -1364,7 +1367,7 @@ class VideoEditorActivity : ComponentActivity() {
         layerViews.forEach { stage.removeView(it) }; layerViews.clear()
         layers.forEachIndexed { i, l ->
             if (!l.visual) return@forEachIndexed
-            val v = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP; setImageBitmap(layerThumbs[l.source]); setBackgroundColor(0x33ffffff); tag = i
+            val v = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP; setImageBitmap(layerThumbs[l.source]?.let { b -> if (l.matte.active) VideoLayers.matted(b, l.matte) else b }); setBackgroundColor(if (l.matte.active) 0 else 0x33ffffff); tag = i
                 contentDescription = "เลเยอร์${layerName(l)} ลากเพื่อย้าย"; clipToOutline = true
                 outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(view: View, o: android.graphics.Outline) = o.setRoundRect(0, 0, view.width, view.height, dp(4).toFloat()) } }
             if (l.kind == VideoLayer.TEXT) { v.scaleType = ImageView.ScaleType.FIT_XY; v.background = null; v.clipToOutline = false }
@@ -1402,7 +1405,8 @@ class VideoEditorActivity : ComponentActivity() {
             val inTime = now in l.at until l.end; val picked = tool == LAYER_TOOL && i == layerPick
             // The picked layer never disappears completely while it is being edited, even when faded or outside its time.
             v.alpha = when { inTime -> if (picked) p[3].coerceAtLeast(0.25f) else p[3]; picked -> 0.4f; else -> 0f }
-            v.isEnabled = inTime || picked
+            v.isEnabled = (inTime || picked) && !l.locked
+            if (l.hidden) { v.alpha = if (picked) 0.2f else 0f; v.isEnabled = false }
         }
     }
     /** Plays layer sounds along with the preview. */
@@ -1413,7 +1417,7 @@ class VideoEditorActivity : ComponentActivity() {
         layers.forEachIndexed { i, l ->
             if (!l.audible) return@forEachIndexed
             val mp = layerSound[i]
-            if (playing && now in l.at until l.end) {
+            if (playing && now in l.at until l.end && !l.hidden) {
                 val p = mp ?: runCatching { MediaPlayer().apply { setDataSource(this@VideoEditorActivity, l.source); prepare() } }.getOrNull()?.also { layerSound[i] = it } ?: return@forEachIndexed
                 if (!p.isPlaying) runCatching { p.seekTo((l.from + now - l.at).toInt()); p.start() }
                 runCatching { val v = l.volume.coerceAtMost(1f) * l.fade(now); p.setVolume(v, v) }
@@ -1445,6 +1449,8 @@ class VideoEditorActivity : ComponentActivity() {
         col.addView(controls, LinearLayout.LayoutParams(-1, 0, 1f))
         layerControls(controls)
     }
+    private var copiedPose: FloatArray? = null
+    private val rematte = Runnable { if (!isDestroyed) { val keep = layerPick; rebuildLayers(); layerPick = keep; placeLayers() } }
     private fun layerControls(box: LinearLayout) {
         box.removeAllViews()
         val i = layerPick; val l = layers.getOrNull(i) ?: return
@@ -1474,6 +1480,20 @@ class VideoEditorActivity : ComponentActivity() {
                 layers[i] = if (near != null && cur.keyList.size > 1) cur.withKeys(cur.keyList - near) else cur.copy(keys = "", x = p[0], y = p[1], size = p[2], opacity = p[3])
                 refresh(); layerControls(box) }
         }
+        if (l.visual && l.keys.isNotEmpty()) {
+            val t = outNow() - l.at; val here = l.keyList.firstOrNull { abs(it.t - t) <= 150 }
+            fun jump(to: Long) { val (k, at) = locate(l.at + to); jumpTo(k, at); timeline.playhead = outNow(); layerControls(box); placeLayers() }
+            actions.add(0, EditorKit.action(this, LEFT, "คีย์ก่อนหน้า") { l.keyList.lastOrNull { it.t < t - 150 }?.let { jump(it.t) } ?: notice("ไม่มีคีย์เฟรมก่อนหน้านี้") })
+            actions.add(1, EditorKit.action(this, RIGHT, "คีย์ถัดไป") { l.keyList.firstOrNull { it.t > t + 150 }?.let { jump(it.t) } ?: notice("ไม่มีคีย์เฟรมหลังจากนี้") })
+            if (here != null) actions += EditorKit.action(this, "M4 18c6 0 10-12 16-12", "การเคลื่อน: " + EASES[here.ease.coerceIn(0, EASES.size - 1)]) {
+                val cur = layers[i]; layers[i] = cur.withKeys(cur.keyList.map { if (it === here || it.t == here.t) VideoLayer.Key(it.t, it.x, it.y, it.size, it.opacity, (it.ease + 1) % EASES.size) else it }); refresh(); layerControls(box) }
+            actions += EditorKit.action(this, "M8 8h11v11H8z M5 16V5h11", "คัดลอกคีย์") { val p = layers[i].rawPose(outNow().coerceIn(layers[i].at, layers[i].end)); copiedPose = p; notice("คัดลอกตำแหน่ง ขนาด และความทึบแล้ว") }
+        }
+        if (l.visual && copiedPose != null) actions += EditorKit.action(this, "M9 4h6v3H9z M6 6h12v14H6z", "วางคีย์") { val p = copiedPose!!; val cur = layers[i]; val now = outNow()
+            if (now !in cur.at..cur.end) notice("เลื่อนหัวอ่านเข้ามาในช่วงเวลาของเลเยอร์นี้ก่อน")
+            else { layers[i] = cur.withKeys(cur.keyList.filter { abs(it.t - (now - cur.at)) > 120 } + VideoLayer.Key(now - cur.at, p[0], p[1], p[2], p[3])); refresh(); layerControls(box) } }
+        actions += EditorKit.action(this, "M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6", if (l.hidden) "แสดง" else "ซ่อน", l.hidden) { layers[i] = layers[i].copy(hidden = !layers[i].hidden); rebuildLayers(); refreshTimeline(); layerControls(box) }
+        actions += EditorKit.action(this, "M6 11h12v9H6z M8 11V8a4 4 0 0 1 8 0v3", if (l.locked) "ปลดล็อก" else "ล็อก", l.locked) { layers[i] = layers[i].copy(locked = !layers[i].locked); placeLayers(); refreshTimeline(); layerControls(box) }
         actions += EditorKit.action(this, "M8 8h11v11H8z M5 16V5h11", "ทำสำเนา") { val cur = layers[i]; val total = totalOut()
             layers += cur.copy(at = (cur.end).coerceAtMost((total - cur.length).coerceAtLeast(0)), x = (cur.x + 0.04f).coerceAtMost(1f), y = (cur.y + 0.04f).coerceAtMost(1f))
             layerPick = layers.size - 1; rebuildLayers(); showTool(LAYER_TOOL, false) }
@@ -1509,6 +1529,22 @@ class VideoEditorActivity : ComponentActivity() {
         // Fading applies to the picture and to the sound of a layer alike.
         slider("ค่อย ๆ เข้า", (0..3000 step 100).toList(), l.fadeIn.toInt(), seconds) { v -> layers[i] = layers[i].copy(fadeIn = v.toLong()); refresh() }
         slider("ค่อย ๆ ออก", (0..3000 step 100).toList(), l.fadeOut.toInt(), seconds) { v -> layers[i] = layers[i].copy(fadeOut = v.toLong()); refresh() }
+        if (l.kind == VideoLayer.IMAGE || l.kind == VideoLayer.VIDEO) {
+            // Cut-outs: a chroma key for green or blue screens, a shape mask with a soft edge, and rounded corners.
+            val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(6), dp(12), dp(2)) }
+            fun chip(name: String, on: Boolean, f: () -> Unit) = row.addView(text(name, 12f, if (on) Glass.ACCENT else Color.WHITE, on).apply { gravity = Gravity.CENTER; background = glass(16, if (on) Glass.ACCENT_SOFT else 0x26ffffff)
+                setPadding(dp(12), 0, dp(12), 0); isClickable = true; glassTouch(); contentDescription = name; setOnClickListener { f(); rebuildLayers(); layerControls(box) } }, LinearLayout.LayoutParams(-2, dp(32)).apply { rightMargin = dp(6) })
+            chip("คีย์สีเขียว", l.key == GREEN_KEY) { layers[i] = layers[i].copy(key = if (layers[i].key == GREEN_KEY) 0 else GREEN_KEY) }
+            chip("คีย์สีน้ำเงิน", l.key == BLUE_KEY) { layers[i] = layers[i].copy(key = if (layers[i].key == BLUE_KEY) 0 else BLUE_KEY) }
+            chip("มาสก์วงรี", l.shape == StudioMatte.ELLIPSE) { layers[i] = layers[i].copy(shape = if (layers[i].shape == StudioMatte.ELLIPSE) 0 else StudioMatte.ELLIPSE) }
+            chip("มาสก์สี่เหลี่ยม", l.shape == StudioMatte.ROUNDED) { layers[i] = layers[i].copy(shape = if (layers[i].shape == StudioMatte.ROUNDED) 0 else StudioMatte.ROUNDED) }
+            box.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(row) }, LinearLayout.LayoutParams(-1, -2))
+            // Changing a cut-out redraws the picture, so it happens when the finger lifts rather than on every step.
+            fun matteSlider(name: String, now: Float, set: (Float) -> VideoLayer) = slider(name, (0..100 step 5).toList(), (now * 100).roundToInt(), { "$it%" }) { v -> layers[i] = set(v / 100f); handler.removeCallbacks(rematte); handler.postDelayed(rematte, 250) }
+            if (l.key != 0) matteSlider("ความไวคีย์", l.keyTol) { layers[i].copy(keyTol = it) }
+            if (l.shape != 0) matteSlider("ขอบนุ่ม", l.feather) { layers[i].copy(feather = it) }
+            matteSlider("มุมโค้ง", l.round) { layers[i].copy(round = it) }
+        }
         if (l.audible) slider("เสียง", (0..200 step 10).toList(), (l.volume * 100).toInt(), { "$it%" }) { v -> layers[i] = layers[i].copy(volume = v / 100f); layerSound[i]?.runCatching { val x = (v / 100f).coerceAtMost(1f); setVolume(x, x) } }
         box.addView(android.widget.ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(sliders) }, LinearLayout.LayoutParams(-1, 0, 1f))
     }

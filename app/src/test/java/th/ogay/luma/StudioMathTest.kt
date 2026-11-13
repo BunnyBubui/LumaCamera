@@ -23,6 +23,11 @@ class StudioMathTest {
         assertEquals(0.15625f, StudioMath.glide(times, values, 1250)[0], 1e-6f)
         assertEquals(0.5f, StudioMath.glide(times, values, 3000)[1], 1e-6f)
         assertArrayEquals(floatArrayOf(1f, 1f), StudioMath.glide(times, values, 2000), 1e-6f)
+        val e = intArrayOf(StudioMath.EASE_LINEAR, StudioMath.EASE_HOLD, 0)
+        assertEquals(0.25f, StudioMath.glide(times, values, 1250, e)[0], 1e-6f)
+        assertEquals(1f, StudioMath.glide(times, values, 3999, e)[1], 1e-6f)
+        assertEquals(0.125f, StudioMath.ease(StudioMath.EASE_IN, 0.5f), 1e-6f)
+        assertEquals(0.875f, StudioMath.ease(StudioMath.EASE_OUT, 0.5f), 1e-6f)
     }
 
     @Test fun fadeRisesAtTheStartAndFallsAtTheEnd() {
@@ -70,5 +75,23 @@ class StudioAudioTest {
         assertEquals(0.0, y, 1e-4)
         val flat = StudioAudio.Biquad.lowShelf(48000, 150.0, 0.0)
         assertEquals(0.3, flat.run(0, 0.3), 1e-9)
+    }
+}
+
+class StudioMatteTest {
+    @Test fun greenKeyClearsGreenAndKeepsSkin() {
+        val px = intArrayOf(0xff00ff00.toInt(), 0xff10e020.toInt(), 0xffd8a080.toInt())
+        StudioMatte.apply(px, 3, 1, StudioMatte.Spec(0xff00ff00.toInt(), 0.4f, StudioMatte.NONE, 0f, 0f))
+        assertEquals(0, px[0] ushr 24); assertEquals(0, px[1] ushr 24); assertEquals(255, px[2] ushr 24)
+    }
+    @Test fun ellipseKeepsCentreAndClearsCorners() {
+        val w = 21; val px = IntArray(w * w) { 0xffffffff.toInt() }
+        StudioMatte.apply(px, w, w, StudioMatte.Spec(0, 0f, StudioMatte.ELLIPSE, 0.1f, 0f))
+        assertEquals(255, px[10 * w + 10] ushr 24); assertEquals(0, px[0] ushr 24); assertEquals(0, px[w * w - 1] ushr 24)
+    }
+    @Test fun roundedCornersCutOnlyTheCorners() {
+        val w = 40; val px = IntArray(w * w) { 0xffffffff.toInt() }
+        StudioMatte.apply(px, w, w, StudioMatte.Spec(0, 0f, StudioMatte.NONE, 0f, 0.5f))
+        assertEquals(0, px[0] ushr 24); assertEquals(255, px[20 * w] ushr 24); assertEquals(255, px[20] ushr 24)
     }
 }

@@ -39,22 +39,31 @@ data class VideoLayer(
     val keys: String = "",
     /** Rotation of a picture layer in degrees, clockwise. */
     val turn: Float = 0f,
+    /** Chroma key colour (0 = off) and how far around it counts as that colour (0..1). */
+    val key: Int = 0, val keyTol: Float = 0.4f,
+    /** Shape mask ([StudioMatte.NONE], ELLIPSE, ROUNDED), its soft edge (0..1) and the corner rounding of the picture (0..1). */
+    val shape: Int = 0, val feather: Float = 0.1f, val round: Float = 0f,
+    /** Left out of the preview and the export, but kept in the project. */
+    val hidden: Boolean = false,
+    /** Cannot be moved on the picture or on the timeline. */
+    val locked: Boolean = false,
 ) {
+    val matte get() = StudioMatte.Spec(key, keyTol, shape, feather, round)
     val end get() = at + length
     val visual get() = kind != SOUND
     val audible get() = kind == VIDEO || kind == SOUND
     val still get() = kind == IMAGE || kind == TEXT
     val animated get() = keys.isNotEmpty() || fadeIn > 0 || fadeOut > 0
 
-    class Key(val t: Long, val x: Float, val y: Float, val size: Float, val opacity: Float)
-    val keyList: List<Key> by lazy { keys.split(';').mapNotNull { k -> val p = k.split(','); if (p.size < 5) null else runCatching { Key(p[0].toLong(), p[1].toFloat(), p[2].toFloat(), p[3].toFloat(), p[4].toFloat()) }.getOrNull() }.sortedBy { it.t } }
-    fun withKeys(list: List<Key>) = copy(keys = list.sortedBy { it.t }.joinToString(";") { "${it.t},${it.x},${it.y},${it.size},${it.opacity}" })
+    class Key(val t: Long, val x: Float, val y: Float, val size: Float, val opacity: Float, val ease: Int = StudioMath.EASE_SMOOTH)
+    val keyList: List<Key> by lazy { keys.split(';').mapNotNull { k -> val p = k.split(','); if (p.size < 5) null else runCatching { Key(p[0].toLong(), p[1].toFloat(), p[2].toFloat(), p[3].toFloat(), p[4].toFloat(), p.getOrNull(5)?.toIntOrNull() ?: StudioMath.EASE_SMOOTH) }.getOrNull() }.sortedBy { it.t } }
+    fun withKeys(list: List<Key>) = copy(keys = list.sortedBy { it.t }.joinToString(";") { "${it.t},${it.x},${it.y},${it.size},${it.opacity},${it.ease}" })
 
     /** Centre x, centre y, size and opacity at [outMs] of the finished video, from the keyframes (without the fades). */
     fun rawPose(outMs: Long): FloatArray {
         val k = keyList
         if (k.isEmpty()) return floatArrayOf(x, y, size, opacity)
-        return StudioMath.glide(LongArray(k.size) { k[it].t }, Array(k.size) { floatArrayOf(k[it].x, k[it].y, k[it].size, k[it].opacity) }, outMs - at)
+        return StudioMath.glide(LongArray(k.size) { k[it].t }, Array(k.size) { floatArrayOf(k[it].x, k[it].y, k[it].size, k[it].opacity) }, outMs - at, IntArray(k.size) { k[it].ease })
     }
     /** As [rawPose], with the fade in and fade out applied to the opacity. The preview and the export both draw from this. */
     fun pose(outMs: Long): FloatArray { val p = rawPose(outMs); p[3] = (p[3] * fade(outMs)).coerceIn(0f, 1f); return p }
@@ -67,13 +76,15 @@ data class VideoLayer(
         fun textSource(text: String, color: Int, style: Int): Uri = Uri.parse("lumoratext:" + Uri.encode("$color/$style/$text"))
         /** Packs a list of layers into a Bundle-friendly string (one line per layer). */
         fun save(list: List<VideoLayer>) = list.joinToString("\n") { l -> listOf(l.kind, l.source, l.at, l.length, l.from, l.x, l.y, l.size, l.aspect, l.volume,
-            l.opacity, l.fadeIn, l.fadeOut, Uri.encode(l.text).ifEmpty { "-" }, l.color, l.style, l.keys.ifEmpty { "-" }, l.turn).joinToString("\t") }
+            l.opacity, l.fadeIn, l.fadeOut, Uri.encode(l.text).ifEmpty { "-" }, l.color, l.style, l.keys.ifEmpty { "-" }, l.turn, l.key, l.keyTol, l.shape, l.feather, l.round, if (l.hidden) 1 else 0, if (l.locked) 1 else 0).joinToString("\t") }
         fun load(text: String?): List<VideoLayer> = text.orEmpty().lines().filter { it.isNotBlank() }.mapNotNull { line ->
             val p = line.split("\t"); if (p.size < 10) return@mapNotNull null
             runCatching { VideoLayer(p[0].toInt(), Uri.parse(p[1]), p[2].toLong(), p[3].toLong(), p[4].toLong(), p[5].toFloat(), p[6].toFloat(), p[7].toFloat(), p[8].toFloat(), p[9].toFloat(),
                 p.getOrNull(10)?.toFloatOrNull() ?: 1f, p.getOrNull(11)?.toLongOrNull() ?: 0L, p.getOrNull(12)?.toLongOrNull() ?: 0L,
                 p.getOrNull(13)?.takeIf { it != "-" }?.let { Uri.decode(it) } ?: "", p.getOrNull(14)?.toIntOrNull() ?: Color.WHITE, p.getOrNull(15)?.toIntOrNull() ?: 0,
-                p.getOrNull(16)?.takeIf { it != "-" } ?: "", p.getOrNull(17)?.toFloatOrNull() ?: 0f) }.getOrNull()
+                p.getOrNull(16)?.takeIf { it != "-" } ?: "", p.getOrNull(17)?.toFloatOrNull() ?: 0f,
+                p.getOrNull(18)?.toIntOrNull() ?: 0, p.getOrNull(19)?.toFloatOrNull() ?: 0.4f, p.getOrNull(20)?.toIntOrNull() ?: 0, p.getOrNull(21)?.toFloatOrNull() ?: 0.1f,
+                p.getOrNull(22)?.toFloatOrNull() ?: 0f, p.getOrNull(23) == "1", p.getOrNull(24) == "1") }.getOrNull()
         }
     }
 }
@@ -82,7 +93,14 @@ data class VideoLayer(
 object VideoLayers {
     /** Picture layers as overlays for the whole video (their times are times of the finished video). */
     fun overlays(c: Context, layers: List<VideoLayer>): List<BitmapOverlay> = layers.filter { it.visual }.map { l ->
-        when (l.kind) { VideoLayer.IMAGE -> TimedOverlay(l, picture(c, l.source, 1280)); VideoLayer.TEXT -> TimedOverlay(l, textPicture(l)); else -> MovingOverlay(c, l) }
+        when (l.kind) { VideoLayer.IMAGE -> TimedOverlay(l, matted(picture(c, l.source, 1280), l.matte)); VideoLayer.TEXT -> TimedOverlay(l, textPicture(l)); else -> MovingOverlay(c, l) }
+    }
+    /** A copy of [b] with the layer's chroma key and mask applied ([b] itself when there is nothing to apply). */
+    fun matted(b: Bitmap, m: StudioMatte.Spec): Bitmap {
+        if (!m.active) return b
+        val w = b.width; val h = b.height; val px = IntArray(w * h); b.getPixels(px, 0, w, 0, 0, w, h)
+        StudioMatte.apply(px, w, h, m)
+        return Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).apply { setPixels(px, 0, w, 0, 0, w, h) }
     }
 
     /** The words of a text layer drawn on a clear picture: centred lines, with a soft shadow, a dark box or an outline. */
@@ -206,10 +224,16 @@ object VideoLayers {
         private val frames = runCatching { LayerFrames(c, layer.source, layer.from, 720) }.getOrNull()
         private val blank = Bitmap.createBitmap(16, (16 / layer.aspect).toInt().coerceAtLeast(1), Bitmap.Config.ARGB_8888)
         override val pixelWidth get() = frames?.bitmap?.width ?: blank.width
+        private val matte = layer.matte
+        private val out = frames?.bitmap?.takeIf { matte.active }?.let { Bitmap.createBitmap(it.width, it.height, Bitmap.Config.ARGB_8888) }
+        private val px = out?.let { IntArray(it.width * it.height) }
         override fun getBitmap(presentationTimeUs: Long): Bitmap {
             val f = frames ?: return blank
             if (inside(presentationTimeUs)) runCatching { f.advance((presentationTimeUs / 1000 - layer.at) * 1000) }
-            return f.bitmap
+            if (out == null || px == null) return f.bitmap
+            // The decoded frame stays untouched; the cut-out goes into a second picture every frame.
+            f.bitmap.getPixels(px, 0, out.width, 0, 0, out.width, out.height); StudioMatte.apply(px, out.width, out.height, matte); out.setPixels(px, 0, out.width, 0, 0, out.width, out.height)
+            return out
         }
         override fun release() { super.release(); frames?.close() }
     }
