@@ -72,7 +72,7 @@ class VideoEditorActivity : ComponentActivity() {
         private val CROPS = listOf("ต้นฉบับ" to 0f, "1:1" to 1f, "4:5" to 4f / 5, "16:9" to 16f / 9, "9:16" to 9f / 16, "2.39:1" to 2.39f)
         private val PLACES = listOf("บน", "กลาง", "ล่าง")
         private val TEXT_COLORS = intArrayOf(Color.WHITE, Color.BLACK, Glass.ACCENT, 0xffffd60a.toInt(), 0xff0a84ff.toInt())
-        private val TRANSITIONS = listOf("ตัดตรง", "จางดำ", "แฟลชขาว", "ซูมเข้า")
+        private val TRANSITIONS = listOf("ตัดตรง", "จางดำ", "แฟลชขาว", "ซูมเข้า", "เลื่อน", "ปาด", "เบลอ")
         private val STICKERS = listOf("😀", "😂", "😍", "🥳", "😎", "🔥", "❤️", "✨", "👍", "🎉", "⭐", "🌸", "☀️", "🌙", "📍", "💯")
         private const val CLIPS = "M3 6h7v12H3z M14 6h7v12h-7z"
         private const val JOIN = "M3 5h6v14H3z M15 5h6v14h-6z M10 12h4 M12.5 10l1.5 2-1.5 2"
@@ -591,15 +591,27 @@ class VideoEditorActivity : ComponentActivity() {
         if (k == order().first()) musicPlayer?.runCatching { seekTo(0) }
         switching = true
         val go = Runnable { playIndex = k; switching = false; showClipOnBar(); trim.playhead = trim.start; openPlayer(); showTime() }
-        if ((transition == 1 || transition == 2) && !Glass.reduced(this)) {
-            dip.setBackgroundColor(if (transition == 2) Color.WHITE else Color.BLACK)
-            dip.animate().cancel(); dip.animate().alpha(1f).setDuration(VideoEdit.TRANSITION_MS / 2).withEndAction(go).start()
-        } else go.run()
+        val half = VideoEdit.TRANSITION_MS / 2
+        if (Glass.reduced(this) || extras.isEmpty()) go.run()
+        else when (transition) {
+            1, 2 -> { dip.setBackgroundColor(if (transition == 2) Color.WHITE else Color.BLACK); dip.pivotX = 0f; dip.scaleX = 1f
+                dip.animate().cancel(); dip.animate().alpha(1f).setDuration(half).withEndAction(go).start() }
+            4 -> texture.animate().translationX(-texture.width.toFloat()).setInterpolator(Glass.EASE).setDuration(half).withEndAction { go.run() }.start()
+            5 -> { dip.setBackgroundColor(Color.BLACK); dip.alpha = 1f; dip.pivotX = dip.width.toFloat(); dip.scaleX = 0f
+                dip.animate().cancel(); dip.animate().scaleX(1f).setDuration(half).withEndAction(go).start() }
+            6 -> if (android.os.Build.VERSION.SDK_INT >= 31) android.animation.ValueAnimator.ofFloat(0f, 1f).apply { duration = half
+                addUpdateListener { blurPreview(it.animatedValue as Float) }; addListener(object : android.animation.AnimatorListenerAdapter() { override fun onAnimationEnd(a: android.animation.Animator) { blurIn = true; go.run() } }); start() } else go.run()
+            else -> go.run()
+        }
     }
     /** The new clip is ready: uncover it (fade, flash) or let it settle from a little closer (zoom). */
     private fun arrived() {
         if (Glass.reduced(this)) { dip.alpha = 0f; return }
-        if (dip.alpha > 0f) dip.animate().alpha(0f).setDuration(VideoEdit.TRANSITION_MS).start()
+        if (transition == 5 && dip.alpha > 0f) { dip.pivotX = 0f; dip.animate().cancel(); dip.animate().scaleX(0f).setDuration(VideoEdit.TRANSITION_MS).withEndAction { dip.alpha = 0f; dip.scaleX = 1f }.start() }
+        else if (dip.alpha > 0f) dip.animate().alpha(0f).setDuration(VideoEdit.TRANSITION_MS).start()
+        if (texture.translationX != 0f) { texture.translationX = texture.width.toFloat(); texture.animate().translationX(0f).setInterpolator(Glass.EASE).setDuration(VideoEdit.TRANSITION_MS).start() }
+        if (blurIn && android.os.Build.VERSION.SDK_INT >= 31) { blurIn = false; android.animation.ValueAnimator.ofFloat(1f, 0f).apply { duration = VideoEdit.TRANSITION_MS
+            addUpdateListener { blurPreview(it.animatedValue as Float) }; addListener(object : android.animation.AnimatorListenerAdapter() { override fun onAnimationEnd(a: android.animation.Animator) { paintLook() } }); start() } }
         if (transition == 3 && playIndex > 0) {
             texture.scaleY = 1.12f; texture.scaleX = 1.12f
             texture.animate().scaleX(1f).scaleY(1f).setInterpolator(Glass.EASE).setDuration(VideoEdit.TRANSITION_MS).start()
@@ -709,6 +721,15 @@ class VideoEditorActivity : ComponentActivity() {
         val lut = BitmapShader(bmp, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply { filterMode = BitmapShader.FILTER_MODE_NEAREST }
         val shader = RuntimeShader(LUT_AGSL).apply { setInputShader("lut", lut); setFloatUniform("n", n.toFloat()) }
         return RenderEffect.createRuntimeShaderEffect(shader, "content")
+    }
+    /** Blur over the preview for the blur transition ([k] 0..1), on top of the colour look. */
+    private var blurIn = false
+    private fun blurPreview(k: Float) {
+        if (android.os.Build.VERSION.SDK_INT < 31) return
+        if (k <= 0.01f) { paintLook(); return }
+        val blur = RenderEffect.createBlurEffect(k * k * dp(18), k * k * dp(18), Shader.TileMode.CLAMP)
+        val look = if (android.os.Build.VERSION.SDK_INT >= 33 && grade.active() && !comparing) lutEffect(lastCube ?: gradeCube(25)) else null
+        texture.setRenderEffect(if (look != null) RenderEffect.createChainEffect(blur, look) else blur)
     }
     /** Puts the whole look (filter, adjustments and grade) on the preview: through one colour table when the grade is used, else as a colour matrix. */
     private fun paintLook() {
@@ -1132,7 +1153,7 @@ class VideoEditorActivity : ComponentActivity() {
         Glass.tick(timeline); showClipOnBar(); trim.playhead = trim.playhead.coerceIn(trim.start, trim.end); showTime(); if (tool == 10) showTool(10, false)
     }
     private fun transitionTools(col: LinearLayout) {
-        val icons = listOf(EditorKit.SCISSORS, "M4 12h16 M4 6h16 M4 18h16", "M12 3v4 M12 17v4 M3 12h4 M17 12h4 M6 6l2.5 2.5 M15.5 15.5L18 18 M18 6l-2.5 2.5 M8.5 15.5L6 18", "M10 4H4v6 M14 4h6v6 M10 20H4v-6 M14 20h6v-6")
+        val icons = listOf(EditorKit.SCISSORS, "M4 12h16 M4 6h16 M4 18h16", "M12 3v4 M12 17v4 M3 12h4 M17 12h4 M6 6l2.5 2.5 M15.5 15.5L18 18 M18 6l-2.5 2.5 M8.5 15.5L6 18", "M10 4H4v6 M14 4h6v6 M10 20H4v-6 M14 20h6v-6", "M4 12h12 M12 7l5 5-5 5 M20 5v14", "M4 4h8v16H4z M15 4v16 M19 4v16", "M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16 M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8")
         val items = TRANSITIONS.mapIndexed { i, n -> EditorKit.StripItem(this, icons[i], n) }
         if (extras.isEmpty()) col.addView(text("ทรานซิชันอยู่ระหว่างคลิป · เพิ่มคลิปที่แท็บคลิปก่อน", 11.5f, Glass.TEXT3).apply { gravity = Gravity.CENTER; setPadding(dp(16), 0, dp(16), dp(6)) }, -1, -2)
         col.addView(EditorKit.strip(this, items.map { it to 70 }, transition, 60, { k -> items.forEachIndexed { j, v -> v.lit(j == k) } }) { k -> transition = k },

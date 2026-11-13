@@ -57,7 +57,7 @@ data class VideoEditSpec(
     val textBox: Boolean = false,
     /** Further clips played after this one (each whole or trimmed); the result is one file. */
     val extras: List<VideoPart> = emptyList(),
-    /** Between two different clips: 0 cut, 1 fade through black, 2 flash of white, 3 zoom in. */
+    /** Between two different clips: 0 cut, 1 fade through black, 2 flash of white, 3 zoom in, 4 slide, 5 wipe, 6 blur. */
     val transition: Int = 0,
     /** Emoji stickers over the whole video. */
     val stickers: List<VideoSticker> = emptyList(),
@@ -174,8 +174,13 @@ object VideoEdit {
             if (piece.clip != 0 && piece.speed != 1f) { if (!s.keepAudio) own += SpeedChangeEffect(piece.speed); if (piece.speed > 1f) own += FrameDropEffect.createDefaultFrameDropEffect(30f) }
             if (s.transition != 0) {
                 val joinIn = i > 0 && pieces[i - 1].clip != piece.clip; val joinOut = i < pieces.size - 1 && pieces[i + 1].clip != piece.clip
-                if (s.transition == 3) { if (joinIn) own += Punch(piece.durationUs) }
-                else if (joinIn || joinOut) own += Dip(piece.durationUs, joinIn, joinOut, s.transition == 2)
+                when (s.transition) {
+                    3 -> if (joinIn) own += Punch(piece.durationUs)
+                    4 -> if (joinIn || joinOut) own += StudioSlide(piece.durationUs, joinIn, joinOut)
+                    5 -> if (joinIn || joinOut) own += StudioTransition(StudioTransition.WIPE, piece.durationUs, joinIn, joinOut)
+                    6 -> if (joinIn || joinOut) own += StudioTransition(StudioTransition.BLUR, piece.durationUs, joinIn, joinOut)
+                    else -> if (joinIn || joinOut) own += Dip(piece.durationUs, joinIn, joinOut, s.transition == 2)
+                }
             }
             val edited = EditedMediaItem.Builder(piece.item).setEffects(Effects(sound, own)).setRemoveAudio(!s.keepAudio)
             // With sound, setSpeed changes picture and sound together. Without a sound track it stalls the export (no
