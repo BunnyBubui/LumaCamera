@@ -98,7 +98,7 @@ class StudioProjectsActivity : ComponentActivity() {
     override fun onResume() { super.onResume(); fill() }
 
     private fun fill() {
-        luma.readIo.execute {
+        StudioProjects.io.execute {
             val list = StudioProjects.list(this)
             runOnUiThread {
                 if (isDestroyed) return@runOnUiThread

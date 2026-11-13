@@ -432,7 +432,7 @@ class VideoEditorActivity : ComponentActivity() {
             val pieces = ArrayList<SpeechPiece>()
             runOnUiThread { captionUi?.render(1, 0.08f, "อ่านระดับเสียงเพื่อหาช่วงที่มีคนพูด…") }
             for (p in whole) {
-                val pk = AudioPeaks.getOrDecode(this, p.uri).takeIf { it.isNotEmpty() } ?: continue
+                val pk = AudioPeaks.range(this, p.uri, p.from, p.to).takeIf { it.isNotEmpty() } ?: continue
                 for ((a, b) in StudioMath.keepRanges(pk, AudioPeaks.STEP_MS.toLong(), p.from, p.to, quiet = 0.1f, minMs = 350, padMs = 120)) {
                     var x = a; while (x < b) { val y = if (b - x > 10_000) x + 8_000 else b; pieces += SpeechPiece(p.uri, x, y, p.outAt + ((x - p.from) / p.speed).toLong(), p.speed); x = y }
                 }
@@ -2278,7 +2278,7 @@ class VideoEditorActivity : ComponentActivity() {
         // A project file appears only once something was really edited; just opening a video leaves no trace.
         if (!named && !changed() && !StudioProjects.exists(this, projectId)) return
         val snap = state(); val pic = firstFrame; val id = projectId; val name = projectName
-        luma.readIo.execute {
+        StudioProjects.io.execute {
             val ok = runCatching { StudioProjects.save(applicationContext, id, name, source, snap, pic) }.isSuccess
             if (ok) runOnUiThread { if (!isDestroyed) saveLabel?.let { l -> l.text = "บันทึกอัตโนมัติแล้ว"; l.animate().cancel(); l.alpha = 1f; l.animate().alpha(0f).setStartDelay(1800).setDuration(500).start() } }
         }

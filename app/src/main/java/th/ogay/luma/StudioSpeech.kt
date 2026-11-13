@@ -118,7 +118,7 @@ class StudioSpeech(private val a: Activity, languageArg: String, private val pie
             override fun onError(error: Int) { if (language == AUTO) language = "th-TH"; run() }
         })
     }
-    fun stop() { stopped = true; handler.removeCallbacks(timeout); pending = null; recognizer?.runCatching { cancel(); destroy() }; recognizer = null; closeFile() }
+    fun stop() { stopped = true; handler.removeCallbacks(timeout); pending = null; recognizer?.runCatching { cancel(); destroy() }; recognizer = null; runCatching { langId?.close() }; langId = null; closeFile() }
     private fun closeFile() { runCatching { pfd?.close() }; pfd = null; file?.delete(); file = null }
 
     /**
@@ -137,9 +137,27 @@ class StudioSpeech(private val a: Activity, languageArg: String, private val pie
             if (stopped) return
             if (at >= candidates.size) { language = best; onDetected(best); run(); return }
             val lang = candidates[at++]; onStage("ตรวจภาษาที่พูด · ลอง $lang (${at}/${candidates.size})")
-            recognize(sample, 1000 + at, lang) { text, conf -> val score = (text?.trim()?.length ?: 0) * (if (conf > 0f) conf else 0.5f); if (score > bestScore) { bestScore = score; best = lang }; handler.post { step() } }
+            recognize(sample, 1000 + at, lang) { text, conf ->
+                val words = text?.trim().orEmpty()
+                fun settle(score: Float) { if (score > bestScore) { bestScore = score; best = lang }; handler.post { step() } }
+                if (words.isEmpty()) settle(0f)
+                // A second, text-reading AI model (ML Kit language ID) checks the words really are in the language that was tried;
+                // reading speech in the wrong language gives words it does not recognise as that language.
+                else idConfidence(words, lang) { id -> settle(id * minOf(words.length, 40) * (if (conf > 0f) 0.5f + conf / 2f else 1f)) }
+            }
         }
         step()
+    }
+
+    private var langId: com.google.mlkit.nl.languageid.LanguageIdentifier? = null
+    /** How sure the on-device language-ID model is that [text] is written in [tag] (0 to 1); 0 when it cannot tell. */
+    private fun idConfidence(text: String, tag: String, done: (Float) -> Unit) {
+        val client = langId ?: com.google.mlkit.nl.languageid.LanguageIdentification.getClient(
+            com.google.mlkit.nl.languageid.LanguageIdentificationOptions.Builder().setConfidenceThreshold(0.05f).build()).also { langId = it }
+        val base = tag.lowercase().substringBefore('-').let { if (it == "yue") "zh" else it }
+        client.identifyPossibleLanguages(text)
+            .addOnSuccessListener { list -> done(list.firstOrNull { it.languageTag.lowercase().substringBefore('-') == base }?.confidence ?: 0f) }
+            .addOnFailureListener { done(0f) }
     }
 
     private fun run() {

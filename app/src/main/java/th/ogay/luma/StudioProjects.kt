@@ -14,6 +14,12 @@ import java.io.File
  * each file so a later version of the app can tell how to read an older project.
  */
 object StudioProjects {
+    /**
+     * Saving and listing projects run here, on their own thread. The shared photo/video reading thread can be busy for minutes with an
+     * export or caption job, and a project queued behind it would not be saved or shown until that job ended.
+     */
+    val io: java.util.concurrent.ExecutorService = java.util.concurrent.Executors.newSingleThreadExecutor()
+
     const val SCHEMA = 1
     class Info(val id: String, val name: String, val source: Uri, val updated: Long, val thumb: File, val missing: Boolean,
         /** Short words for what was edited (for the list), and the length in seconds when it can be told simply (else 0). */
