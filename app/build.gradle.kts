@@ -82,6 +82,7 @@ dependencies {
     implementation("com.google.mlkit:segmentation-selfie:16.0.0-beta6")
     // Bundled QR model: scans the viewfinder without waiting for Play services to download anything.
     implementation("com.google.mlkit:barcode-scanning:17.3.0")
+    implementation("com.google.mlkit:translate:17.0.3")
     implementation("org.opencv:opencv:4.12.0")
     implementation("androidx.exifinterface:exifinterface:1.3.7")
     implementation("androidx.work:work-runtime:2.9.1")

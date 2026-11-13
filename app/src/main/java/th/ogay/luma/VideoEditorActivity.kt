@@ -1672,6 +1672,30 @@ class VideoEditorActivity : ComponentActivity() {
         }
         rebuildLayers(); refreshTimeline(); showTool(15, false)
     }
+    private fun translateCaptions(fromTag: String, toTag: String) {
+        val from = com.google.mlkit.nl.translate.TranslateLanguage.fromLanguageTag(fromTag.substringBefore('-'))
+        val to = com.google.mlkit.nl.translate.TranslateLanguage.fromLanguageTag(toTag.substringBefore('-'))
+        if (from == null || to == null) { notice("ภาษานี้ยังแปลในเครื่องไม่ได้"); return }
+        if (from == to) { notice("ภาษาที่พูดกับภาษาที่แปลเป็นภาษาเดียวกัน"); return }
+        val ids = layers.indices.filter { layers[it].caption }
+        if (ids.isEmpty()) return
+        val client = com.google.mlkit.nl.translate.Translation.getClient(com.google.mlkit.nl.translate.TranslatorOptions.Builder().setSourceLanguage(from).setTargetLanguage(to).build())
+        notice("กำลังเตรียมโมเดลภาษา (โหลดครั้งแรกต้องต่ออินเทอร์เน็ต)…")
+        client.downloadModelIfNeeded().addOnSuccessListener {
+            var left = ids.size; val out = arrayOfNulls<String>(layers.size)
+            ids.forEach { i -> client.translate(layers[i].text).addOnCompleteListener { t ->
+                out[i] = t.result?.takeIf { t.isSuccessful && it.isNotBlank() }
+                if (--left == 0 && !isDestroyed) {
+                    var done = 0
+                    ids.forEach { j -> val words = out[j] ?: return@forEach; val l = layers.getOrNull(j) ?: return@forEach
+                        val n = l.copy(text = words).let { it.copy(source = VideoLayer.textSource(it.text, it.color, it.style)) }
+                        val pic = runCatching { VideoLayers.textPicture(n, TEXT_PREVIEW) }.getOrNull() ?: return@forEach
+                        layerThumbs[n.source] = pic; layers[j] = n.copy(aspect = pic.width.toFloat() / pic.height); done++ }
+                    client.close(); rebuildLayers(); refreshTimeline(); showTool(15, false)
+                    notice(if (done > 0) "แปลคำบรรยาย $done บรรทัดแล้ว · ตรวจคำก่อนส่งออก" else "แปลไม่สำเร็จ ลองใหม่อีกครั้ง")
+                } } }
+        }.addOnFailureListener { client.close(); notice("โหลดโมเดลภาษาไม่ได้ · ต่ออินเทอร์เน็ตแล้วลองใหม่") }
+    }
     private fun captionTools(col: LinearLayout) {
         col.gravity = Gravity.TOP
         val lang = captionLang(); val name = LANGS.firstOrNull { it.second == lang }?.first ?: lang
@@ -1700,6 +1724,14 @@ class VideoEditorActivity : ComponentActivity() {
         showRow.addView(text("ใส่คำบรรยายบนวิดีโอ", 14f, Glass.TEXT, true).apply { setPadding(dp(10), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
         showRow.addView(GlassSwitch(this).apply { set(shown, false); onToggle = { on -> layers.indices.filter { layers[it].caption }.forEach { i -> layers[i] = layers[i].copy(hidden = !on) }; rebuildLayers(); refreshTimeline(); showTool(15, false) } }, dp(52), dp(30))
         col.addView(showRow, -1, dp(40))
+        // Translate every caption line on the phone (ML Kit); the language model downloads once, then it works offline.
+        val targetTag = getSharedPreferences("camera", MODE_PRIVATE).getString("caption_target", "en-US") ?: "en-US"
+        val targetName = LANGS.firstOrNull { it.second == targetTag }?.first ?: targetTag
+        val trRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(8), dp(14), 0) }
+        trRow.addView(dropButton("แปลเป็น: $targetName") { v -> menu.show(v, "แปลคำบรรยายเป็นภาษา", LANGS.map { GlassMenu.Option(it.first, "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M3 12h18 M12 3c3 3 3 15 0 18 M12 3c-3 3-3 15 0 18") }, LANGS.indexOfFirst { it.second == targetTag }) { k ->
+            getSharedPreferences("camera", MODE_PRIVATE).edit().putString("caption_target", LANGS[k].second).apply(); showTool(15, false) } }, LinearLayout.LayoutParams(-2, dp(38)))
+        trRow.addView(EditorKit.chip(this, "แปลเลย", "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M3 12h18 M12 3c3 3 3 15 0 18 M12 3c-3 3-3 15 0 18") { translateCaptions(captionLang(), targetTag) }, LinearLayout.LayoutParams(-2, dp(38)).apply { leftMargin = dp(8) })
+        col.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(trRow) }, -1, -2)
         val drops = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(8), dp(14), 0) }
         drops.addView(text("คำบรรยาย $count บรรทัด", 12f, Glass.TEXT2, true).apply { setPadding(0, 0, dp(8), 0) })
         drops.addView(dropButton("ตำแหน่ง") { v -> menu.show(v, "ตำแหน่งคำบรรยาย", listOf(GlassMenu.Option("ล่าง", posIcon(0.5f, 0.86f)), GlassMenu.Option("กลาง", posIcon(0.5f, 0.5f)), GlassMenu.Option("บน", posIcon(0.5f, 0.14f))), -1) { k -> styleCaptions(y = listOf(0.86f, 0.5f, 0.14f)[k]) } }, LinearLayout.LayoutParams(-2, dp(34)).apply { rightMargin = dp(6) })

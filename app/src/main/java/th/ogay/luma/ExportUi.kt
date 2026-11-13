@@ -127,6 +127,15 @@ object ExportSheet {
             pickRow("การบีบอัด", codecValue, codecNote) { v -> pickMenu.show(v, "การบีบอัดวิดีโอ", listOf(GlassMenu.Option("H.264", "", "เปิดได้ทุกเครื่อง"), GlassMenu.Option("H.265", "", "ไฟล์เล็กกว่า")), if (prefs.getBoolean("export_hevc", false)) 1 else 0) { k ->
                 prefs.edit().putBoolean("export_hevc", k == 1).apply(); paintCodec(k) } }
         } else if (!hevcOk && prefs.getBoolean("export_hevc", false)) prefs.edit().putBoolean("export_hevc", false).apply()
+        // Container: MP4 plays everywhere; MOV is the same video under a QuickTime name, preferred by some editing software and Apple devices.
+        if (!upscale) {
+            val boxes = listOf("mp4" to "MP4", "mov" to "MOV")
+            val boxValue = a.text("", 14f, Glass.TEXT, true); val boxNote = a.text("", 12f, Glass.TEXT3)
+            fun paintBox(k: Int) { boxValue.text = boxes[k].second; boxNote.text = if (k == 0) "เปิดได้ทุกเครื่องและทุกแอป" else "ชื่อ .mov · ใช้กับโปรแกรมตัดต่อและอุปกรณ์ Apple" }
+            paintBox(boxes.indexOfFirst { it.first == prefs.getString("export_container", "mp4") }.coerceAtLeast(0))
+            pickRow("รูปแบบไฟล์", boxValue, boxNote) { v -> pickMenu.show(v, "รูปแบบไฟล์วิดีโอ", boxes.map { GlassMenu.Option(it.second, Icons.FILE, if (it.first == "mp4") "แนะนำ" else "QuickTime") }, boxes.indexOfFirst { it.first == prefs.getString("export_container", "mp4") }.coerceAtLeast(0)) { k ->
+                prefs.edit().putString("export_container", boxes[k].first).apply(); paintBox(k) } }
+        }
         // Bitrate: how many megabits each second of video may use. More = sharper and bigger; automatic leaves it to the phone.
         if (!upscale) {
             val mbpsList = listOf(0, 8, 16, 30, 50)
