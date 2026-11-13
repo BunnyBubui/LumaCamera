@@ -63,7 +63,8 @@ class StudioTimeline(context: Context) : View(context) {
 
     private val d = resources.displayMetrics.density
     private var pxPerMs = 64f * d / 1000f
-    private val rulerH = 16f * d; private val clipH = 46f * d; private val laneH = 30f * d
+    private val rulerH = 16f * d; private val clipH = 46f * d; var laneDp = 30f; set(v) { field = v; requestLayout(); invalidate() }
+    private val laneH get() = laneDp * d
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x99ffffff.toInt(); textSize = 9.5f * d }
     private val accent = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Glass.ACCENT }

@@ -248,8 +248,8 @@ class VideoEditorActivity : ComponentActivity() {
         }
         timeline.clips = list; timeline.lanes = lanes; timeline.selected = if (barActive) -1 else seq.indexOf(playIndex).coerceAtLeast(0); timeline.joined = transition != 0; timeline.marks = markers
         timeline.selectedBar = if (barActive && layerPick in layers.indices) layerPick else -2
-        if (lanes.size != laneCount) { laneCount = lanes.size; val full = dp(68 + 30 * lanes.size); timeline.layoutParams = timeline.layoutParams.apply { height = full }
-            timelineScroll.layoutParams = timelineScroll.layoutParams.apply { height = minOf(full, dp(68 + 30 * 3)) } }
+        if (lanes.size != laneCount) { laneCount = lanes.size; val full = dp(68) + (laneDp() * resources.displayMetrics.density * lanes.size).toInt(); timeline.layoutParams = timeline.layoutParams.apply { height = full }
+            timelineScroll.layoutParams = timelineScroll.layoutParams.apply { height = minOf(full, dp(68) + (laneDp() * resources.displayMetrics.density * 3).toInt()) } }
         timeline.playhead = outNow()
         timeline.invalidate()
     }
@@ -573,6 +573,7 @@ class VideoEditorActivity : ComponentActivity() {
             showTime(); if (tool == 10) showTool(10, false)
         }
         // Many lanes: the timeline is taller than its window and scrolls up and down inside it (three lanes show at once).
+        timeline.laneDp = laneDp()
         timelineScroll = android.widget.ScrollView(this).apply { isVerticalScrollBarEnabled = false; overScrollMode = View.OVER_SCROLL_NEVER; addView(timeline, FrameLayout.LayoutParams(-1, dp(68))) }
         root.addView(timelineScroll, LinearLayout.LayoutParams(-1, dp(68)).apply { topMargin = dp(2) })
         trim = TrimBar(this).apply {
@@ -1849,6 +1850,7 @@ class VideoEditorActivity : ComponentActivity() {
     private val pickSticker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) { runCatching { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }; addLayers(listOf(uri), VideoLayer.IMAGE, home = 12, size = 0.3f) }
     }
+    private fun laneDp() = getSharedPreferences("camera", MODE_PRIVATE).getInt("lane_dp", 30).toFloat()
     /** Layers menu: one "+ เพิ่ม" button for a picture or a video on top, then the picked layer's controls. */
     private fun layerTools(col: LinearLayout) {
         col.gravity = Gravity.TOP
@@ -1856,6 +1858,10 @@ class VideoEditorActivity : ComponentActivity() {
             pendingKind = if (k == 0) VideoLayer.IMAGE else VideoLayer.VIDEO
             pickFromGallery.launch(Intent(this, GalleryActivity::class.java).putExtra(GalleryActivity.EXTRA_PICK, if (k == 0) "image" else "video")) } }.also { (it as LinearLayout).gravity = Gravity.CENTER },
             LinearLayout.LayoutParams(dp(150), dp(38)).apply { gravity = Gravity.CENTER_HORIZONTAL; topMargin = dp(4); bottomMargin = dp(6) })
+        // Row height of the lanes: small, medium or large (all rows stay equal); the timeline resizes at once.
+        val sizes = listOf(24 to "แถวเล็ก", 30 to "แถวกลาง", 40 to "แถวใหญ่")
+        col.addView(LinearLayout(this).apply { gravity = Gravity.CENTER; sizes.forEach { (v, n) -> addView(EditorKit.chip(this@VideoEditorActivity, n, "M4 7h16 M4 12h16 M4 17h16", laneDp().toInt() == v) {
+            getSharedPreferences("camera", MODE_PRIVATE).edit().putInt("lane_dp", v).apply(); timeline.laneDp = v.toFloat(); laneCount = -1; refreshTimeline(); showTool(LAYER_TOOL, false) }, LinearLayout.LayoutParams(-2, dp(32)).apply { setMargins(dp(3), 0, dp(3), dp(4)) }) } }, -1, -2)
         val l = layers.getOrNull(layerPick)
         if (l == null || !l.visual || !barActive) {
             col.addView(text("เพิ่มภาพหรือวิดีโอซ้อนบนคลิป · แตะแถบบนไทม์ไลน์หรือแตะบนภาพเพื่อปรับเลเยอร์นั้น", 12f, Glass.TEXT3).apply { gravity = Gravity.CENTER; setPadding(dp(16), dp(24), dp(16), 0) }, -1, -2)
