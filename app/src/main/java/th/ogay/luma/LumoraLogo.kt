@@ -78,11 +78,9 @@ class LumoraLogoView(context: Context) : View(context) {
             } while (pm2.nextContour())
             c.drawPath(partial, line)
         }
-        if (end > 0f) {
+        if (end > 0f && scaled.size > 2) {
             fill.color = Color.WHITE; fill.alpha = (235 * end).toInt()
             c.drawPath(scaled[2], fill)
-            fill.color = Glass.ACCENT; fill.alpha = (255 * end).toInt()
-            c.drawPath(scaled[3], fill)
         }
     }
 
