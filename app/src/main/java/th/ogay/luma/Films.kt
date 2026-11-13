@@ -235,7 +235,9 @@ Lumora Noir|8|0.0|1.24|1.0|1.0|1.0|0.0|0.34|0.36|ขาวดำคอนทร�
         val c = Canvas(styled)
         c.drawBitmap(src, 0f, 0f, Paint(Paint.FILTER_BITMAP_FLAG).apply { colorFilter = ColorMatrixColorFilter(m) })
         if (film != null) {
-            if (x.glow > 0.01f) {
+            // Film colour and fine-grain finishing: the existing colour matrix remains the fast live-preview fallback.
+            FilmToneEngine.apply(styled, film, x)
+            if (x.glow * x.strength > 0.01f) {
                 // Halation: the bright parts are blurred wide and laid back on top, warm and soft, like light bleeding in film.
                 val sw = (w / 8).coerceAtLeast(32); val sh = (h / 8).coerceAtLeast(32)
                 val small = Bitmap.createScaledBitmap(styled, sw, sh, true)
@@ -245,24 +247,15 @@ Lumora Noir|8|0.0|1.24|1.0|1.0|1.0|0.0|0.34|0.36|ขาวดำคอนทร�
                 small.recycle()
                 val soft = Bitmap.createScaledBitmap(hi, (sw / 4).coerceAtLeast(8), (sh / 4).coerceAtLeast(8), true)
                 hi.recycle()
-                c.drawBitmap(soft, null, Rect(0, 0, w, h), Paint(Paint.FILTER_BITMAP_FLAG).apply { alpha = (x.glow * 230).toInt().coerceIn(0, 255); xfermode = PorterDuffXfermode(PorterDuff.Mode.SCREEN) })
+                c.drawBitmap(soft, null, Rect(0, 0, w, h), Paint(Paint.FILTER_BITMAP_FLAG).apply { alpha = (x.glow * x.strength * 230).toInt().coerceIn(0, 255); xfermode = PorterDuffXfermode(PorterDuff.Mode.SCREEN) })
                 soft.recycle()
             }
-            val vig = film.vignette * x.vignette
+            val vig = film.vignette * x.vignette * x.strength
             if (vig > 0.01f) {
                 val rad = Math.hypot(w.toDouble(), h.toDouble()).toFloat() / 2f
                 c.drawRect(0f, 0f, w.toFloat(), h.toFloat(), Paint().apply { shader = RadialGradient(w / 2f, h / 2f, rad, intArrayOf(Color.TRANSPARENT, Color.TRANSPARENT, Color.argb((vig * 255).toInt().coerceIn(0, 230), 0, 0, 0)), floatArrayOf(0f, 0.55f, 1f), Shader.TileMode.CLAMP) })
             }
-            val gr = film.grain * x.grain
-            if (gr > 0.01f) {
-                // One small noise tile repeated over the picture: cheap and looks like fine grain.
-                val t = 256; val noise = Bitmap.createBitmap(t, t, Bitmap.Config.ARGB_8888); val rnd = Random(7); val px = IntArray(t * t)
-                for (i in px.indices) { val v = 128 + (rnd.nextGaussian() * 38).toInt().coerceIn(-120, 120); px[i] = Color.argb((gr * 46).toInt().coerceIn(0, 140), v, v, v) }
-                noise.setPixels(px, 0, t, 0, 0, t, t)
-                c.drawRect(0f, 0f, w.toFloat(), h.toFloat(), Paint().apply { shader = BitmapShader(noise, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT) })
-                noise.recycle()
-            }
-            if (x.leak > 0) {
+            if (x.leak > 0 && x.strength > 0f) {
                 // A warm streak of light from one side. The side and spread change on every photo, like a real leaky back.
                 val rnd = Random(System.nanoTime()); val side = rnd.nextInt(4); val k = 0.22f + 0.2f * x.leak
                 val horizontal = side < 2
@@ -270,8 +263,8 @@ Lumora Noir|8|0.0|1.24|1.0|1.0|1.0|0.0|0.34|0.36|ขาวดำคอนทร�
                 val pos = (if (horizontal) h else w) * (0.2f + 0.6f * rnd.nextFloat())
                 val cx = if (horizontal) (if (side == 0) 0f else w.toFloat()) else pos
                 val cy = if (horizontal) pos else (if (side == 2) 0f else h.toFloat())
-                val warm = Color.argb((k * 255).toInt(), 255, 120 + rnd.nextInt(60), 40)
-                c.drawRect(0f, 0f, w.toFloat(), h.toFloat(), Paint().apply { shader = RadialGradient(cx, cy, len, intArrayOf(warm, Color.argb((k * 90).toInt(), 255, 60, 30), Color.TRANSPARENT), floatArrayOf(0f, 0.5f, 1f), Shader.TileMode.CLAMP); xfermode = PorterDuffXfermode(PorterDuff.Mode.SCREEN) })
+                val warm = Color.argb((k * 255 * x.strength).toInt().coerceIn(0, 255), 255, 120 + rnd.nextInt(60), 40)
+                c.drawRect(0f, 0f, w.toFloat(), h.toFloat(), Paint().apply { shader = RadialGradient(cx, cy, len, intArrayOf(warm, Color.argb((k * 90 * x.strength).toInt().coerceIn(0, 255), 255, 60, 30), Color.TRANSPARENT), floatArrayOf(0f, 0.5f, 1f), Shader.TileMode.CLAMP); xfermode = PorterDuffXfermode(PorterDuff.Mode.SCREEN) })
             }
             if (x.date) {
                 val stamp = java.text.SimpleDateFormat("''yy  M  d", java.util.Locale.US).format(java.util.Date())
