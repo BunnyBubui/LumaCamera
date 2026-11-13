@@ -68,7 +68,9 @@ data class VideoEditSpec(
     /** How many of [extras] play before the main clip (0 = the main clip is first). */
     val mainAt: Int = 0,
     /** Finishing effects over the whole picture, each 0..1. */
-    val vignette: Float = 0f, val grain: Float = 0f, val sharpen: Float = 0f)
+    val vignette: Float = 0f, val grain: Float = 0f, val sharpen: Float = 0f,
+    /** The whole colour (filter, adjustments and colour studio) as one [r][g][b] table; when set it replaces [look]. */
+    val grade: Array<Array<IntArray>>? = null)
 
 /** A clip appended after the main one. [from]/[to] in ms of that clip. */
 data class VideoPart(val source: Uri, val from: Long, val to: Long, val speed: Float = 1f)
@@ -153,7 +155,8 @@ object VideoEdit {
         if (s.speed > 1f) effects += FrameDropEffect.createDefaultFrameDropEffect(30f)
         // One clip: look and text belong to the clip. Several clips: they belong to the whole video (below), so they
         // run across the joins and every clip is brought to the first clip's frame.
-        if (!multi) s.look?.let { effects += SingleColorLut.createFromCube(EditorKit.cube(it)) }
+        val table = s.grade ?: s.look?.let { EditorKit.cube(it) }
+        if (!multi) table?.let { effects += SingleColorLut.createFromCube(it) }
         if (s.crop > 0f) effects += Presentation.createForAspectRatio(s.crop, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP)
         val finishing = s.vignette > 0f || s.grain > 0f || s.sharpen > 0f
         if (!multi && finishing) effects += StudioFx(s.vignette, s.grain, s.sharpen)
@@ -187,7 +190,7 @@ object VideoEdit {
         if (multi) {
             val (w, h) = frameSize(s)
             whole += Presentation.createForWidthAndHeight(w / 2 * 2, h / 2 * 2, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP)
-            s.look?.let { whole += SingleColorLut.createFromCube(EditorKit.cube(it)) }
+            table?.let { whole += SingleColorLut.createFromCube(it) }
             if (finishing) whole += StudioFx(s.vignette, s.grain, s.sharpen)
             if (texts.isNotEmpty()) whole += OverlayEffect(texts)
         }

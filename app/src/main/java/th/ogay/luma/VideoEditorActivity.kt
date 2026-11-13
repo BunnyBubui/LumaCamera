@@ -80,6 +80,18 @@ class VideoEditorActivity : ComponentActivity() {
         private const val ADD = "M12 5v14 M5 12h14"
         private const val LAYERS = "M12 3l9 5-9 5-9-5z M3 12.5l9 5 9-5 M3 17l9 5 9-5"
         private const val LAYER_TOOL = 13
+        private const val COLOR_TOOL = 14
+        /** Looks each picture colour up in a [n]³ colour table laid out as n slices side by side (x = blue·n + red, y = green), blending the 8 nearest entries. */
+        private const val LUT_AGSL = """uniform shader content; uniform shader lut; uniform float n;
+            half3 at(float r, float g, float b) { return lut.eval(float2(b * n + r + 0.5, g + 0.5)).rgb; }
+            half4 main(float2 p) {
+                half4 c = content.eval(p); float a = max(float(c.a), 0.0001);
+                float3 v = clamp(float3(c.rgb) / a, 0.0, 1.0) * (n - 1.0); float3 i = floor(v); float3 f = v - i; float3 j = min(i + 1.0, n - 1.0);
+                half3 c00 = mix(at(i.r, i.g, i.b), at(j.r, i.g, i.b), f.r); half3 c10 = mix(at(i.r, j.g, i.b), at(j.r, j.g, i.b), f.r);
+                half3 c01 = mix(at(i.r, i.g, j.b), at(j.r, i.g, j.b), f.r); half3 c11 = mix(at(i.r, j.g, j.b), at(j.r, j.g, j.b), f.r);
+                half3 o = mix(mix(c00, c10, f.g), mix(c01, c11, f.g), f.b);
+                return half4(o * half(a), c.a);
+            }"""
         /** Width in pixels the words of a text layer are drawn at for the preview (the export draws them again at full size). */
         private const val TEXT_PREVIEW = 720
         private const val SRT_LIMIT = 60
@@ -483,7 +495,7 @@ class VideoEditorActivity : ComponentActivity() {
         root.addView(trim, LinearLayout.LayoutParams(-1, dp(64)).apply { setMargins(dp(12), dp(4), dp(12), dp(4)) })
         tools = FrameLayout(this).apply { clipChildren = false }
         root.addView(tools, LinearLayout.LayoutParams(-1, dp(124)))
-        toolBar = EditorKit.ToolBar(this, listOf(EditorKit.SCISSORS to "ตัด", EditorKit.SPLIT to "แยกไฟล์", EditorKit.SPEED to "ความเร็ว", EditorKit.CROP to "ครอบ", EditorKit.TEXT to "ข้อความ", Icons.FILM to "ฟิลเตอร์", EditorKit.MUSIC to "เพลง", EditorKit.ADJUST to "ปรับ", EditorKit.ROTATE to "หมุน", Icons.SOUND to "เสียง", CLIPS to "คลิป", JOIN to "ทรานซิชัน", STICKER to "สติกเกอร์", LAYERS to "เลเยอร์")) { showTool(it) }
+        toolBar = EditorKit.ToolBar(this, listOf(EditorKit.SCISSORS to "ตัด", EditorKit.SPLIT to "แยกไฟล์", EditorKit.SPEED to "ความเร็ว", EditorKit.CROP to "ครอบ", EditorKit.TEXT to "ข้อความ", Icons.FILM to "ฟิลเตอร์", EditorKit.MUSIC to "เพลง", EditorKit.ADJUST to "ปรับ", EditorKit.ROTATE to "หมุน", Icons.SOUND to "เสียง", CLIPS to "คลิป", JOIN to "ทรานซิชัน", STICKER to "สติกเกอร์", LAYERS to "เลเยอร์", "M12 3a9 9 0 1 0 0 18c1.1 0 2-.9 2-2 0-.5-.2-1-.5-1.3-.3-.4-.5-.8-.5-1.3 0-1.1.9-2 2-2h2.3A4.7 4.7 0 0 0 21 9.7C21 5.9 17 3 12 3z M7.5 11h.01 M10 7.5h.01 M14.5 7.5h.01" to "สี")) { showTool(it) }
         root.addView(toolBar, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(4), 0, dp(4), dp(8)) })
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) { override fun handleOnBackPressed() = leave() })
 
@@ -676,10 +688,188 @@ class VideoEditorActivity : ComponentActivity() {
     private fun colour(): ColorMatrix = EditorKit.film(film, filmStrength).apply { postConcat(EditorKit.adjust(adjust)) }
     private fun looked() = film != null || adjust.any { it != 0f }
     private fun applyLook() {
-        texture.setLayerPaint(if (!looked() || comparing) null else Paint().apply { colorFilter = ColorMatrixColorFilter(colour()) })
+        paintLook()
         captionView.setBackgroundColor(if (textBox) 0x99000000.toInt() else 0); captionView.setPadding(if (textBox) dp(8) else 0, 0, if (textBox) dp(8) else 0, 0)
         captionView.text = caption; captionView.setTextColor(textColor); captionView.visibility = if (caption.isBlank()) View.GONE else View.VISIBLE
         layoutVideo(); if (::timeLabel.isInitialized) showTime()
+    }
+
+    // ---------- Colour studio ----------
+    private val grade = StudioGrade()
+    private var lutPath = ""; private var lutName = ""
+    private var colourTab = 0; private var curveChannel = 0; private var hslBand = 0; private var wheelRange = 1
+    private var hist: HistView? = null
+    private var lastCube: Array<Array<IntArray>>? = null
+    private fun gradeCube(n: Int) = grade.build(if (looked()) colour().array else null, n)
+    @androidx.annotation.RequiresApi(33)
+    private fun lutEffect(cube: Array<Array<IntArray>>): RenderEffect {
+        val n = cube.size; val px = IntArray(n * n * n)
+        for (r in 0 until n) for (g in 0 until n) for (b in 0 until n) px[g * n * n + b * n + r] = cube[r][g][b]
+        val bmp = Bitmap.createBitmap(px, n * n, n, Bitmap.Config.ARGB_8888)
+        val lut = BitmapShader(bmp, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP).apply { filterMode = BitmapShader.FILTER_MODE_NEAREST }
+        val shader = RuntimeShader(LUT_AGSL).apply { setInputShader("lut", lut); setFloatUniform("n", n.toFloat()) }
+        return RenderEffect.createRuntimeShaderEffect(shader, "content")
+    }
+    /** Puts the whole look (filter, adjustments and grade) on the preview: through one colour table when the grade is used, else as a colour matrix. */
+    private fun paintLook() {
+        val graded = grade.active() && !comparing
+        if (graded && android.os.Build.VERSION.SDK_INT >= 33) {
+            val cube = gradeCube(25); lastCube = cube
+            texture.setLayerPaint(null); texture.setRenderEffect(lutEffect(cube))
+        } else {
+            if (android.os.Build.VERSION.SDK_INT >= 31) texture.setRenderEffect(null)
+            lastCube = if (graded) gradeCube(17) else null
+            texture.setLayerPaint(if (!looked() || comparing) null else Paint().apply { colorFilter = ColorMatrixColorFilter(colour()) })
+        }
+    }
+    /** Brightness spread of the picture on screen, after the look: red, green and blue, dark on the left, bright on the right. */
+    private class HistView(c: Context) : View(c) {
+        private val bins = Array(3) { FloatArray(64) }
+        private val paint = Paint(Paint.ANTI_ALIAS_FLAG); private val path = Path()
+        private val colors = intArrayOf(0x99ff5a5a.toInt(), 0x9952d96b.toInt(), 0x995a9bff.toInt())
+        init { contentDescription = "ฮิสโตแกรม" }
+        fun feed(b: Bitmap, cube: Array<Array<IntArray>>?) {
+            bins.forEach { it.fill(0f) }
+            val w = b.width; val h = b.height; val px = IntArray(w * h); b.getPixels(px, 0, w, 0, 0, w, h)
+            val n = cube?.size ?: 0
+            for (p in px) {
+                var c = p
+                if (cube != null) c = cube[((p shr 16 and 255) * (n - 1) + 127) / 255][((p shr 8 and 255) * (n - 1) + 127) / 255][((p and 255) * (n - 1) + 127) / 255]
+                bins[0][(c shr 16 and 255) shr 2]++; bins[1][(c shr 8 and 255) shr 2]++; bins[2][(c and 255) shr 2]++
+            }
+            val top = bins.maxOf { a -> a.drop(1).dropLast(1).maxOrNull() ?: 1f }.coerceAtLeast(1f)
+            bins.forEach { a -> for (i in a.indices) a[i] = (a[i] / top).coerceAtMost(1f) }
+            invalidate()
+        }
+        override fun onDraw(c: Canvas) {
+            val w = width.toFloat(); val h = height.toFloat()
+            paint.style = Paint.Style.FILL; paint.color = 0x1fffffff; c.drawRoundRect(0f, 0f, w, h, h * 0.18f, h * 0.18f, paint)
+            paint.xfermode = PorterDuffXfermode(PorterDuff.Mode.SCREEN)
+            bins.forEachIndexed { k, a -> path.reset(); path.moveTo(0f, h)
+                a.forEachIndexed { i, v -> path.lineTo(i * w / (a.size - 1), h - v * (h - 4)) }
+                path.lineTo(w, h); path.close(); paint.color = colors[k]; c.drawPath(path, paint) }
+            paint.xfermode = null
+        }
+    }
+    private val histTick = object : Runnable { override fun run() {
+        val v = hist ?: return
+        if (tool != COLOR_TOOL || isDestroyed) return
+        runCatching { texture.getBitmap(96, 54) }.getOrNull()?.let { b -> v.feed(b, if (comparing) null else lastCube); b.recycle() }
+        handler.postDelayed(this, 450)
+    } }
+    /** One tone curve to bend by dragging its five points up and down. */
+    private class CurveEdit(c: Context) : View(c) {
+        var points = FloatArray(20); var at = 0; var color = Color.WHITE
+        var onChange: () -> Unit = {}
+        private val d = resources.displayMetrics.density
+        private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 2.4f * resources.displayMetrics.density }
+        private val dot = Paint(Paint.ANTI_ALIAS_FLAG); private val grid = Paint().apply { color = 0x26ffffff }
+        private var drag = -1
+        init { contentDescription = "เส้นโค้งโทน ลากจุดขึ้นลง"; isClickable = true }
+        private fun x(i: Float) = 10 * d + i * (width - 20 * d); private fun y(v: Float) = height - 8 * d - v * (height - 16 * d)
+        override fun onDraw(c: Canvas) {
+            for (k in 0..4) { val gx = x(k / 4f); c.drawLine(gx, y(0f), gx, y(1f), grid); val gy = y(k / 4f); c.drawLine(x(0f), gy, x(1f), gy, grid) }
+            line.color = color; var px = x(0f); var py = y(StudioGrade.curve(points, at, 0f))
+            for (s in 1..60) { val t = s / 60f; val nx = x(t); val ny = y(StudioGrade.curve(points, at, t)); c.drawLine(px, py, nx, ny, line); px = nx; py = ny }
+            for (k in 0..4) { dot.color = if (k == drag) Glass.ACCENT else Color.WHITE; c.drawCircle(x(k / 4f), y(points[at + k]), (if (k == drag) 8f else 6f) * d, dot) }
+        }
+        override fun onTouchEvent(e: MotionEvent): Boolean {
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> { parent?.requestDisallowInterceptTouchEvent(true); drag = ((e.x - x(0f)) / (x(1f) - x(0f)) * 4 + 0.5f).toInt().coerceIn(0, 4); invalidate() }
+                MotionEvent.ACTION_MOVE -> if (drag >= 0) { points[at + drag] = ((height - 8 * d - e.y) / (height - 16 * d)).coerceIn(0f, 1f); invalidate(); onChange() }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { drag = -1; invalidate() }
+            }
+            return true
+        }
+    }
+    private fun colourTools(col: LinearLayout) {
+        col.gravity = Gravity.TOP
+        val top = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(12), dp(2), dp(12), dp(4)) }
+        hist = HistView(this).also { top.addView(it, LinearLayout.LayoutParams(0, dp(40), 1f)) }
+        top.addView(text("กดค้างดูต้นฉบับ", 11f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; background = glass(14, 0x26ffffff); setPadding(dp(10), 0, dp(10), 0); contentDescription = "กดค้างเพื่อดูภาพก่อนปรับสี"
+            setOnTouchListener { v, e -> when (e.actionMasked) { MotionEvent.ACTION_DOWN -> { comparing = true; applyLook(); v.alpha = 0.6f }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { comparing = false; applyLook(); v.alpha = 1f } }; true } }, LinearLayout.LayoutParams(-2, dp(30)).apply { leftMargin = dp(8) })
+        top.addView(text("รีเซ็ต", 11f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; background = glass(14, 0x26ffffff); setPadding(dp(10), 0, dp(10), 0); isClickable = true; glassTouch(); contentDescription = "รีเซ็ตสีทั้งหมด"
+            setOnClickListener { grade.reset(); lutPath = ""; lutName = ""; applyLook(); showTool(COLOR_TOOL, false) } }, LinearLayout.LayoutParams(-2, dp(30)).apply { leftMargin = dp(6) })
+        col.addView(top, -1, -2)
+        val tabs = LinearLayout(this).apply { gravity = Gravity.CENTER }
+        listOf("โทนสี", "เส้นโค้ง", "HSL", "LUT").forEachIndexed { i, n -> tabs.addView(text(n, 12.5f, if (i == colourTab) Glass.ACCENT else Color.WHITE, i == colourTab).apply { gravity = Gravity.CENTER
+            background = glass(16, if (i == colourTab) Glass.ACCENT_SOFT else 0x1fffffff); setPadding(dp(14), 0, dp(14), 0); isClickable = true; glassTouch(); contentDescription = n
+            setOnClickListener { colourTab = i; showTool(COLOR_TOOL, false) } }, LinearLayout.LayoutParams(-2, dp(32)).apply { setMargins(dp(3), 0, dp(3), 0) }) }
+        col.addView(tabs, -1, -2)
+        val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(4), 0, 0) }
+        col.addView(body, LinearLayout.LayoutParams(-1, 0, 1f))
+        fun slider(name: String, now: Float, lo: Int, grad: IntArray, set: (Float) -> Unit) {
+            val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), 0, dp(10), 0) }
+            val steps = (lo..100).toList(); val label = text("$name ${sign(now)}", 12f, Glass.TEXT2, true).apply { minWidth = dp(104) }
+            row.addView(label)
+            row.addView(GlassSlider(this).apply { values = steps.map { if (it > 0 && lo < 0) "+$it" else "$it" }; this.grad = grad; index = ((now * 100).roundToInt() - lo).coerceIn(0, steps.size - 1); contentDescription = name
+                onChange = { k -> val v = steps[k] / 100f; label.text = "$name ${sign(v)}"; set(v); applyLook() } }, LinearLayout.LayoutParams(0, dp(38), 1f))
+            body.addView(row, -1, -2)
+        }
+        fun chips(names: List<String>, colors: List<Int>?, at: Int, pick: (Int) -> Unit) {
+            val row = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(dp(8), 0, dp(8), dp(2)) }
+            names.forEachIndexed { i, n ->
+                val v: View = if (colors != null) View(this).apply { background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(colors[i]); setStroke(dp(if (i == at) 3 else 1), if (i == at) Color.WHITE else 0x55ffffff) } }
+                else text(n, 12f, if (i == at) Glass.ACCENT else Color.WHITE, i == at).apply { gravity = Gravity.CENTER; background = glass(14, if (i == at) Glass.ACCENT_SOFT else 0x1fffffff); setPadding(dp(12), 0, dp(12), 0) }
+                v.isClickable = true; v.contentDescription = n; v.setOnClickListener { Glass.tick(v); pick(i) }
+                row.addView(v, if (colors != null) LinearLayout.LayoutParams(dp(26), dp(26)).apply { setMargins(dp(5), 0, dp(5), 0) } else LinearLayout.LayoutParams(-2, dp(30)).apply { setMargins(dp(3), 0, dp(3), 0) })
+            }
+            body.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(row) }, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.CENTER_HORIZONTAL })
+        }
+        val rainbow = intArrayOf(0xffff3b30.toInt(), 0xffffcc00.toInt(), 0xff34c759.toInt(), 0xff32ade6.toInt(), 0xff5856d6.toInt(), 0xffff2d55.toInt(), 0xffff3b30.toInt())
+        val dim = intArrayOf(0xff8e8e93.toInt(), Color.WHITE, Glass.ACCENT)
+        when (colourTab) {
+            0 -> { // Colour wheels as three sliders each: which colour to push into the shadows, midtones or highlights, how strongly, and how much brighter or darker.
+                chips(listOf("เงา", "กลาง", "สว่าง"), null, wheelRange) { wheelRange = it; showTool(COLOR_TOOL, false) }
+                val k = wheelRange * 3
+                slider("สีที่เติม", grade.wheels[k], 0, rainbow) { grade.wheels[k] = it }
+                slider("ความแรงสี", grade.wheels[k + 1], 0, dim) { grade.wheels[k + 1] = it }
+                slider("ความสว่าง", grade.wheels[k + 2], -100, dim) { grade.wheels[k + 2] = it }
+            }
+            1 -> {
+                chips(listOf("ทั้งหมด", "แดง", "เขียว", "น้ำเงิน"), null, curveChannel) { curveChannel = it; showTool(COLOR_TOOL, false) }
+                val edit = CurveEdit(this).apply { points = grade.curves; at = curveChannel * 5; color = intArrayOf(Color.WHITE, 0xffff5a5a.toInt(), 0xff52d96b.toInt(), 0xff5a9bff.toInt())[curveChannel]
+                    onChange = { applyLook() } }
+                body.addView(edit, LinearLayout.LayoutParams(-1, 0, 1f).apply { setMargins(dp(24), dp(2), dp(24), dp(2)) })
+            }
+            2 -> {
+                val names = listOf("แดง", "ส้ม", "เหลือง", "เขียว", "ฟ้า", "น้ำเงิน", "ม่วง", "ชมพู")
+                chips(names, StudioGrade.BANDS.map { StudioGrade.hueColour(it / 360f).let { c -> Color.rgb((c[0] * 255).toInt(), (c[1] * 255).toInt(), (c[2] * 255).toInt()) } }, hslBand) { hslBand = it; showTool(COLOR_TOOL, false) }
+                val k = hslBand * 3
+                body.addView(text("ปรับเฉพาะสี${names[hslBand]}ในภาพ", 11.5f, Glass.TEXT3).apply { gravity = Gravity.CENTER }, -1, -2)
+                slider("เฉดสี", grade.hsl[k], -100, rainbow) { grade.hsl[k] = it }
+                slider("ความอิ่มสี", grade.hsl[k + 1], -100, dim) { grade.hsl[k + 1] = it }
+                slider("ความสว่าง", grade.hsl[k + 2], -100, dim) { grade.hsl[k + 2] = it }
+            }
+            else -> {
+                // A LUT (.cube file) is a ready-made colour table from another app or a colourist.
+                val row = LinearLayout(this).apply { gravity = Gravity.CENTER }
+                row.addView(EditorKit.chip(this, if (grade.lut == null) "นำเข้าไฟล์ .cube" else "เปลี่ยน LUT", ADD) { pickLut.launch(arrayOf("*/*")) }, LinearLayout.LayoutParams(-2, dp(36)).apply { setMargins(dp(4), 0, dp(4), 0) })
+                if (grade.lut != null) row.addView(EditorKit.chip(this, "เอาออก", Icons.CLOSE) { grade.lut = null; lutPath = ""; lutName = ""; applyLook(); showTool(COLOR_TOOL, false) }, LinearLayout.LayoutParams(-2, dp(36)).apply { setMargins(dp(4), 0, dp(4), 0) })
+                body.addView(row, -1, -2)
+                body.addView(text(if (grade.lut == null) "รองรับ .cube แบบ 3D ขนาดไม่เกิน 33" else lutName, 12f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; setPadding(0, dp(8), 0, dp(4)) }, -1, -2)
+                if (grade.lut != null) slider("ความแรง", grade.lutAmount, 0, dim) { grade.lutAmount = it }
+            }
+        }
+        handler.removeCallbacks(histTick); handler.post(histTick)
+    }
+    private val pickLut = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@registerForActivityResult
+        luma.readIo.execute {
+            val result = runCatching {
+                val name = (contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { if (it.moveToFirst()) it.getString(0) else null } ?: "lut.cube").replace(Regex("[^\\p{L}\\p{N}._-]"), "_")
+                val dir = java.io.File(filesDir, "studio/luts").apply { mkdirs() }; val f = java.io.File(dir, System.currentTimeMillis().toString(36) + "_" + name)
+                contentResolver.openInputStream(uri)!!.use { input -> f.outputStream().use { input.copyTo(it) } }
+                val table = f.reader().use { CubeLut.read(it) }
+                Triple(f.path, name, table)
+            }
+            runOnUiThread {
+                if (isDestroyed) return@runOnUiThread
+                result.onSuccess { (path, name, table) -> grade.lut = table; grade.lutAmount = 1f; lutPath = path; lutName = name; applyLook(); showTool(COLOR_TOOL, false) }
+                    .onFailure { notice("อ่านไฟล์ LUT ไม่ได้ · " + (it.message ?: "ต้องเป็นไฟล์ .cube")) }
+            }
+        }
     }
 
     // ---------- Tools ----------
@@ -689,7 +879,8 @@ class VideoEditorActivity : ComponentActivity() {
         // Cut, split-into-two-files and speed belong to the first clip, so the preview goes back to it.
         if (i in 0..2 && playIndex != 0 && !switching) playClip(0, false)
         // The layer lanes need room; the preview gives way smoothly.
-        val want = dp(if (i == LAYER_TOOL) 276 else if (i == 2 && speed < 1f) 150 else 124)
+        if (i != COLOR_TOOL) { handler.removeCallbacks(histTick); hist = null }
+        val want = dp(if (i == LAYER_TOOL) 276 else if (i == COLOR_TOOL) 268 else if (i == 2 && speed < 1f) 150 else 124)
         if (tools.layoutParams.height != want) {
             if (!animate || Glass.reduced(this)) { tools.layoutParams.height = want; tools.requestLayout() }
             else android.animation.ValueAnimator.ofInt(tools.layoutParams.height, want).apply { duration = 260; interpolator = Glass.EASE
@@ -722,6 +913,7 @@ class VideoEditorActivity : ComponentActivity() {
             5 -> filmTools(col)
             6 -> musicTools(col)
             7 -> adjustTools(col)
+            COLOR_TOOL -> colourTools(col)
             8 -> col.addView(EditorKit.actions(this, listOf(
                     EditorKit.action(this, EditorKit.ROTATE, "หมุน 90°") { turns = (turns + 1) % 4; layoutVideo()
                         if (!Glass.reduced(this)) { texture.rotation = texture.rotation - 90f; texture.animate().rotation(turns * 90f).setInterpolator(Glass.EASE).setDuration(320).start() } },
@@ -872,7 +1064,17 @@ class VideoEditorActivity : ComponentActivity() {
         col.addView(EditorKit.actions(this, items), -1, -2)
     }
 
-    private fun changed() = start != 0L || end != duration || split >= 0 || speed != 1f || cropIndex != 0 || caption.isNotBlank() || film != null || music != null || !keepSound || looked() || turns != 0 || mirror || volume != 1f || cutValid() || extras.isNotEmpty() || stickers.isNotEmpty() || layers.isNotEmpty() || markers.isNotEmpty() || fx.any { it > 0f }
+    private fun restoreGrade(s: Bundle) {
+        val keep = StudioGrade().also { it.copyFrom(grade) }
+        grade.reset()
+        s.getFloatArray("curves")?.takeIf { it.size == 20 }?.copyInto(grade.curves); s.getFloatArray("hsl")?.takeIf { it.size == 24 }?.copyInto(grade.hsl); s.getFloatArray("wheels")?.takeIf { it.size == 9 }?.copyInto(grade.wheels)
+        grade.lutAmount = s.getFloat("lutAmount", 1f)
+        val path = s.getString("lutPath").orEmpty(); lutName = s.getString("lutName").orEmpty()
+        // The same LUT file as before is kept as it is; only a different file is read again.
+        grade.lut = if (path.isEmpty()) null else if (path == lutPath && keep.lut != null) keep.lut else runCatching { java.io.File(path).reader().use { CubeLut.read(it) } }.getOrNull()
+        lutPath = if (grade.lut == null) "" else path
+    }
+    private fun changed() = start != 0L || end != duration || split >= 0 || speed != 1f || cropIndex != 0 || caption.isNotBlank() || film != null || music != null || !keepSound || looked() || turns != 0 || mirror || volume != 1f || cutValid() || extras.isNotEmpty() || stickers.isNotEmpty() || layers.isNotEmpty() || markers.isNotEmpty() || fx.any { it > 0f } || grade.active()
 
     // ---------- Clips, transitions, stickers ----------
     /** The clips in playing order: the main one, then the added ones, which can be moved or removed. */
@@ -1398,7 +1600,7 @@ class VideoEditorActivity : ComponentActivity() {
         return VideoEdit.composition(VideoEditSpec(f?.let { Uri.fromFile(it.file) } ?: source, at(from), at(to), if (turns % 2 == 1) vh else vw, if (turns % 2 == 1) vw else vh,
         speed * n, CROPS[cropIndex].second, caption, place, textColor, textBig, if (looked()) colour() else null, music, f == null && hasAudio && keepSound && speed in SOUND_MIN..SOUND_MAX,
         turns, mirror, volume, musicVolume, if (cut) at(cutFrom) else -1L, if (cut) at(cutTo) else -1L, textBox,
-        extras.map { VideoPart(it.uri, it.from, it.to, it.speed) }, if (extras.isEmpty()) 0 else transition, stickers.toList(), clampedLayers(), shrinkShort, shrinkFps, mainPos(), fx[0], fx[1], fx[2]), applicationContext)
+        extras.map { VideoPart(it.uri, it.from, it.to, it.speed) }, if (extras.isEmpty()) 0 else transition, stickers.toList(), clampedLayers(), shrinkShort, shrinkFps, mainPos(), fx[0], fx[1], fx[2], grade = if (grade.active()) gradeCube(33) else null), applicationContext)
     }
 
     /** Export problems stay on screen until dismissed, so the reason can be read (and reported). */
@@ -1420,7 +1622,7 @@ class VideoEditorActivity : ComponentActivity() {
         out.putString("caption", caption); out.putInt("place", place); out.putInt("textColor", textColor); out.putBoolean("big", textBig)
         out.putString("film", film?.id); out.putFloat("strength", filmStrength); out.putString("music", music?.toString()); out.putString("musicName", musicName)
         out.putBoolean("sound", keepSound); out.putInt("tool", tool)
-        out.putFloatArray("adjust", adjust); out.putFloatArray("fx", fx); out.putInt("turns", turns); out.putBoolean("mirror", mirror); out.putFloat("volume", volume); out.putFloat("musicVolume", musicVolume)
+        out.putFloatArray("adjust", adjust); out.putFloatArray("fx", fx); out.putFloatArray("curves", grade.curves.copyOf()); out.putFloatArray("hsl", grade.hsl.copyOf()); out.putFloatArray("wheels", grade.wheels.copyOf()); out.putString("lutPath", lutPath); out.putString("lutName", lutName); out.putFloat("lutAmount", grade.lutAmount); out.putInt("turns", turns); out.putBoolean("mirror", mirror); out.putFloat("volume", volume); out.putFloat("musicVolume", musicVolume)
         out.putLong("cutFrom", cutFrom); out.putLong("cutTo", cutTo); out.putBoolean("textBox", textBox)
         out.putStringArrayList("extras", ArrayList(extras.map { it.uri.toString() })); out.putStringArrayList("extraRanges", ArrayList(extras.map { "${it.from},${it.to},${it.speed}" })); out.putInt("mainAt", mainAt); out.putStringArrayList("markers", ArrayList(markers.map { it.toString() })); out.putInt("transition", transition)
         out.putStringArrayList("stickers", ArrayList(stickers.map { "${it.x}|${it.y}|${it.big}|${it.text}" }))
@@ -1431,7 +1633,7 @@ class VideoEditorActivity : ComponentActivity() {
         caption = s.getString("caption") ?: ""; place = s.getInt("place", 2); textColor = s.getInt("textColor", Color.WHITE); textBig = s.getBoolean("big")
         film = Films.byId(s.getString("film")); filmStrength = s.getFloat("strength", 1f); music = s.getString("music")?.let { Uri.parse(it) }; musicName = s.getString("musicName") ?: ""
         keepSound = s.getBoolean("sound", true); tool = s.getInt("tool")
-        s.getFloatArray("adjust")?.takeIf { it.size == adjust.size }?.copyInto(adjust); fx.fill(0f); s.getFloatArray("fx")?.takeIf { it.size == fx.size }?.copyInto(fx); turns = s.getInt("turns"); mirror = s.getBoolean("mirror"); volume = s.getFloat("volume", 1f); musicVolume = s.getFloat("musicVolume", 1f)
+        s.getFloatArray("adjust")?.takeIf { it.size == adjust.size }?.copyInto(adjust); fx.fill(0f); restoreGrade(s); s.getFloatArray("fx")?.takeIf { it.size == fx.size }?.copyInto(fx); turns = s.getInt("turns"); mirror = s.getBoolean("mirror"); volume = s.getFloat("volume", 1f); musicVolume = s.getFloat("musicVolume", 1f)
         cutFrom = s.getLong("cutFrom", -1L); cutTo = s.getLong("cutTo", -1L); textBox = s.getBoolean("textBox")
         transition = s.getInt("transition"); stickers.clear(); mainAt = s.getInt("mainAt")
         markers.clear(); s.getStringArrayList("markers")?.mapNotNullTo(markers) { it.toLongOrNull() }
