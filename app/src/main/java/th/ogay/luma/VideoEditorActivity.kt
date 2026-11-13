@@ -1385,7 +1385,7 @@ class VideoEditorActivity : ComponentActivity() {
                 val field = GlassDialog.field(this, "วินาที", String.format(Locale.US, "%.2f", lenOf(playIndex) / 1000f), true); field.selectAll()
                 GlassDialog.ask(this, "ความยาวของคลิป", "M12 7v5l3 2 M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18", "ตั้งได้ตั้งแต่ 0.01 วินาที · ความเร็วจะปรับตามเอง", field, focus = field) {
                     val sec = field.text.toString().toFloatOrNull()
-                    if (sec == null || sec < 0.01f) { notice("ใส่ตัวเลขตั้งแต่ 0.01 ขึ้นไป"); false } else { setCurve(null); setBase((src / (sec * 1000f)).coerceIn(0.001f, 5000f)); showTool(2, false); true } } } }, LinearLayout.LayoutParams(-2, dp(34)).apply { setMargins(dp(3), 0, dp(3), 0) })
+                    if (sec == null || sec < 0.01f) { notice("ใส่ตัวเลขตั้งแต่ 0.01 ขึ้นไป"); false } else { setCurve(null); setBase((src / (sec * 1000f)).coerceIn(0.001f, 5000f)); showTool(2, false); true } } }, LinearLayout.LayoutParams(-2, dp(34)).apply { setMargins(dp(3), 0, dp(3), 0) })
             row.addView(EditorKit.chip(this, "ใส่ตัวเลขความเร็ว", EditorKit.SPEED) {
                 val field = GlassDialog.field(this, "เท่า", base().toString(), true); field.selectAll()
                 GlassDialog.ask(this, "ความเร็ว (เท่า)", EditorKit.SPEED, "0.1 ช้าลงสิบเท่า · 2 เร็วขึ้นสองเท่า", field, focus = field) {
