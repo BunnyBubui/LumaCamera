@@ -77,5 +77,12 @@ object StudioProjects {
         val n = newId(); val o = JSONObject(file(c, id).readText()); o.put("name", o.optString("name") + " (สำเนา)").put("updated", System.currentTimeMillis())
         file(c, n).writeText(o.toString()); thumb(c, id).takeIf { it.exists() }?.copyTo(thumb(c, n), true); n
     }.getOrNull()
+    /** Points a project whose video went missing at another file. The edits stay; times beyond the new file's end are cut back when it opens. */
+    fun relink(c: Context, id: String, uri: Uri) { runCatching {
+        val f = file(c, id); val o = JSONObject(f.readText()); val old = o.getString("source")
+        o.put("source", uri.toString())
+        o.optJSONObject("state")?.let { st -> st.optJSONArray("mainSource")?.let { a -> if (a.optString(1) == old) st.put("mainSource", JSONArray().put("s").put(uri.toString())) } }
+        f.writeText(o.toString())
+    } }
     fun delete(c: Context, id: String) { file(c, id).delete(); thumb(c, id).delete() }
 }

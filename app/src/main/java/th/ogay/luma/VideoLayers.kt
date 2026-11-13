@@ -103,22 +103,56 @@ object VideoLayers {
         return Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).apply { setPixels(px, 0, w, 0, 0, w, h) }
     }
 
-    /** The words of a text layer drawn on a clear picture: centred lines, with a soft shadow, a dark box or an outline. */
+    /** Fonts a text layer can use (bits 8–9 of [VideoLayer.style]) and alignments (bits 12–13). */
+    val FONTS = listOf("sans-serif", "serif", "monospace", "sans-serif-condensed")
+    fun font(style: Int) = (style shr 8) and 3
+    fun align(style: Int) = (style shr 12) and 3
+    /** A text layer whose words start with this mark is a shape: the number after it picks which one. */
+    const val SHAPE = "\u0001shape:"
+    val SHAPES = listOf("สี่เหลี่ยม", "วงกลม", "ลูกศร", "ดาว", "หัวใจ", "เส้น")
+    fun shapeOf(text: String) = if (text.startsWith(SHAPE)) text.removePrefix(SHAPE).toIntOrNull()?.coerceIn(0, SHAPES.size - 1) ?: 0 else -1
+
+    /** A shape in the layer's colour; with the outline style only its edge is drawn. */
+    private fun shapePicture(l: VideoLayer, kind: Int, width: Int): Bitmap {
+        val w = width / 2; val h = if (kind == 2 || kind == 5) w / 2 else w
+        val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888); val cv = android.graphics.Canvas(out)
+        val outline = l.style and 2 != 0
+        val p = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = l.color; style = if (outline) android.graphics.Paint.Style.STROKE else android.graphics.Paint.Style.FILL; strokeWidth = w * 0.05f; strokeJoin = android.graphics.Paint.Join.ROUND }
+        val m = if (outline) w * 0.04f else 0f; val fw = w.toFloat(); val fh = h.toFloat()
+        val path = android.graphics.Path()
+        when (kind) {
+            0 -> cv.drawRoundRect(m, m, fw - m, fh - m, fw * 0.08f, fw * 0.08f, p)
+            1 -> cv.drawOval(m, m, fw - m, fh - m, p)
+            2 -> { path.moveTo(m, fh * 0.35f); path.lineTo(fw * 0.6f, fh * 0.35f); path.lineTo(fw * 0.6f, m); path.lineTo(fw - m, fh / 2); path.lineTo(fw * 0.6f, fh - m); path.lineTo(fw * 0.6f, fh * 0.65f); path.lineTo(m, fh * 0.65f); path.close(); cv.drawPath(path, p) }
+            3 -> { for (i in 0 until 10) { val r = if (i % 2 == 0) fw / 2 - m else fw * 0.2f; val a = Math.PI / 5 * i - Math.PI / 2
+                    val x = fw / 2 + r * Math.cos(a).toFloat(); val y = fh / 2 + r * Math.sin(a).toFloat(); if (i == 0) path.moveTo(x, y) else path.lineTo(x, y) }; path.close(); cv.drawPath(path, p) }
+            4 -> { path.moveTo(fw / 2, fh * 0.9f); path.cubicTo(fw * 0.05f, fh * 0.55f, fw * 0.1f, fh * 0.08f, fw / 2, fh * 0.3f); path.cubicTo(fw * 0.9f, fh * 0.08f, fw * 0.95f, fh * 0.55f, fw / 2, fh * 0.9f); path.close(); cv.drawPath(path, p) }
+            else -> cv.drawRoundRect(m, fh * 0.38f, fw - m, fh * 0.62f, fh * 0.12f, fh * 0.12f, p.apply { style = android.graphics.Paint.Style.FILL })
+        }
+        return out
+    }
+
+    /** The words of a text layer drawn on a clear picture, in its font and alignment, with a soft shadow, a dark box or an outline. */
     fun textPicture(l: VideoLayer, width: Int = 1080): Bitmap {
+        shapeOf(l.text).takeIf { it >= 0 }?.let { return shapePicture(l, it, width) }
         val words = l.text.ifBlank { " " }
         val paint = android.text.TextPaint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
-            textSize = width * 0.105f; color = l.color; typeface = if (l.style and 4 != 0) android.graphics.Typeface.DEFAULT else android.graphics.Typeface.DEFAULT_BOLD
+            textSize = width * 0.105f; color = l.color
+            typeface = android.graphics.Typeface.create(FONTS[font(l.style)], if (l.style and 4 != 0) android.graphics.Typeface.NORMAL else android.graphics.Typeface.BOLD)
             if (l.style and 3 == 0) setShadowLayer(textSize * 0.14f, 0f, textSize * 0.04f, 0xb0000000.toInt()) }
         val pad = (paint.textSize * 0.4f).toInt(); val room = width - pad * 2
-        fun layout(p: android.text.TextPaint) = android.text.StaticLayout.Builder.obtain(words, 0, words.length, p, room).setAlignment(android.text.Layout.Alignment.ALIGN_CENTER).setIncludePad(true).build()
-        val lay = layout(paint)
-        val wide = (0 until lay.lineCount).maxOf { lay.getLineWidth(it) }
-        val bw = (wide + pad * 2).toInt().coerceIn(pad * 2 + 2, width); val bh = lay.height + pad * 2
+        val alignment = when (align(l.style)) { 1 -> android.text.Layout.Alignment.ALIGN_NORMAL; 2 -> android.text.Layout.Alignment.ALIGN_OPPOSITE; else -> android.text.Layout.Alignment.ALIGN_CENTER }
+        fun layout(p: android.text.TextPaint, w: Int) = android.text.StaticLayout.Builder.obtain(words, 0, words.length, p, w).setAlignment(alignment).setIncludePad(true).build()
+        val first = layout(paint, room)
+        val wide = kotlin.math.ceil((0 until first.lineCount).maxOf { first.getLineWidth(it) }).toInt().coerceIn(1, room)
+        // Laid out again at the width of the longest line, so left and right alignment line up inside the picture.
+        val lay = layout(paint, wide)
+        val bw = wide + pad * 2; val bh = lay.height + pad * 2
         val out = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888); val cv = android.graphics.Canvas(out)
         val dark = Color.red(l.color) * 0.3f + Color.green(l.color) * 0.59f + Color.blue(l.color) * 0.11f < 110
         if (l.style and 1 != 0) cv.drawRoundRect(0f, 0f, bw.toFloat(), bh.toFloat(), pad * 0.6f, pad * 0.6f, android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = if (dark) 0xd9ffffff.toInt() else 0xb3000000.toInt() })
-        cv.translate((bw - room) / 2f, pad.toFloat())
-        if (l.style and 2 != 0) layout(android.text.TextPaint(paint).apply { style = android.graphics.Paint.Style.STROKE; strokeWidth = textSize * 0.16f; strokeJoin = android.graphics.Paint.Join.ROUND; color = if (dark) Color.WHITE else Color.BLACK; clearShadowLayer() }).draw(cv)
+        cv.translate(pad.toFloat(), pad.toFloat())
+        if (l.style and 2 != 0) layout(android.text.TextPaint(paint).apply { style = android.graphics.Paint.Style.STROKE; strokeWidth = textSize * 0.16f; strokeJoin = android.graphics.Paint.Join.ROUND; color = if (dark) Color.WHITE else Color.BLACK; clearShadowLayer() }, wide).draw(cv)
         lay.draw(cv)
         return out
     }

@@ -16,6 +16,14 @@ import androidx.activity.ComponentActivity
 /** The list of saved video-editor projects: open, rename, copy or delete. */
 class StudioProjectsActivity : ComponentActivity() {
     private lateinit var col: LinearLayout
+    private var relinking = ""
+    /** A replacement for a missing video: the project keeps its edits and uses the chosen file from now on. */
+    private val pickReplacement = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenDocument()) { uri ->
+        val id = relinking; relinking = ""
+        if (uri == null || id.isEmpty()) return@registerForActivityResult
+        runCatching { contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+        StudioProjects.relink(this, id, uri); notice("เชื่อมวิดีโอใหม่แล้ว"); fill()
+    }
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(0xff0b0f1e.toInt()) }
@@ -49,7 +57,7 @@ class StudioProjectsActivity : ComponentActivity() {
         addView(pic, dp(64), dp(64))
         val words = LinearLayout(this@StudioProjectsActivity).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, dp(4), 0) }
         words.addView(text(p.name, 15.5f, Color.WHITE, true).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END })
-        words.addView(text(if (p.missing) "ไม่พบไฟล์วิดีโอต้นฉบับ" else "แก้ไขล่าสุด " + android.text.format.DateFormat.format("d MMM HH:mm", p.updated), 12f, if (p.missing) 0xffff6b6b.toInt() else Glass.TEXT3))
+        words.addView(text(if (p.missing) "ไม่พบวิดีโอต้นฉบับ · แตะเพื่อเลือกไฟล์แทน" else "แก้ไขล่าสุด " + android.text.format.DateFormat.format("d MMM HH:mm", p.updated), 12f, if (p.missing) 0xffff6b6b.toInt() else Glass.TEXT3))
         addView(words, LinearLayout.LayoutParams(0, -2, 1f))
         fun small(icon: String, desc: String, f: () -> Unit) = addView(FrameLayout(this@StudioProjectsActivity).apply { isClickable = true; glassTouch(); contentDescription = desc
             addView(IconView(this@StudioProjectsActivity, icon, 1.9f).apply { tint = Glass.TEXT2 }, FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER)); setOnClickListener { f() } }, dp(44), dp(48))
@@ -62,7 +70,7 @@ class StudioProjectsActivity : ComponentActivity() {
             AlertDialog.Builder(this@StudioProjectsActivity).setTitle("ลบโปรเจกต์นี้?").setMessage("ลบเฉพาะการตัดต่อที่บันทึกไว้ วิดีโอต้นฉบับยังอยู่")
                 .setPositiveButton("ลบ") { _, _ -> StudioProjects.delete(this@StudioProjectsActivity, p.id); fill() }.setNegativeButton("ยกเลิก", null).show() }
         setOnClickListener {
-            if (p.missing) notice("ไม่พบไฟล์วิดีโอต้นฉบับของโปรเจกต์นี้ จึงเปิดไม่ได้")
+            if (p.missing) { relinking = p.id; notice("ไม่พบวิดีโอต้นฉบับ · เลือกไฟล์วิดีโอที่จะใช้แทน"); pickReplacement.launch(arrayOf("video/*")) }
             else startActivity(VideoEditorActivity.intent(this@StudioProjectsActivity, p.source).putExtra("project", p.id)) }
     }
 }
