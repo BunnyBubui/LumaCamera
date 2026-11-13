@@ -1298,6 +1298,9 @@ class VideoEditorActivity : ComponentActivity() {
                 EditorKit.action(this, "M3 5h18v14H3z M12 5v14", "หาฉาก") { findScenes() },
                 EditorKit.action(this, "M7 4v16 M7 5h10l-2.5 3.5L17 12H7", "แยกตามมาร์กเกอร์") { splitAtMarkers() },
                 EditorKit.action(this, "M3 12h3 M18 12h3 M8 8v8 M12 5v14 M16 8v8", "ตัดช่วงเงียบ") { cutSilence() },
+                // Slip: the clip keeps its length and place, and shows an earlier or later part of its file.
+                EditorKit.action(this, "M9 7l-5 5 5 5 M4 12h12 M20 5v14", "เนื้อหา −0.5 วิ") { val d = minOf(500L, e.from); if (d <= 0) notice("อยู่ที่ต้นไฟล์แล้ว") else { e.from -= d; e.to -= d; showClipOnBar(); jumpTo(chosen + 1, (trim.playhead - d).coerceIn(e.from, e.to)); showTime() } },
+                EditorKit.action(this, "M15 7l5 5-5 5 M20 12H8 M4 5v14", "เนื้อหา +0.5 วิ") { val d = minOf(500L, e.duration - e.to); if (d <= 0) notice("อยู่ที่ท้ายไฟล์แล้ว") else { e.from += d; e.to += d; showClipOnBar(); jumpTo(chosen + 1, (trim.playhead + d).coerceIn(e.from, e.to)); showTime() } },
                 EditorKit.action(this, Icons.CLOSE, "ลบ") { extras.removeAt(chosen); if (chosen < mainPos()) mainAt = mainPos() - 1; go(if (chosen < extras.size) chosen + 1 else chosen) })), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(2) })
         } else col.addView(EditorKit.actionRow(this, listOf(
             // Splitting the first clip turns its second half into a clip of its own, which can then be moved, trimmed or removed.
