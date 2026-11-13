@@ -181,7 +181,7 @@ class VideoEditorActivity : ComponentActivity() {
             val ok = runCatching { r.stop() }.isSuccess; runCatching { r.release() }; recorder = null
             if (player?.isPlaying == true) togglePlay(); applySound()
             val f = recFile; recFile = null
-            if (ok && f != null && f.length() > 0) addLayers(listOf(Uri.fromFile(f)), VideoLayer.SOUND, recAt) else { notice("อัดเสียงไม่สำเร็จ"); showTool(LAYER_TOOL, false) }
+            if (ok && f != null && f.length() > 0) addLayers(listOf(Uri.fromFile(f)), VideoLayer.SOUND, recAt, home = 16) else { notice("อัดเสียงไม่สำเร็จ"); showTool(16, false) }
             return
         }
         if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
@@ -195,7 +195,7 @@ class VideoEditorActivity : ComponentActivity() {
         // The video plays silently while recording, so its own sound does not leak into the microphone.
         if (player?.isPlaying != true) togglePlay()
         player?.runCatching { setVolume(0f, 0f) }; musicPlayer?.runCatching { setVolume(0f, 0f) }
-        notice("กำลังอัดเสียง · แตะ \"หยุดอัด\" เมื่อพูดจบ"); showTool(LAYER_TOOL, false)
+        showTool(16, false)
     }
     /** The film strip under the preview shows the clip that is on screen: the first clip, or the added clip that was picked. */
     private fun showClipOnBar() {
@@ -387,8 +387,8 @@ class VideoEditorActivity : ComponentActivity() {
     private fun addCaptionLayers(made: List<Pair<VideoLayer, Bitmap>>): Int {
         val total = totalOut(); var added = 0
         made.forEach { (l, pic) -> if (l.at < total - 200) { layerThumbs[l.source] = pic
-            layers += l.copy(length = l.length.coerceAtMost(total - l.at), x = 0.5f, y = 0.86f, size = (pic.width.toFloat() / TEXT_PREVIEW * 0.62f).coerceIn(0.1f, 0.95f), aspect = pic.width.toFloat() / pic.height); added++ } }
-        layerPick = layers.size - 1; rebuildLayers(); showTool(LAYER_TOOL, false)
+            layers += l.copy(length = l.length.coerceAtMost(total - l.at), x = 0.5f, y = 0.86f, size = (pic.width.toFloat() / TEXT_PREVIEW * 0.62f).coerceIn(0.1f, 0.95f), aspect = pic.width.toFloat() / pic.height, caption = true); added++ } }
+        rebuildLayers(); refreshTimeline(); showTool(15, false)
         return added
     }
     // ---- Automatic captions ----
@@ -409,8 +409,7 @@ class VideoEditorActivity : ComponentActivity() {
         if (speech != null) { (speech as StudioSpeech).stop(); speech = null; notice("หยุดสร้างคำบรรยายแล้ว"); return }
         if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
             requestPermissions(arrayOf(android.Manifest.permission.RECORD_AUDIO), 72); notice("ระบบแปลงเสียงต้องได้สิทธิ์ไมโครโฟน · อนุญาตแล้วแตะอีกครั้ง"); return }
-        val langs = listOf("ภาษาไทย" to "th-TH", "English" to "en-US")
-        android.app.AlertDialog.Builder(this).setTitle("ภาษาที่พูดในวิดีโอ").setItems(langs.map { it.first }.toTypedArray()) { _, w -> startCaptions(langs[w].second) }.show()
+        startCaptions(captionLang()); showTool(15, false)
     }
     @androidx.annotation.RequiresApi(33)
     private fun startCaptions(lang: String) {
@@ -429,8 +428,9 @@ class VideoEditorActivity : ComponentActivity() {
             runOnUiThread {
                 if (isDestroyed) return@runOnUiThread
                 if (pieces.isEmpty()) { notice("ไม่พบช่วงที่มีเสียงพูด"); return@runOnUiThread }
-                val job = StudioSpeech(this, lang, pieces.take(80), { i, n -> notice("กำลังแปลงเสียงเป็นข้อความ ${i + 1}/$n · แตะคำบรรยายอัตโนมัติอีกครั้งเพื่อหยุด") }) { cues, problem ->
+                val job = StudioSpeech(this, lang, pieces.take(80), { i, n -> val t = "กำลังแปลงเสียงเป็นข้อความ ${i + 1}/$n"; captionStatus?.takeIf { tool == 15 }?.let { it.text = t } ?: notice(t)) }) { cues, problem ->
                     speech = null; if (isDestroyed) return@StudioSpeech
+                    if (tool == 15) showTool(15, false)
                     val made = cues.map { c -> val l = VideoLayer(VideoLayer.TEXT, VideoLayer.textSource(c.text, Color.WHITE, 1), c.from, c.to - c.from, text = c.text, style = 1); l to VideoLayers.textPicture(l, TEXT_PREVIEW) }
                     val added = if (made.isNotEmpty()) addCaptionLayers(made) else 0
                     notice(when { added > 0 && problem == null -> "เพิ่มคำบรรยาย $added บรรทัด · ตรวจคำและเวลาก่อนส่งออก"; added > 0 -> "เพิ่มคำบรรยาย $added บรรทัด · $problem"; else -> problem ?: "ไม่พบเสียงพูดที่แปลงได้" })
@@ -604,6 +604,7 @@ class VideoEditorActivity : ComponentActivity() {
         val saved = state ?: reopened
         if (saved?.getStringArrayList("extras").isNullOrEmpty()) handler.postDelayed(watcher, 600)
         else { applying = true; restoreExtras(saved!!) { applying = false; handler.postDelayed(watcher, 600) } }
+        convertLegacyMusic()
         rebuildStickers(); loadLayerThumbs()
     }
     private fun readExtra(uri: Uri): Extra? = runCatching {
@@ -717,7 +718,7 @@ class VideoEditorActivity : ComponentActivity() {
         musicPlayer = runCatching { MediaPlayer().apply { setDataSource(this@VideoEditorActivity, m); isLooping = true; prepare() } }.getOrElse { notice("เปิดเพลงนี้ไม่ได้"); music = null; null }
     }
     private fun applySound() {
-        val clipVol = if (playIndex == 0) volume.coerceAtMost(1f) else 1f
+        val clipVol = clipVolume(playIndex).coerceAtMost(1f)
         val v = if (keepSound && !isMuted(playIndex) && recorder == null) clipVol else 0f; player?.runCatching { setVolume(v, v) }
         val m = if (recorder == null) musicVolume.coerceAtMost(1f) * duckGain() else 0f; musicPlayer?.runCatching { setVolume(m, m) }
         previewEq()
@@ -905,11 +906,12 @@ class VideoEditorActivity : ComponentActivity() {
     }
     /** Marks the beats of the music on the timeline, so clip edges and layers snap to them. */
     private fun markBeats() {
-        val m = music ?: run { notice("เลือกเพลงก่อน"); return }
+        val song = layers.firstOrNull { it.music } ?: run { notice("เพิ่มเพลงก่อน"); return }
+        val m = song.source
         val run = { pk: FloatArray ->
             val loop = pk.size.toLong() * AudioPeaks.STEP_MS; val total = totalOut(); val beats = StudioMath.beats(pk, AudioPeaks.STEP_MS.toLong())
-            val all = ArrayList<Long>(); var base = 0L
-            while (loop > 0 && base < total && all.size < 400) { beats.forEach { if (base + it < total) all += base + it }; base += loop }
+            // Beats are times in the song; the bar starts at song.at on the timeline and plays from song.from in the song.
+            val all = beats.map { song.at + it - song.from }.filter { it >= song.at && it < song.end && it < total }.take(400)
             val added = all.filter { b -> markers.none { abs(it - b) < 120 } }
             markers += added; markers.sort(); refreshTimeline()
             notice(if (added.isEmpty()) "ไม่พบจังหวะที่ชัดในเพลงนี้" else "ปักมาร์กเกอร์ตามจังหวะเพลง ${added.size} จุด · ขอบคลิปและเลเยอร์จะดูดเข้าหาจังหวะ")
@@ -959,7 +961,7 @@ class VideoEditorActivity : ComponentActivity() {
         notice("แยกเสียงเป็นแถบสีม่วงแล้ว · ลากแถบเพื่อให้เสียงมาก่อนหรือต่อเลยภาพ")
     }
     /** The music goes down to 30 % while a sound layer plays, in the preview the same way as in the export. */
-    private fun duckGain(): Float = if (!duck) 1f else StudioAudio.duck(outNow(), layers.filter { it.audible && it.volume > 0f && !it.hidden }.map { it.at to it.end })
+    private fun duckGain(): Float = if (!duck) 1f else StudioAudio.duck(outNow(), layers.filter { it.audible && it.volume > 0f && !it.hidden && !it.music }.map { it.at to it.end })
 
     // ---------- Colour studio ----------
     private val grade = StudioGrade()
@@ -1305,6 +1307,8 @@ class VideoEditorActivity : ComponentActivity() {
             9 -> soundTools(col)
             11 -> transitionTools(col)
             12 -> stickerTools(col)
+            15 -> captionTools(col)
+            16 -> voiceTools(col)
             else -> layerTools(col)
         }
         EditorKit.swap(tools, col, dir)
@@ -1537,23 +1541,68 @@ class VideoEditorActivity : ComponentActivity() {
         show(adjustIndex.coerceIn(0, names.size - 1))
     }
     /** Loudness of the clip's sound and of the music, 0–200 %. */
+    // ---------- Sound, captions and voice menus ----------
+    /** Older projects kept one song outside the timeline; it becomes a music bar on the timeline. */
+    private fun convertLegacyMusic() {
+        val m = music ?: return
+        val len = VideoLayers.duration(this, m).let { if (it > 0) it else totalOut() }.coerceAtMost(totalOut()).coerceAtLeast(200)
+        layers += VideoLayer(VideoLayer.SOUND, m, 0L, len, 0L, volume = musicVolume, music = true)
+        music = null; musicName = ""; musicPlayer?.runCatching { release() }; musicPlayer = null
+        rebuildLayers(); refreshTimeline()
+    }
+    private val pickSong = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) { runCatching { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }; addLayers(listOf(uri), VideoLayer.SOUND, outNow(), home = 9, music = true) }
+    }
+    private fun clipVolume(k: Int) = if (k == 0) volume else extras.getOrNull(k - 1)?.volume ?: 1f
+    private fun setClipVolume(k: Int, v: Float) { if (k == 0) volume = v else extras.getOrNull(k - 1)?.volume = v; applySound() }
+    /** A big speaker button that shows clearly whether the sound is on. */
+    private fun muteButton(muted: Boolean, click: () -> Unit): View = LinearLayout(this).apply {
+        gravity = Gravity.CENTER_VERTICAL; background = glass(20, if (muted) 0x33ff453a else Glass.ACCENT_SOFT); setPadding(dp(12), 0, dp(14), 0); isClickable = true; glassTouch()
+        contentDescription = if (muted) "เปิดเสียง" else "ปิดเสียง"
+        addView(IconView(this@VideoEditorActivity, if (muted) "M4 9v6h4l5 4V5L8 9H4z M16 9l5 6 M21 9l-5 6" else "M4 9v6h4l5 4V5L8 9H4z M16 8.5a5 5 0 0 1 0 7 M18.5 6a8.5 8.5 0 0 1 0 12", 2f).apply { tint = if (muted) 0xffff6b6b.toInt() else Glass.ACCENT }, dp(22), dp(22))
+        addView(text(if (muted) "ปิดเสียงอยู่" else "เปิดเสียงอยู่", 12.5f, if (muted) 0xffff6b6b.toInt() else Glass.ACCENT, true).apply { setPadding(dp(8), 0, 0, 0) })
+        setOnClickListener { Glass.tick(this); click() }
+    }
     private fun soundTools(col: LinearLayout) {
         col.gravity = Gravity.TOP
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         col.addView(android.widget.ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(box) }, LinearLayout.LayoutParams(-1, 0, 1f))
-        fun row(icon: String, label: String, steps: List<String>, at: Int, enabled: Boolean, set: (Int) -> Unit) {
-            val r = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), 0, dp(12), 0); alpha = if (enabled) 1f else 0.4f }
-            r.addView(IconView(this, icon, 2f).apply { tint = Glass.TEXT2 }, dp(20), dp(20))
-            r.addView(text(label, 12f, Glass.TEXT2, true).apply { setPadding(dp(8), 0, 0, 0) }, dp(84), -2)
-            r.addView(GlassSlider(this).apply { values = steps; index = at; grad = intArrayOf(0xff8e8e93.toInt(), Glass.ACCENT); contentDescription = label; isEnabled = enabled
-                onChange = { i -> set(i); applySound() } }, LinearLayout.LayoutParams(0, dp(40), 1f))
+        fun slider(label: String, steps: List<String>, at: Int, set: (Int) -> Unit) {
+            val r = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), 0, dp(12), 0) }
+            r.addView(text(label, 12f, Glass.TEXT2, true), dp(96), -2)
+            r.addView(GlassSlider(this).apply { values = steps; index = at.coerceIn(0, steps.size - 1); grad = intArrayOf(0xff8e8e93.toInt(), Glass.ACCENT); contentDescription = label
+                onChange = { i -> set(i) } }, LinearLayout.LayoutParams(0, dp(40), 1f))
             box.addView(r, -1, -2)
         }
         val pct = (0..200 step 5).map { "$it%" }
-        row(Icons.SOUND, "เสียงคลิปแรก", pct, (volume * 20).roundToInt(), hasAudio && keepSound) { volume = it / 20f }
-        row(EditorKit.MUSIC, "เพลง", pct, (musicVolume * 20).roundToInt(), music != null) { musicVolume = it / 20f }
+        val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(2), dp(14), dp(6)) }
+        val l = layers.getOrNull(layerPick)?.takeIf { barActive && it.audible }
+        if (l != null) {
+            val i = layerPick
+            head.addView(text((if (l.music) "เพลง: " else "เสียง: ") + layerName(l), 13f, Color.WHITE, true).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }, LinearLayout.LayoutParams(0, -2, 1f))
+            head.addView(muteButton(l.volume == 0f) { layers[i] = layers[i].copy(volume = if (layers[i].volume == 0f) 1f else 0f); releaseLayerSound(); showTool(9, false) })
+            box.addView(head, -1, -2)
+            slider("ความดัง", pct, (l.volume * 20).roundToInt()) { v -> layers[i] = layers[i].copy(volume = v / 20f); layerSound[i]?.runCatching { val x = (v / 20f).coerceAtMost(1f); setVolume(x, x) } }
+            val sec = (0..3000 step 100).map { if (it == 0) "ไม่มี" else String.format(Locale.US, "%.1f วิ", it / 1000f) }
+            slider("ค่อย ๆ ดังขึ้น", sec, (l.fadeIn / 100).toInt()) { v -> layers[i] = layers[i].copy(fadeIn = v * 100L) }
+            slider("ค่อย ๆ เบาลง", sec, (l.fadeOut / 100).toInt()) { v -> layers[i] = layers[i].copy(fadeOut = v * 100L) }
+        } else {
+            val k = playIndex
+            head.addView(text("เสียงคลิป ${order().indexOf(k) + 1}", 13f, Color.WHITE, true), LinearLayout.LayoutParams(0, -2, 1f))
+            head.addView(muteButton(isMuted(k) || !keepSound) { if (!keepSound) { keepSound = true; setMuted(k, false) } else setMuted(k, !isMuted(k)); showTool(9, false) })
+            box.addView(head, -1, -2)
+            slider("ความดังคลิปนี้", pct, (clipVolume(k) * 20).roundToInt()) { v -> setClipVolume(k, v / 20f) }
+            val all = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(0, dp(2), 0, dp(4)) }
+            all.addView(EditorKit.chip(this, "ใช้ความดังนี้กับทุกคลิป", Icons.SOUND) { val v = clipVolume(k); volume = v; extras.forEach { it.volume = v }; applySound(); notice("ทุกคลิปดัง ${(v * 100).roundToInt()}%") }, LinearLayout.LayoutParams(-2, dp(34)).apply { setMargins(dp(3), 0, dp(3), 0) })
+            all.addView(EditorKit.chip(this, if (keepSound) "ปิดเสียงทุกคลิป" else "เปิดเสียงทุกคลิป", "M4 9v6h4l5 4V5L8 9H4z", !keepSound) { keepSound = !keepSound; applySound(); showTool(9, false) }, LinearLayout.LayoutParams(-2, dp(34)).apply { setMargins(dp(3), 0, dp(3), 0) })
+            box.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(all) }, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.CENTER_HORIZONTAL })
+        }
+        val music = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(0, dp(4), 0, dp(4)) }
+        music.addView(EditorKit.chip(this, "เพิ่มเพลง", EditorKit.MUSIC) { pickSong.launch(arrayOf("audio/*")) }, LinearLayout.LayoutParams(-2, dp(34)).apply { setMargins(dp(3), 0, dp(3), 0) })
+        if (layers.any { it.music }) music.addView(EditorKit.chip(this, "มาร์กจังหวะเพลง", "M9 18V6l10-2v12") { markBeats() }, LinearLayout.LayoutParams(-2, dp(34)).apply { setMargins(dp(3), 0, dp(3), 0) })
+        box.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(music) }, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.CENTER_HORIZONTAL })
         val db = (-12..12).map { if (it > 0) "+$it dB" else "$it dB" }
-        listOf("เสียงทุ้ม", "เสียงกลาง", "เสียงแหลม").forEachIndexed { k, n -> row("M4 18V9 M12 18V5 M20 18v-7 M2 9h4 M10 5h4 M18 11h4", n, db, eq[k].roundToInt() + 12, keepSound) { eq[k] = (it - 12).toFloat() } }
+        listOf("เสียงทุ้ม", "เสียงกลาง", "เสียงแหลม").forEachIndexed { q, n -> slider(n, db, eq[q].roundToInt() + 12) { v -> eq[q] = (v - 12).toFloat(); applySound() } }
         val toggles = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(dp(8), dp(6), dp(8), dp(4)) }
         fun toggle(label: String, on: Boolean, f: () -> Unit) = toggles.addView(text(label, 12f, if (on) Glass.ACCENT else Color.WHITE, on).apply { gravity = Gravity.CENTER; background = glass(16, if (on) Glass.ACCENT_SOFT else 0x26ffffff)
             setPadding(dp(12), 0, dp(12), 0); isClickable = true; glassTouch(); contentDescription = label; setOnClickListener { f(); applySound(); showTool(9, false) } }, LinearLayout.LayoutParams(-2, dp(34)).apply { setMargins(dp(3), 0, dp(3), 0) })
@@ -1561,8 +1610,82 @@ class VideoEditorActivity : ComponentActivity() {
         toggle("เสียงพูดชัด", voice) { voice = !voice }
         toggle("ลดเพลงตอนมีเสียงพูด", duck) { duck = !duck }
         box.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(toggles) }, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.CENTER_HORIZONTAL })
-        box.addView(text("ตัดเสียงลมและเสียงพูดชัดมีผลในไฟล์ที่ส่งออก · พรีวิวได้ยินเฉพาะอีควอไลเซอร์และการลดเพลง", 11f, Glass.TEXT3).apply { gravity = Gravity.CENTER; setPadding(dp(16), dp(2), dp(16), dp(8)) }, -1, -2)
+        box.addView(text("แตะแถบเพลงหรือเสียงบนไทม์ไลน์เพื่อปรับแถบนั้น · ลากแถบเพื่อเลือกช่วงที่เล่น · ตัดและแยกได้ที่เมนูตัด", 11f, Glass.TEXT3).apply { gravity = Gravity.CENTER; setPadding(dp(16), dp(2), dp(16), dp(8)) }, -1, -2)
     }
+
+    private val LANGS = listOf("ภาษาไทย" to "th-TH", "English" to "en-US", "日本語" to "ja-JP", "한국어" to "ko-KR", "中文 (普通话)" to "zh-CN", "粵語" to "yue-Hant-HK",
+        "Tiếng Việt" to "vi-VN", "Bahasa Indonesia" to "id-ID", "Bahasa Melayu" to "ms-MY", "Filipino" to "fil-PH", "हिन्दी" to "hi-IN", "Español" to "es-ES",
+        "Français" to "fr-FR", "Deutsch" to "de-DE", "Italiano" to "it-IT", "Português" to "pt-BR", "Русский" to "ru-RU", "العربية" to "ar-SA")
+    private var captionStatus: TextView? = null
+    private fun captionLang() = getSharedPreferences("camera", MODE_PRIVATE).getString("caption_lang", "th-TH") ?: "th-TH"
+    /** Restyles every caption line together: words, look and place stay in step. */
+    private fun styleCaptions(style: ((Int) -> Int)? = null, color: Int? = null, y: Float? = null) {
+        layers.indices.filter { layers[it].caption }.forEach { i -> val l = layers[i]
+            val n = l.copy(style = style?.invoke(l.style) ?: l.style, color = color ?: l.color).let { it.copy(source = VideoLayer.textSource(it.text, it.color, it.style)) }
+            val pic = runCatching { VideoLayers.textPicture(n, TEXT_PREVIEW) }.getOrNull() ?: return@forEach
+            layerThumbs[n.source] = pic
+            layers[i] = n.copy(aspect = pic.width.toFloat() / pic.height, y = y ?: n.y, keys = if (y != null) "" else n.keys)
+        }
+        rebuildLayers(); refreshTimeline(); showTool(15, false)
+    }
+    private fun captionTools(col: LinearLayout) {
+        col.gravity = Gravity.TOP
+        val lang = captionLang(); val name = LANGS.firstOrNull { it.second == lang }?.first ?: lang
+        val top = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(2), dp(14), dp(6)) }
+        top.addView(dropButton("ภาษาที่พูด: $name") { v -> menu.show(v, "ภาษาที่พูดในวิดีโอ", LANGS.map { GlassMenu.Option(it.first) }, LANGS.indexOfFirst { it.second == lang }) { k ->
+            getSharedPreferences("camera", MODE_PRIVATE).edit().putString("caption_lang", LANGS[k].second).apply(); showTool(15, false) } }, LinearLayout.LayoutParams(-2, dp(38)))
+        col.addView(top, -1, -2)
+        val go = LinearLayout(this).apply { gravity = Gravity.CENTER; background = glass(22, if (speech != null) 0x33ff453a else Glass.ACCENT); isClickable = true; glassTouch()
+            contentDescription = if (speech != null) "หยุดสร้างคำบรรยาย" else "สร้างคำบรรยายอัตโนมัติ"
+            addView(IconView(this@VideoEditorActivity, if (speech != null) "M7 7h10v10H7z" else "M4 6h16v10H8l-4 4z M8 10h8 M8 13h5", 2.2f).apply { tint = if (speech != null) Color.WHITE else Glass.ON_ACCENT }, dp(20), dp(20))
+            addView(text(if (speech != null) "หยุด" else "สร้างคำบรรยายจากเสียงพูด", 14.5f, if (speech != null) Color.WHITE else Glass.ON_ACCENT, true).apply { setPadding(dp(8), 0, 0, 0) })
+            setOnClickListener { autoCaptions() } }
+        col.addView(go, LinearLayout.LayoutParams(-1, dp(46)).apply { setMargins(dp(16), 0, dp(16), dp(4)) })
+        captionStatus = text(if (speech != null) "กำลังแปลงเสียง…" else "ใช้ระบบแปลงเสียงในเครื่อง · ภาษาที่เครื่องยังไม่มีจะถูกดาวน์โหลดก่อน", 11.5f, Glass.TEXT3).apply { gravity = Gravity.CENTER; setPadding(dp(16), 0, dp(16), dp(4)) }
+        col.addView(captionStatus, -1, -2)
+        val srt = LinearLayout(this).apply { gravity = Gravity.CENTER }
+        srt.addView(EditorKit.chip(this, "นำเข้าไฟล์ SRT", EditorKit.START) { pickSrt.launch(arrayOf("*/*")) }, LinearLayout.LayoutParams(-2, dp(34)).apply { setMargins(dp(3), 0, dp(3), 0) })
+        val count = layers.count { it.caption }
+        if (layers.any { it.kind == VideoLayer.TEXT && VideoLayers.shapeOf(it.text) < 0 }) srt.addView(EditorKit.chip(this, "ส่งออกไฟล์ SRT", EditorKit.END) { saveSrt.launch("subtitles.srt") }, LinearLayout.LayoutParams(-2, dp(34)).apply { setMargins(dp(3), 0, dp(3), 0) })
+        col.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(srt) }, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.CENTER_HORIZONTAL })
+        if (count == 0) return
+        val drops = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(8), dp(14), 0) }
+        drops.addView(text("คำบรรยาย $count บรรทัด", 12f, Glass.TEXT2, true).apply { setPadding(0, 0, dp(8), 0) })
+        drops.addView(dropButton("ตำแหน่ง") { v -> menu.show(v, "ตำแหน่งคำบรรยาย", listOf(GlassMenu.Option("ล่าง"), GlassMenu.Option("กลาง"), GlassMenu.Option("บน")), -1) { k -> styleCaptions(y = listOf(0.86f, 0.5f, 0.14f)[k]) } }, LinearLayout.LayoutParams(-2, dp(34)).apply { rightMargin = dp(6) })
+        val looks = listOf("กล่องพื้น" to 1, "ขอบตัวอักษร" to 2, "ไม่มีพื้น" to 0)
+        drops.addView(dropButton("รูปแบบ") { v -> menu.show(v, "รูปแบบคำบรรยาย", looks.map { GlassMenu.Option(it.first) }, -1) { k -> styleCaptions(style = { s -> (s and 3.inv()) or looks[k].second }) } }, LinearLayout.LayoutParams(-2, dp(34)).apply { rightMargin = dp(6) })
+        drops.addView(EditorKit.chip(this, "ลบทั้งหมด", "M5 7h14 M9 7V4h6v3 M7 7l1 13h8l1-13") { layers.removeAll { it.caption }; layerPick = -1; barActive = false; rebuildLayers(); refreshTimeline(); showTool(15, false) }, LinearLayout.LayoutParams(-2, dp(34)))
+        col.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(drops) }, -1, -2)
+        col.addView(colorRow(layers.first { it.caption }.color) { c -> styleCaptions(color = c) }, -1, -2)
+    }
+
+    private var recLabel: TextView? = null
+    private val recTick = object : Runnable { override fun run() {
+        val v = recLabel ?: return; if (recorder == null) return
+        val ms = outNow() - recAt; v.text = "กำลังอัด " + clock(ms.coerceAtLeast(0)); handler.postDelayed(this, 200)
+    } }
+    private fun voiceTools(col: LinearLayout) {
+        col.gravity = Gravity.TOP
+        val recording = recorder != null
+        val button = FrameLayout(this).apply { isClickable = true; glassTouch(); contentDescription = if (recording) "หยุดอัด" else "เริ่มอัดเสียง"
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0x26ffffff); setStroke(dp(3), if (recording) 0xffff453a.toInt() else Color.WHITE) }
+            addView(View(this@VideoEditorActivity).apply { background = GradientDrawable().apply { if (recording) cornerRadius = dp(6).toFloat() else shape = GradientDrawable.OVAL; setColor(0xffff453a.toInt()) } },
+                FrameLayout.LayoutParams(dp(if (recording) 28 else 52), dp(if (recording) 28 else 52), Gravity.CENTER))
+            setOnClickListener { toggleRecord() } }
+        col.addView(button, LinearLayout.LayoutParams(dp(78), dp(78)).apply { gravity = Gravity.CENTER_HORIZONTAL; topMargin = dp(8) })
+        recLabel = text(if (recording) "กำลังอัด…" else "แตะเพื่อเริ่มอัดตรงหัวอ่าน", 14f, if (recording) 0xffff6b6b.toInt() else Color.WHITE, true).apply { gravity = Gravity.CENTER; setPadding(0, dp(8), 0, dp(2)) }
+        col.addView(recLabel, -1, -2)
+        col.addView(text(if (recording) "แตะปุ่มอีกครั้งเมื่อพูดจบ" else "วิดีโอจะเล่นโดยไม่มีเสียงระหว่างอัด เสียงที่อัดจะวางบนไทม์ไลน์ตรงจุดที่เริ่ม", 11.5f, Glass.TEXT3).apply { gravity = Gravity.CENTER; setPadding(dp(16), 0, dp(16), dp(6)) }, -1, -2)
+        val voices = layers.indices.filter { layers[it].kind == VideoLayer.SOUND && layers[it].source.path?.contains("/studio/voice_") == true }
+        if (voices.isNotEmpty()) {
+            val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(12), 0, dp(12), 0) }
+            voices.forEachIndexed { n, i -> row.addView(EditorKit.chip(this, "เสียงพูด ${n + 1} · ${clock(layers[i].length)}", "M12 4a3 3 0 0 0-3 3v5a3 3 0 0 0 6 0V7a3 3 0 0 0-3-3z", barActive && layerPick == i) {
+                val (k, at) = locate(layers[i].at); jumpTo(k, at); barActive = true; layerPick = i; refreshTimeline(); showTool(16, false) }, LinearLayout.LayoutParams(-2, dp(34)).apply { rightMargin = dp(6) }) }
+            col.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(row) }, -1, -2)
+        }
+        if (recording) { handler.removeCallbacks(recTick); handler.post(recTick) }
+    }
+
     private fun musicTools(col: LinearLayout) {
         if (music != null) col.addView(text(musicName, 12f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.MIDDLE; setPadding(dp(16), 0, dp(16), dp(6)) }, -1, -2)
         val items = mutableListOf<View>(EditorKit.action(this, EditorKit.MUSIC, if (music == null) "เลือกเพลง" else "เปลี่ยนเพลง", music != null) { pickMusic.launch(arrayOf("audio/*")) })
@@ -1894,7 +2017,7 @@ class VideoEditorActivity : ComponentActivity() {
             if (playing && now in l.at until l.end && !l.hidden) {
                 val p = mp ?: runCatching { MediaPlayer().apply { setDataSource(this@VideoEditorActivity, l.source); prepare() } }.getOrNull()?.also { layerSound[i] = it } ?: return@forEachIndexed
                 if (!p.isPlaying) runCatching { p.seekTo((l.from + now - l.at).toInt()); p.start() }
-                runCatching { val v = l.volume.coerceAtMost(1f) * l.fade(now); p.setVolume(v, v) }
+                runCatching { val v = l.volume.coerceAtMost(1f) * l.fade(now) * (if (l.music) duckGain() else 1f); p.setVolume(v, v) }
             } else if (mp?.isPlaying == true) mp.pause()
         }
     }
@@ -2178,7 +2301,7 @@ class VideoEditorActivity : ComponentActivity() {
         return VideoEdit.composition(VideoEditSpec(f?.let { Uri.fromFile(it.file) } ?: source, at(from), at(to), if (turns % 2 == 1) vh else vw, if (turns % 2 == 1) vw else vh,
         speed * n, cropRatio(), caption, place, textColor, textBig, if (looked()) colour() else null, music, f == null && hasAudio && keepSound && allSpeeds().all { it in SOUND_MIN..SOUND_MAX },
         turns, mirror, volume, musicVolume, if (cut) at(cutFrom) else -1L, if (cut) at(cutTo) else -1L, textBox,
-        extras.map { VideoPart(it.uri, it.from, it.to, it.speed, it.muted, it.volume, it.curve) }, if (extras.isEmpty()) 0 else transition, stickers.toList(), clampedLayers(), shrinkShort, shrinkFps, mainPos(), fx[0], fx[1], fx[2], grade = if (grade.active()) gradeCube(33) else null, audio = audioSettings(), mainMuted = mainMuted, mainCurve = if (f == null) mainCurve else null, duck = duck && music != null), applicationContext)
+        extras.map { VideoPart(it.uri, it.from, it.to, it.speed, it.muted, it.volume, it.curve) }, if (extras.isEmpty()) 0 else transition, stickers.toList(), clampedLayers(), shrinkShort, shrinkFps, mainPos(), fx[0], fx[1], fx[2], grade = if (grade.active()) gradeCube(33) else null, audio = audioSettings(), mainMuted = mainMuted, mainCurve = if (f == null) mainCurve else null, duck = duck), applicationContext)
     }
 
     /** Export problems stay on screen until dismissed, so the reason can be read (and reported). */

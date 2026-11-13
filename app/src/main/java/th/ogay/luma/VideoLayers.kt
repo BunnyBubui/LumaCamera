@@ -186,11 +186,13 @@ object VideoLayers {
     }
 
     /** One audio sequence per layer with sound: silence until the layer starts, then its sound. */
-    fun sounds(c: Context, layers: List<VideoLayer>, gain: (Float) -> AudioProcessor): List<EditedMediaItemSequence> = layers.filter { it.audible && it.volume > 0f && hasAudio(c, it.source) }.map { l ->
+    fun sounds(c: Context, layers: List<VideoLayer>, duck: Boolean = false, gain: (Float) -> AudioProcessor): List<EditedMediaItemSequence> = layers.filter { it.audible && it.volume > 0f && hasAudio(c, it.source) }.map { l ->
+        // Music goes down while other sound layers play; the duck counts time from the music bar's own start.
+        val under = if (duck && l.music) layers.filter { it.audible && !it.music && it.volume > 0f }.map { (it.at - l.at) to (it.end - l.at) } else emptyList()
         val clip = MediaItem.Builder().setUri(l.source).setClippingConfiguration(
             MediaItem.ClippingConfiguration.Builder().setStartPositionMs(l.from).setEndPositionMs(l.from + l.length).build()).build()
         val item = EditedMediaItem.Builder(clip).setRemoveVideo(true)
-            .setEffects(Effects(listOfNotNull(if (l.volume != 1f) gain(l.volume) else null, if (l.fadeIn > 0 || l.fadeOut > 0) FadeAudio(l.fadeIn, l.fadeOut, l.length) else null), emptyList())).build()
+            .setEffects(Effects(listOfNotNull(if (l.volume != 1f) gain(l.volume) else null, if (l.fadeIn > 0 || l.fadeOut > 0) FadeAudio(l.fadeIn, l.fadeOut, l.length) else null, if (under.isNotEmpty()) StudioAudio.Duck(under) else null), emptyList())).build()
         val seq = EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_AUDIO))
         if (l.at > 0) seq.addGap(l.at * 1000)
         seq.addItem(item).build()
