@@ -102,6 +102,10 @@ class VideoEditorActivity : ComponentActivity() {
             }"""
         /** Width in pixels the words of a text layer are drawn at for the preview (the export draws them again at full size). */
         private const val TEXT_PREVIEW = 720
+        /** Label to show, and the English phrase the translator is given (empty = no context). */
+        private val TRANS_CONTEXTS = listOf("ทั่วไป" to "", "หนังจีนกำลังภายใน" to "a Chinese martial-arts (wuxia) film, with classical, formal speech and honorifics",
+            "อนิเมะ" to "a Japanese anime, with natural spoken style", "ซีรีส์เกาหลี" to "a Korean drama, with natural spoken style", "ดราม่า/ซีรีส์" to "a drama series, natural spoken style",
+            "ตลก" to "a comedy show, keep the jokes and casual tone", "สารคดี/ข่าว" to "a documentary or news report, formal and precise", "สอน/เทคนิค" to "a technical tutorial, keep technical terms accurate", "ย้อนยุค/ประวัติศาสตร์" to "a historical drama, with old-fashioned formal speech")
         private const val SRT_LIMIT = 60
         private const val SMOOTH = "M3 17c3 0 4-10 9-10s6 10 9 10"
         private const val LEFT = "M15 6l-6 6 6 6"
@@ -388,8 +392,10 @@ class VideoEditorActivity : ComponentActivity() {
     /** Puts caption lines on the video as text layers low on the picture; returns how many fit inside the video. */
     private fun addCaptionLayers(made: List<Pair<VideoLayer, Bitmap>>): Int {
         val total = totalOut(); var added = 0
-        made.forEach { (l, pic) -> if (l.at < total - 200) { layerThumbs[l.source] = pic
-            layers += l.copy(length = l.length.coerceAtMost(total - l.at), x = 0.5f, y = 0.86f, size = (pic.width.toFloat() / TEXT_PREVIEW * 0.62f * captionScale() / 100f).coerceIn(0.05f, 0.98f), aspect = pic.width.toFloat() / pic.height, caption = true); added++ } }
+        made.forEach { (l0, _) -> if (l0.at < total - 200) {
+            val l = l0.copy(caption = true, wrap = captionWrap(captionScale())); val pic = runCatching { VideoLayers.textPicture(l, TEXT_PREVIEW) }.getOrNull() ?: return@forEach
+            layerThumbs[l.source] = pic
+            layers += l.copy(length = l.length.coerceAtMost(total - l.at), x = 0.5f, y = 0.86f, size = captionSize(pic, captionScale()), aspect = pic.width.toFloat() / pic.height); added++ } }
         rebuildLayers(); refreshTimeline(); showTool(15, false)
         return added
     }
@@ -485,7 +491,7 @@ class VideoEditorActivity : ComponentActivity() {
                     speech = null; if (isDestroyed) return@StudioSpeech
                     ui.render(4, 0.97f, "กำลังใส่คำบรรยาย ${cues.size} บรรทัด…")
                     if (tool == 15) showTool(15, false)
-                    val made = cues.map { c -> val l = VideoLayer(VideoLayer.TEXT, VideoLayer.textSource(c.text, Color.WHITE, 1), c.from, c.to - c.from, text = c.text, style = 1); l to VideoLayers.textPicture(l, TEXT_PREVIEW) }
+                    val made = StudioMath.holdCues(cues).map { c -> val l = VideoLayer(VideoLayer.TEXT, VideoLayer.textSource(c.text, Color.WHITE, 1), c.from, c.to - c.from, text = c.text, style = 1); l to VideoLayers.textPicture(l, TEXT_PREVIEW) }
                     val added = if (made.isNotEmpty()) addCaptionLayers(made) else 0
                     ui.render(4, 1f, if (added > 0) "เสร็จแล้ว · เพิ่ม $added บรรทัด" else (problem ?: "ไม่พบเสียงพูดที่แปลงได้")); ui.remove(); captionUi = null
                     notice(when { added > 0 && problem == null -> "เพิ่มคำบรรยาย $added บรรทัด · ตรวจคำและเวลาก่อนส่งออก"; added > 0 -> "เพิ่มคำบรรยาย $added บรรทัด · $problem"; else -> problem ?: "ไม่พบเสียงพูดที่แปลงได้" })
@@ -1724,9 +1730,8 @@ class VideoEditorActivity : ComponentActivity() {
     private fun styleCaptions(style: ((Int) -> Int)? = null, color: Int? = null, y: Float? = null) {
         layers.indices.filter { layers[it].caption }.forEach { i -> val l = layers[i]
             val n = l.copy(style = style?.invoke(l.style) ?: l.style, color = color ?: l.color).let { it.copy(source = VideoLayer.textSource(it.text, it.color, it.style)) }
-            val pic = runCatching { VideoLayers.textPicture(n, TEXT_PREVIEW) }.getOrNull() ?: return@forEach
-            layerThumbs[n.source] = pic
-            layers[i] = n.copy(aspect = pic.width.toFloat() / pic.height, y = y ?: n.y, keys = if (y != null) "" else n.keys)
+            val r = redraw(l, n) ?: return@forEach
+            layers[i] = r.copy(y = y ?: n.y, keys = if (y != null) "" else n.keys)
         }
         rebuildLayers(); refreshTimeline(); showTool(15, false)
     }
@@ -1764,6 +1769,7 @@ class VideoEditorActivity : ComponentActivity() {
         captionUi = ui; ui.render(0, 0.03f, "กำลังเปิด ${m.name} · ครั้งแรกอาจใช้เวลาสักครู่")
         val app = applicationContext
         Thread({
+            LlamaTranslator.context = transContext()
             val err = LlamaTranslator.run(app, m, from, to, texts, { runOnUiThread { ui.render(1, 0.1f, "เริ่มแปลบรรทัดแรก…") } }) { done, total, t -> out[done - 1] = t
                 runOnUiThread { ui.render(1, 0.1f + 0.85f * done / total, "บรรทัดที่ $done จาก $total", t ?: "") } }
             LlamaTranslator.release()
@@ -1780,8 +1786,7 @@ class VideoEditorActivity : ComponentActivity() {
         ids.forEachIndexed { k, j -> val words = out[k] ?: return@forEachIndexed; val l = layers.getOrNull(j) ?: return@forEachIndexed
             if (l.text != texts[k]) return@forEachIndexed
             val n = l.copy(text = words).let { it.copy(source = VideoLayer.textSource(it.text, it.color, it.style)) }
-            val pic = runCatching { VideoLayers.textPicture(n, TEXT_PREVIEW) }.getOrNull() ?: return@forEachIndexed
-            layerThumbs[n.source] = pic; layers[j] = n.copy(aspect = pic.width.toFloat() / pic.height); done++ }
+            layers[j] = redraw(l, n) ?: return@forEachIndexed; done++ }
         rebuildLayers(); refreshTimeline(); showTool(15, false)
         notice(if (done > 0) "แปลคำบรรยาย $done บรรทัดแล้ว · ตรวจคำก่อนส่งออก" else "แปลไม่สำเร็จ ลองใหม่อีกครั้งหรือเปลี่ยนโมเดล")
     }
@@ -1802,20 +1807,38 @@ class VideoEditorActivity : ComponentActivity() {
                     var done = 0
                     ids.forEach { j -> val words = out[j] ?: return@forEach; val l = layers.getOrNull(j) ?: return@forEach
                         val n = l.copy(text = words).let { it.copy(source = VideoLayer.textSource(it.text, it.color, it.style)) }
-                        val pic = runCatching { VideoLayers.textPicture(n, TEXT_PREVIEW) }.getOrNull() ?: return@forEach
-                        layerThumbs[n.source] = pic; layers[j] = n.copy(aspect = pic.width.toFloat() / pic.height); done++ }
+                        layers[j] = redraw(l, n) ?: return@forEach; done++ }
                     client.close(); rebuildLayers(); refreshTimeline(); showTool(15, false)
                     notice(if (done > 0) "แปลคำบรรยาย $done บรรทัดแล้ว · ตรวจคำก่อนส่งออก" else "แปลไม่สำเร็จ ลองใหม่อีกครั้ง")
                 } } }
         }.addOnFailureListener { client.close(); notice("โหลดโมเดลภาษาไม่ได้ · ต่ออินเทอร์เน็ตแล้วลองใหม่") }
     }
     /** How big the caption lines are made, in percent of the usual size; it applies to new lines and, when changed, to every line already there. */
+    /** Share of the picture a caption line may fill (about 94% of the video width), whatever the letter size. */
+    private fun captionWrap(percent: Int) = (0.94f / (0.62f * percent / 100f)).coerceIn(0.4f, 4f)
+    private fun captionSize(pic: Bitmap, percent: Int) = (pic.width.toFloat() / TEXT_PREVIEW * 0.62f * percent / 100f).coerceIn(0.05f, 0.98f)
+    /** Draws [n] in place of [l] and keeps the letters the same size on the video when the picture gets wider or narrower. */
+    private fun redraw(l: VideoLayer, n: VideoLayer): VideoLayer? {
+        val oldW = layerThumbs[l.source]?.width ?: 0
+        val pic = runCatching { VideoLayers.textPicture(n, TEXT_PREVIEW) }.getOrNull() ?: return null
+        layerThumbs[n.source] = pic
+        val k = if (oldW > 0) pic.width.toFloat() / oldW else 1f
+        return n.copy(aspect = pic.width.toFloat() / pic.height, size = (l.size * k).coerceIn(0.05f, 0.98f))
+    }
+    private fun transContext() = getSharedPreferences("camera", MODE_PRIVATE).getString("trans_context", "") ?: ""
+    private fun setTransContext(v: String) = getSharedPreferences("camera", MODE_PRIVATE).edit().putString("trans_context", v.trim().take(120)).apply()
+    private fun askTransContext() {
+        val box = android.widget.EditText(this).apply { setText(transContext()); hint = "เช่น หนังจีนกำลังภายใน ภาษาโบราณ"; setTextColor(Glass.TEXT); setHintTextColor(Glass.TEXT3); textSize = 15f; background = glass(14, 0x1affffff); setPadding(dp(14), dp(10), dp(14), dp(10)); isSingleLine = true }
+        GlassDialog.ask(this, "บริบทของคำบรรยาย", message = "บอกว่าเป็นเรื่องแนวไหน โมเดลจะเลือกคำและน้ำเสียงให้ตรง", content = box, ok = "ใช้", focus = box) { setTransContext(box.text.toString()); showTool(15, false); true }
+    }
     private fun captionScale() = getSharedPreferences("camera", MODE_PRIVATE).getInt("caption_scale", 100)
     private fun applyCaptionScale(percent: Int) {
         val old = captionScale(); if (percent == old) return
         val ratio = percent / old.toFloat()
         getSharedPreferences("camera", MODE_PRIVATE).edit().putInt("caption_scale", percent).apply()
-        layers.indices.filter { layers[it].caption }.forEach { i -> layers[i] = layers[i].copy(size = (layers[i].size * ratio).coerceIn(0.05f, 0.98f)) }
+        layers.indices.filter { layers[it].caption }.forEach { i -> val l = layers[i]
+            val n = l.copy(wrap = captionWrap(percent)); val pic = runCatching { VideoLayers.textPicture(n, TEXT_PREVIEW) }.getOrNull() ?: return@forEach
+            layerThumbs[n.source] = pic; layers[i] = n.copy(aspect = pic.width.toFloat() / pic.height, size = captionSize(pic, percent)) }
         rebuildLayers(); refreshTimeline()
     }
     private fun sizeCard(): View {
@@ -1880,6 +1903,10 @@ class VideoEditorActivity : ComponentActivity() {
         val trRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(8), dp(14), 0) }
         trRow.addView(dropButton("แปลเป็น: $targetName") { v -> menu.show(v, "แปลคำบรรยายเป็นภาษา", LANGS.map { GlassMenu.Option(it.first, "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M3 12h18 M12 3c3 3 3 15 0 18 M12 3c-3 3-3 15 0 18") }, LANGS.indexOfFirst { it.second == targetTag }) { k ->
             getSharedPreferences("camera", MODE_PRIVATE).edit().putString("caption_target", LANGS[k].second).apply(); showTool(15, false) } }, LinearLayout.LayoutParams(-2, dp(38)))
+        trRow.addView(dropButton("บริบท: " + transContext().let { cur -> TRANS_CONTEXTS.firstOrNull { it.second == cur && cur.isNotEmpty() }?.first ?: cur.ifEmpty { "ทั่วไป" } }) { v ->
+            val opts = TRANS_CONTEXTS.map { it.first }
+            menu.show(v, "บอกบริบทให้แปลตรงแนว", opts.map { GlassMenu.Option(it) } + GlassMenu.Option("พิมพ์เอง…"), TRANS_CONTEXTS.indexOfFirst { it.second == transContext() }) { k ->
+                if (k < TRANS_CONTEXTS.size) { setTransContext(TRANS_CONTEXTS[k].second); showTool(15, false) } else askTransContext() } }, LinearLayout.LayoutParams(-2, dp(38)).apply { leftMargin = dp(8) })
         trRow.addView(EditorKit.chip(this, if (translating) "หยุดแปล" else "แปลเลย", "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M3 12h18 M12 3c3 3 3 15 0 18 M12 3c-3 3-3 15 0 18") { translateNow() }, LinearLayout.LayoutParams(-2, dp(38)).apply { leftMargin = dp(8) })
         col.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(trRow) }, -1, -2)
         // Translator model: ML Kit (small) or a model that runs on the phone, with the same download card as the speech model.
@@ -2611,7 +2638,8 @@ class VideoEditorActivity : ComponentActivity() {
         init { importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }
         fun set(v: RectF, k: RectF) { video.set(v); keep.set(k); invalidate() }
         override fun onDraw(c: Canvas) {
-            if (keep == video) return
+            if (keep == video) { // No crop: still outline the frame so its edge is clear, like the program monitor in Premiere.
+                line.strokeWidth = resources.displayMetrics.density; c.drawRect(keep.left + 0.5f, keep.top + 0.5f, keep.right - 0.5f, keep.bottom - 0.5f, line); return }
             c.drawRect(video.left, video.top, video.right, keep.top, dim); c.drawRect(video.left, keep.bottom, video.right, video.bottom, dim)
             c.drawRect(video.left, keep.top, keep.left, keep.bottom, dim); c.drawRect(keep.right, keep.top, video.right, keep.bottom, dim)
             line.strokeWidth = resources.displayMetrics.density * 1.5f; c.drawRect(keep, line)

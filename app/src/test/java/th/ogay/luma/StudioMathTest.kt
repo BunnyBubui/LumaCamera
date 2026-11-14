@@ -6,6 +6,19 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class StudioMathTest {
+    @Test fun speechCaptionStaysOneSecondThenStops() {
+        val out = StudioMath.holdCues(listOf(StudioMath.Cue(0, 2000, "a"), StudioMath.Cue(10000, 12000, "b")))
+        assertEquals(3000L, out[0].to); assertEquals(13000L, out[1].to)
+    }
+    @Test fun speechCaptionNeverRunsIntoNextLine() {
+        val out = StudioMath.holdCues(listOf(StudioMath.Cue(0, 2000, "a"), StudioMath.Cue(2400, 4000, "b")))
+        assertEquals(2400L, out[0].to)
+    }
+    @Test fun longVoiceIsNotCutButHoldIsCapped() {
+        val out = StudioMath.holdCues(listOf(StudioMath.Cue(0, 9000, "a")))
+        assertEquals(9000L, out[0].to)
+    }
+
     @Test fun orderPutsTheOpenedClipAfterTheLeadingClips() {
         assertEquals(listOf(0, 1, 2, 3), StudioMath.order(0, 3))
         assertEquals(listOf(1, 2, 0, 3), StudioMath.order(2, 3))

@@ -46,6 +46,19 @@ object StudioMath {
 
     /** One subtitle line: shown from [from] to [to] ms. */
     data class Cue(val from: Long, val to: Long, val text: String)
+    /**
+     * Timing for lines made from speech: each line stays [holdMs] after the voice stops, then goes away.
+     * It never runs into the next line, and a line is not kept longer than [maxMs] unless the voice itself lasted that long.
+     */
+    fun holdCues(cues: List<Cue>, holdMs: Long = 1000L, maxMs: Long = 7000L, minMs: Long = 300L): List<Cue> {
+        val sorted = cues.sortedBy { it.from }
+        return sorted.mapIndexed { i, c ->
+            val next = sorted.getOrNull(i + 1)?.from ?: Long.MAX_VALUE
+            val cap = maxOf(c.to, c.from + maxMs)
+            val end = minOf(c.to + holdMs, next, cap).coerceAtLeast(minOf(c.from + minMs, next))
+            Cue(c.from, end, c.text)
+        }
+    }
     private val srtTime = Regex("""(\d+):(\d+):(\d+)[,.](\d+)\s*-->\s*(\d+):(\d+):(\d+)[,.](\d+)""")
     /** Reads the text of an .srt file. Lines without a valid time or without words are skipped; formatting tags are removed. */
     fun parseSrt(text: String): List<Cue> = text.removePrefix(0xFEFF.toChar().toString()).replace("\r", "").split(Regex("""\n\s*\n""")).mapNotNull { block ->

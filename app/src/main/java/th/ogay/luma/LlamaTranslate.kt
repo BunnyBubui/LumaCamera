@@ -85,9 +85,13 @@ object LlamaTranslator {
         return if (m.approxMb * 1_048_576L > mi.totalMem * 6 / 10) "เครื่องนี้มี RAM ไม่พอสำหรับโมเดลนี้ ลองโมเดลที่เล็กกว่า" else null
     }
 
+    /** What the text is (for example a Chinese martial-arts film), so the model picks matching words and tone. Empty = none. */
+    @Volatile var context: String = ""
+
     private fun prompt(f: TransFamily, from: String, to: String, text: String): String {
         val fn = TransLang.name(from); val tn = TransLang.name(to)
-        return when (f) {
+        val hint = context.trim().take(120).let { if (it.isEmpty()) "" else "Context: the text is dialogue from $it. Choose vocabulary, tone and names that suit it.\n" }
+        return hint + when (f) {
             TransFamily.HUNYUAN -> "Translate the following segment into $tn, without additional explanation.\n\n$text"
             TransFamily.CHINDA -> "Translate $fn to $tn.\nRules:\n- Return only the translated text\n\n${TransLang.code(from).uppercase()}: $text"
             TransFamily.TYPHOON -> "Translate the following $fn text into $tn. Return only the translated text, without explanations.\nSource Text:\n\n$text"
