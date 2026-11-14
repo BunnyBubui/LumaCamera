@@ -41,6 +41,8 @@ object ExportJob {
         val kinds: List<Int> = emptyList(),
         /** Sound only: AAC bitrate in kbps (0 = a picture export). */
         val audioKbps: Int = 0,
+        /** Sound only: the file is made as AAC first and then turned into a .wav. */
+        val wav: Boolean = false,
     )
 
     class State(val plan: Plan) {
@@ -125,6 +127,7 @@ object ExportJob {
             override fun onCompleted(composition: Composition, result: ExportResult) {
                 transformer = null; h.removeCallbacks(poll); done += file
                 if (i + 1 < parts.size) { runPart(app, s, parts, i + 1, h, done); return }
+                if (s.plan.wav) { toWav(app, s, done.toList()); return }
                 val e = s.plan.enhance; val out = s.plan.finalFile
                 if (e != null && out != null) enhance(app, s, file, out, e) else publish(app, s, done)
             }
@@ -150,9 +153,22 @@ object ExportJob {
         }.apply { name = "lumora-enhance"; priority = Thread.NORM_PRIORITY - 1 }.start()
     }
 
+    /** Sound only, as .wav: decodes the finished AAC file to plain PCM. */
+    private fun toWav(app: Context, s: State, files: List<File>) {
+        s.stage = s.plan.stageEnhance; s.fraction = 0f; s.detail = "กำลังแปลงเป็น WAV"; changed()
+        Thread {
+            var last = 0L; val made = ArrayList<File>()
+            val r = runCatching { files.forEach { f ->
+                val w = File(f.parentFile, f.nameWithoutExtension + ".wav"); made += w
+                AudioWav.fromFile(f, w, cancel) { p -> s.fraction = p; val now = SystemClock.elapsedRealtime(); if (now - last > 300) { last = now; changed() } }
+                f.delete() } }
+            r.onSuccess { publish(app, s, made) }.onFailure { made.forEach { it.delete() }; fail(s, if (cancel.get()) null else (it.message ?: it.javaClass.simpleName)) }
+        }.apply { name = "lumora-wav" }.start()
+    }
+
     private fun publish(app: Context, s: State, files: List<File>) {
         s.stage = s.plan.stageSave; s.fraction = 0.3f; s.detail = "กำลังบันทึกไฟล์"; changed()
-        runCatching { files.map { f -> if (f.extension == "m4a") MediaLedger.publishAudio(app, f, f.name, s.plan.note) else MediaLedger.publishVideo(app, f, f.name, s.plan.note) } }
+        runCatching { files.map { f -> if (f.extension == "m4a" || f.extension == "wav") MediaLedger.publishAudio(app, f, f.name, s.plan.note) else MediaLedger.publishVideo(app, f, f.name, s.plan.note) } }
             .onSuccess { u -> s.uris = u; s.outputs = files; s.stage = s.plan.steps.size; s.fraction = 0f; s.finished = true; s.detail = "เสร็จแล้ว"; end() }
             .onFailure { fail(s, "บันทึกไฟล์ไม่ได้ · ${it.localizedMessage}") }
     }

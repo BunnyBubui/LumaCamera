@@ -2609,9 +2609,13 @@ class VideoEditorActivity : ComponentActivity() {
         if (!clipSound && layers.none { it.audible && !it.hidden && it.volume > 0f }) { notice("วิดีโอนี้ไม่มีเสียงให้ส่งออก"); return }
         enhance = null; shrinkShort = 0; shrinkFps = 0f; soundHz = c.audioHz; soundMono = c.audioMono
         val id = System.currentTimeMillis(); val dir = File(filesDir, "video-exports/$id").apply { mkdirs() }
-        val plan = ExportJob.Plan(listOf("รวมเสียงทั้งหมด", "บันทึกลงโฟลเดอร์เพลง"), listOf(1f, 0.3f), firstFrame, 0, 0, -1, 1,
+        val wav = c.audioFormat == 1
+        val plan = ExportJob.Plan(if (wav) listOf("รวมเสียงทั้งหมด", "แปลงเป็น WAV", "บันทึกลงโฟลเดอร์เพลง") else listOf("รวมเสียงทั้งหมด", "บันทึกลงโฟลเดอร์เพลง"),
+            if (wav) listOf(1f, 0.4f, 0.3f) else listOf(1f, 0.3f), firstFrame, 0, 0, if (wav) 1 else -1, if (wav) 2 else 1,
             slow = null, parts = { _ -> flow = null; listOf(composition(start, end, audioOnly = true) to File(dir, "Lumora_AUDIO_$id.m4a")) },
-            enhance = null, finalFile = null, note = "เสียงจาก Lumora", cleanup = {}, kinds = listOf(ExportProgress.Backdrop.EDIT, ExportProgress.Backdrop.SAVE), audioKbps = c.audioKbps.coerceAtLeast(32))
+            enhance = null, finalFile = null, note = "เสียงจาก Lumora", cleanup = {},
+            kinds = if (wav) listOf(ExportProgress.Backdrop.EDIT, ExportProgress.Backdrop.EDIT, ExportProgress.Backdrop.SAVE) else listOf(ExportProgress.Backdrop.EDIT, ExportProgress.Backdrop.SAVE),
+            audioKbps = if (wav) 320 else c.audioKbps.coerceAtLeast(32), wav = wav)
         startJob(plan)
     }
     /** Sound-only export settings from the sheet (sample rate, mono), read when the sound composition is built. */

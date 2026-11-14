@@ -20,7 +20,8 @@ import kotlin.math.ceil
 /** What the export sheet hands back: the short side in pixels, the frame rate and whether AI may enlarge. */
 data class ExportChoice(val shortSide: Int, val fps: Float, val ai: Boolean, val profile: th.ogay.luma.ai.EnhanceProfile = th.ogay.luma.ai.EnhanceProfile.NATURAL, val audioOnly: Boolean = false,
     /** In-between frames: 0 finer, 1 balanced, 2 faster. */ val flowMode: Int = 1,
-    /** Fixed video bitrate in Mbps (0 = automatic), and for sound only: AAC kbps, sample rate in Hz (0 = as recorded) and mono. */ val mbps: Int = 0, val audioKbps: Int = 128, val audioHz: Int = 0, val audioMono: Boolean = false)
+    /** Fixed video bitrate in Mbps (0 = automatic), and for sound only: AAC kbps, sample rate in Hz (0 = as recorded) and mono. */ val mbps: Int = 0, val audioKbps: Int = 128, val audioHz: Int = 0, val audioMono: Boolean = false,
+    /** Sound only: 0 AAC in .m4a, 1 plain PCM in .wav. */ val audioFormat: Int = 0)
 
 /**
  * Export sheet in the style of TikTok's: the clip at the top, then two sliders (resolution and frame rate) like
@@ -74,6 +75,8 @@ object ExportSheet {
         var audioOnly = false
         var flowMode = prefs.getInt("export_flow", 1).coerceIn(0, 2)
         var akbps = prefs.getInt("export_akbps", 128); var ahz = prefs.getInt("export_ahz", 0); var amono = prefs.getBoolean("export_amono", false)
+        var aformat = prefs.getInt("export_aformat", 0).coerceIn(0, 1)
+        val kBox = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
         var shownAudio: Boolean? = null; var shownFlow: Boolean? = null
         // The model chip and its preview only matter when the picture gets bigger; set further down.
         var onBigger: (Boolean) -> Unit = {}
@@ -97,10 +100,13 @@ object ExportSheet {
             aiChip.isEnabled = bigger; onBigger(bigger)
             val long = (src.longSide * s.toFloat() / src.shortSide).toInt()
             val chosen = prefs.getInt("export_mbps", 0)
-            val mb = if (audioOnly) akbps * 1000 / 8.0 * src.durationMs / 1000.0 / 1_000_000.0
+            val mb = if (audioOnly && aformat == 1) (if (ahz > 0) ahz else 48000) * (if (amono) 1 else 2) * 2.0 * src.durationMs / 1000.0 / 1_000_000.0
+                else if (audioOnly) akbps * 1000 / 8.0 * src.durationMs / 1000.0 / 1_000_000.0
                 else (if (chosen > 0) chosen * 1_000_000 else FrameEncoder.bitrate(long, s, r)) / 8.0 * src.durationMs / 1000.0 / 1_000_000.0
             val minutes = if (audioOnly) 0.0 else minutes(src, s, r, ai() && bigger)
             val ok = audioOnly || !(bigger || smoother) || FrameEncoder.pickMime(long / 2 * 2, s, r) != null
+            val kv = if (audioOnly && aformat == 1) View.GONE else View.VISIBLE
+            if (kBox.visibility != kv) { kBox.visibility = kv; sheet.unpin() }
             val wantAudio = audioOnly; val wantFlow = smoother && !audioOnly
             if (shownAudio != wantAudio || shownFlow != wantFlow) { val first = shownAudio == null; shownAudio = wantAudio; shownFlow = wantFlow
                 videoBox.visibility = if (wantAudio) View.GONE else View.VISIBLE; audioBox.visibility = if (wantAudio) View.VISIBLE else View.GONE
@@ -181,6 +187,12 @@ object ExportSheet {
         // Sound only: the same kind of sliders and menus for the sound file.
         into = audioBox
         run {
+            val fmtValue = a.text("", 14f, Glass.TEXT, true); val fmtNote = a.text("", 12f, Glass.TEXT3)
+            fun paintFmt() { fmtValue.text = if (aformat == 1) "WAV" else "M4A · AAC"; fmtNote.text = if (aformat == 1) "PCM ไม่บีบอัด ใช้กับโปรแกรมตัดต่อ · ได้จาก AAC 320 kbps จึงไม่ใช่เสียงต้นฉบับแบบไม่สูญเสีย" else "เล็กและเปิดได้เกือบทุกเครื่อง · แนะนำ" }
+            paintFmt()
+            pickRow("รูปแบบเสียง", fmtValue, fmtNote) { v -> pickMenu.show(v, "รูปแบบไฟล์เสียง", listOf(GlassMenu.Option("M4A · AAC", Icons.SOUND, "แนะนำ"), GlassMenu.Option("WAV", Icons.SOUND, "ไม่บีบอัด ไฟล์ใหญ่")), aformat) { k ->
+                aformat = k; prefs.edit().putInt("export_aformat", k).apply(); paintFmt(); refresh() } }
+            audioBox.addView(kBox, -1, -2); into = kBox
             val kbpsList = listOf(32, 48, 64, 96, 112, 128, 160, 192, 224, 256, 320)
             val kValue = a.text("", 15f, Glass.TEXT, true); val kNote = a.text("", 12f, Glass.TEXT2)
             fun paintK(k: Int) { val v = kbpsList[k]; kValue.text = "$v kbps"; kValue.setTextColor(if (v == 128) Color.WHITE else Glass.ACCENT)
@@ -188,6 +200,7 @@ object ExportSheet {
             val startK = kbpsList.indexOf(akbps).let { if (it >= 0) it else kbpsList.indexOfFirst { v -> v >= akbps }.let { j -> if (j < 0) kbpsList.size - 1 else j } }
             akbps = kbpsList[startK]; paintK(startK)
             row("บิตเรตเสียง", kValue, kNote, kbpsList.map { "$it kbps" }, startK) { k -> akbps = kbpsList[k]; prefs.edit().putInt("export_akbps", akbps).apply(); paintK(k) }
+            into = audioBox
             val hzList = listOf(0, 22050, 32000, 44100, 48000)
             val hzValue = a.text("", 14f, Glass.TEXT, true); val hzNote = a.text("", 12f, Glass.TEXT3)
             fun paintHz() { hzValue.text = if (ahz == 0) "ตามต้นฉบับ" else String.format(java.util.Locale.US, "%.1f kHz", ahz / 1000.0).replace(".0 kHz", " kHz"); hzNote.text = if (ahz == 0) "ไม่เปลี่ยนความถี่ของเสียง" else if (ahz < 32000) "ไฟล์เล็กลง เสียงแหลมจะหายไป" else "ใช้กันทั่วไป" }
@@ -260,7 +273,7 @@ object ExportSheet {
             }
         }
         go.setOnClickListener { Glass.tick(go); close(); onExport(ExportChoice(sides[side], rates[rate], ai() && !audioOnly, if (model == 2) th.ogay.luma.ai.EnhanceProfile.CLASSIC else th.ogay.luma.ai.EnhanceProfile.NATURAL, audioOnly,
-            flowMode, prefs.getInt("export_mbps", 0), akbps, ahz, amono)) }
+            flowMode, prefs.getInt("export_mbps", 0), akbps, ahz, amono, aformat)) }
         card.addView(go, LinearLayout.LayoutParams(-1, a.dp(52)).apply { topMargin = a.dp(12) })
         card.addView(a.text("ยกเลิก", 14f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; isClickable = true; setPadding(0, a.dp(12), 0, 0); setOnClickListener { close() } }, -1, a.dp(44))
         refresh()
