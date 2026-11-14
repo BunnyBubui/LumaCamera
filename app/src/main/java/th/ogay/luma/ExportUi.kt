@@ -247,7 +247,7 @@ class ExportProgress(private val a: Activity, thumb: Bitmap?, private val steps:
     private var shownFrame: Bitmap? = null
     private val percent = a.text("0%", 40f, Glass.TEXT, true).apply { gravity = Gravity.CENTER }
     private val frames = a.text("", 13.5f, Glass.TEXT2).apply { gravity = Gravity.CENTER }
-    private val eta = a.text("", 17f, Glass.TEXT, true).apply { gravity = Gravity.CENTER }
+    private val eta = a.text("", 17f, Glass.ACCENT, true).apply { gravity = Gravity.CENTER }
     private val etaBox = LinearLayout(a)
     private val marks = ArrayList<TextView>(); private val labels = ArrayList<TextView>()
 
@@ -301,7 +301,7 @@ class ExportProgress(private val a: Activity, thumb: Bitmap?, private val steps:
         frames.text = listOfNotNull(if (s.totalFrames > 0) "${String.format(Locale.US, "%,d", s.frames)} / ${String.format(Locale.US, "%,d", s.totalFrames)} เฟรม" else null, s.detail.takeIf { it.isNotEmpty() }).joinToString(" · ")
         val ms = s.etaMs
         etaBox.visibility = if (ms > 0) View.VISIBLE else View.GONE
-        eta.text = if (ms < 60_000) "เหลืออีกไม่ถึง 1 นาที" else "เหลืออีกประมาณ ${ms / 60_000 + 1} นาที"
+        eta.text = Eta.text(ms)
         marks.forEachIndexed { k, m ->
             m.text = if (k < i) "✓" else if (k == i) "●" else "○"
             m.setTextColor(if (k < i) 0xff30d158.toInt() else if (k == i) Glass.ACCENT else Glass.TEXT3)
@@ -424,7 +424,12 @@ class CaptionProgress(
     private val heard = a.text("", 14.5f, Glass.TEXT).apply { gravity = Gravity.CENTER; maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END }
     private val heardBox = LinearLayout(a).apply { background = a.glass(14, 0x1affffff); setPadding(a.dp(14), a.dp(8), a.dp(14), a.dp(8)); visibility = View.GONE }
     private val marks = ArrayList<TextView>(); private val labels = ArrayList<TextView>()
-    private val pillText = a.text("", 13.5f, Glass.TEXT, true).apply { maxLines = 1 }
+    private val eta = a.text("กำลังคำนวณเวลา…", 17f, Glass.ACCENT, true).apply { gravity = Gravity.CENTER }
+    private val etaBox = LinearLayout(a)
+    private val tracker = Eta.Tracker()
+    private val pillText = a.text("", 13.5f, Glass.TEXT, true).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }
+    private val pillEta = a.text("", 12f, Glass.ACCENT, true).apply { maxLines = 1 }
+    private val pillPct = a.text("0%", 14f, Glass.ON_ACCENT, true).apply { gravity = Gravity.CENTER }
     private val pillBar = ModelBar(a)
     private val pill = LinearLayout(a)
     private var gone = false
@@ -441,6 +446,9 @@ class CaptionProgress(
         col.addView(percent, LinearLayout.LayoutParams(-2, -2).apply { topMargin = a.dp(4) })
         col.addView(heading, LinearLayout.LayoutParams(-1, -2))
         col.addView(detail, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(2) })
+        etaBox.apply { gravity = Gravity.CENTER_VERTICAL; background = a.glass(22, (Glass.ACCENT and 0x00ffffff) or 0x2e000000); setPadding(a.dp(16), a.dp(8), a.dp(18), a.dp(8))
+            addView(IconView(a, Icons.TIMER, 2f).apply { tint = Glass.ACCENT }, a.dp(20), a.dp(20)); addView(eta.apply { setPadding(a.dp(8), 0, 0, 0) }) }
+        col.addView(etaBox, LinearLayout.LayoutParams(-2, -2).apply { topMargin = a.dp(10) })
         heardBox.addView(heard, LinearLayout.LayoutParams(-1, -2))
         col.addView(heardBox, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(8) })
         val list = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; background = a.glass(20, 0x14ffffff); setPadding(a.dp(16), a.dp(6), a.dp(16), a.dp(6)) }
@@ -460,18 +468,21 @@ class CaptionProgress(
         col.addView(a.text("ย่อแล้วยังตัดต่อต่อได้ · ถ้าออกจากหน้านี้ งานจะหยุด", 11.5f, Glass.TEXT3).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(8) })
         layer.addView(android.widget.ScrollView(a).apply { isVerticalScrollBarEnabled = false; isFillViewport = true; addView(col, FrameLayout.LayoutParams(-1, -2, Gravity.CENTER)) }, -1, -1)
 
-        pill.apply { orientation = LinearLayout.VERTICAL; background = a.glass(24, Glass.alpha(Glass.BG, 0xf5)); setPadding(a.dp(16), a.dp(9), a.dp(8), a.dp(9)); visibility = View.GONE; isClickable = true; glassTouch()
-            contentDescription = "ดูความคืบหน้า" }
+        pill.apply { orientation = LinearLayout.VERTICAL; background = a.accentFrame(22); setPadding(a.dp(10), a.dp(10), a.dp(10), a.dp(12)); visibility = View.GONE; isClickable = true; glassTouch()
+            contentDescription = "ดูความคืบหน้า"; elevation = a.dp(8).toFloat() }
         val prow = LinearLayout(a).apply { gravity = Gravity.CENTER_VERTICAL }
-        prow.addView(pillText, LinearLayout.LayoutParams(0, -2, 1f))
+        prow.addView(pillPct.apply { background = a.glass(16, Glass.ACCENT) }, a.dp(46), a.dp(32))
+        val names = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; setPadding(a.dp(10), 0, a.dp(6), 0) }
+        names.addView(pillText, -1, -2); names.addView(pillEta, -1, -2)
+        prow.addView(names, LinearLayout.LayoutParams(0, -2, 1f))
         prow.addView(FrameLayout(a).apply { isClickable = true; glassTouch(); contentDescription = "ยกเลิก"; background = a.glass(16, 0x2effffff)
             addView(IconView(a, Icons.CLOSE, 2f), FrameLayout.LayoutParams(a.dp(14), a.dp(14), Gravity.CENTER)); setOnClickListener { onCancel() } }, a.dp(32), a.dp(32))
         pill.addView(prow, -1, -2)
-        pill.addView(pillBar, LinearLayout.LayoutParams(-1, a.dp(4)).apply { topMargin = a.dp(4); rightMargin = a.dp(8) })
+        pill.addView(pillBar, LinearLayout.LayoutParams(-1, a.dp(6)).apply { topMargin = a.dp(10) })
         pill.setOnClickListener { expand() }
         val root = a.window.decorView as FrameLayout
         root.addView(layer, -1, -1)
-        root.addView(pill, FrameLayout.LayoutParams(a.dp(260), -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = a.dp(84) })
+        root.addView(pill, FrameLayout.LayoutParams(a.dp(300), -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = a.dp(116) })
         layer.animate().alpha(1f).setDuration(220).start()
     }
 
@@ -488,10 +499,12 @@ class CaptionProgress(
     fun render(stage: Int, fraction: Float, note: String, lastWords: String = "") {
         if (lastWords.isEmpty()) { lastFraction = fraction; lastNote = note }
         val f = fraction.coerceIn(0f, 1f); val pct = (f * 100).toInt()
-        ring.progress = f; percent.text = "$pct%"; pillBar.fraction = f
+        ring.progress = f; percent.text = "$pct%"; pillBar.fraction = f; pillPct.text = "$pct%"
+        val left = tracker.left(f); val etaWords = if (left < 0) "กำลังคำนวณเวลา…" else Eta.text(left)
+        eta.text = etaWords; pillEta.text = etaWords
         backdrop.mode = kinds.getOrElse(stage) { ExportProgress.Backdrop.SAVE }
         val head = headings.getOrElse(stage) { "" }
-        heading.text = head; detail.text = note; pillText.text = "$head · $pct%"
+        heading.text = head; detail.text = note; pillText.text = head
         if (lastWords.isNotEmpty()) { heard.text = "“$lastWords”"; heardBox.visibility = View.VISIBLE }
         marks.forEachIndexed { k, m ->
             m.text = if (k < stage) "✓" else if (k == stage) "●" else "○"
@@ -502,5 +515,32 @@ class CaptionProgress(
     fun remove() {
         gone = true; pill.visibility = View.GONE
         layer.animate().alpha(0f).setDuration(200).withEndAction { (layer.parent as? FrameLayout)?.let { it.removeView(layer); it.removeView(pill) } }.start()
+    }
+}
+
+
+/** Time left, worded the same way everywhere (progress pages, pills and notifications). */
+object Eta {
+    fun text(ms: Long): String = when {
+        ms < 40_000 -> "เหลือไม่ถึง 1 นาที"
+        ms < 3_600_000 -> "เหลือประมาณ ${(ms + 30_000) / 60_000} นาที"
+        else -> "เหลือประมาณ ${ms / 3_600_000} ชม. ${(ms % 3_600_000 + 30_000) / 60_000} นาที"
+    }
+    /** Short form for the status-bar chip: "<1น." / "3น." / "1ชม.5น.". */
+    fun chip(ms: Long): String = when {
+        ms < 40_000 -> "<1น."
+        ms < 3_600_000 -> "${(ms + 30_000) / 60_000}น."
+        else -> "${ms / 3_600_000}ชม.${(ms % 3_600_000 + 30_000) / 60_000}น."
+    }
+    /** Learns the pace of a job from how far it got and how long that took, and smooths the guess so it does not jump. */
+    class Tracker {
+        private val t0 = android.os.SystemClock.elapsedRealtime(); private var smooth = -1L
+        /** Milliseconds left for a job that is [fraction] (0..1) done, or -1 while there is too little to go on. */
+        fun left(fraction: Float): Long {
+            if (fraction < 0.03f || fraction >= 1f) return if (fraction >= 1f) 0L else -1L
+            val raw = ((android.os.SystemClock.elapsedRealtime() - t0) * (1f - fraction) / fraction).toLong()
+            smooth = if (smooth < 0) raw else (smooth * 0.7 + raw * 0.3).toLong()
+            return smooth
+        }
     }
 }

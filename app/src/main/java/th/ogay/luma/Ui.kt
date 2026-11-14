@@ -69,6 +69,11 @@ private var lastNotice: java.lang.ref.WeakReference<View>? = null
  * A short message in the app's own glass style, a pill above the bottom bar that fades away. Where there is no screen to
  * draw on (a service, a destroyed activity) it falls back to the system toast.
  */
+/** A dark card with a full orange outline: stands out on any picture, unlike a plain dark glass card. */
+fun Context.accentFrame(radiusDp: Int): android.graphics.drawable.GradientDrawable = android.graphics.drawable.GradientDrawable().apply {
+    cornerRadius = dp(radiusDp).toFloat(); setColor(Glass.alpha(Glass.BG, 0xf5)); setStroke(dp(2), Glass.ACCENT)
+}
+
 fun Context.notice(message: String) {
     var c: Context? = this
     while (c is android.content.ContextWrapper && c !is android.app.Activity) c = c.baseContext
@@ -77,9 +82,8 @@ fun Context.notice(message: String) {
     val root = act.window.decorView as? android.widget.FrameLayout ?: run { Toast.makeText(this, message, Toast.LENGTH_LONG).show(); return }
     lastNotice?.get()?.let { (it.parent as? android.view.ViewGroup)?.removeView(it) }
     val box = android.widget.LinearLayout(act).apply {
-        gravity = android.view.Gravity.CENTER_VERTICAL; background = act.glass(22, Glass.alpha(Glass.BG, 0xf2)); setPadding(act.dp(16), act.dp(12), act.dp(18), act.dp(12)); alpha = 0f
+        gravity = android.view.Gravity.CENTER_VERTICAL; background = act.accentFrame(22); setPadding(act.dp(18), act.dp(12), act.dp(18), act.dp(12)); alpha = 0f
         isClickable = true; elevation = act.dp(6).toFloat(); contentDescription = message
-        addView(View(act).apply { background = act.glass(2, Glass.ACCENT) }, android.widget.LinearLayout.LayoutParams(act.dp(3), act.dp(22)).apply { rightMargin = act.dp(12) })
         addView(act.text(message, 13.5f, Glass.TEXT, true).apply { maxLines = 4 }, android.widget.LinearLayout.LayoutParams(-2, -2))
     }
     root.addView(box, android.widget.FrameLayout.LayoutParams(-2, -2, android.view.Gravity.BOTTOM or android.view.Gravity.CENTER_HORIZONTAL).apply { bottomMargin = act.dp(112); leftMargin = act.dp(20); rightMargin = act.dp(20) })

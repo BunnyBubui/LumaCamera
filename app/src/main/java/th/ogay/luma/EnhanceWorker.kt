@@ -121,7 +121,8 @@ class EnhanceWorker(context: Context, params: WorkerParameters) : Worker(context
         val scale = when (shot.aiModel) { EnhanceSpec.NATURAL_MODEL -> "Natural ×${shot.aiScale}"; EnhanceSpec.MODEL -> "Classic ×${shot.aiScale}"; else -> "SR1" }
         val notification = LiveNotice.progress(context, "Lumora · กำลังเพิ่มรายละเอียดภาพ $scale",
             if (progress == 0) "กำลังเตรียมภาพ" else "ทำไปแล้ว $progress%" + th.ogay.luma.ai.AiProgress.etaText().let { if (it.isEmpty()) "" else " · $it" }, if (progress == 0) -1 else progress,
-            openGallery(shot), WorkManager.getInstance(context).createCancelPendingIntent(id))
+            openGallery(shot), WorkManager.getInstance(context).createCancelPendingIntent(id),
+            th.ogay.luma.ai.AiProgress.etaMs().takeIf { it > 0 }?.let { th.ogay.luma.Eta.chip(it) })
         val notificationId = 40000+(shot.id.hashCode() and 0x7fff)
         return if (Build.VERSION.SDK_INT >= 29) ForegroundInfo(notificationId,notification,ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
             else ForegroundInfo(notificationId,notification)
