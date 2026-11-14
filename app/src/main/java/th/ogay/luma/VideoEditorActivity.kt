@@ -389,7 +389,7 @@ class VideoEditorActivity : ComponentActivity() {
     private fun addCaptionLayers(made: List<Pair<VideoLayer, Bitmap>>): Int {
         val total = totalOut(); var added = 0
         made.forEach { (l, pic) -> if (l.at < total - 200) { layerThumbs[l.source] = pic
-            layers += l.copy(length = l.length.coerceAtMost(total - l.at), x = 0.5f, y = 0.86f, size = (pic.width.toFloat() / TEXT_PREVIEW * 0.62f).coerceIn(0.1f, 0.95f), aspect = pic.width.toFloat() / pic.height, caption = true); added++ } }
+            layers += l.copy(length = l.length.coerceAtMost(total - l.at), x = 0.5f, y = 0.86f, size = (pic.width.toFloat() / TEXT_PREVIEW * 0.62f * captionScale() / 100f).coerceIn(0.05f, 0.98f), aspect = pic.width.toFloat() / pic.height, caption = true); added++ } }
         rebuildLayers(); refreshTimeline(); showTool(15, false)
         return added
     }
@@ -1793,6 +1793,30 @@ class VideoEditorActivity : ComponentActivity() {
                 } } }
         }.addOnFailureListener { client.close(); notice("โหลดโมเดลภาษาไม่ได้ · ต่ออินเทอร์เน็ตแล้วลองใหม่") }
     }
+    /** How big the caption lines are made, in percent of the usual size; it applies to new lines and, when changed, to every line already there. */
+    private fun captionScale() = getSharedPreferences("camera", MODE_PRIVATE).getInt("caption_scale", 100)
+    private fun applyCaptionScale(percent: Int) {
+        val old = captionScale(); if (percent == old) return
+        val ratio = percent / old.toFloat()
+        getSharedPreferences("camera", MODE_PRIVATE).edit().putInt("caption_scale", percent).apply()
+        layers.indices.filter { layers[it].caption }.forEach { i -> layers[i] = layers[i].copy(size = (layers[i].size * ratio).coerceIn(0.05f, 0.98f)) }
+        rebuildLayers(); refreshTimeline()
+    }
+    private fun sizeCard(): View {
+        val card = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = glass(18, 0x1affffff); setPadding(dp(14), dp(10), dp(14), dp(10)) }
+        val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        head.addView(text("ขนาดตัวอักษร", 14f, Glass.TEXT, true), LinearLayout.LayoutParams(0, -2, 1f))
+        val value = text("${captionScale()}%", 13f, Glass.ACCENT, true); head.addView(value)
+        card.addView(head, -1, -2)
+        var dragging = false; var pending = captionScale()
+        val slider = GlassSlider(this).apply { values = (50..200 step 5).map { "$it%" }; index = ((captionScale() - 50) / 5).coerceIn(0, 30)
+            grad = intArrayOf(0xff8e8e93.toInt(), Color.WHITE, Glass.ACCENT); contentDescription = "ขนาดตัวอักษรคำบรรยาย"
+            onChange = { k -> pending = 50 + k * 5; value.text = "$pending%"; if (!dragging) applyCaptionScale(pending) }
+            onDrag = { d -> dragging = d; if (!d) applyCaptionScale(pending) } }
+        card.addView(slider, LinearLayout.LayoutParams(-1, dp(40)))
+        card.addView(text("ใช้กับทุกบรรทัดพร้อมกัน ปรับได้ทั้งก่อนและหลังสร้าง", 11.5f, Glass.TEXT3))
+        return card
+    }
     private fun captionTools(col: LinearLayout) {
         col.gravity = Gravity.TOP
         val lang = captionLang(); val name = if (lang == CAPTION_AUTO) "ตรวจจับอัตโนมัติ" else LANGS.firstOrNull { it.second == lang }?.first ?: lang
@@ -1804,19 +1828,21 @@ class VideoEditorActivity : ComponentActivity() {
         col.addView(top, -1, -2)
         // Speech model: a card that shows the chosen Whisper model, its download progress, and download / cancel / delete.
         col.addView(ModelCard(this, menu, WhisperModels.ALL, Icons.MIC, "เลือกโมเดลถอดเสียง") { m -> downloadModel(m) }, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(14), 0, dp(14), dp(8)) })
+        col.addView(sizeCard(), LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(14), 0, dp(14), dp(10)) })
         val go = LinearLayout(this).apply { gravity = Gravity.CENTER; background = glass(22, if (speech != null) 0x33ff453a else Glass.ACCENT); isClickable = true; glassTouch()
             contentDescription = if (speech != null) "หยุดสร้างคำบรรยาย" else "สร้างคำบรรยายอัตโนมัติ"
             addView(IconView(this@VideoEditorActivity, if (speech != null) "M7 7h10v10H7z" else "M4 6h16v10H8l-4 4z M8 10h8 M8 13h5", 2.2f).apply { tint = if (speech != null) Color.WHITE else Glass.ON_ACCENT }, dp(20), dp(20))
             addView(text(if (speech != null) "หยุด" else "สร้างคำบรรยายจากเสียงพูด", 14.5f, if (speech != null) Color.WHITE else Glass.ON_ACCENT, true).apply { setPadding(dp(8), 0, 0, 0) })
             setOnClickListener { autoCaptions() } }
         col.addView(go, LinearLayout.LayoutParams(-1, dp(46)).apply { setMargins(dp(16), 0, dp(16), dp(4)) })
-        captionStatus = text(if (speech != null) "กำลังถอดเสียง…" else "ถอดเสียงด้วย Whisper ในเครื่อง · เสียงไม่ถูกส่งออกไปไหน · ต้องดาวน์โหลดโมเดลครั้งแรกเท่านั้น", 11.5f, Glass.TEXT3).apply { gravity = Gravity.CENTER; setPadding(dp(16), 0, dp(16), dp(4)) }
-        col.addView(captionStatus, -1, -2)
-        val srt = LinearLayout(this).apply { gravity = Gravity.CENTER }
-        srt.addView(EditorKit.chip(this, "นำเข้าไฟล์ SRT", EditorKit.START) { pickSrt.launch(arrayOf("*/*")) }, LinearLayout.LayoutParams(-2, dp(34)).apply { setMargins(dp(3), 0, dp(3), 0) })
+        // A line of status shows only while something is working; nothing sits under the button otherwise.
+        captionStatus = if (speech != null || translating) text(if (translating) "กำลังแปล…" else "กำลังถอดเสียง…", 11.5f, Glass.TEXT3).apply { gravity = Gravity.CENTER; setPadding(dp(16), 0, dp(16), dp(4)) } else null
+        captionStatus?.let { col.addView(it, -1, -2) }
+        val srt = LinearLayout(this)
+        srt.addView(EditorKit.chip(this, "นำเข้า SRT", EditorKit.START) { pickSrt.launch(arrayOf("*/*")) }, LinearLayout.LayoutParams(0, dp(42), 1f))
         val count = layers.count { it.caption }
-        if (layers.any { it.kind == VideoLayer.TEXT && VideoLayers.shapeOf(it.text) < 0 }) srt.addView(EditorKit.chip(this, "ส่งออกไฟล์ SRT", EditorKit.END) { saveSrt.launch("subtitles.srt") }, LinearLayout.LayoutParams(-2, dp(34)).apply { setMargins(dp(3), 0, dp(3), 0) })
-        col.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(srt) }, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.CENTER_HORIZONTAL })
+        if (layers.any { it.kind == VideoLayer.TEXT && VideoLayers.shapeOf(it.text) < 0 }) srt.addView(EditorKit.chip(this, "ส่งออก SRT", EditorKit.END) { saveSrt.launch("subtitles.srt") }, LinearLayout.LayoutParams(0, dp(42), 1f).apply { leftMargin = dp(8) })
+        col.addView(srt, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(14), dp(2), dp(14), 0) })
         if (count == 0) return
         // Show or hide every caption line on the video together (hidden lines stay, so they can still be exported as .srt).
         val shown = layers.filter { it.caption }.none { it.hidden }

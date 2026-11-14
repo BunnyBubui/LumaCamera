@@ -405,63 +405,94 @@ class ExportProgress(private val a: Activity, thumb: Bitmap?, private val steps:
 
 
 /**
- * Progress for making captions, in the same look as the export page: the clip's first picture in a ring, the percentage,
- * what is happening now (finding speech, which language, which piece of how many, the last words heard) and the steps
- * marked waiting / working / done, over the moving background.
+ * The progress of making captions, as a sheet at the bottom of the screen: what is being done now in one line, a bar,
+ * the last sentence heard, and three steps. "ย่อไปทำเบื้องหลัง" folds it into a small pill at the top, so the video can
+ * be edited while the work goes on; tapping the pill opens the sheet again. [thumb] is kept for callers and not shown.
  */
-class CaptionProgress(private val a: Activity, thumb: Bitmap?, private val steps: List<String>, onCancel: () -> Unit) {
-    private val layer = FrameLayout(a).apply { setBackgroundColor(Glass.alpha(Glass.BG, 0xf2)); isClickable = true; alpha = 0f }
-    private val backdrop = ExportProgress.Backdrop(a)
-    private val ring = ExportProgress.Ring(a)
-    private val percent = a.text("0%", 40f, Glass.TEXT, true).apply { gravity = Gravity.CENTER }
-    private val detail = a.text("", 13.5f, Glass.TEXT2).apply { gravity = Gravity.CENTER; maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END }
-    private val heard = a.text("", 13f, Glass.TEXT).apply { gravity = Gravity.CENTER; maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END; alpha = 0.85f }
+class CaptionProgress(private val a: Activity, @Suppress("UNUSED_PARAMETER") thumb: Bitmap?, private val steps: List<String>, onCancel: () -> Unit) {
+    private val layer = FrameLayout(a).apply { setBackgroundColor(0x99000000.toInt()); isClickable = true; alpha = 0f }
+    private val title = a.text("", 18f, Glass.TEXT, true)
+    private val percent = a.text("0%", 24f, Glass.ACCENT, true)
+    private val bar = ModelBar(a)
+    private val detail = a.text("", 13f, Glass.TEXT2).apply { maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END }
+    private val heardLabel = a.text("ประโยคล่าสุด", 11.5f, Glass.TEXT3)
+    private val heard = a.text("", 15f, Glass.TEXT).apply { maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END }
+    private val heardBox = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; background = a.glass(14, 0x66000000); setPadding(a.dp(14), a.dp(10), a.dp(14), a.dp(10)); visibility = View.GONE }
     private val marks = ArrayList<TextView>(); private val labels = ArrayList<TextView>()
-    /** Which background the step uses, like the export's: finding the speech is FLOW, reading it is AI, placing lines is SAVE. */
-    private val kinds = listOf(ExportProgress.Backdrop.EDIT, ExportProgress.Backdrop.FLOW, ExportProgress.Backdrop.AI, ExportProgress.Backdrop.AI, ExportProgress.Backdrop.SAVE)
+    private val pillText = a.text("", 13.5f, Glass.TEXT, true)
+    private val pillBar = ModelBar(a)
+    private val pill = LinearLayout(a)
+    private var gone = false
 
     init {
-        layer.addView(backdrop, -1, -1)
-        val col = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; setPadding(a.dp(28), 0, a.dp(28), 0) }
-        val frame = FrameLayout(a)
-        frame.addView(ImageView(a).apply { scaleType = ImageView.ScaleType.CENTER_CROP; setImageBitmap(thumb); setBackgroundColor(0x22ffffff); clipToOutline = true
-            outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: android.graphics.Outline) = o.setRoundRect(0, 0, v.width, v.height, a.dp(18).toFloat()) } },
-            FrameLayout.LayoutParams(a.dp(132), a.dp(176), Gravity.CENTER))
-        frame.addView(ring, FrameLayout.LayoutParams(a.dp(150), a.dp(194), Gravity.CENTER))
-        col.addView(frame, a.dp(160), a.dp(200))
-        col.addView(percent, LinearLayout.LayoutParams(-2, -2).apply { topMargin = a.dp(10) })
-        col.addView(detail, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(2) })
-        col.addView(heard, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(8) })
-        val list = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; background = a.glass(20, 0x14ffffff); setPadding(a.dp(16), a.dp(10), a.dp(16), a.dp(10)) }
-        steps.forEach { st ->
-            val r = LinearLayout(a).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, a.dp(6), 0, a.dp(6)) }
-            val m = a.text("○", 15f, Glass.TEXT3, true).apply { gravity = Gravity.CENTER }; marks += m
-            r.addView(m, a.dp(26), -2)
-            val l = a.text(st, 14f, Glass.TEXT3); labels += l
-            r.addView(l, LinearLayout.LayoutParams(0, -2, 1f))
-            list.addView(r, -1, -2)
+        val sheet = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; background = a.glass(28, Glass.alpha(Glass.BG, 0xfa)); setPadding(a.dp(18), a.dp(10), a.dp(18), a.dp(20)) }
+        sheet.addView(View(a).apply { background = a.glass(2, 0x33ffffff) }, LinearLayout.LayoutParams(a.dp(40), a.dp(4)).apply { gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = a.dp(12) })
+        val head = LinearLayout(a).apply { gravity = Gravity.CENTER_VERTICAL }
+        head.addView(title, LinearLayout.LayoutParams(0, -2, 1f)); head.addView(percent)
+        sheet.addView(head, -1, -2)
+        sheet.addView(bar, LinearLayout.LayoutParams(-1, a.dp(6)).apply { topMargin = a.dp(10) })
+        sheet.addView(detail, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(10) })
+        heardBox.addView(heardLabel); heardBox.addView(heard, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(3) })
+        sheet.addView(heardBox, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(12) })
+        val rows = listOf("เตรียมเสียง · หาช่วงที่มีเสียงพูด · ตรวจภาษา", steps.getOrElse(3) { "ถอดเสียง" }, steps.getOrElse(4) { "ใส่คำบรรยายบนไทม์ไลน์" })
+        val list = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
+        rows.forEach { st ->
+            val r = LinearLayout(a).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, a.dp(5), 0, a.dp(5)) }
+            val m = a.text("○", 14f, Glass.TEXT3, true).apply { gravity = Gravity.CENTER }; marks += m
+            r.addView(m, a.dp(24), -2)
+            val l = a.text(st, 13.5f, Glass.TEXT3); labels += l
+            r.addView(l, LinearLayout.LayoutParams(0, -2, 1f)); list.addView(r, -1, -2)
         }
-        col.addView(list, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(16) })
-        col.addView(EditorKit.chip(a, "ยกเลิก", Icons.CLOSE) { onCancel() }, LinearLayout.LayoutParams(-2, a.dp(44)).apply { topMargin = a.dp(18) })
-        layer.addView(col, FrameLayout.LayoutParams(-1, -2, Gravity.CENTER))
-        (a.window.decorView as FrameLayout).addView(layer, -1, -1)
+        sheet.addView(list, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(12) })
+        val buttons = LinearLayout(a)
+        buttons.addView(button("ย่อไปทำเบื้องหลัง", true) { minimize() }, LinearLayout.LayoutParams(0, a.dp(46), 1.4f))
+        buttons.addView(button("ยกเลิก", false) { onCancel() }, LinearLayout.LayoutParams(0, a.dp(46), 1f).apply { leftMargin = a.dp(10) })
+        sheet.addView(buttons, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(16) })
+        sheet.addView(a.text("ย่อแล้วยังตัดต่อต่อได้ · ถ้าออกจากหน้านี้ การถอดเสียงจะหยุด", 11.5f, Glass.TEXT3).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(10) })
+        layer.addView(sheet, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+
+        pill.apply { orientation = LinearLayout.VERTICAL; background = a.glass(24, Glass.alpha(Glass.BG, 0xf5)); setPadding(a.dp(16), a.dp(9), a.dp(8), a.dp(9)); visibility = View.GONE; isClickable = true; glassTouch()
+            contentDescription = "ดูความคืบหน้าคำบรรยาย" }
+        val prow = LinearLayout(a).apply { gravity = Gravity.CENTER_VERTICAL }
+        prow.addView(pillText, LinearLayout.LayoutParams(0, -2, 1f))
+        prow.addView(FrameLayout(a).apply { isClickable = true; glassTouch(); contentDescription = "ยกเลิก"; background = a.glass(16, 0x2effffff)
+            addView(IconView(a, Icons.CLOSE, 2f).apply { tint = Glass.TEXT }, FrameLayout.LayoutParams(a.dp(14), a.dp(14), Gravity.CENTER)); setOnClickListener { onCancel() } }, a.dp(32), a.dp(32))
+        pill.addView(prow, -1, -2)
+        pill.addView(pillBar, LinearLayout.LayoutParams(-1, a.dp(4)).apply { topMargin = a.dp(4); rightMargin = a.dp(8) })
+        pill.setOnClickListener { expand() }
+        val root = a.window.decorView as FrameLayout
+        root.addView(layer, -1, -1)
+        root.addView(pill, FrameLayout.LayoutParams(a.dp(250), -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = a.dp(84) })
         layer.animate().alpha(1f).setDuration(220).start()
     }
+
+    private fun button(label: String, main: Boolean, click: () -> Unit) = FrameLayout(a).apply {
+        isClickable = true; glassTouch(); contentDescription = label; background = a.glass(23, if (main) Glass.ACCENT else 0x2effffff)
+        addView(a.text(label, 14.5f, if (main) Glass.ON_ACCENT else Glass.TEXT, true), FrameLayout.LayoutParams(-2, -2, Gravity.CENTER)); setOnClickListener { click() } }
+
+    fun minimize() { if (gone) return; layer.visibility = View.GONE; pill.visibility = View.VISIBLE }
+    fun expand() { if (gone) return; pill.visibility = View.GONE; layer.visibility = View.VISIBLE }
 
     /** [stage] is the step now working (earlier ones show done); [fraction] is 0..1 of the whole job. */
     var lastFraction = 0f; private set
     var lastNote = ""; private set
     fun render(stage: Int, fraction: Float, note: String, lastWords: String = "") {
         if (lastWords.isEmpty()) { lastFraction = fraction; lastNote = note }
-        ring.progress = fraction.coerceIn(0f, 1f); percent.text = "${(fraction.coerceIn(0f, 1f) * 100).toInt()}%"
-        backdrop.mode = kinds.getOrElse(stage) { ExportProgress.Backdrop.SAVE }
+        val f = fraction.coerceIn(0f, 1f); val pct = (f * 100).toInt()
+        val head = when { stage < 3 -> "กำลังเตรียมเสียง"; stage == 3 -> "กำลังถอดเสียง"; else -> "กำลังใส่คำบรรยาย" }
+        title.text = head; percent.text = "$pct%"; bar.fraction = f; pillBar.fraction = f
+        pillText.text = "$head · $pct%"
         detail.text = note
-        if (lastWords.isNotEmpty()) heard.text = "“$lastWords”"
+        if (lastWords.isNotEmpty()) { heard.text = "“$lastWords”"; heardBox.visibility = View.VISIBLE }
+        val row = when { stage < 3 -> 0; stage == 3 -> 1; else -> 2 }
         marks.forEachIndexed { k, m ->
-            m.text = if (k < stage) "✓" else if (k == stage) "●" else "○"
-            m.setTextColor(if (k < stage) 0xff30d158.toInt() else if (k == stage) Glass.ACCENT else Glass.TEXT3)
-            labels[k].setTextColor(if (k <= stage) Color.WHITE else Glass.TEXT3)
+            m.text = if (k < row) "✓" else if (k == row) "●" else "○"
+            m.setTextColor(if (k < row) 0xff30d158.toInt() else if (k == row) Glass.ACCENT else Glass.TEXT3)
+            labels[k].setTextColor(if (k <= row) Color.WHITE else Glass.TEXT3)
         }
     }
-    fun remove() { layer.animate().alpha(0f).setDuration(200).withEndAction { (layer.parent as? FrameLayout)?.removeView(layer) }.start() }
+    fun remove() {
+        gone = true; pill.visibility = View.GONE
+        layer.animate().alpha(0f).setDuration(200).withEndAction { (layer.parent as? FrameLayout)?.let { it.removeView(layer); it.removeView(pill) } }.start()
+    }
 }
