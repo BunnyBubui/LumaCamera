@@ -96,6 +96,12 @@ object LlamaTranslator {
         }
     }
 
+    private fun fallbackWrap(f: TransFamily, ask: String) = when (f) {
+        TransFamily.CHINDA, TransFamily.TYPHOON -> "<|im_start|>user\n$ask<|im_end|>\n<|im_start|>assistant\n"
+        TransFamily.GEMMA -> "<start_of_turn>user\n$ask<end_of_turn>\n<start_of_turn>model\n"
+        TransFamily.HUNYUAN -> ""
+    }
+
     private fun clean(raw: String): String {
         var s = raw
         val end = s.lastIndexOf("</think>"); if (end >= 0) s = s.substring(end + 8)
@@ -124,8 +130,10 @@ object LlamaTranslator {
             loaded()
             lines.forEachIndexed { i, text ->
                 if (cancelled) return null
-                var wrapped = e.wrap(prompt(family, from, to, text))
-                if (wrapped.isEmpty()) return "โมเดลนี้ไม่มีรูปแบบแชทในไฟล์ ใช้แปลไม่ได้"
+                val ask = prompt(family, from, to, text)
+                // The model's own template first; if the file has none the library can read, the usual form for that family.
+                var wrapped = e.wrap(ask).ifEmpty { fallbackWrap(family, ask) }
+                if (wrapped.isEmpty()) return "ไฟล์โมเดลนี้ไม่มีรูปแบบแชทที่อ่านได้ ใช้แปลไม่ได้ · ลองโมเดลอื่น"
                 if (family == TransFamily.CHINDA && !wrapped.contains("<think>")) wrapped += "<think>\n\n</think>\n\n"
                 val out = clean(e.generate(wrapped, (text.length * 3).coerceIn(64, 512)))
                 progress(i + 1, lines.size, out.takeIf { it.isNotBlank() })

@@ -112,10 +112,17 @@ if(ANDROID_ABI STREQUAL "arm64-v8a")
     set(GGML_CPU_ARM_ARCH "armv8.2-a+dotprod" CACHE STRING "" FORCE)
 endif()
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-set(LUMA_SAVED_SHARED ${BUILD_SHARED_LIBS})
-set(BUILD_SHARED_LIBS OFF)
-add_subdirectory(${luma_llama_source_SOURCE_DIR} luma-llama EXCLUDE_FROM_ALL)
-set(BUILD_SHARED_LIBS ${LUMA_SAVED_SHARED})
+# The CI and debug APKs are Debug builds, where C++ would be compiled with no optimisation and the model would run
+# many times slower than it should. The flags are set inside a function so they apply to llama.cpp only.
+function(luma_add_llama)
+    set(BUILD_SHARED_LIBS OFF)
+    set(CMAKE_C_FLAGS_DEBUG "-O3 -DNDEBUG")
+    set(CMAKE_CXX_FLAGS_DEBUG "-O3 -DNDEBUG")
+    set(CMAKE_C_FLAGS_RELWITHDEBINFO "-O3 -DNDEBUG")
+    set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "-O3 -DNDEBUG")
+    add_subdirectory(${luma_llama_source_SOURCE_DIR} luma-llama EXCLUDE_FROM_ALL)
+endfunction()
+luma_add_llama()
 
 add_library(luma_llm SHARED llm_bridge.cpp)
 target_include_directories(luma_llm PRIVATE

@@ -1751,7 +1751,9 @@ class VideoEditorActivity : ComponentActivity() {
     private fun runLlmTranslate(m: ModelSpec, to: String) {
         val ids = layers.indices.filter { layers[it].caption }; if (ids.isEmpty() || translating) return
         val from = captionFrom(to)
-        if (TranslatorModels.infoOf(m)?.supports(from, to) != true) { notice("${m.name} แปลคู่ภาษานี้ไม่ได้ · เลือกโมเดลอื่นหรือภาษาอื่น"); return }
+        if (TranslatorModels.infoOf(m)?.supports(from, to) != true) {
+            val ok = TranslatorModels.ALL.filter { TranslatorModels.infoOf(it)?.supports(from, to) == true }.joinToString(" · ") { it.name }
+            notice("${m.name} แปล ${TransLang.name(from)} → ${TransLang.name(to)} ไม่ได้" + (if (TranslatorModels.infoOf(m)?.thEnOnly == true) " (รองรับเฉพาะไทย↔อังกฤษ)" else "") + "\nลองใช้: " + ok.ifEmpty { "ML Kit" }); return }
         val texts = ids.map { layers[it].text }; val out = arrayOfNulls<String>(ids.size)
         translating = true; translateStopped = false
         if (tool == 15) showTool(15, false)
