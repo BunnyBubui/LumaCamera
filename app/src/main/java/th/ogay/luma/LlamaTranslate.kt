@@ -106,7 +106,7 @@ object LlamaTranslator {
      * Translates [lines]; [progress] is called after each one with (done, total, text or null when that line failed).
      * Runs on the calling thread. Returns an error message, or null when it finished (or was cancelled).
      */
-    fun run(c: Context, m: ModelSpec, from: String, to: String, lines: List<String>, progress: (Int, Int, String?) -> Unit): String? {
+    fun run(c: Context, m: ModelSpec, from: String, to: String, lines: List<String>, loaded: () -> Unit = {}, progress: (Int, Int, String?) -> Unit): String? {
         val info = TranslatorModels.infoOf(m) ?: return "โมเดลนี้ยังใช้ไม่ได้"
         val family = info.family ?: return "โมเดลนี้ยังใช้ไม่ได้"
         if (!info.supports(from, to)) return "โมเดลนี้แปลคู่ภาษานี้ไม่ได้ · เลือกโมเดลอื่น"
@@ -121,6 +121,7 @@ object LlamaTranslator {
                 engineId = m.id
             }
             val e = engine ?: return "เปิดโมเดลไม่ได้"
+            loaded()
             lines.forEachIndexed { i, text ->
                 if (cancelled) return null
                 var wrapped = e.wrap(prompt(family, from, to, text))

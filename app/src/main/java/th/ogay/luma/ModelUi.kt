@@ -83,7 +83,7 @@ class ModelCard(private val a: Activity, private val menu: GlassMenu, private va
         if (m.unavailable != null || m.builtin) return
         actionHost.addView(when {
             job != null -> pill("ยกเลิก", "M6 6l12 12 M18 6L6 18", false) { job.cancel() }
-            have -> pill("ลบ", "M5 7h14 M10 11v6 M14 11v6 M9 7V4h6v3 M7 7l1 13h8l1-13", false) { ModelStore.delete(a, m); refresh() }
+            have -> pill("ลบ", "M5 7h14 M10 11v6 M14 11v6 M9 7V4h6v3 M7 7l1 13h8l1-13", false) { GlassDialog.confirm(a, "ลบ ${m.name} ไหม", "ไฟล์ ${WhisperModels.sizeText(a, m)} จะถูกลบออกจากเครื่อง ถ้าจะใช้อีกต้องดาวน์โหลดใหม่", "ลบ", Icons.CLOSE, danger = true) { ModelStore.delete(a, m); refresh() } }
             else -> pill("ดาวน์โหลด", Icons.DOWNLOAD, true) { onDownload(m) }
         })
     }

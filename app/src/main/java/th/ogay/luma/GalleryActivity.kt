@@ -324,13 +324,8 @@ class GalleryActivity : ComponentActivity() {
         contentResolver.query(u, arrayOf(MediaStore.MediaColumns.OWNER_PACKAGE_NAME), null, null, null)?.use { c -> c.moveToFirst() && c.getString(0) == packageName } ?: false
     }.getOrDefault(false)
     private fun confirmDelete(items: List<Item>) {
-        // Pictures from other apps: Android shows its own "move to bin?" question, so a second one from Lumora is skipped.
-        if (Build.VERSION.SDK_INT >= 30) {
-            luma.readIo.execute {
-                val anyOwn = items.any { it.shot != null || it.key.startsWith("ledger:") || (it.uri.authority == MediaStore.AUTHORITY && ownFile(it.uri)) }
-                runOnUiThread { if (!isDestroyed) { if (anyOwn && prefs.getBoolean("gallery_ask_delete", true)) askDelete(items) else trash(items) } }
-            }
-        } else if (prefs.getBoolean("gallery_ask_delete", true)) askDelete(items) else trash(items)
+        // Lumora's own question comes first for every picture; for pictures from other apps Android then adds its own consent sheet, which cannot be skipped.
+        if (prefs.getBoolean("gallery_ask_delete", true)) askDelete(items) else trash(items)
     }
     private fun askDelete(items: List<Item>) {
         GlassDialog.panel(this, if (items.size == 1) "ลบ${if (items[0].video) "วิดีโอ" else "รูป"}นี้ไหม" else "ลบ ${items.size} รายการไหม") { col, d ->

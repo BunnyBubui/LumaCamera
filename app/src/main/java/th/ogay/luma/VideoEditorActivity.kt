@@ -416,6 +416,14 @@ class VideoEditorActivity : ComponentActivity() {
     /** The model whose download should start the captions by themselves when it finishes (set by the "create captions" button). */
     private var startWhenReady: String? = null
     private var hearingModels = false
+    /** Where each tool's list was scrolled to, so a button that rebuilds the panel does not throw the list back to the top. */
+    private val toolScroll = HashMap<Int, Int>()
+    private fun keepScroll(sv: android.widget.ScrollView): android.widget.ScrollView {
+        val key = tool
+        sv.setOnScrollChangeListener { _, _, y, _, _ -> toolScroll[key] = y }
+        sv.post { sv.scrollTo(0, toolScroll[key] ?: 0) }
+        return sv
+    }
     /** The translator whose download should start the translation by itself when it finishes. */
     private var translateAfter: String? = null
     private var translating = false
@@ -1355,6 +1363,7 @@ class VideoEditorActivity : ComponentActivity() {
         // Older menus now live inside others: split-file and clips in cut, music in sound, adjust in the image menu.
         val i = when (req) { 1, 10 -> 0; 6 -> 9; 7 -> COLOR_TOOL; else -> req }
         val dir = if (animate) TOOL_IDS.indexOf(i).compareTo(TOOL_IDS.indexOf(tool)) else 0
+        if (tool != i) toolScroll.clear()
         tool = i; toolBar.select(TOOL_IDS.indexOf(i).coerceAtLeast(0), animate)
         // The layer lanes need room; the preview gives way smoothly.
         if (i != COLOR_TOOL) { handler.removeCallbacks(histTick); hist = null }
@@ -1659,7 +1668,7 @@ class VideoEditorActivity : ComponentActivity() {
     private fun soundTools(col: LinearLayout) {
         col.gravity = Gravity.TOP
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        col.addView(android.widget.ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(box) }, LinearLayout.LayoutParams(-1, 0, 1f))
+        col.addView(keepScroll(android.widget.ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(box) }), LinearLayout.LayoutParams(-1, 0, 1f))
         fun slider(label: String, steps: List<String>, at: Int, set: (Int) -> Unit) {
             val r = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), 0, dp(12), 0) }
             r.addView(text(label, 12f, Glass.TEXT2, true), dp(96), -2)
@@ -1746,17 +1755,22 @@ class VideoEditorActivity : ComponentActivity() {
         val texts = ids.map { layers[it].text }; val out = arrayOfNulls<String>(ids.size)
         translating = true; translateStopped = false
         if (tool == 15) showTool(15, false)
-        notice("กำลังโหลด ${m.name} · ครั้งแรกอาจใช้เวลาสักครู่")
+        val ui = CaptionProgress(this, firstFrame, listOf("โหลดโมเดล ${m.name}", "แปลทีละบรรทัด", "ใส่ข้อความที่แปลลงไทม์ไลน์"),
+            { translateStopped = true; LlamaTranslator.cancel(); notice("กำลังหยุดแปล…") },
+            listOf(ExportProgress.Backdrop.FLOW, ExportProgress.Backdrop.AI, ExportProgress.Backdrop.SAVE),
+            listOf("กำลังโหลดโมเดลแปล", "กำลังแปล ${TransLang.name(from)} → ${TransLang.name(to)}", "กำลังใส่ข้อความที่แปล"))
+        captionUi = ui; ui.render(0, 0.03f, "กำลังเปิด ${m.name} · ครั้งแรกอาจใช้เวลาสักครู่")
         val app = applicationContext
         Thread({
-            val err = LlamaTranslator.run(app, m, from, to, texts) { done, total, t -> out[done - 1] = t
-                runOnUiThread { captionStatus?.takeIf { tool == 15 }?.text = "กำลังแปล $done/$total · ${m.name}" } }
+            val err = LlamaTranslator.run(app, m, from, to, texts, { runOnUiThread { ui.render(1, 0.1f, "เริ่มแปลบรรทัดแรก…") } }) { done, total, t -> out[done - 1] = t
+                runOnUiThread { ui.render(1, 0.1f + 0.85f * done / total, "บรรทัดที่ $done จาก $total", t ?: "") } }
             LlamaTranslator.release()
             runOnUiThread { finishLlmTranslate(ids, texts, out, err) }
         }, "luma-translate").start()
     }
     private fun finishLlmTranslate(ids: List<Int>, texts: List<String>, out: Array<String?>, err: String?) {
         translating = false
+        captionUi?.remove(); captionUi = null
         if (isDestroyed) return
         if (err != null) { notice(err); if (tool == 15) showTool(15, false); return }
         if (translateStopped) { notice("หยุดแปลแล้ว · คำบรรยายยังเป็นต้นฉบับ"); if (tool == 15) showTool(15, false); return }
@@ -1822,7 +1836,7 @@ class VideoEditorActivity : ComponentActivity() {
         host.gravity = Gravity.TOP
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         captionBody(box)
-        host.addView(android.widget.ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(box) }, LinearLayout.LayoutParams(-1, 0, 1f))
+        host.addView(keepScroll(android.widget.ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(box) }), LinearLayout.LayoutParams(-1, 0, 1f))
     }
     private fun captionBody(col: LinearLayout) {
         val lang = captionLang(); val name = if (lang == CAPTION_AUTO) "ตรวจจับอัตโนมัติ" else LANGS.firstOrNull { it.second == lang }?.first ?: lang
@@ -2338,7 +2352,7 @@ class VideoEditorActivity : ComponentActivity() {
             if (l.shape != 0) matteSlider("ขอบนุ่ม", l.feather) { layers[i].copy(feather = it) }
             matteSlider("มุมโค้ง", l.round) { layers[i].copy(round = it) }
         }
-        box.addView(android.widget.ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(sliders) }, LinearLayout.LayoutParams(-1, 0, 1f))
+        box.addView(keepScroll(android.widget.ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(sliders) }), LinearLayout.LayoutParams(-1, 0, 1f))
     }
 
     // ---------- Undo, redo and the saved project ----------
