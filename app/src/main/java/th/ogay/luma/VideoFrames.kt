@@ -51,8 +51,22 @@ class FrameDecoder(c: Context, uri: Uri, private val fromUs: Long = 0L, private 
             fps = (if (count != null && count > 1 && durationUs > 0) count * 1_000_000f / durationUs else if (declared > 0f) declared else 30f).coerceIn(5f, 240f)
         } finally { meta.release() }
         format.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible)
-        codec = MediaCodec.createDecoderByType(format.getString(MediaFormat.KEY_MIME)!!)
-        codec.configure(format, null, null, 0); codec.start()
+        val mime = format.getString(MediaFormat.KEY_MIME)!!
+        // Not live playback: ask the decoder for its top speed. A phone that refuses the hints gets the plain setup.
+        codec = try {
+            MediaCodec.createDecoderByType(mime).also { c ->
+                try {
+                    val fast = MediaFormat.createVideoFormat(mime, format.getInteger(MediaFormat.KEY_WIDTH), format.getInteger(MediaFormat.KEY_HEIGHT))
+                    listOf("csd-0", "csd-1", "csd-2").forEach { k -> if (format.containsKey(k)) fast.setByteBuffer(k, format.getByteBuffer(k)) }
+                    if (format.containsKey(MediaFormat.KEY_MAX_INPUT_SIZE)) fast.setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, format.getInteger(MediaFormat.KEY_MAX_INPUT_SIZE))
+                    fast.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible)
+                    fast.setInteger(MediaFormat.KEY_PRIORITY, 1); fast.setInteger(MediaFormat.KEY_OPERATING_RATE, Short.MAX_VALUE.toInt())
+                    c.configure(fast, null, null, 0); c.start()
+                } catch (t: Throwable) { runCatching { c.release() }; throw t }
+            }
+        } catch (_: Throwable) {
+            MediaCodec.createDecoderByType(mime).also { it.configure(format, null, null, 0); it.start() }
+        }
         extractor.seekTo(fromUs, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
     }
 
@@ -100,12 +114,16 @@ class FrameEncoder(private val out: File, val width: Int, val height: Int, priva
 
     init {
         val mime = pickMime(width, height, fps) ?: error("เครื่องนี้เข้ารหัสวิดีโอ ${width}×${height} ${fps.roundToInt()} fps ไม่ได้")
-        val fmt = MediaFormat.createVideoFormat(mime, width, height).apply {
+        fun format(fast: Boolean) = MediaFormat.createVideoFormat(mime, width, height).apply {
             setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible)
             setInteger(MediaFormat.KEY_BIT_RATE, bitrate(width, height, fps, mime))
             setFloat(MediaFormat.KEY_FRAME_RATE, fps); setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
+            // Not a live recording: let the encoder run as fast as it can.
+            if (fast) { setInteger(MediaFormat.KEY_PRIORITY, 1); setInteger(MediaFormat.KEY_OPERATING_RATE, Short.MAX_VALUE.toInt()) }
         }
-        codec = MediaCodec.createEncoderByType(mime).apply { configure(fmt, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE); start() }
+        fun make(fast: Boolean) = MediaCodec.createEncoderByType(mime).also { c ->
+            try { c.configure(format(fast), null, null, MediaCodec.CONFIGURE_FLAG_ENCODE); c.start() } catch (t: Throwable) { runCatching { c.release() }; throw t } }
+        codec = try { make(true) } catch (_: Throwable) { make(false) }
     }
 
     fun encode(rgb: Mat) {
@@ -222,6 +240,15 @@ class FlowBlender(private val w: Int, private val h: Int) : AutoCloseable {
     override fun close() { listOf(grid, f01, f10, s01, s10, ft0, ft1, m0, m1, w0, w1, out, none).forEach { it.release() } }
 
     companion object {
+        /** How different two grey copies are: the mean difference per pixel, 0 (the same picture) to 255. */
+        fun change(a: Mat, b: Mat): Double {
+            if (a.size() != b.size()) return 0.0
+            val d = Mat(); Core.absdiff(a, b, d); val m = Core.mean(d).`val`[0]; d.release(); return m
+        }
+        /** Below this two neighbours are the same picture (a held frame): no motion to measure. */
+        const val STILL = 0.35
+        /** Above this the neighbours are different shots (a cut): warping between them only smears. */
+        const val CUT = 45.0
         /** Grey copy about 480 pixels wide for measuring motion. */
         fun gray(rgb: Mat): Mat {
             val s = minOf(1.0, 480.0 / rgb.cols())
@@ -326,5 +353,92 @@ object Yuv {
             else for (y in 0 until ph) { val base = y * rs; for (x in 0 until pw) b.put(base + x * ps, data[off + y * pw + x]) }
         }
         put(img.planes[0], w, h, 0); put(img.planes[1], w / 2, h / 2, w * h); put(img.planes[2], w / 2, h / 2, w * h * 5 / 4)
+    }
+}
+
+/**
+ * Decodes on its own thread, a few frames ahead, so the next frame is already waiting while the current one is
+ * being worked on. Owns [dec]: closing this closes it.
+ */
+class AsyncFrames(private val dec: FrameDecoder, depth: Int = 3) : AutoCloseable {
+    private object End
+    private val queue = java.util.concurrent.ArrayBlockingQueue<Any>(depth)
+    @Volatile private var failure: Throwable? = null
+    @Volatile private var stop = false
+    private val thread = Thread({
+        try {
+            while (!stop) {
+                val f = dec.next() ?: break
+                if (!offer(f)) { f.rgb.release(); break }
+            }
+        } catch (t: Throwable) { failure = t }
+        finally { offer(End) }
+    }, "frames-decode").apply { isDaemon = true; start() }
+
+    private fun offer(x: Any): Boolean {
+        while (!stop) { try { if (queue.offer(x, 200, java.util.concurrent.TimeUnit.MILLISECONDS)) return true } catch (_: InterruptedException) { return false } }
+        return false
+    }
+
+    /** The next frame, or null at the end. The caller releases the matrix. Rethrows a decoding failure. */
+    fun next(): FrameDecoder.Frame? {
+        while (true) {
+            val x = queue.poll(200, java.util.concurrent.TimeUnit.MILLISECONDS)
+            if (x == null) { if (!thread.isAlive && queue.isEmpty()) { failure?.let { throw it }; return null }; continue }
+            if (x === End) { failure?.let { throw it }; return null }
+            return x as FrameDecoder.Frame
+        }
+    }
+
+    override fun close() {
+        stop = true; thread.interrupt(); runCatching { thread.join(3000) }
+        while (true) { val x = queue.poll() ?: break; (x as? FrameDecoder.Frame)?.rgb?.release() }
+        dec.close()
+    }
+}
+
+/**
+ * Colour conversion and encoding on their own thread: the caller hands over a frame and goes straight on to the next
+ * one. Frames are copied on the way in, so the caller may keep using or reuse its matrix. Owns [enc].
+ */
+class AsyncEncoder(private val enc: FrameEncoder, depth: Int = 4) : AutoCloseable {
+    val width get() = enc.width
+    val height get() = enc.height
+    /** Frames handed over so far (not all are written yet). */
+    @Volatile var frames = 0; private set
+    private val end = Mat()
+    private val queue = java.util.concurrent.ArrayBlockingQueue<Mat>(depth)
+    @Volatile private var failure: Throwable? = null
+    @Volatile private var stop = false
+    private val thread = Thread({
+        try {
+            while (true) {
+                val m = queue.take()
+                if (m === end) break
+                try { if (!stop) enc.encode(m) } finally { m.release() }
+            }
+        } catch (t: Throwable) { if (!stop) failure = t }
+    }, "frames-encode").apply { isDaemon = true; start() }
+
+    private fun put(m: Mat) {
+        while (true) {
+            failure?.let { if (m !== end) m.release(); throw it }
+            if (queue.offer(m, 200, java.util.concurrent.TimeUnit.MILLISECONDS)) return
+        }
+    }
+
+    fun encode(rgb: Mat) { put(rgb.clone()); frames++ }
+
+    /** Waits for every frame to be written, then ends the video and adds the sound. */
+    fun finish() {
+        put(end); thread.join()
+        failure?.let { throw it }
+        enc.finish()
+    }
+
+    override fun close() {
+        stop = true; thread.interrupt(); runCatching { thread.join(3000) }
+        while (true) { val m = queue.poll() ?: break; if (m !== end) m.release() }
+        enc.close()
     }
 }

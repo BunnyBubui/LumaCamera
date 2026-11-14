@@ -32,7 +32,9 @@ object VideoEnhancer {
     fun run(c: Context, input: File, out: File, plan: Plan, cancel: AtomicBoolean, progress: (Progress) -> Unit = {}): File {
         check(OpenCVLoader.initLocal()) { "OpenCV not available" }
         val dec = FrameDecoder(c, Uri.fromFile(input))
-        var enc: FrameEncoder? = null; var sr: FrameSr? = null; var blend: FlowBlender? = null
+        // Decoding and encoding run beside the flow and warping work on other threads; the three overlap.
+        val frames = AsyncFrames(dec)
+        var enc: AsyncEncoder? = null; var sr: FrameSr? = null; var blend: FlowBlender? = null
         var prev: Mat? = null; var prevGray: Mat? = null; var prevPts = 0L; var firstPts = -1L
         var paired = false
         val stepUs = 1_000_000.0 / plan.fps
@@ -42,12 +44,12 @@ object VideoEnhancer {
         val total = dec.durationUs.coerceAtLeast(1)
         try {
             while (!cancel.get()) {
-                val f = dec.next() ?: break
+                val f = frames.next() ?: break
                 if (firstPts < 0) firstPts = f.ptsUs
                 val pts = f.ptsUs - firstPts
                 if (enc == null) {
                     val (w, h) = size(f.rgb.cols(), f.rgb.rows(), plan.shortSide)
-                    enc = FrameEncoder(out, w, h, plan.fps, dec.rotation, input)
+                    enc = AsyncEncoder(FrameEncoder(out, w, h, plan.fps, dec.rotation, input))
                     if (plan.ai && w > f.rgb.cols() * 1.05) sr = FrameSr(c, plan.profile)
                     if (plan.fps > dec.fps * 1.05f) blend = FlowBlender(w, h)
                 }
@@ -63,11 +65,14 @@ object VideoEnhancer {
                     while (k * stepUs <= pts) { enc.encode(big); k++ }
                 } else {
                     paired = false
+                    // Still pictures and cuts get the nearest frame: nothing to measure, and a warp across a cut only smears.
+                    var kind = -1
                     while (k * stepUs < pts) {
                         val t = (k * stepUs - prevPts) / (pts - prevPts).coerceAtLeast(1)
                         val b = blend
+                        if (b != null && kind < 0) { val d = FlowBlender.change(prevGray!!, gray!!); kind = if (d < FlowBlender.STILL || d > FlowBlender.CUT) 1 else 0 }
                         when {
-                            b != null && t > 0.04 && t < 0.96 -> { if (!paired) { b.pair(p, prevGray!!, big, gray!!); paired = true }; enc.encode(b.at(t)) }
+                            b != null && t > 0.04 && t < 0.96 && kind == 0 -> { if (!paired) { b.pair(p, prevGray!!, big, gray!!); paired = true }; enc.encode(b.at(t)) }
                             t < 0.5 -> enc.encode(p)
                             else -> enc.encode(big)
                         }
@@ -92,7 +97,7 @@ object VideoEnhancer {
             runCatching { enc?.close() }; enc = null; runCatching { out.delete() }
             throw t
         } finally {
-            runCatching { enc?.close() }; dec.close(); runCatching { sr?.close() }; blend?.close(); prev?.release(); prevGray?.release()
+            runCatching { enc?.close() }; frames.close(); runCatching { sr?.close() }; blend?.close(); prev?.release(); prevGray?.release()
         }
     }
 

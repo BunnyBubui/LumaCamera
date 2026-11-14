@@ -26,16 +26,17 @@ object SlowFlow {
                maxSide: Int = 1920, progress: (Float) -> Unit = {}): Result {
         check(OpenCVLoader.initLocal()) { "OpenCV not available" }
         val dec = FrameDecoder(c, uri, fromMs * 1000, toMs * 1000)
-        var enc: FrameEncoder? = null; var blend: FlowBlender? = null
+        val frames = AsyncFrames(dec)
+        var enc: AsyncEncoder? = null; var blend: FlowBlender? = null
         var prev: Mat? = null; var prevGray: Mat? = null
         val span = ((toMs - fromMs) * 1000).coerceAtLeast(1)
         try {
             while (!cancel.get()) {
-                val f = dec.next() ?: break
+                val f = frames.next() ?: break
                 if (enc == null) {
                     val s = minOf(1f, maxSide.toFloat() / maxOf(f.rgb.cols(), f.rgb.rows()))
                     val w = ((f.rgb.cols() * s).roundToInt() / 2 * 2).coerceAtLeast(2); val h = ((f.rgb.rows() * s).roundToInt() / 2 * 2).coerceAtLeast(2)
-                    enc = FrameEncoder(out, w, h, dec.fps, dec.rotation); blend = FlowBlender(w, h)
+                    enc = AsyncEncoder(FrameEncoder(out, w, h, dec.fps, dec.rotation)); blend = FlowBlender(w, h)
                 }
                 val rgb = f.rgb
                 if (rgb.cols() != enc.width || rgb.rows() != enc.height) Imgproc.resize(rgb, rgb, Size(enc.width.toDouble(), enc.height.toDouble()), 0.0, 0.0, Imgproc.INTER_AREA)
@@ -58,7 +59,7 @@ object SlowFlow {
             runCatching { enc?.close() }; enc = null; runCatching { out.delete() }
             throw t
         } finally {
-            runCatching { enc?.close() }; dec.close(); blend?.close(); prev?.release(); prevGray?.release()
+            runCatching { enc?.close() }; frames.close(); blend?.close(); prev?.release(); prevGray?.release()
         }
     }
 }
