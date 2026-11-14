@@ -1731,7 +1731,7 @@ class VideoEditorActivity : ComponentActivity() {
     private fun translateNow() {
         if (translating) { translateStopped = true; LlamaTranslator.cancel(); notice("กำลังหยุดแปล…"); return }
         val to = captionTarget(); val m = TranslatorModels.selected(this)
-        if (layers.none { it.caption }) return
+        if (layers.none { it.caption }) { notice("ยังไม่มีคำบรรยายให้แปล · สร้างคำบรรยายก่อน"); return }
         when {
             m.builtin -> translateCaptions(captionFrom(to), to)
             m.unavailable != null -> notice("${m.name}: ${m.unavailable}")
@@ -1817,8 +1817,14 @@ class VideoEditorActivity : ComponentActivity() {
         card.addView(text("ใช้กับทุกบรรทัดพร้อมกัน ปรับได้ทั้งก่อนและหลังสร้าง", 11.5f, Glass.TEXT3))
         return card
     }
-    private fun captionTools(col: LinearLayout) {
-        col.gravity = Gravity.TOP
+    /** The caption panel scrolls, so everything stays reachable however tall it gets. */
+    private fun captionTools(host: LinearLayout) {
+        host.gravity = Gravity.TOP
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        captionBody(box)
+        host.addView(android.widget.ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(box) }, LinearLayout.LayoutParams(-1, 0, 1f))
+    }
+    private fun captionBody(col: LinearLayout) {
         val lang = captionLang(); val name = if (lang == CAPTION_AUTO) "ตรวจจับอัตโนมัติ" else LANGS.firstOrNull { it.second == lang }?.first ?: lang
         val top = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(2), dp(14), dp(6)) }
         // The first row is "automatic"; the rest are the languages the recogniser can be told to read.
@@ -1843,7 +1849,7 @@ class VideoEditorActivity : ComponentActivity() {
         val count = layers.count { it.caption }
         if (layers.any { it.kind == VideoLayer.TEXT && VideoLayers.shapeOf(it.text) < 0 }) srt.addView(EditorKit.chip(this, "ส่งออก SRT", EditorKit.END) { saveSrt.launch("subtitles.srt") }, LinearLayout.LayoutParams(0, dp(42), 1f).apply { leftMargin = dp(8) })
         col.addView(srt, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(14), dp(2), dp(14), 0) })
-        if (count == 0) return
+        if (count > 0) {
         // Show or hide every caption line on the video together (hidden lines stay, so they can still be exported as .srt).
         val shown = layers.filter { it.caption }.none { it.hidden }
         val showRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(18), dp(6), dp(18), 0) }
@@ -1851,6 +1857,7 @@ class VideoEditorActivity : ComponentActivity() {
         showRow.addView(text("ใส่คำบรรยายบนวิดีโอ", 14f, Glass.TEXT, true).apply { setPadding(dp(10), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
         showRow.addView(GlassSwitch(this).apply { set(shown, false); onToggle = { on -> layers.indices.filter { layers[it].caption }.forEach { i -> layers[i] = layers[i].copy(hidden = !on) }; rebuildLayers(); refreshTimeline(); showTool(15, false) } }, dp(52), dp(30))
         col.addView(showRow, -1, dp(40))
+        }
         // Translate every caption line on the phone (ML Kit); the language model downloads once, then it works offline.
         val targetTag = captionTarget()
         val targetName = LANGS.firstOrNull { it.second == targetTag }?.first ?: targetTag
@@ -1861,6 +1868,7 @@ class VideoEditorActivity : ComponentActivity() {
         col.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(trRow) }, -1, -2)
         // Translator model: ML Kit (small) or a model that runs on the phone, with the same download card as the speech model.
         col.addView(ModelCard(this, menu, TranslatorModels.ALL, "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M3 12h18 M12 3c3 3 3 15 0 18 M12 3c-3 3-3 15 0 18", "เลือกโมเดลแปลภาษา") { m -> downloadModel(m) }, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(14), dp(8), dp(14), 0) })
+        if (count == 0) return
         val drops = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(8), dp(14), 0) }
         drops.addView(text("คำบรรยาย $count บรรทัด", 12f, Glass.TEXT2, true).apply { setPadding(0, 0, dp(8), 0) })
         drops.addView(dropButton("ตำแหน่ง") { v -> menu.show(v, "ตำแหน่งคำบรรยาย", listOf(GlassMenu.Option("ล่าง", posIcon(0.5f, 0.86f)), GlassMenu.Option("กลาง", posIcon(0.5f, 0.5f)), GlassMenu.Option("บน", posIcon(0.5f, 0.14f))), -1) { k -> styleCaptions(y = listOf(0.86f, 0.5f, 0.14f)[k]) } }, LinearLayout.LayoutParams(-2, dp(34)).apply { rightMargin = dp(6) })
