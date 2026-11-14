@@ -407,24 +407,39 @@ class VideoEditorActivity : ComponentActivity() {
         return out
     }
     private fun autoCaptions() {
-        if (android.os.Build.VERSION.SDK_INT < 33) { notice("คำบรรยายอัตโนมัติต้องใช้ Android 13 ขึ้นไป"); return }
         if (speech != null) { stopCaptions(); return }
-        if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(arrayOf(android.Manifest.permission.RECORD_AUDIO), 72); notice("ระบบแปลงเสียงต้องได้สิทธิ์ไมโครโฟน · อนุญาตแล้วแตะอีกครั้ง"); return }
-        startCaptions(captionLang()); showTool(15, false)
+        val m = WhisperModels.selected(this)
+        if (!ModelStore.installed(this, m)) { downloadModel(m, startAfter = true); return }
+        startCaptions(captionLang(), m); showTool(15, false)
     }
     private var captionUi: CaptionProgress? = null
-    @androidx.annotation.RequiresApi(33)
+    /** Says what the caption panel's model line should show; set while the panel is open, cleared when the screen closes. */
+    private var modelWatch: ((String) -> Unit)? = null
+    /** Downloads a Whisper model; with [startAfter] the captions start by themselves once it is ready. */
+    private fun downloadModel(m: ModelSpec, startAfter: Boolean = false) {
+        notice("กำลังดาวน์โหลด ${m.name} (${WhisperModels.sizeText(this, m)}) · ต้องต่ออินเทอร์เน็ต")
+        ModelStore.download(this, m) { job ->
+            if (isDestroyed) return@download
+            val pct = (job.fraction * 100).toInt()
+            modelWatch?.invoke(if (job.finished) "" else "กำลังดาวน์โหลด $pct%")
+            if (job.finished) {
+                if (job.error != null) notice(job.error!!)
+                else if (startAfter && speech == null && WhisperModels.selected(this).id == m.id) { notice("ดาวน์โหลดเสร็จแล้ว · เริ่มสร้างคำบรรยาย"); startCaptions(captionLang(), m) }
+                else notice("ดาวน์โหลด ${m.name} เสร็จแล้ว")
+                if (tool == 15) showTool(15, false)
+            }
+        }
+        if (tool == 15) showTool(15, false)
+    }
     private fun stopCaptions() {
         (speech as? StudioSpeech)?.stop(); speech = null; captionUi?.remove(); captionUi = null
         notice("หยุดสร้างคำบรรยายแล้ว"); if (tool == 15) showTool(15, false)
     }
-    @androidx.annotation.RequiresApi(33)
-    private fun startCaptions(lang: String) {
+    private fun startCaptions(lang: String, model: ModelSpec) {
         val whole = soundPieces()
         if (whole.isEmpty()) { notice("วิดีโอนี้ไม่มีเสียงให้แปลง"); return }
         val auto = lang == StudioSpeech.AUTO
-        val ui = CaptionProgress(this, firstFrame, listOf("เตรียมเสียงจากคลิป", "หาช่วงที่มีเสียงพูด", if (auto) "ตรวจภาษาที่พูด" else "ใช้ภาษาที่เลือกไว้", "แปลงเสียงเป็นข้อความ", "ใส่คำบรรยายบนไทม์ไลน์")) { stopCaptions() }
+        val ui = CaptionProgress(this, firstFrame, listOf("เตรียมเสียงจากคลิป", "หาช่วงที่มีเสียงพูด", if (auto) "ตรวจภาษาที่พูด" else "ใช้ภาษาที่เลือกไว้", "ถอดเสียงด้วย ${model.name}", "ใส่คำบรรยายบนไทม์ไลน์")) { stopCaptions() }
         captionUi = ui; ui.render(0, 0.02f, "กำลังเตรียมเสียงจากคลิป…")
         notice("กำลังหาช่วงที่มีเสียงพูด…")
         luma.readIo.execute {
@@ -443,11 +458,11 @@ class VideoEditorActivity : ComponentActivity() {
                 val used = pieces.take(80)
                 ui.render(if (auto) 2 else 3, 0.18f, "พบ ${used.size} ช่วงที่มีเสียงพูด" + if (used.size < pieces.size) " (ใช้ 80 ช่วงแรก)" else "")
                 var spoken = lang
-                val job = StudioSpeech(this, lang, used, { i, n ->
+                val job = StudioSpeech(this, lang, used, model, { i, n ->
                     val p = used.getOrNull(i); val span = if (p != null) " · ${clock(p.from)}–${clock(p.to)} ของคลิป" else ""
                     val langName = LANGS.firstOrNull { it.second == spoken }?.first
                     ui.render(3, 0.25f + 0.7f * i / n.coerceAtLeast(1), "ช่วงที่ ${i + 1} จาก $n$span" + (if (auto && langName != null) " · ภาษา $langName" else ""))
-                    captionStatus?.takeIf { tool == 15 }?.let { it.text = "กำลังแปลงเสียงเป็นข้อความ ${i + 1}/$n" } }) { cues, problem ->
+                    captionStatus?.takeIf { tool == 15 }?.let { it.text = "กำลังถอดเสียง ${i + 1}/$n" } }) { cues, problem ->
                     speech = null; if (isDestroyed) return@StudioSpeech
                     ui.render(4, 0.97f, "กำลังใส่คำบรรยาย ${cues.size} บรรทัด…")
                     if (tool == 15) showTool(15, false)
@@ -457,7 +472,7 @@ class VideoEditorActivity : ComponentActivity() {
                     notice(when { added > 0 && problem == null -> "เพิ่มคำบรรยาย $added บรรทัด · ตรวจคำและเวลาก่อนส่งออก"; added > 0 -> "เพิ่มคำบรรยาย $added บรรทัด · $problem"; else -> problem ?: "ไม่พบเสียงพูดที่แปลงได้" })
                 }
                 job.onStage = { t -> ui.render(2, 0.2f, t) }
-                job.onDetected = { code -> spoken = code; val n = LANGS.firstOrNull { it.second == code }?.first ?: code; ui.render(3, 0.25f, "พบว่าพูดภาษา $n") }
+                job.onDetected = { code -> val tag = LANGS.firstOrNull { StudioSpeech.whisperCode(it.second) == code }?.second ?: code; spoken = tag; val n = LANGS.firstOrNull { it.second == tag }?.first ?: code; ui.render(3, 0.25f, "พบว่าพูดภาษา $n") }
                 job.onText = { t -> ui.render(3, ui.lastFraction, ui.lastNote, t) }
                 speech = job; job.start()
             }
@@ -1728,13 +1743,25 @@ class VideoEditorActivity : ComponentActivity() {
         top.addView(dropButton("ภาษาที่พูด: $name") { v -> menu.show(v, "ภาษาที่พูดในวิดีโอ", spoken.map { GlassMenu.Option(it.first) }, spoken.indexOfFirst { it.second == lang }) { k ->
             getSharedPreferences("camera", MODE_PRIVATE).edit().putString("caption_lang", spoken[k].second).apply(); showTool(15, false) } }, LinearLayout.LayoutParams(-2, dp(38)))
         col.addView(top, -1, -2)
+        // Speech model: pick one of the Whisper models, download it once, delete it to free space.
+        val ws = WhisperModels.selected(this); val have = ModelStore.installed(this, ws); val running = ModelStore.job(ws)
+        val modelRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), 0, dp(14), dp(6)) }
+        modelRow.addView(dropButton("โมเดลถอดเสียง: ${ws.name}") { v -> menu.show(v, "เลือกโมเดลถอดเสียง", WhisperModels.ALL.map { m ->
+            GlassMenu.Option(m.name + " · " + m.badge, Icons.MIC, m.short + " · " + WhisperModels.sizeText(this, m) + if (ModelStore.installed(this, m)) " · ติดตั้งแล้ว" else " · ยังไม่ได้ดาวน์โหลด") }, WhisperModels.ALL.indexOf(ws)) { k ->
+            ModelStore.select(this, WhisperModels.ALL[k]); showTool(15, false) } }, LinearLayout.LayoutParams(-2, dp(38)))
+        val modelState = text(when { running != null -> "กำลังดาวน์โหลด ${(running.fraction * 100).toInt()}%"; have -> "ติดตั้งแล้ว · ${WhisperModels.sizeText(this, ws)}"; else -> "ยังไม่ได้ดาวน์โหลด · ${WhisperModels.sizeText(this, ws)}" }, 11.5f, if (have) Glass.TEXT2 else Glass.TEXT3).apply { setPadding(dp(10), 0, 0, 0) }
+        modelWatch = { t -> if (t.isNotEmpty() && modelState.isAttachedToWindow) modelState.text = t }
+        modelRow.addView(modelState, LinearLayout.LayoutParams(0, -2, 1f))
+        modelRow.addView(EditorKit.chip(this, if (running != null) "ยกเลิก" else if (have) "ลบ" else "ดาวน์โหลด", if (have || running != null) "" else Icons.DOWNLOAD) {
+            when { running != null -> running.cancel(); have -> { ModelStore.delete(this, ws); notice("ลบ ${ws.name} แล้ว"); showTool(15, false) }; else -> downloadModel(ws) } }, LinearLayout.LayoutParams(-2, dp(38)))
+        col.addView(modelRow, -1, -2)
         val go = LinearLayout(this).apply { gravity = Gravity.CENTER; background = glass(22, if (speech != null) 0x33ff453a else Glass.ACCENT); isClickable = true; glassTouch()
             contentDescription = if (speech != null) "หยุดสร้างคำบรรยาย" else "สร้างคำบรรยายอัตโนมัติ"
             addView(IconView(this@VideoEditorActivity, if (speech != null) "M7 7h10v10H7z" else "M4 6h16v10H8l-4 4z M8 10h8 M8 13h5", 2.2f).apply { tint = if (speech != null) Color.WHITE else Glass.ON_ACCENT }, dp(20), dp(20))
             addView(text(if (speech != null) "หยุด" else "สร้างคำบรรยายจากเสียงพูด", 14.5f, if (speech != null) Color.WHITE else Glass.ON_ACCENT, true).apply { setPadding(dp(8), 0, 0, 0) })
             setOnClickListener { autoCaptions() } }
         col.addView(go, LinearLayout.LayoutParams(-1, dp(46)).apply { setMargins(dp(16), 0, dp(16), dp(4)) })
-        captionStatus = text(if (speech != null) "กำลังแปลงเสียง…" else "ใช้ระบบแปลงเสียงในเครื่อง · ภาษาที่เครื่องยังไม่มีจะถูกดาวน์โหลดก่อน", 11.5f, Glass.TEXT3).apply { gravity = Gravity.CENTER; setPadding(dp(16), 0, dp(16), dp(4)) }
+        captionStatus = text(if (speech != null) "กำลังถอดเสียง…" else "ถอดเสียงด้วย Whisper ในเครื่อง · เสียงไม่ถูกส่งออกไปไหน · ต้องดาวน์โหลดโมเดลครั้งแรกเท่านั้น", 11.5f, Glass.TEXT3).apply { gravity = Gravity.CENTER; setPadding(dp(16), 0, dp(16), dp(4)) }
         col.addView(captionStatus, -1, -2)
         val srt = LinearLayout(this).apply { gravity = Gravity.CENTER }
         srt.addView(EditorKit.chip(this, "นำเข้าไฟล์ SRT", EditorKit.START) { pickSrt.launch(arrayOf("*/*")) }, LinearLayout.LayoutParams(-2, dp(34)).apply { setMargins(dp(3), 0, dp(3), 0) })
@@ -2442,7 +2469,7 @@ class VideoEditorActivity : ComponentActivity() {
     // ---------- Lifecycle ----------
     override fun onPause() { player?.let { if (it.isPlaying) togglePlay() }; if (prog != null) th.ogay.luma.ai.AiPace.watching = false; super.onPause(); if (::trim.isInitialized && overlay == null) saveProject() }
     override fun onResume() { super.onResume(); if (prog != null) th.ogay.luma.ai.AiPace.watching = true }
-    override fun onDestroy() { if (android.os.Build.VERSION.SDK_INT >= 33) (speech as? StudioSpeech)?.stop(); speech = null; fxEq?.runCatching { release() }; fxEq = null; recorder?.runCatching { stop() }; recorder?.runCatching { release() }; recorder = null; handler.removeCallbacksAndMessages(null); releasePlayer(); musicPlayer?.runCatching { release() }; releaseLayerSound(); super.onDestroy() }
+    override fun onDestroy() { (speech as? StudioSpeech)?.stop(); speech = null; modelWatch = null; fxEq?.runCatching { release() }; fxEq = null; recorder?.runCatching { stop() }; recorder?.runCatching { release() }; recorder = null; handler.removeCallbacksAndMessages(null); releasePlayer(); musicPlayer?.runCatching { release() }; releaseLayerSound(); super.onDestroy() }
     override fun onSaveInstanceState(out: Bundle) {
         super.onSaveInstanceState(out); writeState(out)
         out.putString("projectId", projectId); out.putString("projectName", projectName); out.putBoolean("named", named)

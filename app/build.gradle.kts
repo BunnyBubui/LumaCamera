@@ -66,6 +66,23 @@ android {
 // Kotlin 2.2 makes the old kotlinOptions DSL an error, so the JVM target lives here.
 kotlin { compilerOptions { jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17) } }
 
+// Whisper speech recognition runs on sherpa-onnx. Its release AAR (Kotlin classes plus native libraries for the
+// phone) is downloaded once into build/ instead of being committed, then linked as a local file.
+val sherpaVersion = "2.0.1"
+val sherpaAar = layout.buildDirectory.file("sherpa/sherpa-onnx-$sherpaVersion.aar").get().asFile
+val fetchSherpa by tasks.registering {
+    outputs.file(sherpaAar)
+    doLast {
+        if (!sherpaAar.isFile || sherpaAar.length() < 1_000_000L) {
+            sherpaAar.parentFile.mkdirs()
+            val part = File(sherpaAar.path + ".part")
+            java.net.URI("https://github.com/k2-fsa/sherpa-onnx/releases/download/v$sherpaVersion/sherpa-onnx-$sherpaVersion.aar").toURL().openStream().use { i -> part.outputStream().use { o -> i.copyTo(o) } }
+            check(part.length() > 1_000_000L) { "sherpa-onnx AAR download looks incomplete" }
+            check(part.renameTo(sherpaAar)) { "cannot move sherpa-onnx AAR into place" }
+        }
+    }
+}
+
 dependencies {
     // Standalone CompiledModel: offline GPU FP16 with explicit CPU fallback.
     implementation("com.google.ai.edge.litert:litert:2.1.6")
@@ -83,7 +100,7 @@ dependencies {
     // Bundled QR model: scans the viewfinder without waiting for Play services to download anything.
     implementation("com.google.mlkit:barcode-scanning:17.3.0")
     implementation("com.google.mlkit:translate:17.0.3")
-    implementation("com.google.mlkit:language-id:17.0.6")
+    implementation(files(sherpaAar).builtBy(fetchSherpa))
     implementation("org.opencv:opencv:4.12.0")
     implementation("androidx.exifinterface:exifinterface:1.3.7")
     implementation("androidx.work:work-runtime:2.9.1")
