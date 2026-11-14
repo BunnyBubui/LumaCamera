@@ -18,7 +18,9 @@ import java.util.Locale
 import kotlin.math.ceil
 
 /** What the export sheet hands back: the short side in pixels, the frame rate and whether AI may enlarge. */
-data class ExportChoice(val shortSide: Int, val fps: Float, val ai: Boolean, val profile: th.ogay.luma.ai.EnhanceProfile = th.ogay.luma.ai.EnhanceProfile.NATURAL, val audioOnly: Boolean = false)
+data class ExportChoice(val shortSide: Int, val fps: Float, val ai: Boolean, val profile: th.ogay.luma.ai.EnhanceProfile = th.ogay.luma.ai.EnhanceProfile.NATURAL, val audioOnly: Boolean = false,
+    /** In-between frames: 0 finer, 1 balanced, 2 faster. */ val flowMode: Int = 1,
+    /** Fixed video bitrate in Mbps (0 = automatic), and for sound only: AAC kbps, sample rate in Hz (0 = as recorded) and mono. */ val mbps: Int = 0, val audioKbps: Int = 128, val audioHz: Int = 0, val audioMono: Boolean = false)
 
 /**
  * Export sheet in the style of TikTok's: the clip at the top, then two sliders (resolution and frame rate) like
@@ -64,6 +66,15 @@ object ExportSheet {
         val estimate = a.text("", 12.5f, Glass.TEXT2).apply { gravity = Gravity.CENTER }
         val go = a.text("ส่งออก", 16f, Glass.ON_ACCENT, true).apply { gravity = Gravity.CENTER; background = a.glass(26, Glass.ACCENT); isClickable = true; glassTouch(); contentDescription = "เริ่มส่งออก" }
 
+        // Video rows live in one box and sound rows in another: choosing "sound only" swaps them.
+        var into: LinearLayout = card
+        val videoBox = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
+        val audioBox = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }
+        val flowBox = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }
+        var audioOnly = false
+        var flowMode = prefs.getInt("export_flow", 1).coerceIn(0, 2)
+        var akbps = prefs.getInt("export_akbps", 128); var ahz = prefs.getInt("export_ahz", 0); var amono = prefs.getBoolean("export_amono", false)
+        var shownAudio: Boolean? = null; var shownFlow: Boolean? = null
         // The model chip and its preview only matter when the picture gets bigger; set further down.
         var onBigger: (Boolean) -> Unit = {}
         fun refresh() {
@@ -85,9 +96,16 @@ object ExportSheet {
             // Always in place so the sheet keeps its height; it only matters (and is lit) when the picture gets bigger.
             aiChip.isEnabled = bigger; onBigger(bigger)
             val long = (src.longSide * s.toFloat() / src.shortSide).toInt()
-            val mb = FrameEncoder.bitrate(long, s, r) / 8.0 * src.durationMs / 1000.0 / 1_000_000.0
-            val minutes = minutes(src, s, r, ai() && bigger)
-            val ok = !(bigger || smoother) || FrameEncoder.pickMime(long / 2 * 2, s, r) != null
+            val chosen = prefs.getInt("export_mbps", 0)
+            val mb = if (audioOnly) akbps * 1000 / 8.0 * src.durationMs / 1000.0 / 1_000_000.0
+                else (if (chosen > 0) chosen * 1_000_000 else FrameEncoder.bitrate(long, s, r)) / 8.0 * src.durationMs / 1000.0 / 1_000_000.0
+            val minutes = if (audioOnly) 0.0 else minutes(src, s, r, ai() && bigger)
+            val ok = audioOnly || !(bigger || smoother) || FrameEncoder.pickMime(long / 2 * 2, s, r) != null
+            val wantAudio = audioOnly; val wantFlow = smoother && !audioOnly
+            if (shownAudio != wantAudio || shownFlow != wantFlow) { val first = shownAudio == null; shownAudio = wantAudio; shownFlow = wantFlow
+                videoBox.visibility = if (wantAudio) View.GONE else View.VISIBLE; audioBox.visibility = if (wantAudio) View.VISIBLE else View.GONE
+                flowBox.visibility = if (wantFlow) View.VISIBLE else View.GONE
+                if (!first) sheet.unpin() }
             estimate.text = if (!ok) "เครื่องนี้เข้ารหัส ${sideName(s)} ${fpsName(r)} fps ไม่ได้ ลองลดความละเอียดหรือเฟรมเรต"
                 else "ไฟล์ประมาณ ${if (mb < 10) String.format(Locale.US, "%.1f", mb) else mb.toInt().toString()} MB" + (if (minutes > 0) " · ใช้เวลาประมาณ ${if (minutes < 1) "ไม่ถึง 1" else ceil(minutes).toInt().toString()} นาที" else "")
             estimate.setTextColor(if (ok) Glass.TEXT2 else 0xffff6b5e.toInt())
@@ -96,13 +114,11 @@ object ExportSheet {
         fun row(title: String, value: TextView, note: TextView, names: List<String>, start: Int, set: (Int) -> Unit) {
             val top = LinearLayout(a).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, a.dp(18), 0, 0) }
             top.addView(a.text(title, 14f, Glass.TEXT2, true), LinearLayout.LayoutParams(0, -2, 1f)); top.addView(value)
-            card.addView(top, -1, -2)
-            card.addView(GlassSlider(a).apply { values = names; index = start; grad = intArrayOf(0xff64d2ff.toInt(), Color.WHITE, Glass.ACCENT); contentDescription = title
+            into.addView(top, -1, -2)
+            into.addView(GlassSlider(a).apply { values = names; index = start; grad = intArrayOf(0xff64d2ff.toInt(), Color.WHITE, Glass.ACCENT); contentDescription = title
                 onChange = { k -> set(k); refresh() } }, LinearLayout.LayoutParams(-1, a.dp(46)))
-            card.addView(note, -1, -2)
+            into.addView(note, -1, -2)
         }
-        row("ความละเอียด", sideValue, sideNote, sides.map { sideName(it) }, side) { side = it }
-        row("อัตราเฟรม", rateValue, rateNote, rates.map { fpsName(it) }, rate) { rate = it }
         // Choices from a list open a glass menu, like the AI model below: the file type, and the compression.
         val pickMenu = GlassMenu(a.window.decorView as FrameLayout) { on -> sheet.recede(on) }
         fun pickRow(title: String, value: TextView, note: TextView, tap: (View) -> Unit) {
@@ -111,13 +127,28 @@ object ExportSheet {
             val pill = LinearLayout(a).apply { gravity = Gravity.CENTER_VERTICAL; background = a.glass(16, 0x26ffffff); setPadding(a.dp(14), 0, a.dp(10), 0); isClickable = true; glassTouch(); contentDescription = title
                 addView(value); addView(IconView(a, "M7 10l5 5 5-5", 2f).apply { tint = Glass.TEXT2 }, LinearLayout.LayoutParams(a.dp(16), a.dp(16)).apply { leftMargin = a.dp(6) }); setOnClickListener { tap(this) } }
             top.addView(pill, LinearLayout.LayoutParams(-2, a.dp(38)))
-            card.addView(top, -1, -2); card.addView(note.apply { setPadding(0, a.dp(4), 0, 0) }, -1, -2)
+            into.addView(top, -1, -2); into.addView(note.apply { setPadding(0, a.dp(4), 0, 0) }, -1, -2)
         }
-        var audioOnly = false
+        // What the file is comes first: choosing sound only takes the picture rows away and shows the sound ones.
         val typeValue = a.text("วิดีโอ", 14f, Glass.TEXT, true); val typeNote = a.text("ภาพพร้อมเสียง .mp4", 12f, Glass.TEXT3)
-        var onType: () -> Unit = {}
         if (!upscale) pickRow("ไฟล์ที่ได้", typeValue, typeNote) { v -> pickMenu.show(v, "ไฟล์ที่ได้", listOf(GlassMenu.Option("วิดีโอ", Icons.VIDEO, "ภาพพร้อมเสียง .mp4"), GlassMenu.Option("เสียงอย่างเดียว", Icons.SOUND, "ไฟล์เสียง .m4a ลงโฟลเดอร์เพลง")), if (audioOnly) 1 else 0) { k ->
-            audioOnly = k == 1; typeValue.text = if (audioOnly) "เสียงอย่างเดียว" else "วิดีโอ"; typeNote.text = if (audioOnly) "ไฟล์เสียง .m4a · ความละเอียดและอัตราเฟรมไม่มีผล" else "ภาพพร้อมเสียง .mp4"; onType() } }
+            audioOnly = k == 1; typeValue.text = if (audioOnly) "เสียงอย่างเดียว" else "วิดีโอ"; typeNote.text = if (audioOnly) "ไฟล์เสียง .m4a (AAC) ลงโฟลเดอร์เพลง" else "ภาพพร้อมเสียง .mp4"; refresh() } }
+        card.addView(videoBox, -1, -2); card.addView(audioBox, -1, -2)
+        into = videoBox
+        row("ความละเอียด", sideValue, sideNote, sides.map { sideName(it) }, side) { side = it }
+        row("อัตราเฟรม", rateValue, rateNote, rates.map { fpsName(it) }, rate) { rate = it }
+        // How the in-between frames are made: finer measuring of motion or faster. Shown only when the rate goes above the source.
+        videoBox.addView(flowBox, -1, -2); into = flowBox
+        run {
+            val flowNames = listOf("ละเอียด", "สมดุล", "เร็ว")
+            val flowNotes = listOf("วัดการเคลื่อนไหวละเอียดที่สุด ภาพแทรกเนียนกว่า แต่ช้าที่สุด", "ค่าเริ่มต้น คุณภาพกับความเร็วพอดีกัน", "เร็วที่สุด ขอบวัตถุที่ขยับเร็วอาจเบลอหรือเพี้ยนกว่า")
+            val flowValue = a.text("", 14f, Glass.TEXT, true); val flowNote = a.text("", 12f, Glass.TEXT3)
+            fun paintFlow(k: Int) { flowValue.text = flowNames[k]; flowNote.text = flowNotes[k] }
+            paintFlow(flowMode)
+            pickRow("ความเร็วเฟรมแทรก", flowValue, flowNote) { v -> pickMenu.show(v, "ความเร็วเฟรมแทรก", flowNames.indices.map { GlassMenu.Option(flowNames[it], Icons.FPS, if (it == 1) "แนะนำ" else flowNotes[it].substringBefore(" ")) }, flowMode) { k ->
+                flowMode = k; prefs.edit().putInt("export_flow", k).apply(); paintFlow(k) } }
+        }
+        into = videoBox
         // H.265 makes a smaller file at the same quality; it is offered only when this phone can encode it.
         val hevcOk = runCatching { android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS).codecInfos.any { it.isEncoder && it.supportedTypes.any { t -> t.equals("video/hevc", true) } } }.getOrDefault(false)
         if (hevcOk && !upscale) {
@@ -137,16 +168,39 @@ object ExportSheet {
                 prefs.edit().putString("export_container", boxes[k].first).apply(); paintBox(k) } }
         }
         // Bitrate: how many megabits each second of video may use. More = sharper and bigger; automatic leaves it to the phone.
+        // A slider like resolution and frame rate, so any step from 1 to 100 Mbps can be picked.
         if (!upscale) {
-            val mbpsList = listOf(0, 8, 16, 30, 50)
-            val mbpsValue = a.text("", 14f, Glass.TEXT, true); val mbpsNote = a.text("", 12f, Glass.TEXT3)
-            fun paintRate(k: Int) { mbpsValue.text = if (mbpsList[k] == 0) "อัตโนมัติ" else "${mbpsList[k]} Mbps"
-                val mb = if (mbpsList[k] == 0) null else mbpsList[k] / 8.0 * src.durationMs / 1000.0
-                mbpsNote.text = if (mb == null) "แอปเลือกให้ตามขนาดภาพ" else String.format(java.util.Locale.US, "ขนาดไฟล์ประมาณ %.0f MB · ยิ่งสูงยิ่งคมและไฟล์ใหญ่", mb) }
-            paintRate(mbpsList.indexOf(prefs.getInt("export_mbps", 0)).coerceAtLeast(0))
-            pickRow("บิตเรต", mbpsValue, mbpsNote) { v -> pickMenu.show(v, "บิตเรตวิดีโอ", mbpsList.map { GlassMenu.Option(if (it == 0) "อัตโนมัติ" else "$it Mbps", Icons.FPS, if (it == 0) "แนะนำ" else if (it <= 8) "ประหยัดที่" else if (it <= 16) "สมดุล" else "คมที่สุด") }, mbpsList.indexOf(prefs.getInt("export_mbps", 0)).coerceAtLeast(0)) { k ->
-                prefs.edit().putInt("export_mbps", mbpsList[k]).apply(); paintRate(k) } }
+            val mbpsList = listOf(0, 1, 2, 3, 4, 5, 6, 8, 10, 12, 14, 16, 20, 24, 30, 40, 50, 60, 80, 100)
+            val mbpsValue = a.text("", 15f, Glass.TEXT, true); val mbpsNote = a.text("", 12f, Glass.TEXT2)
+            fun paintRate(k: Int) { val m = mbpsList[k]; mbpsValue.text = if (m == 0) "อัตโนมัติ" else "$m Mbps"; mbpsValue.setTextColor(if (m == 0) Color.WHITE else Glass.ACCENT)
+                mbpsNote.text = if (m == 0) "แอปเลือกให้ตามขนาดภาพ · แนะนำ" else String.format(java.util.Locale.US, "ไฟล์ประมาณ %.0f MB · %s", m / 8.0 * src.durationMs / 1000.0, if (m <= 8) "ประหยัดที่ ภาพหยาบลง" else if (m <= 20) "สมดุล" else "คมที่สุด ไฟล์ใหญ่") }
+            val start = mbpsList.indexOf(prefs.getInt("export_mbps", 0)).let { if (it >= 0) it else mbpsList.indexOfFirst { m -> m >= prefs.getInt("export_mbps", 0) }.coerceAtLeast(0) }
+            paintRate(start)
+            row("บิตเรตวิดีโอ", mbpsValue, mbpsNote, mbpsList.map { if (it == 0) "อัตโนมัติ" else "$it Mbps" }, start) { k -> prefs.edit().putInt("export_mbps", mbpsList[k]).apply(); paintRate(k) }
         }
+        // Sound only: the same kind of sliders and menus for the sound file.
+        into = audioBox
+        run {
+            val kbpsList = listOf(32, 48, 64, 96, 112, 128, 160, 192, 224, 256, 320)
+            val kValue = a.text("", 15f, Glass.TEXT, true); val kNote = a.text("", 12f, Glass.TEXT2)
+            fun paintK(k: Int) { val v = kbpsList[k]; kValue.text = "$v kbps"; kValue.setTextColor(if (v == 128) Color.WHITE else Glass.ACCENT)
+                kNote.text = String.format(java.util.Locale.US, "ไฟล์ประมาณ %.1f MB · %s", v * 1000 / 8.0 * src.durationMs / 1000.0 / 1_000_000.0, if (v <= 64) "เสียงพูด ไฟล์เล็ก" else if (v <= 128) "สมดุล เหมาะกับเพลงทั่วไป" else "คมชัดสูง ไฟล์ใหญ่") }
+            val startK = kbpsList.indexOf(akbps).let { if (it >= 0) it else kbpsList.indexOfFirst { v -> v >= akbps }.let { j -> if (j < 0) kbpsList.size - 1 else j } }
+            akbps = kbpsList[startK]; paintK(startK)
+            row("บิตเรตเสียง", kValue, kNote, kbpsList.map { "$it kbps" }, startK) { k -> akbps = kbpsList[k]; prefs.edit().putInt("export_akbps", akbps).apply(); paintK(k) }
+            val hzList = listOf(0, 22050, 32000, 44100, 48000)
+            val hzValue = a.text("", 14f, Glass.TEXT, true); val hzNote = a.text("", 12f, Glass.TEXT3)
+            fun paintHz() { hzValue.text = if (ahz == 0) "ตามต้นฉบับ" else String.format(java.util.Locale.US, "%.1f kHz", ahz / 1000.0).replace(".0 kHz", " kHz"); hzNote.text = if (ahz == 0) "ไม่เปลี่ยนความถี่ของเสียง" else if (ahz < 32000) "ไฟล์เล็กลง เสียงแหลมจะหายไป" else "ใช้กันทั่วไป" }
+            paintHz()
+            pickRow("ความถี่เสียง", hzValue, hzNote) { v -> pickMenu.show(v, "ความถี่เสียง (sample rate)", hzList.map { GlassMenu.Option(if (it == 0) "ตามต้นฉบับ" else "${it / 1000.0} kHz".replace(".0 kHz", " kHz"), Icons.SOUND, if (it == 0) "แนะนำ" else if (it < 32000) "เล็ก ทึบขึ้น" else "มาตรฐาน") }, hzList.indexOf(ahz).coerceAtLeast(0)) { k ->
+                ahz = hzList[k]; prefs.edit().putInt("export_ahz", ahz).apply(); paintHz() } }
+            val chValue = a.text("", 14f, Glass.TEXT, true); val chNote = a.text("", 12f, Glass.TEXT3)
+            fun paintCh() { chValue.text = if (amono) "โมโน" else "สเตอริโอ"; chNote.text = if (amono) "รวมซ้ายขวาเป็นช่องเดียว ไฟล์เล็กลง" else "ตามต้นฉบับ" }
+            paintCh()
+            pickRow("ช่องเสียง", chValue, chNote) { v -> pickMenu.show(v, "ช่องเสียง", listOf(GlassMenu.Option("สเตอริโอ", Icons.SOUND, "ตามต้นฉบับ"), GlassMenu.Option("โมโน", Icons.SOUND, "ไฟล์เล็กลง")), if (amono) 1 else 0) { k ->
+                amono = k == 1; prefs.edit().putBoolean("export_amono", amono).apply(); paintCh() } }
+        }
+        into = card
         val names = listOf("ไม่ใช้ AI · เร็วที่สุด", "Natural SR3 · แนะนำ", "Classic SR2 · คมชัด")
         val notes = listOf("ขยายภาพแบบปกติ เร็วที่สุด", "คน ใบหน้า ตัวหนังสือ · เนียนตา", "วิว ตึก ใบไม้ · คมเต็มที่")
         val icons = listOf(Icons.PHOTO, th.ogay.luma.ai.EnhanceUi.LEAF, th.ogay.luma.ai.EnhanceUi.GEM)
@@ -170,7 +224,7 @@ object ExportSheet {
         // making in-between frames alone needs no AI model, so the box stays closed and the rows below move up.
         val aiBox = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
         aiBox.addView(aiChip, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(14) })
-        card.addView(aiBox, -1, -2)
+        videoBox.addView(aiBox, -1, -2)
         card.addView(estimate, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(16) })
         // Same preview as for photos: a before / after of the middle of the clip with the chosen model.
         val previewBtn = a.text("ดูตัวอย่างโมเดล", 14f, Glass.ACCENT, true).apply { gravity = Gravity.CENTER; isClickable = true; background = a.glass(24, 0x1affffff); glassTouch(); contentDescription = "ดูตัวอย่างผลของโมเดล AI"
@@ -205,7 +259,8 @@ object ExportSheet {
                 }
             }
         }
-        go.setOnClickListener { Glass.tick(go); close(); onExport(ExportChoice(sides[side], rates[rate], ai() && !audioOnly, if (model == 2) th.ogay.luma.ai.EnhanceProfile.CLASSIC else th.ogay.luma.ai.EnhanceProfile.NATURAL, audioOnly)) }
+        go.setOnClickListener { Glass.tick(go); close(); onExport(ExportChoice(sides[side], rates[rate], ai() && !audioOnly, if (model == 2) th.ogay.luma.ai.EnhanceProfile.CLASSIC else th.ogay.luma.ai.EnhanceProfile.NATURAL, audioOnly,
+            flowMode, prefs.getInt("export_mbps", 0), akbps, ahz, amono)) }
         card.addView(go, LinearLayout.LayoutParams(-1, a.dp(52)).apply { topMargin = a.dp(12) })
         card.addView(a.text("ยกเลิก", 14f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; isClickable = true; setPadding(0, a.dp(12), 0, 0); setOnClickListener { close() } }, -1, a.dp(44))
         refresh()

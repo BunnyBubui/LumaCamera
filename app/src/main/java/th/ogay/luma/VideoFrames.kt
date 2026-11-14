@@ -102,7 +102,7 @@ class FrameDecoder(c: Context, uri: Uri, private val fromUs: Long = 0L, private 
  * Encodes RGB frames at a fixed rate into an MP4 (H.264, or HEVC when H.264 cannot do the size and rate), and at
  * the end copies the sound track of [audioFrom] unchanged.
  */
-class FrameEncoder(private val out: File, val width: Int, val height: Int, private val fps: Float, rotation: Int, private val audioFrom: File? = null) : AutoCloseable {
+class FrameEncoder(private val out: File, val width: Int, val height: Int, private val fps: Float, rotation: Int, private val audioFrom: File? = null, private val bitrateBps: Int = 0) : AutoCloseable {
     private val codec: MediaCodec
     private val muxer = MediaMuxer(out.path, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4).apply { setOrientationHint(rotation) }
     private val info = MediaCodec.BufferInfo()
@@ -116,7 +116,7 @@ class FrameEncoder(private val out: File, val width: Int, val height: Int, priva
         val mime = pickMime(width, height, fps) ?: error("เครื่องนี้เข้ารหัสวิดีโอ ${width}×${height} ${fps.roundToInt()} fps ไม่ได้")
         fun format(fast: Boolean) = MediaFormat.createVideoFormat(mime, width, height).apply {
             setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible)
-            setInteger(MediaFormat.KEY_BIT_RATE, bitrate(width, height, fps, mime))
+            setInteger(MediaFormat.KEY_BIT_RATE, if (bitrateBps > 0) bitrateBps else bitrate(width, height, fps, mime))
             setFloat(MediaFormat.KEY_FRAME_RATE, fps); setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
             // Not a live recording: let the encoder run as fast as it can.
             if (fast) { setInteger(MediaFormat.KEY_PRIORITY, 1); setInteger(MediaFormat.KEY_OPERATING_RATE, Short.MAX_VALUE.toInt()) }
@@ -203,8 +203,8 @@ class FrameEncoder(private val out: File, val width: Int, val height: Int, priva
  * copies, scaled up, and the frame at time t is both neighbours warped toward t (Super SloMo's linear-motion
  * estimate) and blended.
  */
-class FlowBlender(private val w: Int, private val h: Int) : AutoCloseable {
-    private val dis = DISOpticalFlow.create(DISOpticalFlow.PRESET_FAST)
+class FlowBlender(private val w: Int, private val h: Int, fastest: Boolean = false) : AutoCloseable {
+    private val dis = DISOpticalFlow.create(if (fastest) DISOpticalFlow.PRESET_ULTRAFAST else DISOpticalFlow.PRESET_FAST)
     private val grid = Mat(h, w, CvType.CV_32FC2)
     private val f01 = Mat(); private val f10 = Mat(); private val s01 = Mat(); private val s10 = Mat()
     private val ft0 = Mat(); private val ft1 = Mat(); private val m0 = Mat(); private val m1 = Mat()
@@ -249,9 +249,9 @@ class FlowBlender(private val w: Int, private val h: Int) : AutoCloseable {
         const val STILL = 0.35
         /** Above this the neighbours are different shots (a cut): warping between them only smears. */
         const val CUT = 45.0
-        /** Grey copy about 480 pixels wide for measuring motion. */
-        fun gray(rgb: Mat): Mat {
-            val s = minOf(1.0, 480.0 / rgb.cols())
+        /** Grey copy about [width] pixels wide for measuring motion (wider = finer and slower). */
+        fun gray(rgb: Mat, width: Int = 480): Mat {
+            val s = minOf(1.0, width.toDouble() / rgb.cols())
             val g = Mat(); Imgproc.cvtColor(rgb, g, Imgproc.COLOR_RGB2GRAY)
             Imgproc.resize(g, g, Size((rgb.cols() * s).roundToInt().coerceAtLeast(16).toDouble(), (rgb.rows() * s).roundToInt().coerceAtLeast(16).toDouble()), 0.0, 0.0, Imgproc.INTER_AREA)
             return g

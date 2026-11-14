@@ -39,6 +39,8 @@ object ExportJob {
         val cleanup: () -> Unit,
         /** Backdrop kind per step ([ExportProgress.Backdrop]), so the process page can be rebuilt from anywhere. */
         val kinds: List<Int> = emptyList(),
+        /** Sound only: AAC bitrate in kbps (0 = a picture export). */
+        val audioKbps: Int = 0,
     )
 
     class State(val plan: Plan) {
@@ -130,7 +132,7 @@ object ExportJob {
                 transformer = null; h.removeCallbacks(poll); file.delete()
                 fail(s, if (cancel.get()) null else "${e.errorCodeName} · ${e.cause?.message ?: e.localizedMessage}")
             }
-        }, h.looper)
+        }, h.looper, s.plan.audioKbps)
         transformer = t; t.start(composition, file.path); h.post(poll)
     }
 

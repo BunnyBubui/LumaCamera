@@ -2532,10 +2532,10 @@ class VideoEditorActivity : ComponentActivity() {
     private fun startExport(c: ExportChoice, src: ExportSheet.Source) {
         if (ExportJob.running()) { notice("มีงานส่งออกอยู่แล้ว · รอให้เสร็จก่อน"); return }
         if (luma.shots.upscaling()) { notice("กำลังเพิ่มรายละเอียดภาพด้วย AI อยู่ · ส่งออกได้เมื่อเสร็จแล้ว"); return }
-        if (c.audioOnly) { exportAudio(); return }
+        if (c.audioOnly) { exportAudio(c); return }
         val bigger = c.shortSide > src.shortSide * 1.05f; val smoother = c.fps > src.fps * 1.05f
         if (!changed() && !bigger && !smoother && c.shortSide >= src.shortSide - 8 && c.fps >= src.fps - 0.6f) { notice("ยังไม่มีการแก้ไข"); return }
-        enhance = if (bigger || smoother) VideoEnhancer.Plan(c.shortSide, c.fps, c.ai, c.profile) else null
+        enhance = if (bigger || smoother) VideoEnhancer.Plan(c.shortSide, c.fps, c.ai, c.profile, c.flowMode, c.mbps) else null
         shrinkShort = if (enhance == null && c.shortSide < src.shortSide - 8) c.shortSide else 0
         shrinkFps = if (enhance == null && c.fps < src.fps - 0.6f) c.fps else 0f
         // Several clips or layers become one file, so the split (two files of the main clip) is left out then.
@@ -2604,16 +2604,18 @@ class VideoEditorActivity : ComponentActivity() {
     }
 
     /** Exports only the sound of the edit (clips, music, voice and sound layers) as an .m4a file into the music folder. */
-    private fun exportAudio() {
+    private fun exportAudio(c: ExportChoice) {
         val clipSound = hasAudio && keepSound && allSpeeds().all { it in SOUND_MIN..SOUND_MAX }
         if (!clipSound && layers.none { it.audible && !it.hidden && it.volume > 0f }) { notice("วิดีโอนี้ไม่มีเสียงให้ส่งออก"); return }
-        enhance = null; shrinkShort = 0; shrinkFps = 0f
+        enhance = null; shrinkShort = 0; shrinkFps = 0f; soundHz = c.audioHz; soundMono = c.audioMono
         val id = System.currentTimeMillis(); val dir = File(filesDir, "video-exports/$id").apply { mkdirs() }
         val plan = ExportJob.Plan(listOf("รวมเสียงทั้งหมด", "บันทึกลงโฟลเดอร์เพลง"), listOf(1f, 0.3f), firstFrame, 0, 0, -1, 1,
             slow = null, parts = { _ -> flow = null; listOf(composition(start, end, audioOnly = true) to File(dir, "Lumora_AUDIO_$id.m4a")) },
-            enhance = null, finalFile = null, note = "เสียงจาก Lumora", cleanup = {}, kinds = listOf(ExportProgress.Backdrop.EDIT, ExportProgress.Backdrop.SAVE))
+            enhance = null, finalFile = null, note = "เสียงจาก Lumora", cleanup = {}, kinds = listOf(ExportProgress.Backdrop.EDIT, ExportProgress.Backdrop.SAVE), audioKbps = c.audioKbps.coerceAtLeast(32))
         startJob(plan)
     }
+    /** Sound-only export settings from the sheet (sample rate, mono), read when the sound composition is built. */
+    private var soundHz = 0; private var soundMono = false
     private fun composition(from: Long, to: Long, audioOnly: Boolean = false): Composition {
         // With smooth slow motion the main clip is the rendered file: n times longer, so times scale by n and the
         // speed left to apply is speed × n (about 1×). It has no sound.
@@ -2624,7 +2626,7 @@ class VideoEditorActivity : ComponentActivity() {
         return VideoEdit.composition(VideoEditSpec(f?.let { Uri.fromFile(it.file) } ?: source, at(from), at(to), if (turns % 2 == 1) vh else vw, if (turns % 2 == 1) vw else vh,
         speed * n, cropRatio(), caption, place, textColor, textBig, if (looked()) colour() else null, music, f == null && hasAudio && keepSound && allSpeeds().all { it in SOUND_MIN..SOUND_MAX },
         turns, mirror, volume, musicVolume, if (cut) at(cutFrom) else -1L, if (cut) at(cutTo) else -1L, textBox,
-        extras.map { VideoPart(it.uri, it.from, it.to, it.speed, it.muted, it.volume, it.curve) }, if (extras.isEmpty()) 0 else transition, stickers.toList(), clampedLayers(), shrinkShort, shrinkFps, mainPos(), fx[0], fx[1], fx[2], grade = if (grade.active()) gradeCube(33) else null, audio = audioSettings(), mainMuted = mainMuted, mainCurve = if (f == null) mainCurve else null, audioOnly = audioOnly, duck = duck), applicationContext)
+        extras.map { VideoPart(it.uri, it.from, it.to, it.speed, it.muted, it.volume, it.curve) }, if (extras.isEmpty()) 0 else transition, stickers.toList(), clampedLayers(), shrinkShort, shrinkFps, mainPos(), fx[0], fx[1], fx[2], grade = if (grade.active()) gradeCube(33) else null, audio = audioSettings(), mainMuted = mainMuted, mainCurve = if (f == null) mainCurve else null, audioOnly = audioOnly, duck = duck, audioHz = if (audioOnly) soundHz else 0, audioMono = audioOnly && soundMono), applicationContext)
     }
 
     /** Export problems stay on screen until dismissed, so the reason can be read (and reported). */

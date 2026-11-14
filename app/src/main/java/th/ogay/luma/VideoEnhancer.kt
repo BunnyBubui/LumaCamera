@@ -19,7 +19,11 @@ import kotlin.math.roundToInt
  * less than running the model on them too.
  */
 object VideoEnhancer {
-    class Plan(val shortSide: Int, val fps: Float, val ai: Boolean, val profile: th.ogay.luma.ai.EnhanceProfile = th.ogay.luma.ai.EnhanceProfile.NATURAL)
+    class Plan(val shortSide: Int, val fps: Float, val ai: Boolean, val profile: th.ogay.luma.ai.EnhanceProfile = th.ogay.luma.ai.EnhanceProfile.NATURAL,
+        /** In-between frames: 0 finer (wider motion measuring), 1 balanced, 2 faster (narrow and the quickest flow preset). */ val flowMode: Int = 1,
+        /** Fixed bitrate in Mbps chosen in the export sheet (0 = automatic). */ val mbps: Int = 0) {
+        val flowWidth get() = when (flowMode) { 0 -> 640; 2 -> 320; else -> 480 }
+    }
     /** [frame]: a fresh picture of the frame just made, about twice a second, for the progress page. */
     class Progress(val fraction: Float, val etaMs: Long, val frames: Int, val total: Int, val backend: String, val frame: android.graphics.Bitmap? = null)
 
@@ -49,11 +53,11 @@ object VideoEnhancer {
                 val pts = f.ptsUs - firstPts
                 if (enc == null) {
                     val (w, h) = size(f.rgb.cols(), f.rgb.rows(), plan.shortSide)
-                    enc = AsyncEncoder(FrameEncoder(out, w, h, plan.fps, dec.rotation, input))
+                    enc = AsyncEncoder(FrameEncoder(out, w, h, plan.fps, dec.rotation, input, plan.mbps * 1_000_000))
                     if (plan.ai && w > f.rgb.cols() * 1.05) sr = FrameSr(c, plan.profile)
-                    if (plan.fps > dec.fps * 1.05f) blend = FlowBlender(w, h)
+                    if (plan.fps > dec.fps * 1.05f) blend = FlowBlender(w, h, plan.flowMode == 2)
                 }
-                val gray = if (blend != null) FlowBlender.gray(f.rgb) else null
+                val gray = if (blend != null) FlowBlender.gray(f.rgb, plan.flowWidth) else null
                 val big = when {
                     sr != null -> sr.upscale(f.rgb, enc.width, enc.height) { cancel.get() }.also { f.rgb.release() }
                     f.rgb.cols() != enc.width || f.rgb.rows() != enc.height -> Mat().also { m ->
