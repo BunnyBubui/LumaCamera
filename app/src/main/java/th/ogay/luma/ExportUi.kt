@@ -249,6 +249,7 @@ class ExportProgress(private val a: Activity, thumb: Bitmap?, private val steps:
     private val frames = a.text("", 13.5f, Glass.TEXT2).apply { gravity = Gravity.CENTER }
     private val eta = a.text("", 17f, Glass.ACCENT, true).apply { gravity = Gravity.CENTER }
     private val etaBox = LinearLayout(a)
+    private val tracker = Eta.Tracker()
     private val marks = ArrayList<TextView>(); private val labels = ArrayList<TextView>()
 
     init {
@@ -263,8 +264,8 @@ class ExportProgress(private val a: Activity, thumb: Bitmap?, private val steps:
         col.addView(percent, LinearLayout.LayoutParams(-2, -2).apply { topMargin = a.dp(10) })
         col.addView(frames, -1, -2)
         // Time left, highlighted: a glass pill with a clock.
-        etaBox.apply { gravity = Gravity.CENTER_VERTICAL; background = a.glass(22, (Glass.ACCENT and 0x00ffffff) or 0x2e000000); setPadding(a.dp(16), a.dp(8), a.dp(18), a.dp(8)); visibility = View.GONE
-            addView(IconView(a, Icons.TIMER, 2f).apply { tint = Glass.ACCENT }, a.dp(20), a.dp(20)); addView(eta.apply { setPadding(a.dp(8), 0, 0, 0) }) }
+        etaBox.apply { gravity = Gravity.CENTER_VERTICAL; background = a.glass(22, (Glass.ACCENT and 0x00ffffff) or 0x2e000000); setPadding(a.dp(16), a.dp(8), a.dp(18), a.dp(8)); visibility = View.VISIBLE
+            addView(IconView(a, Icons.TIMER, 2f).apply { tint = Glass.ACCENT }, a.dp(20), a.dp(20)); addView(eta.apply { setPadding(a.dp(8), 0, 0, 0); text = "กำลังคำนวณเวลา…" }) }
         col.addView(etaBox, LinearLayout.LayoutParams(-2, -2).apply { topMargin = a.dp(12) })
         val list = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; background = a.glass(20, 0x14ffffff); setPadding(a.dp(16), a.dp(10), a.dp(16), a.dp(10)) }
         steps.forEach { st ->
@@ -299,9 +300,10 @@ class ExportProgress(private val a: Activity, thumb: Bitmap?, private val steps:
         val i = s.stage
         backdrop.mode = kinds.getOrElse(i) { Backdrop.SAVE }
         frames.text = listOfNotNull(if (s.totalFrames > 0) "${String.format(Locale.US, "%,d", s.frames)} / ${String.format(Locale.US, "%,d", s.totalFrames)} เฟรม" else null, s.detail.takeIf { it.isNotEmpty() }).joinToString(" · ")
-        val ms = s.etaMs
-        etaBox.visibility = if (ms > 0) View.VISIBLE else View.GONE
-        eta.text = Eta.text(ms)
+        // The AI step knows its own pace; every other step (and plain exports) is timed from how far the whole job has got.
+        val ms = if (s.etaMs > 0) s.etaMs else tracker.left(p)
+        etaBox.visibility = View.VISIBLE
+        eta.text = if (ms < 0) "กำลังคำนวณเวลา…" else Eta.text(ms)
         marks.forEachIndexed { k, m ->
             m.text = if (k < i) "✓" else if (k == i) "●" else "○"
             m.setTextColor(if (k < i) 0xff30d158.toInt() else if (k == i) Glass.ACCENT else Glass.TEXT3)

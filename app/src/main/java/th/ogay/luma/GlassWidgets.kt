@@ -1003,7 +1003,7 @@ class AiRing(context: Context) : View(context) {
         if (caption.isNotEmpty()) { big.textSize = 19 * d; c.drawText(caption, cx, y, big); y += 30 * d }
         if (detail.isNotEmpty()) { small.textSize = 15 * d; small.color = Glass.TEXT2; c.drawText(detail, cx, y, small); y += 26 * d }
         if (eta.isNotEmpty()) {
-            small.textSize = 15 * d; small.color = Color.WHITE; small.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            small.textSize = 15 * d; small.color = Glass.ACCENT; small.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
             val tw = small.measureText(eta); val icon = 22 * d; val w = tw + icon + 40 * d; val l = cx - w / 2
             etaPill.color = 0x40ff9f45; c.drawRoundRect(l, y, l + w, y + 38 * d, 19 * d, 19 * d, etaPill)
             val ix = l + 18 * d + icon / 2; val iy = y + 19 * d

@@ -77,7 +77,11 @@ class ModelCard(private val a: Activity, private val menu: GlassMenu, private va
         if (job != null) {
             bar.fraction = job.fraction
             val total = (job.totalBytes.takeIf { it > 0 } ?: (m.approxMb * 1_048_576L)) / 1_048_576
-            detail.text = "${(job.fraction * 100).toInt()}% · ${job.doneBytes / 1_048_576} / $total MB · ออกจากหน้านี้ได้ ดาวน์โหลดต่อเบื้องหลัง"
+            val left = job.etaMs(job.totalBytes.takeIf { it > 0 } ?: (m.approxMb * 1_048_576L))
+            val head = "${(job.fraction * 100).toInt()}% · ${job.doneBytes / 1_048_576} / $total MB · "
+            val etaWords = if (left < 0) "กำลังคำนวณเวลา…" else Eta.text(left)
+            detail.text = android.text.SpannableString(head + etaWords + " · ดาวน์โหลดต่อเบื้องหลังได้").apply {
+                setSpan(android.text.style.ForegroundColorSpan(Glass.ACCENT), head.length, head.length + etaWords.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE) }
         }
         actionHost.removeAllViews()
         if (m.unavailable != null || m.builtin) return

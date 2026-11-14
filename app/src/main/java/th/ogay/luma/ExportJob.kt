@@ -186,13 +186,15 @@ class ExportService : Service() {
         getSystemService(android.app.NotificationManager::class.java).notify(id, notification())
     }
 
+    private val pacer = Eta.Tracker()
     private fun notification(): android.app.Notification {
         val s = ExportJob.state
         val pc = s?.percent() ?: -1
-        val eta = s?.etaMs?.takeIf { it > 0 }?.let { " · " + Eta.text(it) } ?: ""
+        val left = s?.etaMs?.takeIf { it > 0 } ?: pacer.left(pc.coerceAtLeast(0) / 100f).takeIf { it > 0 }
+        val eta = left?.let { " · " + Eta.text(it) } ?: ""
         return LiveNotice.progress(this, "Lumora · ส่งออกวิดีโอ", (s?.stepName() ?: "กำลังเริ่ม") + eta, pc, openProcess(),
             PendingIntent.getService(this, 1, Intent(this, ExportService::class.java).setAction(CANCEL), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT),
-            s?.etaMs?.takeIf { it > 0 }?.let { Eta.chip(it) })
+            left?.let { Eta.chip(it) })
     }
 
     /** While the export runs, the notification opens the process page; once it is done, the gallery. */

@@ -34,6 +34,13 @@ object ModelStore {
         @Volatile var finished = false
         @Volatile var doneBytes = 0L
         @Volatile var totalBytes = 0L
+        /** When this run began and how many bytes were already there, so the speed (and the time left) can be worked out. */
+        @Volatile var t0 = 0L; @Volatile var b0 = 0L
+        /** Milliseconds left at the speed so far, or -1 while there is too little to go on. */
+        fun etaMs(total: Long): Long {
+            val el = System.currentTimeMillis() - t0; val got = doneBytes - b0
+            return if (t0 == 0L || el < 3_000 || got <= 0 || total <= 0) -1L else ((total - doneBytes).coerceAtLeast(0) * el / got)
+        }
         fun cancel() { cancelled = true }
     }
 
@@ -98,6 +105,7 @@ object ModelStore {
                                 if (job.cancelled) throw InterruptedException()
                                 val n = input.read(buf); if (n < 0) break
                                 out.write(buf, 0, n); done += n; job.doneBytes = done
+                                if (job.t0 == 0L) { job.t0 = System.currentTimeMillis(); job.b0 = done - n }
                                 val now = System.currentTimeMillis()
                                 if (now - last > 150) { last = now; job.fraction = (done.toFloat() / total).coerceIn(0f, 0.99f); tell() }
                             }
@@ -179,9 +187,10 @@ class ModelDownloadService : android.app.Service() {
     private fun notification(): android.app.Notification {
         val j = ModelStore.active().firstOrNull()
         val pc = j?.let { (it.fraction * 100).toInt() } ?: -1
-        val text = if (j == null) "กำลังเริ่ม" else "${j.spec.name} · ${j.doneBytes / 1_048_576} / ${(j.totalBytes.takeIf { it > 0 } ?: (j.spec.approxMb * 1_048_576L)) / 1_048_576} MB"
+        val text = if (j == null) "กำลังเริ่ม" else "${j.spec.name} · ${j.doneBytes / 1_048_576} / ${(j.totalBytes.takeIf { it > 0 } ?: (j.spec.approxMb * 1_048_576L)) / 1_048_576} MB" + (j.etaMs(j.totalBytes.takeIf { it > 0 } ?: (j.spec.approxMb * 1_048_576L)).takeIf { it > 0 }?.let { " · " + Eta.text(it) } ?: "")
         return LiveNotice.progress(this, "Lumora · ดาวน์โหลดโมเดล", text, pc, null,
-            android.app.PendingIntent.getService(this, 2, android.content.Intent(this, ModelDownloadService::class.java).setAction(CANCEL), android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT))
+            android.app.PendingIntent.getService(this, 2, android.content.Intent(this, ModelDownloadService::class.java).setAction(CANCEL), android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT),
+            j?.etaMs(j.totalBytes.takeIf { it > 0 } ?: (j.spec.approxMb * 1_048_576L))?.takeIf { it > 0 }?.let { Eta.chip(it) })
     }
 
     private fun stop() {

@@ -1379,7 +1379,7 @@ class GalleryActivity : ComponentActivity() {
         if (!::ring.isInitialized || ring.visibility != View.VISIBLE || showingId != id || isDestroyed) return
         val p = th.ogay.luma.ai.AiProgress
         if (p.shotId == id) {
-            if (p.total > 0) ring.update(p.fraction() * 99f, ring.caption, listOf("${String.format(Locale.US, "%,d", p.done)} / ${String.format(Locale.US, "%,d", p.total)} ไทล์", p.model).filter { it.isNotEmpty() }.joinToString(" · "), p.etaText())
+            if (p.total > 0) ring.update(p.fraction() * 99f, ring.caption, listOf("${String.format(Locale.US, "%,d", p.done)} / ${String.format(Locale.US, "%,d", p.total)} ไทล์", p.model).filter { it.isNotEmpty() }.joinToString(" · "), p.etaText().ifEmpty { "กำลังคำนวณเวลา…" })
             else ring.update(null, ring.caption, p.step)
         }
         host.postDelayed(this, 330)
