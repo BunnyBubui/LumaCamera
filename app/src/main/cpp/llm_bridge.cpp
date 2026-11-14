@@ -48,7 +48,6 @@ extern "C" {
 JNIEXPORT jlong JNICALL Java_th_ogay_luma_LlamaEngine_nativeLoad(JNIEnv *env, jobject, jstring path, jint threads, jint nCtx) {
     if (!g_backend) { llama_log_set(quietLog, nullptr); llama_backend_init(); g_backend = true; }
     llama_model_params mp = llama_model_default_params();
-    mp.use_mmap = true;
     llama_model *model = llama_model_load_from_file(jstr(env, path).c_str(), mp);
     if (!model) return 0;
     llama_context_params cp = llama_context_default_params();
