@@ -176,8 +176,8 @@ class ModelDownloadService : android.app.Service() {
 
     private fun refresh(job: ModelStore.Job) {
         if (job.finished && !ExportJob.appVisible()) {
-            if (job.error == null) LiveNotice.done(this, 47012, "ดาวน์โหลด ${job.spec.name} เสร็จแล้ว", "พร้อมใช้ถอดเสียงในตัวแก้ไขวิดีโอ", null)
-            else if (!job.cancelled) LiveNotice.done(this, 47012, "ดาวน์โหลด ${job.spec.name} ไม่สำเร็จ", job.error ?: "", null)
+            if (job.error == null) LiveNotice.done(this, 47012, "ดาวน์โหลด ${job.spec.name} เสร็จแล้ว", "พร้อมใช้ถอดเสียงในตัวแก้ไขวิดีโอ", LiveNotice.openApp(this))
+            else if (!job.cancelled) LiveNotice.done(this, 47012, "ดาวน์โหลด ${job.spec.name} ไม่สำเร็จ", job.error ?: "", LiveNotice.openApp(this))
         }
         if (ModelStore.active().isEmpty()) return stop()
         val now = android.os.SystemClock.elapsedRealtime(); if (now - last < 700) return; last = now
@@ -188,7 +188,7 @@ class ModelDownloadService : android.app.Service() {
         val j = ModelStore.active().firstOrNull()
         val pc = j?.let { (it.fraction * 100).toInt() } ?: -1
         val text = if (j == null) "กำลังเริ่ม" else "${j.spec.name} · ${j.doneBytes / 1_048_576} / ${(j.totalBytes.takeIf { it > 0 } ?: (j.spec.approxMb * 1_048_576L)) / 1_048_576} MB" + (j.etaMs(j.totalBytes.takeIf { it > 0 } ?: (j.spec.approxMb * 1_048_576L)).takeIf { it > 0 }?.let { " · " + Eta.text(it) } ?: "")
-        return LiveNotice.progress(this, "Lumora · ดาวน์โหลดโมเดล", text, pc, null,
+        return LiveNotice.progress(this, "Lumora · ดาวน์โหลดโมเดล", text, pc, LiveNotice.openApp(this),
             android.app.PendingIntent.getService(this, 2, android.content.Intent(this, ModelDownloadService::class.java).setAction(CANCEL), android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT),
             j?.etaMs(j.totalBytes.takeIf { it > 0 } ?: (j.spec.approxMb * 1_048_576L))?.takeIf { it > 0 }?.let { Eta.chip(it) })
     }

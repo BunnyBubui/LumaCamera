@@ -481,8 +481,11 @@ class CaptionProgress(
     private val a: Activity, thumb: Bitmap?, private val steps: List<String>,
     private val kinds: List<Int> = listOf(ExportProgress.Backdrop.EDIT, ExportProgress.Backdrop.FLOW, ExportProgress.Backdrop.AI, ExportProgress.Backdrop.AI, ExportProgress.Backdrop.SAVE),
     private val headings: List<String> = listOf("กำลังเตรียมเสียง", "กำลังหาช่วงที่มีเสียงพูด", "กำลังตรวจภาษา", "กำลังถอดเสียง", "กำลังใส่คำบรรยาย"),
+    /** The title of the live alert while this job runs. */
+    private val noticeTitle: String = "สร้างคำบรรยาย",
     onCancel: () -> Unit,
 ) {
+    private val cancelJob = onCancel
     private val layer = FrameLayout(a).apply { setBackgroundColor(Glass.alpha(Glass.BG, 0xf2)); isClickable = true; alpha = 0f }
     private val backdrop = ExportProgress.Backdrop(a)
     private val ring = ExportProgress.Ring(a)
@@ -573,6 +576,7 @@ class CaptionProgress(
         backdrop.mode = kinds.getOrElse(stage) { ExportProgress.Backdrop.SAVE }
         val head = headings.getOrElse(stage) { "" }
         heading.text = head; detail.text = note; pillText.text = head
+        if (!gone) TaskNotice.update(a, noticeTitle, head + if (note.isNotEmpty()) " · $note" else "", pct, left, cancelJob)
         if (lastWords.isNotEmpty()) { heard.text = "“$lastWords”"; heardBox.visibility = View.VISIBLE }
         marks.forEachIndexed { k, m ->
             m.text = if (k < stage) "✓" else if (k == stage) "●" else "○"
@@ -581,7 +585,7 @@ class CaptionProgress(
         }
     }
     fun remove() {
-        gone = true; pill.visibility = View.GONE
+        gone = true; pill.visibility = View.GONE; TaskNotice.stop(a)
         layer.animate().alpha(0f).setDuration(200).withEndAction { (layer.parent as? FrameLayout)?.let { it.removeView(layer); it.removeView(pill) } }.start()
     }
 }

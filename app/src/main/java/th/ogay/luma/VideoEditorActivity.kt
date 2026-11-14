@@ -499,6 +499,7 @@ class VideoEditorActivity : ComponentActivity() {
                     val made = StudioMath.holdCues(cues).map { c -> val l = VideoLayer(VideoLayer.TEXT, VideoLayer.textSource(c.text, Color.WHITE, 1), c.from, c.to - c.from, text = c.text, style = 1); l to VideoLayers.textPicture(l, TEXT_PREVIEW) }
                     val added = if (made.isNotEmpty()) addCaptionLayers(made) else 0
                     ui.render(4, 1f, if (added > 0) "เสร็จแล้ว · เพิ่ม $added บรรทัด" else (problem ?: "ไม่พบเสียงพูดที่แปลงได้")); ui.remove(); captionUi = null
+                    if (added > 0) TaskNotice.finish(this, "สร้างคำบรรยายเสร็จแล้ว", "เพิ่ม $added บรรทัด · แตะเพื่อกลับไปตรวจคำ")
                     notice(when { added > 0 && problem == null -> "เพิ่มคำบรรยาย $added บรรทัด · ตรวจคำและเวลาก่อนส่งออก"; added > 0 -> "เพิ่มคำบรรยาย $added บรรทัด · $problem"; else -> problem ?: "ไม่พบเสียงพูดที่แปลงได้" })
                 }
                 job.onStage = { t -> show(2, t) }
@@ -1759,17 +1760,17 @@ class VideoEditorActivity : ComponentActivity() {
         }
     }
     private fun runLlmTranslate(m: ModelSpec, to: String) {
-        val ids = layers.indices.filter { layers[it].caption }; if (ids.isEmpty() || translating) return
+        val groups = captionGroups(); if (groups.isEmpty() || translating) return
         val from = captionFrom(to)
         if (TranslatorModels.infoOf(m)?.supports(from, to) != true) {
             val ok = TranslatorModels.ALL.filter { TranslatorModels.infoOf(it)?.supports(from, to) == true }.joinToString(" · ") { it.name }
             notice("${m.name} แปล ${TransLang.name(from)} → ${TransLang.name(to)} ไม่ได้" + (if (TranslatorModels.infoOf(m)?.thEnOnly == true) " (รองรับเฉพาะไทย↔อังกฤษ)" else "") + "\nลองใช้: " + ok.ifEmpty { "ML Kit" }); return }
-        val texts = ids.map { layers[it].text }; val out = arrayOfNulls<String>(ids.size)
+        val firsts = groups.map { layers[it.first()].text }; val texts = groups.map { captionSource(it) }; val out = arrayOfNulls<String>(groups.size)
         translating = true; translateStopped = false
         if (tool == 15) showTool(15, false)
         val ui = CaptionProgress(this, firstFrame, listOf("โหลดโมเดล ${m.name}", "แปลทีละบรรทัด", "ใส่ข้อความที่แปลลงไทม์ไลน์"),
             listOf(ExportProgress.Backdrop.FLOW, ExportProgress.Backdrop.AI, ExportProgress.Backdrop.SAVE),
-            listOf("กำลังโหลดโมเดลแปล", "กำลังแปล ${TransLang.name(from)} → ${TransLang.name(to)}", "กำลังใส่ข้อความที่แปล")) {
+            listOf("กำลังโหลดโมเดลแปล", "กำลังแปล ${TransLang.name(from)} → ${TransLang.name(to)}", "กำลังใส่ข้อความที่แปล"), noticeTitle = "แปลคำบรรยาย") {
             translateStopped = true; LlamaTranslator.cancel(); notice("กำลังหยุดแปล…") }
         captionUi = ui; ui.render(0, 0.03f, "กำลังเปิด ${m.name} · ครั้งแรกอาจใช้เวลาสักครู่")
         val app = applicationContext
@@ -1778,42 +1779,37 @@ class VideoEditorActivity : ComponentActivity() {
             val err = LlamaTranslator.run(app, m, from, to, texts, { runOnUiThread { ui.render(1, 0.1f, "เริ่มแปลบรรทัดแรก…") } }) { done, total, t -> out[done - 1] = t
                 runOnUiThread { ui.render(1, 0.1f + 0.85f * done / total, "บรรทัดที่ $done จาก $total", t ?: "") } }
             LlamaTranslator.release()
-            runOnUiThread { finishLlmTranslate(ids, texts, out, err) }
+            runOnUiThread { finishLlmTranslate(groups, firsts, texts, out, err, to) }
         }, "luma-translate").start()
     }
-    private fun finishLlmTranslate(ids: List<Int>, texts: List<String>, out: Array<String?>, err: String?) {
+    private fun finishLlmTranslate(groups: List<List<Int>>, firsts: List<String>, texts: List<String>, out: Array<String?>, err: String?, to: String) {
         translating = false
         captionUi?.remove(); captionUi = null
         if (isDestroyed) return
         if (err != null) { notice(err); if (tool == 15) showTool(15, false); return }
         if (translateStopped) { notice("หยุดแปลแล้ว · คำบรรยายยังเป็นต้นฉบับ"); if (tool == 15) showTool(15, false); return }
-        var done = 0
-        ids.forEachIndexed { k, j -> val words = out[k] ?: return@forEachIndexed; val l = layers.getOrNull(j) ?: return@forEachIndexed
-            if (l.text != texts[k]) return@forEachIndexed
-            val n = l.copy(text = words).let { it.copy(source = VideoLayer.textSource(it.text, it.color, it.style)) }
-            layers[j] = redraw(l, n) ?: return@forEachIndexed; done++ }
+        val done = applyTranslations(groups, firsts, texts, out, to)
         splitLongCaptions()
         rebuildLayers(); refreshTimeline(); showTool(15, false)
         notice(if (done > 0) "แปลคำบรรยาย $done บรรทัดแล้ว · ตรวจคำก่อนส่งออก" else "แปลไม่สำเร็จ ลองใหม่อีกครั้งหรือเปลี่ยนโมเดล")
+        if (done > 0) TaskNotice.finish(this, "แปลคำบรรยายเสร็จแล้ว", "แปล $done บรรทัด · แตะเพื่อกลับไปตรวจคำ")
     }
     private fun translateCaptions(fromTag: String, toTag: String) {
         val from = com.google.mlkit.nl.translate.TranslateLanguage.fromLanguageTag(fromTag.substringBefore('-'))
         val to = com.google.mlkit.nl.translate.TranslateLanguage.fromLanguageTag(toTag.substringBefore('-'))
         if (from == null || to == null) { notice("ภาษานี้ยังแปลในเครื่องไม่ได้"); return }
         if (from == to) { notice("ภาษาที่พูดกับภาษาที่แปลเป็นภาษาเดียวกัน"); return }
-        val ids = layers.indices.filter { layers[it].caption }
-        if (ids.isEmpty()) return
+        val groups = captionGroups()
+        if (groups.isEmpty()) return
+        val firsts = groups.map { layers[it.first()].text }; val sources = groups.map { captionSource(it) }
         val client = com.google.mlkit.nl.translate.Translation.getClient(com.google.mlkit.nl.translate.TranslatorOptions.Builder().setSourceLanguage(from).setTargetLanguage(to).build())
         notice("กำลังเตรียมโมเดลภาษา (โหลดครั้งแรกต้องต่ออินเทอร์เน็ต)…")
         client.downloadModelIfNeeded().addOnSuccessListener {
-            var left = ids.size; val out = arrayOfNulls<String>(layers.size)
-            ids.forEach { i -> client.translate(layers[i].text).addOnCompleteListener { t ->
-                out[i] = t.result?.takeIf { t.isSuccessful && it.isNotBlank() }
+            var left = groups.size; val out = arrayOfNulls<String>(groups.size)
+            groups.indices.forEach { k -> client.translate(sources[k]).addOnCompleteListener { t ->
+                out[k] = t.result?.takeIf { t.isSuccessful && it.isNotBlank() }
                 if (--left == 0 && !isDestroyed) {
-                    var done = 0
-                    ids.forEach { j -> val words = out[j] ?: return@forEach; val l = layers.getOrNull(j) ?: return@forEach
-                        val n = l.copy(text = words).let { it.copy(source = VideoLayer.textSource(it.text, it.color, it.style)) }
-                        layers[j] = redraw(l, n) ?: return@forEach; done++ }
+                    val done = applyTranslations(groups, firsts, sources, out, toTag)
                     client.close(); splitLongCaptions(); rebuildLayers(); refreshTimeline(); showTool(15, false)
                     notice(if (done > 0) "แปลคำบรรยาย $done บรรทัดแล้ว · ตรวจคำก่อนส่งออก" else "แปลไม่สำเร็จ ลองใหม่อีกครั้ง")
                 } } }
@@ -1837,6 +1833,28 @@ class VideoEditorActivity : ComponentActivity() {
         val box = android.widget.EditText(this).apply { setText(transContext()); hint = "เช่น หนังจีนกำลังภายใน ภาษาโบราณ"; setTextColor(Glass.TEXT); setHintTextColor(Glass.TEXT3); textSize = 15f; background = glass(14, 0x1affffff); setPadding(dp(14), dp(10), dp(14), dp(10)); isSingleLine = true }
         GlassDialog.ask(this, "บริบทของคำบรรยาย", message = "บอกว่าเป็นเรื่องแนวไหน โมเดลจะเลือกคำและน้ำเสียงให้ตรง", content = box, ok = "ใช้", focus = box) { setTransContext(box.text.toString()); showTool(15, false); true }
     }
+    private fun nextGroup() = (layers.maxOfOrNull { it.grp } ?: 0) + 1
+    /** Caption lines cut from one sentence share a group, so the sentence is translated whole; a line on its own is its own group. Layer numbers per group, in time order. */
+    private fun captionGroups(): List<List<Int>> =
+        layers.indices.filter { layers[it].caption }.groupBy { if (layers[it].grp != 0) layers[it].grp else -(it + 1) }.values.map { g -> g.sortedBy { layers[it].at } }
+    /** What to translate for a group: the words before any earlier translation, else the group's lines joined. */
+    private fun captionSource(g: List<Int>) = layers[g.first()].orig.ifEmpty { g.joinToString(" ") { layers[it].text } }
+    /** Puts the translated sentence in place of its group (one line, as long as the whole group) and then cuts it again for length. Returns how many were done. */
+    private fun applyTranslations(groups: List<List<Int>>, firsts: List<String>, sources: List<String>, out: Array<String?>, to: String): Int {
+        var done = 0; val drop = HashSet<Int>()
+        groups.forEachIndexed { k, g ->
+            val words = out[k] ?: return@forEachIndexed
+            val j = g.first(); val l = layers.getOrNull(j) ?: return@forEachIndexed
+            if (l.text != firsts[k] || g.any { layers.getOrNull(it)?.caption != true }) return@forEachIndexed
+            val end = g.maxOf { layers[it].end }
+            val n = l.copy(text = words, length = end - l.at, orig = sources[k], trTo = to, grp = if (l.grp != 0) l.grp else nextGroup(), keys = "")
+                .let { it.copy(source = VideoLayer.textSource(it.text, it.color, it.style)) }
+            layers[j] = redraw(l, n) ?: return@forEachIndexed
+            g.drop(1).forEach { drop += it }; done++
+        }
+        if (drop.isNotEmpty()) { drop.sortedDescending().forEach { layers.removeAt(it) }; layerPick = -1; barActive = false }
+        return done
+    }
     /** How many letters fit on one caption line at the chosen size (about 22 at 100%); two lines are allowed before a caption is cut in two. */
     private fun captionMaxChars() = (22f * 100f / captionScale()).toInt().coerceIn(12, 60) * 2
     /** A caption longer than that is split into consecutive captions, the time shared by length, so none runs off the picture. Callers rebuild the layers after. */
@@ -1846,8 +1864,9 @@ class VideoEditorActivity : ComponentActivity() {
             val l = layers[i]
             val parts = if (l.caption) StudioMath.splitCue(StudioMath.Cue(l.at, l.end, l.text), max) else emptyList()
             if (parts.size > 1) {
+                val g = if (l.grp != 0) l.grp else nextGroup()
                 val made = parts.map { p ->
-                    val n = l.copy(text = p.text, at = p.from, length = p.to - p.from, keys = "").let { it.copy(source = VideoLayer.textSource(it.text, it.color, it.style)) }
+                    val n = l.copy(text = p.text, at = p.from, length = p.to - p.from, keys = "", grp = g).let { it.copy(source = VideoLayer.textSource(it.text, it.color, it.style)) }
                     val pic = VideoLayers.textPicture(n, TEXT_PREVIEW); layerThumbs[n.source] = pic
                     n.copy(aspect = pic.width.toFloat() / pic.height, size = captionSize(pic, captionScale())) }
                 layers.removeAt(i); layers.addAll(i, made); i += made.size; changed = true
@@ -1941,18 +1960,28 @@ class VideoEditorActivity : ComponentActivity() {
         // The translate button is as prominent as the speech one: orange, full width; it turns into "stop" while translating.
         val globe = "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M3 12h18 M12 3c3 3 3 15 0 18 M12 3c-3 3-3 15 0 18"
         val tgo = LinearLayout(this).apply { gravity = Gravity.CENTER; background = glass(22, if (translating) 0x33ff453a else Glass.ACCENT); isClickable = true; glassTouch()
-            contentDescription = if (translating) "หยุดแปล" else "แปลคำบรรยาย"
+            // Lines already translated into another language than the one chosen now: the button offers to do them again.
+            val doneTo = layers.firstOrNull { it.caption && it.trTo.isNotEmpty() }?.trTo
+            val label = if (translating) "หยุดแปล" else if (doneTo != null && doneTo != targetTag) "แปลใหม่ · $targetName" else "แปลคำบรรยาย"
+            contentDescription = label
             addView(IconView(this@VideoEditorActivity, if (translating) "M7 7h10v10H7z" else globe, 2.2f).apply { tint = if (translating) Color.WHITE else Glass.ON_ACCENT }, dp(20), dp(20))
-            addView(text(if (translating) "หยุดแปล" else "แปลคำบรรยาย", 14.5f, if (translating) Color.WHITE else Glass.ON_ACCENT, true).apply { setPadding(dp(8), 0, 0, 0) })
+            addView(text(label, 14.5f, if (translating) Color.WHITE else Glass.ON_ACCENT, true).apply { setPadding(dp(8), 0, 0, 0) })
             setOnClickListener { translateNow() } }
         col.addView(tgo, LinearLayout.LayoutParams(-1, dp(46)).apply { setMargins(dp(16), dp(10), dp(16), dp(4)) })
         if (count == 0) return
+        // Remove every caption line at once, where it can be seen (not only inside the sideways row below); it asks first, and the undo button brings them back.
+        val red = 0xffff6b63.toInt()
+        val wipe = LinearLayout(this).apply { gravity = Gravity.CENTER; background = glass(22, 0x26ff453a); isClickable = true; glassTouch(); contentDescription = "ลบคำบรรยายทั้งหมด"
+            addView(IconView(this@VideoEditorActivity, "M5 7h14 M9 7V4h6v3 M7 7l1 13h8l1-13", 2.2f).apply { tint = red }, dp(20), dp(20))
+            addView(text("ลบคำบรรยายทั้งหมด ($count บรรทัด)", 14.5f, red, true).apply { setPadding(dp(8), 0, 0, 0) })
+            setOnClickListener { GlassDialog.ask(this@VideoEditorActivity, "ลบคำบรรยายทั้งหมด?", message = "ลบ $count บรรทัดออกจากไทม์ไลน์ · กดย้อนกลับด้านบนเพื่อเอาคืนได้", ok = "ลบ") {
+                layers.removeAll { it.caption }; layerPick = -1; barActive = false; rebuildLayers(); refreshTimeline(); showTool(15, false); notice("ลบคำบรรยายทั้งหมดแล้ว"); true } } }
+        col.addView(wipe, LinearLayout.LayoutParams(-1, dp(46)).apply { setMargins(dp(16), dp(6), dp(16), dp(4)) })
         val drops = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(8), dp(14), 0) }
         drops.addView(text("คำบรรยาย $count บรรทัด", 12f, Glass.TEXT2, true).apply { setPadding(0, 0, dp(8), 0) })
         drops.addView(dropButton("ตำแหน่ง") { v -> menu.show(v, "ตำแหน่งคำบรรยาย", listOf(GlassMenu.Option("ล่าง", posIcon(0.5f, 0.86f)), GlassMenu.Option("กลาง", posIcon(0.5f, 0.5f)), GlassMenu.Option("บน", posIcon(0.5f, 0.14f))), -1) { k -> styleCaptions(y = listOf(0.86f, 0.5f, 0.14f)[k]) } }, LinearLayout.LayoutParams(-2, dp(34)).apply { rightMargin = dp(6) })
         val looks = listOf("กล่องพื้น" to 1, "ขอบตัวอักษร" to 2, "ไม่มีพื้น" to 0)
         drops.addView(dropButton("รูปแบบ") { v -> menu.show(v, "รูปแบบคำบรรยาย", looks.map { GlassMenu.Option(it.first) }, -1) { k -> styleCaptions(style = { s -> (s and 3.inv()) or looks[k].second }) } }, LinearLayout.LayoutParams(-2, dp(34)).apply { rightMargin = dp(6) })
-        drops.addView(EditorKit.chip(this, "ลบทั้งหมด", "M5 7h14 M9 7V4h6v3 M7 7l1 13h8l1-13") { layers.removeAll { it.caption }; layerPick = -1; barActive = false; rebuildLayers(); refreshTimeline(); showTool(15, false) }, LinearLayout.LayoutParams(-2, dp(34)))
         col.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(drops) }, -1, -2)
         col.addView(colorRow(layers.first { it.caption }.color) { c -> styleCaptions(color = c) }, -1, -2)
     }
@@ -2107,8 +2136,9 @@ class VideoEditorActivity : ComponentActivity() {
             LinearLayout.LayoutParams(dp(150), dp(38)).apply { gravity = Gravity.CENTER_HORIZONTAL; topMargin = dp(4); bottomMargin = dp(6) })
         // Row height of the lanes: small, medium or large (all rows stay equal); the timeline resizes at once.
         val sizes = listOf(24 to "แถวเล็ก", 30 to "แถวกลาง", 40 to "แถวใหญ่")
-        col.addView(LinearLayout(this).apply { gravity = Gravity.CENTER; sizes.forEach { (v, n) -> addView(EditorKit.chip(this@VideoEditorActivity, n, "M4 7h16 M4 12h16 M4 17h16", laneDp().toInt() == v) {
-            getSharedPreferences("camera", MODE_PRIVATE).edit().putInt("lane_dp", v).apply(); timeline.laneDp = v.toFloat(); laneCount = -1; refreshTimeline(); showTool(LAYER_TOOL, false) }, LinearLayout.LayoutParams(-2, dp(32)).apply { setMargins(dp(3), 0, dp(3), dp(4)) }) } }, -1, -2)
+        // Same chip size as the other panels (42 dp, equal widths) so the top edge is not cut.
+        col.addView(LinearLayout(this).apply { gravity = Gravity.CENTER; clipChildren = false; clipToPadding = false; setPadding(0, dp(2), 0, dp(2)); sizes.forEach { (v, n) -> addView(EditorKit.chip(this@VideoEditorActivity, n, "M4 7h16 M4 12h16 M4 17h16", laneDp().toInt() == v) {
+            getSharedPreferences("camera", MODE_PRIVATE).edit().putInt("lane_dp", v).apply(); timeline.laneDp = v.toFloat(); laneCount = -1; refreshTimeline(); showTool(LAYER_TOOL, false) }, LinearLayout.LayoutParams(0, dp(42), 1f).apply { setMargins(dp(3), 0, dp(3), dp(4)) }) } }, -1, -2)
         val l = layers.getOrNull(layerPick)
         if (l == null || !l.visual || !barActive) {
             col.addView(text("เพิ่มภาพหรือวิดีโอซ้อนบนคลิป · แตะแถบบนไทม์ไลน์หรือแตะบนภาพเพื่อปรับเลเยอร์นั้น", 12f, Glass.TEXT3).apply { gravity = Gravity.CENTER; setPadding(dp(16), dp(24), dp(16), 0) }, -1, -2)
@@ -2641,7 +2671,7 @@ class VideoEditorActivity : ComponentActivity() {
     // ---------- Lifecycle ----------
     override fun onPause() { player?.let { if (it.isPlaying) togglePlay() }; if (prog != null) th.ogay.luma.ai.AiPace.watching = false; super.onPause(); if (::trim.isInitialized && overlay == null) saveProject() }
     override fun onResume() { super.onResume(); if (prog != null) th.ogay.luma.ai.AiPace.watching = true }
-    override fun onDestroy() { (speech as? StudioSpeech)?.stop(); speech = null; if (translating) { translateStopped = true; LlamaTranslator.cancel() }; if (hearingModels) { ModelStore.unlisten(modelEvents); hearingModels = false }; fxEq?.runCatching { release() }; fxEq = null; recorder?.runCatching { stop() }; recorder?.runCatching { release() }; recorder = null; handler.removeCallbacksAndMessages(null); releasePlayer(); musicPlayer?.runCatching { release() }; releaseLayerSound(); super.onDestroy() }
+    override fun onDestroy() { (speech as? StudioSpeech)?.stop(); speech = null; TaskNotice.stop(this); if (translating) { translateStopped = true; LlamaTranslator.cancel() }; if (hearingModels) { ModelStore.unlisten(modelEvents); hearingModels = false }; fxEq?.runCatching { release() }; fxEq = null; recorder?.runCatching { stop() }; recorder?.runCatching { release() }; recorder = null; handler.removeCallbacksAndMessages(null); releasePlayer(); musicPlayer?.runCatching { release() }; releaseLayerSound(); super.onDestroy() }
     override fun onSaveInstanceState(out: Bundle) {
         super.onSaveInstanceState(out); writeState(out)
         out.putString("projectId", projectId); out.putString("projectName", projectName); out.putBoolean("named", named)

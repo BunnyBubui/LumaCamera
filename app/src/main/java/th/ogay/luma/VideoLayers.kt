@@ -53,6 +53,8 @@ data class VideoLayer(
     val caption: Boolean = false,
     /** For a caption: how wide a line may run, as a share of the picture it is drawn in (0 = the old default). Keeps lines wide whatever the letter size. */
     val wrap: Float = 0f,
+    /** For a caption: the words before it was translated, the language it was translated into (a tag such as "en-US"), and a group number shared by the lines one sentence was cut into. */
+    val orig: String = "", val trTo: String = "", val grp: Int = 0,
 ) {
     val matte get() = StudioMatte.Spec(key, keyTol, shape, feather, round)
     val end get() = at + length
@@ -82,7 +84,7 @@ data class VideoLayer(
         fun textSource(text: String, color: Int, style: Int): Uri = Uri.parse("lumoratext:" + Uri.encode("$color/$style/$text"))
         /** Packs a list of layers into a Bundle-friendly string (one line per layer). */
         fun save(list: List<VideoLayer>) = list.joinToString("\n") { l -> listOf(l.kind, l.source, l.at, l.length, l.from, l.x, l.y, l.size, l.aspect, l.volume,
-            l.opacity, l.fadeIn, l.fadeOut, Uri.encode(l.text).ifEmpty { "-" }, l.color, l.style, l.keys.ifEmpty { "-" }, l.turn, l.key, l.keyTol, l.shape, l.feather, l.round, if (l.hidden) 1 else 0, if (l.locked) 1 else 0, if (l.music) 1 else 0, if (l.caption) 1 else 0, l.wrap).joinToString("\t") }
+            l.opacity, l.fadeIn, l.fadeOut, Uri.encode(l.text).ifEmpty { "-" }, l.color, l.style, l.keys.ifEmpty { "-" }, l.turn, l.key, l.keyTol, l.shape, l.feather, l.round, if (l.hidden) 1 else 0, if (l.locked) 1 else 0, if (l.music) 1 else 0, if (l.caption) 1 else 0, l.wrap, Uri.encode(l.orig).ifEmpty { "-" }, l.trTo.ifEmpty { "-" }, l.grp).joinToString("\t") }
         fun load(text: String?): List<VideoLayer> = text.orEmpty().lines().filter { it.isNotBlank() }.mapNotNull { line ->
             val p = line.split("\t"); if (p.size < 10) return@mapNotNull null
             runCatching { VideoLayer(p[0].toInt(), Uri.parse(p[1]), p[2].toLong(), p[3].toLong(), p[4].toLong(), p[5].toFloat(), p[6].toFloat(), p[7].toFloat(), p[8].toFloat(), p[9].toFloat(),
@@ -90,7 +92,8 @@ data class VideoLayer(
                 p.getOrNull(13)?.takeIf { it != "-" }?.let { Uri.decode(it) } ?: "", p.getOrNull(14)?.toIntOrNull() ?: Color.WHITE, p.getOrNull(15)?.toIntOrNull() ?: 0,
                 p.getOrNull(16)?.takeIf { it != "-" } ?: "", p.getOrNull(17)?.toFloatOrNull() ?: 0f,
                 p.getOrNull(18)?.toIntOrNull() ?: 0, p.getOrNull(19)?.toFloatOrNull() ?: 0.4f, p.getOrNull(20)?.toIntOrNull() ?: 0, p.getOrNull(21)?.toFloatOrNull() ?: 0.1f,
-                p.getOrNull(22)?.toFloatOrNull() ?: 0f, p.getOrNull(23) == "1", p.getOrNull(24) == "1", p.getOrNull(25) == "1", p.getOrNull(26) == "1", p.getOrNull(27)?.toFloatOrNull() ?: 0f) }.getOrNull()
+                p.getOrNull(22)?.toFloatOrNull() ?: 0f, p.getOrNull(23) == "1", p.getOrNull(24) == "1", p.getOrNull(25) == "1", p.getOrNull(26) == "1", p.getOrNull(27)?.toFloatOrNull() ?: 0f,
+                p.getOrNull(28)?.takeIf { it != "-" }?.let { Uri.decode(it) } ?: "", p.getOrNull(29)?.takeIf { it != "-" } ?: "", p.getOrNull(30)?.toIntOrNull() ?: 0) }.getOrNull()
         }
     }
 }

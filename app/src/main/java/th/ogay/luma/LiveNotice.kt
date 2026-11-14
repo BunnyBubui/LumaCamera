@@ -65,6 +65,10 @@ object LiveNotice {
         return b.build()
     }
 
+    /** Brings the app back to the screen it was on (or opens it): for alerts about work that has no page of its own, such as a model download. */
+    fun openApp(c: Context): PendingIntent? = c.packageManager.getLaunchIntentForPackage(c.packageName)?.let {
+        PendingIntent.getActivity(c, 9, it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT) }
+
     /** A one-off "finished" notification. */
     fun done(c: Context, id: Int, title: String, text: String, open: PendingIntent?) = runCatching {
         channels(c)
