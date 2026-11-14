@@ -1816,14 +1816,14 @@ class VideoEditorActivity : ComponentActivity() {
     /** How big the caption lines are made, in percent of the usual size; it applies to new lines and, when changed, to every line already there. */
     /** Share of the picture a caption line may fill (about 94% of the video width), whatever the letter size. */
     private fun captionWrap(percent: Int) = (0.94f / (0.62f * percent / 100f)).coerceIn(0.4f, 4f)
-    private fun captionSize(pic: Bitmap, percent: Int) = (pic.width.toFloat() / TEXT_PREVIEW * 0.62f * percent / 100f).coerceIn(0.05f, 0.98f)
+    private fun captionSize(pic: Bitmap, percent: Int) = (pic.width.toFloat() / TEXT_PREVIEW * 0.62f * percent / 100f).coerceIn(0.005f, 0.98f)
     /** Draws [n] in place of [l] and keeps the letters the same size on the video when the picture gets wider or narrower. */
     private fun redraw(l: VideoLayer, n: VideoLayer): VideoLayer? {
         val oldW = layerThumbs[l.source]?.width ?: 0
         val pic = runCatching { VideoLayers.textPicture(n, TEXT_PREVIEW) }.getOrNull() ?: return null
         layerThumbs[n.source] = pic
         val k = if (oldW > 0) pic.width.toFloat() / oldW else 1f
-        return n.copy(aspect = pic.width.toFloat() / pic.height, size = (l.size * k).coerceIn(0.05f, 0.98f))
+        return n.copy(aspect = pic.width.toFloat() / pic.height, size = (l.size * k).coerceIn(if (l.caption) 0.005f else 0.05f, 0.98f))
     }
     private fun transContext() = getSharedPreferences("camera", MODE_PRIVATE).getString("trans_context", "") ?: ""
     private fun setTransContext(v: String) = getSharedPreferences("camera", MODE_PRIVATE).edit().putString("trans_context", v.trim().take(120)).apply()
@@ -1832,14 +1832,16 @@ class VideoEditorActivity : ComponentActivity() {
         GlassDialog.ask(this, "บริบทของคำบรรยาย", message = "บอกว่าเป็นเรื่องแนวไหน โมเดลจะเลือกคำและน้ำเสียงให้ตรง", content = box, ok = "ใช้", focus = box) { setTransContext(box.text.toString()); showTool(15, false); true }
     }
     private fun captionScale() = getSharedPreferences("camera", MODE_PRIVATE).getInt("caption_scale", 100)
-    private fun applyCaptionScale(percent: Int) {
-        val old = captionScale(); if (percent == old) return
-        val ratio = percent / old.toFloat()
-        getSharedPreferences("camera", MODE_PRIVATE).edit().putInt("caption_scale", percent).apply()
+    /** Gives every caption line the same letter size (and the same line width), so no line looks bigger or smaller than the rest. */
+    private fun evenCaptions(percent: Int) {
         layers.indices.filter { layers[it].caption }.forEach { i -> val l = layers[i]
             val n = l.copy(wrap = captionWrap(percent)); val pic = runCatching { VideoLayers.textPicture(n, TEXT_PREVIEW) }.getOrNull() ?: return@forEach
             layerThumbs[n.source] = pic; layers[i] = n.copy(aspect = pic.width.toFloat() / pic.height, size = captionSize(pic, percent)) }
-        rebuildLayers(); refreshTimeline()
+    }
+    private fun applyCaptionScale(percent: Int) {
+        val old = captionScale(); if (percent == old) return
+        getSharedPreferences("camera", MODE_PRIVATE).edit().putInt("caption_scale", percent).apply()
+        evenCaptions(percent); rebuildLayers(); refreshTimeline()
     }
     private fun sizeCard(): View {
         val card = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = glass(18, 0x1affffff); setPadding(dp(14), dp(10), dp(14), dp(10)) }
@@ -1864,6 +1866,8 @@ class VideoEditorActivity : ComponentActivity() {
         host.addView(keepScroll(android.widget.ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(box) }), LinearLayout.LayoutParams(-1, 0, 1f))
     }
     private fun captionBody(col: LinearLayout) {
+        // Lines made by an older version have no shared width: bring them to one size once.
+        if (layers.any { it.caption && it.wrap == 0f }) { evenCaptions(captionScale()); rebuildLayers(); refreshTimeline() }
         val lang = captionLang(); val name = if (lang == CAPTION_AUTO) "ตรวจจับอัตโนมัติ" else LANGS.firstOrNull { it.second == lang }?.first ?: lang
         val top = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(2), dp(14), dp(6)) }
         // The first row is "automatic"; the rest are the languages the recogniser can be told to read.
