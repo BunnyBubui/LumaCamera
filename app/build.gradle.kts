@@ -1,3 +1,4 @@
+import java.net.URI
 import java.security.MessageDigest
 
 // OPPO CameraUnit SDK is off by default. -Plumora.cameraunit=true compiles the real bridge against
@@ -76,7 +77,7 @@ val fetchSherpa by tasks.registering {
         if (!sherpaAar.isFile || sherpaAar.length() < 1_000_000L) {
             sherpaAar.parentFile.mkdirs()
             val part = File(sherpaAar.path + ".part")
-            java.net.URI("https://github.com/k2-fsa/sherpa-onnx/releases/download/v$sherpaVersion/sherpa-onnx-$sherpaVersion.aar").toURL().openStream().use { i -> part.outputStream().use { o -> i.copyTo(o) } }
+            URI("https://github.com/k2-fsa/sherpa-onnx/releases/download/v$sherpaVersion/sherpa-onnx-$sherpaVersion.aar").toURL().openStream().use { i -> part.outputStream().use { o -> i.copyTo(o) } }
             check(part.length() > 1_000_000L) { "sherpa-onnx AAR download looks incomplete" }
             check(part.renameTo(sherpaAar)) { "cannot move sherpa-onnx AAR into place" }
         }
