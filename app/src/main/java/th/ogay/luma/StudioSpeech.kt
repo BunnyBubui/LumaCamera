@@ -142,7 +142,8 @@ class StudioSpeech(private val a: Activity, private val languageArg: String, pri
                 ui { progress(i, pieces.size) }
                 val pcm = pcmOf(p); if (pcm.size < StudioPcm.RATE / 4) continue
                 val h = runCatching { heard(rec!!, pcm) }.getOrElse { failures++; null } ?: continue
-                if (worthKeeping(h.text)) { cues += StudioMath.Cue(p.outAt, p.outAt + ((p.to - p.from) / p.speed).toLong(), h.text); ui { onText(h.text) } }
+                val words = StudioMath.cleanSpeech(h.text, (p.to - p.from) / 1000.0)
+                if (words != null) { cues += StudioMath.Cue(p.outAt, p.outAt + ((p.to - p.from) / p.speed).toLong(), words); ui { onText(words) } }
             }
             val problem = if (cues.isNotEmpty()) null else if (failures > 0) "ถอดเสียงไม่สำเร็จ" else "ไม่พบเสียงพูดที่ถอดเป็นข้อความได้"
             ui { finished(cues, problem) }

@@ -88,13 +88,17 @@ object LlamaTranslator {
     /** What the text is (for example a Chinese martial-arts film), so the model picks matching words and tone. Empty = none. */
     @Volatile var context: String = ""
 
-    private fun prompt(f: TransFamily, from: String, to: String, text: String, ctx: String = context.trim().take(120)): String {
+    private fun prompt(f: TransFamily, from: String, to: String, text: String, ctx: String = context.trim().take(120), prev: String = ""): String {
         val fn = TransLang.name(from); val tn = TransLang.name(to)
         // The context goes inside the instruction. A line of its own was translated as if it were a caption (seen on a phone).
         return when (f) {
             // Tencent's context form: the context first, then the line to translate; the model is told not to translate the context.
-            TransFamily.HUNYUAN -> if (ctx.isEmpty()) "Translate the following segment into $tn, without additional explanation.\n\n$text"
-                else "Context: dialogue from $ctx.\n参考上面的信息，把下面的文本翻译成$tn，注意不需要翻译上文，也不要额外解释：\n$text"
+            TransFamily.HUNYUAN -> {
+                // The lines just before this one help the model keep names and sense steady from line to line.
+                val head = listOfNotNull(if (ctx.isEmpty()) null else "Context: dialogue from $ctx.", if (prev.isEmpty()) null else "Previous lines: $prev").joinToString("\n")
+                if (head.isEmpty()) "Translate the following segment into $tn, without additional explanation.\n\n$text"
+                else "$head\n参考上面的信息，把下面的文本翻译成$tn，注意不需要翻译上文，也不要额外解释：\n$text"
+            }
             TransFamily.CHINDA -> "Translate $fn to $tn.\nRules:\n- Return only the translated text\n" + (if (ctx.isEmpty()) "" else "- The text is dialogue from $ctx; choose words and tone to suit it\n") + "\n${TransLang.code(from).uppercase()}: $text"
             TransFamily.TYPHOON -> "Translate the following $fn text into $tn. " + (if (ctx.isEmpty()) "" else "The text is dialogue from $ctx; choose words and tone that suit it. ") + "Return only the translated text, without explanations.\nSource Text:\n\n$text"
             // TranslateGemma is a strict translator with a fixed prompt: extra words would be translated too, so no context here.
@@ -137,8 +141,9 @@ object LlamaTranslator {
             loaded()
             lines.forEachIndexed { i, text ->
                 if (cancelled) return null
-                fun ask(ctx: String): String? {
-                    val q = prompt(family, from, to, text, ctx)
+                val prev = if (family == TransFamily.HUNYUAN) lines.subList(maxOf(0, i - 2), i).joinToString(" / ") else ""
+                fun ask(ctx: String, before: String): String? {
+                    val q = prompt(family, from, to, text, ctx, before)
                     // The model's own template first; if the file has none the library can read, the usual form for that family.
                     var wrapped = e.wrap(q).ifEmpty { fallbackWrap(family, q) }
                     if (wrapped.isEmpty()) return null
@@ -146,9 +151,11 @@ object LlamaTranslator {
                     return clean(e.generate(wrapped, (text.length * 3).coerceIn(64, 512)))
                 }
                 val ctx = context.trim().take(120)
-                var out = ask(ctx) ?: return "ไฟล์โมเดลนี้ไม่มีรูปแบบแชทที่อ่านได้ ใช้แปลไม่ได้ · ลองโมเดลอื่น"
+                var out = ask(ctx, prev) ?: return "ไฟล์โมเดลนี้ไม่มีรูปแบบแชทที่อ่านได้ ใช้แปลไม่ได้ · ลองโมเดลอื่น"
+                // Only the last line is this caption's; earlier lines would be the context translated by mistake.
+                if (prev.isNotEmpty() && out.contains('\n')) out = out.lines().last { it.isNotBlank() }.trim()
                 // A line that came out far longer than the original means the model translated the context too: do it again without.
-                if (ctx.isNotEmpty() && out.length > text.length * 4 + 40) out = ask("") ?: out
+                if ((ctx.isNotEmpty() || prev.isNotEmpty()) && out.length > text.length * 4 + 40) out = ask("", "") ?: out
                 progress(i + 1, lines.size, out.takeIf { it.isNotBlank() })
             }
             return null

@@ -396,6 +396,7 @@ class VideoEditorActivity : ComponentActivity() {
             val l = l0.copy(caption = true, wrap = captionWrap(captionScale())); val pic = runCatching { VideoLayers.textPicture(l, TEXT_PREVIEW) }.getOrNull() ?: return@forEach
             layerThumbs[l.source] = pic
             layers += l.copy(length = l.length.coerceAtMost(total - l.at), x = 0.5f, y = 0.86f, size = captionSize(pic, captionScale()), aspect = pic.width.toFloat() / pic.height); added++ } }
+        splitLongCaptions()
         rebuildLayers(); refreshTimeline(); showTool(15, false)
         return added
     }
@@ -1791,6 +1792,7 @@ class VideoEditorActivity : ComponentActivity() {
             if (l.text != texts[k]) return@forEachIndexed
             val n = l.copy(text = words).let { it.copy(source = VideoLayer.textSource(it.text, it.color, it.style)) }
             layers[j] = redraw(l, n) ?: return@forEachIndexed; done++ }
+        splitLongCaptions()
         rebuildLayers(); refreshTimeline(); showTool(15, false)
         notice(if (done > 0) "แปลคำบรรยาย $done บรรทัดแล้ว · ตรวจคำก่อนส่งออก" else "แปลไม่สำเร็จ ลองใหม่อีกครั้งหรือเปลี่ยนโมเดล")
     }
@@ -1812,7 +1814,7 @@ class VideoEditorActivity : ComponentActivity() {
                     ids.forEach { j -> val words = out[j] ?: return@forEach; val l = layers.getOrNull(j) ?: return@forEach
                         val n = l.copy(text = words).let { it.copy(source = VideoLayer.textSource(it.text, it.color, it.style)) }
                         layers[j] = redraw(l, n) ?: return@forEach; done++ }
-                    client.close(); rebuildLayers(); refreshTimeline(); showTool(15, false)
+                    client.close(); splitLongCaptions(); rebuildLayers(); refreshTimeline(); showTool(15, false)
                     notice(if (done > 0) "แปลคำบรรยาย $done บรรทัดแล้ว · ตรวจคำก่อนส่งออก" else "แปลไม่สำเร็จ ลองใหม่อีกครั้ง")
                 } } }
         }.addOnFailureListener { client.close(); notice("โหลดโมเดลภาษาไม่ได้ · ต่ออินเทอร์เน็ตแล้วลองใหม่") }
@@ -1835,6 +1837,24 @@ class VideoEditorActivity : ComponentActivity() {
         val box = android.widget.EditText(this).apply { setText(transContext()); hint = "เช่น หนังจีนกำลังภายใน ภาษาโบราณ"; setTextColor(Glass.TEXT); setHintTextColor(Glass.TEXT3); textSize = 15f; background = glass(14, 0x1affffff); setPadding(dp(14), dp(10), dp(14), dp(10)); isSingleLine = true }
         GlassDialog.ask(this, "บริบทของคำบรรยาย", message = "บอกว่าเป็นเรื่องแนวไหน โมเดลจะเลือกคำและน้ำเสียงให้ตรง", content = box, ok = "ใช้", focus = box) { setTransContext(box.text.toString()); showTool(15, false); true }
     }
+    /** How many letters fit on one caption line at the chosen size (about 22 at 100%); two lines are allowed before a caption is cut in two. */
+    private fun captionMaxChars() = (22f * 100f / captionScale()).toInt().coerceIn(12, 60) * 2
+    /** A caption longer than that is split into consecutive captions, the time shared by length, so none runs off the picture. Callers rebuild the layers after. */
+    private fun splitLongCaptions(): Boolean {
+        val max = captionMaxChars(); var i = 0; var changed = false
+        while (i < layers.size) {
+            val l = layers[i]
+            val parts = if (l.caption) StudioMath.splitCue(StudioMath.Cue(l.at, l.end, l.text), max) else emptyList()
+            if (parts.size > 1) {
+                val made = parts.map { p ->
+                    val n = l.copy(text = p.text, at = p.from, length = p.to - p.from, keys = "").let { it.copy(source = VideoLayer.textSource(it.text, it.color, it.style)) }
+                    val pic = VideoLayers.textPicture(n, TEXT_PREVIEW); layerThumbs[n.source] = pic
+                    n.copy(aspect = pic.width.toFloat() / pic.height, size = captionSize(pic, captionScale())) }
+                layers.removeAt(i); layers.addAll(i, made); i += made.size; changed = true
+            } else i++
+        }
+        return changed
+    }
     private fun captionScale() = getSharedPreferences("camera", MODE_PRIVATE).getInt("caption_scale", 100)
     /** Gives every caption line the same letter size (and the same line width), so no line looks bigger or smaller than the rest. */
     private fun evenCaptions(percent: Int) {
@@ -1845,7 +1865,7 @@ class VideoEditorActivity : ComponentActivity() {
     private fun applyCaptionScale(percent: Int) {
         val old = captionScale(); if (percent == old) return
         getSharedPreferences("camera", MODE_PRIVATE).edit().putInt("caption_scale", percent).apply()
-        evenCaptions(percent); rebuildLayers(); refreshTimeline()
+        evenCaptions(percent); splitLongCaptions(); rebuildLayers(); refreshTimeline()
     }
     private fun sizeCard(): View {
         val card = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = glass(18, 0x1affffff); setPadding(dp(14), dp(10), dp(14), dp(10)) }
@@ -1915,10 +1935,17 @@ class VideoEditorActivity : ComponentActivity() {
             val opts = TRANS_CONTEXTS.map { it.first }
             menu.show(v, "บอกบริบทให้แปลตรงแนว", opts.map { GlassMenu.Option(it) } + GlassMenu.Option("พิมพ์เอง…"), TRANS_CONTEXTS.indexOfFirst { it.second == transContext() }) { k ->
                 if (k < TRANS_CONTEXTS.size) { setTransContext(TRANS_CONTEXTS[k].second); showTool(15, false) } else askTransContext() } }, LinearLayout.LayoutParams(-2, dp(38)).apply { leftMargin = dp(8) })
-        trRow.addView(EditorKit.chip(this, if (translating) "หยุดแปล" else "แปลเลย", "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M3 12h18 M12 3c3 3 3 15 0 18 M12 3c-3 3-3 15 0 18") { translateNow() }, LinearLayout.LayoutParams(-2, dp(38)).apply { leftMargin = dp(8) })
         col.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(trRow) }, -1, -2)
         // Translator model: ML Kit (small) or a model that runs on the phone, with the same download card as the speech model.
         col.addView(ModelCard(this, menu, TranslatorModels.ALL, "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M3 12h18 M12 3c3 3 3 15 0 18 M12 3c-3 3-3 15 0 18", "เลือกโมเดลแปลภาษา") { m -> downloadModel(m) }, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(14), dp(8), dp(14), 0) })
+        // The translate button is as prominent as the speech one: orange, full width; it turns into "stop" while translating.
+        val globe = "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M3 12h18 M12 3c3 3 3 15 0 18 M12 3c-3 3-3 15 0 18"
+        val tgo = LinearLayout(this).apply { gravity = Gravity.CENTER; background = glass(22, if (translating) 0x33ff453a else Glass.ACCENT); isClickable = true; glassTouch()
+            contentDescription = if (translating) "หยุดแปล" else "แปลคำบรรยาย"
+            addView(IconView(this@VideoEditorActivity, if (translating) "M7 7h10v10H7z" else globe, 2.2f).apply { tint = if (translating) Color.WHITE else Glass.ON_ACCENT }, dp(20), dp(20))
+            addView(text(if (translating) "หยุดแปล" else "แปลคำบรรยาย", 14.5f, if (translating) Color.WHITE else Glass.ON_ACCENT, true).apply { setPadding(dp(8), 0, 0, 0) })
+            setOnClickListener { translateNow() } }
+        col.addView(tgo, LinearLayout.LayoutParams(-1, dp(46)).apply { setMargins(dp(16), dp(10), dp(16), dp(4)) })
         if (count == 0) return
         val drops = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(8), dp(14), 0) }
         drops.addView(text("คำบรรยาย $count บรรทัด", 12f, Glass.TEXT2, true).apply { setPadding(0, 0, dp(8), 0) })

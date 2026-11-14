@@ -6,6 +6,34 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class StudioMathTest {
+    @Test fun soundTagsAreNotSpeech() {
+        listOf("(เพลง)", "[Music]", "♪ ♪", "（音樂）", "(music) ♪").forEach { assertEquals(it, null, StudioMath.cleanSpeech(it)) }
+        assertEquals("สวัสดีครับ", StudioMath.cleanSpeech("(เพลง) สวัสดีครับ"))
+    }
+    @Test fun inventedPhrasesAndLoopsAreDropped() {
+        assertEquals(null, StudioMath.cleanSpeech("Thank you for watching!"))
+        assertEquals(null, StudioMath.cleanSpeech("ขอบคุณที่รับชม"))
+        assertEquals(null, StudioMath.cleanSpeech("哈哈哈哈哈哈哈哈哈哈"))
+        assertEquals(null, StudioMath.cleanSpeech("ไปไปไปไปไปไปไปไปไปไป"))
+        assertEquals(null, StudioMath.cleanSpeech("abcabcabcabcabcabcabc"))
+        assertEquals("ผมจะไปตลาดพรุ่งนี้", StudioMath.cleanSpeech("ผมจะไปตลาดพรุ่งนี้", 3.0))
+    }
+    @Test fun moreLettersThanAnyoneCanSayIsDropped() {
+        assertEquals(null, StudioMath.cleanSpeech("นี่คือบทสนทนาจากภาพยนตร์มวยปล้ำชาวจีนโดยมีการใช้คำพูดที่เป็นทางการและมีการใช้คำสวัสดีต่างๆ", 1.0))
+    }
+    @Test fun longLineSplitsIntoConsecutiveParts() {
+        val text = "นี่คือบทสนทนาจากภาพยนตร์ที่ใช้คำพูดเป็นทางการและมีการใช้คำสวัสดีต่างๆ ด้วยกรุณาเลือกคำศัพท์ที่เหมาะสมกับบทสนทนานี้"
+        val parts = StudioMath.splitCue(StudioMath.Cue(1000, 9000, text), 30)
+        assertTrue(parts.size >= 3)
+        assertEquals(1000L, parts.first().from); assertEquals(9000L, parts.last().to)
+        parts.zipWithNext().forEach { (a, b) -> assertEquals(a.to, b.from) }
+        parts.forEach { assertTrue(it.text.length <= 31) }
+        assertEquals(text.replace(" ", ""), parts.joinToString("") { it.text }.replace(" ", ""))
+        parts.drop(1).forEach { assertTrue("starts inside a syllable: ${it.text}", it.text.first() !in "ะัาำิีึืุู็่้๊๋์") }
+    }
+    @Test fun shortLineIsLeftAlone() {
+        val c = StudioMath.Cue(0, 2000, "สวัสดี"); assertEquals(listOf(c), StudioMath.splitCue(c, 30))
+    }
     @Test fun speechCaptionStaysOneSecondThenStops() {
         val out = StudioMath.holdCues(listOf(StudioMath.Cue(0, 2000, "a"), StudioMath.Cue(10000, 12000, "b")))
         assertEquals(3000L, out[0].to); assertEquals(13000L, out[1].to)
