@@ -50,7 +50,7 @@ class ModelCard(private val a: Activity, private val menu: GlassMenu, private va
         info.addView(status)
         head.addView(info, LayoutParams(0, -2, 1f))
         head.addView(actionHost, LayoutParams(-2, a.dp(36)))
-        head.setOnClickListener { v -> menu.show(v, title, models.map { m -> GlassMenu.Option(m.name + " · " + m.badge, icon, m.short + " · " + WhisperModels.sizeText(a, m) + if (ModelStore.installed(a, m)) " · ติดตั้งแล้ว" else "") }, models.indexOf(ModelStore.selected(a, models[0].group, models))) { k ->
+        head.setOnClickListener { v -> menu.show(v, title, models.map { m -> GlassMenu.Option(m.name + " · " + m.badge, icon, m.short + (if (m.builtin || m.unavailable != null) "" else " · " + WhisperModels.sizeText(a, m)) + if (m.unavailable != null) " · ยังใช้ไม่ได้" else if (!m.builtin && ModelStore.installed(a, m)) " · ติดตั้งแล้ว" else "") }, models.indexOf(ModelStore.selected(a, models[0].group, models))) { k ->
             ModelStore.select(a, models[k]); refresh() } }
         addView(head, -1, -2)
         addView(about, LayoutParams(-1, -2).apply { topMargin = a.dp(6) })
@@ -71,7 +71,7 @@ class ModelCard(private val a: Activity, private val menu: GlassMenu, private va
     fun refresh() {
         val m = ModelStore.selected(a, models[0].group, models); val job = ModelStore.job(m); val have = ModelStore.installed(a, m)
         name.text = m.name; badge.text = m.badge; about.text = m.short
-        status.text = when { job != null -> "กำลังดาวน์โหลด"; have -> "พร้อมใช้ · ${WhisperModels.sizeText(a, m)} ในเครื่อง"; else -> "ยังไม่ได้ดาวน์โหลด · ${WhisperModels.sizeText(a, m)}" }
+        status.text = when { m.unavailable != null -> m.unavailable; m.builtin -> "พร้อมใช้ · โหลดชุดภาษาเองเมื่อใช้ครั้งแรก"; job != null -> "กำลังดาวน์โหลด"; have -> "พร้อมใช้ · ${WhisperModels.sizeText(a, m)} ในเครื่อง"; else -> "ยังไม่ได้ดาวน์โหลด · ${WhisperModels.sizeText(a, m)}" }
         status.setTextColor(if (have && job == null) Glass.ACCENT else Glass.TEXT2)
         progress.visibility = if (job != null) VISIBLE else GONE
         if (job != null) {
@@ -80,6 +80,7 @@ class ModelCard(private val a: Activity, private val menu: GlassMenu, private va
             detail.text = "${(job.fraction * 100).toInt()}% · ${job.doneBytes / 1_048_576} / $total MB · ออกจากหน้านี้ได้ ดาวน์โหลดต่อเบื้องหลัง"
         }
         actionHost.removeAllViews()
+        if (m.unavailable != null || m.builtin) return
         actionHost.addView(when {
             job != null -> pill("ยกเลิก", "M6 6l12 12 M18 6L6 18", false) { job.cancel() }
             have -> pill("ลบ", "M5 7h14 M10 11v6 M14 11v6 M9 7V4h6v3 M7 7l1 13h8l1-13", false) { ModelStore.delete(a, m); refresh() }

@@ -15,6 +15,10 @@ import java.net.URL
 class ModelSpec(
     val id: String, val group: String, val name: String, val badge: String, val short: String, val about: String,
     val approxMb: Int, val files: List<Pair<String, String>>,
+    /** Needs no download from us (ML Kit fetches its own language packs). */
+    val builtin: Boolean = false,
+    /** When set the model cannot be used yet; the text says why. */
+    val unavailable: String? = null,
 )
 
 /**
@@ -43,12 +47,12 @@ object ModelStore {
     fun active(): List<Job> = synchronized(jobs) { jobs.values.filter { !it.finished } }
     fun cancelAll() = active().forEach { it.cancel() }
 
-    private fun dir(c: Context, s: ModelSpec) = File(c.applicationContext.filesDir, "models/${s.group}/${s.id}")
+    fun dir(c: Context, s: ModelSpec) = File(c.applicationContext.filesDir, "models/${s.group}/${s.id}")
     private fun prefs(c: Context) = c.applicationContext.getSharedPreferences("camera", Context.MODE_PRIVATE)
 
     /** The full path of one of the model's files (it exists only once [installed]). */
     fun file(c: Context, s: ModelSpec, name: String) = File(dir(c, s), name)
-    fun installed(c: Context, s: ModelSpec) = File(dir(c, s), ".ok").isFile && s.files.all { File(dir(c, s), it.first).length() > 0 }
+    fun installed(c: Context, s: ModelSpec) = s.builtin || s.files.isNotEmpty() && File(dir(c, s), ".ok").isFile && s.files.all { File(dir(c, s), it.first).length() > 0 }
     fun job(s: ModelSpec): Job? = synchronized(jobs) { jobs[s.id]?.takeIf { !it.finished } }
     /** Bytes the model takes on the phone now. */
     fun sizeOnDisk(c: Context, s: ModelSpec) = dir(c, s).listFiles()?.sumOf { it.length() } ?: 0L

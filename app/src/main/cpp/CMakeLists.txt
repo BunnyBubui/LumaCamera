@@ -88,3 +88,39 @@ target_include_directories(luma_jpeg PRIVATE ${LUMA_JPEG_PREFIX}/include)
 target_compile_options(luma_jpeg PRIVATE -O3 -Wall -Wextra -fvisibility=hidden)
 target_link_options(luma_jpeg PRIVATE "-Wl,-z,max-page-size=16384" "-Wl,--exclude-libs,ALL")
 target_link_libraries(luma_jpeg luma_jpeg_static)
+
+# On-device translation: llama.cpp built from a pinned release tarball (no runtime download), linked statically into
+# one small JNI library. Native CPU tuning is off (the host is not the phone); arm64 gets dot-product instructions,
+# which every phone with Android 12+ has. OpenMP and curl are off to keep dependencies out of the APK.
+FetchContent_Declare(luma_llama_source
+    URL https://github.com/ggml-org/llama.cpp/archive/refs/tags/b12374.tar.gz)
+FetchContent_GetProperties(luma_llama_source)
+if(NOT luma_llama_source_POPULATED)
+    FetchContent_Populate(luma_llama_source)
+endif()
+set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_SERVER OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_COMMON OFF CACHE BOOL "" FORCE)
+set(LLAMA_CURL OFF CACHE BOOL "" FORCE)
+set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
+set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
+set(GGML_LLAMAFILE OFF CACHE BOOL "" FORCE)
+set(GGML_BACKEND_DL OFF CACHE BOOL "" FORCE)
+if(ANDROID_ABI STREQUAL "arm64-v8a")
+    set(GGML_CPU_ARM_ARCH "armv8.2-a+dotprod" CACHE STRING "" FORCE)
+endif()
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+set(LUMA_SAVED_SHARED ${BUILD_SHARED_LIBS})
+set(BUILD_SHARED_LIBS OFF)
+add_subdirectory(${luma_llama_source_SOURCE_DIR} luma-llama EXCLUDE_FROM_ALL)
+set(BUILD_SHARED_LIBS ${LUMA_SAVED_SHARED})
+
+add_library(luma_llm SHARED llm_bridge.cpp)
+target_include_directories(luma_llm PRIVATE
+    ${luma_llama_source_SOURCE_DIR}/include
+    ${luma_llama_source_SOURCE_DIR}/ggml/include)
+target_compile_options(luma_llm PRIVATE -O3 -Wall -fvisibility=hidden)
+target_link_options(luma_llm PRIVATE "-Wl,-z,max-page-size=16384" "-Wl,--gc-sections" "-Wl,--exclude-libs,ALL")
+target_link_libraries(luma_llm llama ggml log)

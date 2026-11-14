@@ -416,11 +416,17 @@ class VideoEditorActivity : ComponentActivity() {
     /** The model whose download should start the captions by themselves when it finishes (set by the "create captions" button). */
     private var startWhenReady: String? = null
     private var hearingModels = false
+    /** The translator whose download should start the translation by itself when it finishes. */
+    private var translateAfter: String? = null
+    private var translating = false
+    private var translateStopped = false
+    private var detectedTag: String? = null
     private val modelEvents: (ModelStore.Job) -> Unit = { job ->
         if (job.finished && !isDestroyed) {
             val m = job.spec
             when {
-                job.error != null -> { notice(job.error!!); startWhenReady = null }
+                job.error != null -> { notice(job.error!!); startWhenReady = null; translateAfter = null }
+                translateAfter == m.id -> { translateAfter = null; notice("ดาวน์โหลดเสร็จแล้ว · เริ่มแปลคำบรรยาย"); runLlmTranslate(m, captionTarget()) }
                 startWhenReady == m.id && speech == null -> { startWhenReady = null; notice("ดาวน์โหลดเสร็จแล้ว · เริ่มสร้างคำบรรยาย"); startCaptions(captionLang(), m) }
                 else -> notice("ดาวน์โหลด ${m.name} เสร็จแล้ว")
             }
@@ -477,7 +483,7 @@ class VideoEditorActivity : ComponentActivity() {
                     notice(when { added > 0 && problem == null -> "เพิ่มคำบรรยาย $added บรรทัด · ตรวจคำและเวลาก่อนส่งออก"; added > 0 -> "เพิ่มคำบรรยาย $added บรรทัด · $problem"; else -> problem ?: "ไม่พบเสียงพูดที่แปลงได้" })
                 }
                 job.onStage = { t -> ui.render(2, 0.2f, t) }
-                job.onDetected = { code -> val tag = LANGS.firstOrNull { StudioSpeech.whisperCode(it.second) == code }?.second ?: code; spoken = tag; val n = LANGS.firstOrNull { it.second == tag }?.first ?: code; ui.render(3, 0.25f, "พบว่าพูดภาษา $n") }
+                job.onDetected = { code -> val tag = LANGS.firstOrNull { StudioSpeech.whisperCode(it.second) == code }?.second ?: code; spoken = tag; detectedTag = tag; val n = LANGS.firstOrNull { it.second == tag }?.first ?: code; ui.render(3, 0.25f, "พบว่าพูดภาษา $n") }
                 job.onText = { t -> ui.render(3, ui.lastFraction, ui.lastNote, t) }
                 speech = job; job.start()
             }
@@ -1715,6 +1721,54 @@ class VideoEditorActivity : ComponentActivity() {
         }
         rebuildLayers(); refreshTimeline(); showTool(15, false)
     }
+    private fun captionTarget() = getSharedPreferences("camera", MODE_PRIVATE).getString("caption_target", "en-US") ?: "en-US"
+    /** The language the lines are in: the one chosen, else what Whisper heard, else the other of Thai and English. */
+    private fun captionFrom(to: String): String {
+        val l = captionLang(); if (l != CAPTION_AUTO) return l
+        return detectedTag ?: if (TransLang.code(to) == "th") "en-US" else "th-TH"
+    }
+    /** "แปลเลย": ML Kit when it is the chosen translator, else a model that runs through llama.cpp (stops the running one if pressed again). */
+    private fun translateNow() {
+        if (translating) { translateStopped = true; LlamaTranslator.cancel(); notice("กำลังหยุดแปล…"); return }
+        val to = captionTarget(); val m = TranslatorModels.selected(this)
+        if (layers.none { it.caption }) return
+        when {
+            m.builtin -> translateCaptions(captionFrom(to), to)
+            m.unavailable != null -> notice("${m.name}: ${m.unavailable}")
+            !ModelStore.installed(this, m) -> { translateAfter = m.id; downloadModel(m); notice("ต้องดาวน์โหลด ${m.name} ก่อน · เสร็จแล้วจะเริ่มแปลให้เอง") }
+            else -> runLlmTranslate(m, to)
+        }
+    }
+    private fun runLlmTranslate(m: ModelSpec, to: String) {
+        val ids = layers.indices.filter { layers[it].caption }; if (ids.isEmpty() || translating) return
+        val from = captionFrom(to)
+        if (TranslatorModels.infoOf(m)?.supports(from, to) != true) { notice("${m.name} แปลคู่ภาษานี้ไม่ได้ · เลือกโมเดลอื่นหรือภาษาอื่น"); return }
+        val texts = ids.map { layers[it].text }; val out = arrayOfNulls<String>(ids.size)
+        translating = true; translateStopped = false
+        if (tool == 15) showTool(15, false)
+        notice("กำลังโหลด ${m.name} · ครั้งแรกอาจใช้เวลาสักครู่")
+        val app = applicationContext
+        Thread({
+            val err = LlamaTranslator.run(app, m, from, to, texts) { done, total, t -> out[done - 1] = t
+                runOnUiThread { captionStatus?.takeIf { tool == 15 }?.text = "กำลังแปล $done/$total · ${m.name}" } }
+            LlamaTranslator.release()
+            runOnUiThread { finishLlmTranslate(ids, texts, out, err) }
+        }, "luma-translate").start()
+    }
+    private fun finishLlmTranslate(ids: List<Int>, texts: List<String>, out: Array<String?>, err: String?) {
+        translating = false
+        if (isDestroyed) return
+        if (err != null) { notice(err); if (tool == 15) showTool(15, false); return }
+        if (translateStopped) { notice("หยุดแปลแล้ว · คำบรรยายยังเป็นต้นฉบับ"); if (tool == 15) showTool(15, false); return }
+        var done = 0
+        ids.forEachIndexed { k, j -> val words = out[k] ?: return@forEachIndexed; val l = layers.getOrNull(j) ?: return@forEachIndexed
+            if (l.text != texts[k]) return@forEachIndexed
+            val n = l.copy(text = words).let { it.copy(source = VideoLayer.textSource(it.text, it.color, it.style)) }
+            val pic = runCatching { VideoLayers.textPicture(n, TEXT_PREVIEW) }.getOrNull() ?: return@forEachIndexed
+            layerThumbs[n.source] = pic; layers[j] = n.copy(aspect = pic.width.toFloat() / pic.height); done++ }
+        rebuildLayers(); refreshTimeline(); showTool(15, false)
+        notice(if (done > 0) "แปลคำบรรยาย $done บรรทัดแล้ว · ตรวจคำก่อนส่งออก" else "แปลไม่สำเร็จ ลองใหม่อีกครั้งหรือเปลี่ยนโมเดล")
+    }
     private fun translateCaptions(fromTag: String, toTag: String) {
         val from = com.google.mlkit.nl.translate.TranslateLanguage.fromLanguageTag(fromTag.substringBefore('-'))
         val to = com.google.mlkit.nl.translate.TranslateLanguage.fromLanguageTag(toTag.substringBefore('-'))
@@ -1772,13 +1826,15 @@ class VideoEditorActivity : ComponentActivity() {
         showRow.addView(GlassSwitch(this).apply { set(shown, false); onToggle = { on -> layers.indices.filter { layers[it].caption }.forEach { i -> layers[i] = layers[i].copy(hidden = !on) }; rebuildLayers(); refreshTimeline(); showTool(15, false) } }, dp(52), dp(30))
         col.addView(showRow, -1, dp(40))
         // Translate every caption line on the phone (ML Kit); the language model downloads once, then it works offline.
-        val targetTag = getSharedPreferences("camera", MODE_PRIVATE).getString("caption_target", "en-US") ?: "en-US"
+        val targetTag = captionTarget()
         val targetName = LANGS.firstOrNull { it.second == targetTag }?.first ?: targetTag
         val trRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(8), dp(14), 0) }
         trRow.addView(dropButton("แปลเป็น: $targetName") { v -> menu.show(v, "แปลคำบรรยายเป็นภาษา", LANGS.map { GlassMenu.Option(it.first, "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M3 12h18 M12 3c3 3 3 15 0 18 M12 3c-3 3-3 15 0 18") }, LANGS.indexOfFirst { it.second == targetTag }) { k ->
             getSharedPreferences("camera", MODE_PRIVATE).edit().putString("caption_target", LANGS[k].second).apply(); showTool(15, false) } }, LinearLayout.LayoutParams(-2, dp(38)))
-        trRow.addView(EditorKit.chip(this, "แปลเลย", "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M3 12h18 M12 3c3 3 3 15 0 18 M12 3c-3 3-3 15 0 18") { translateCaptions(captionLang(), targetTag) }, LinearLayout.LayoutParams(-2, dp(38)).apply { leftMargin = dp(8) })
+        trRow.addView(EditorKit.chip(this, if (translating) "หยุดแปล" else "แปลเลย", "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M3 12h18 M12 3c3 3 3 15 0 18 M12 3c-3 3-3 15 0 18") { translateNow() }, LinearLayout.LayoutParams(-2, dp(38)).apply { leftMargin = dp(8) })
         col.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(trRow) }, -1, -2)
+        // Translator model: ML Kit (small) or a model that runs on the phone, with the same download card as the speech model.
+        col.addView(ModelCard(this, menu, TranslatorModels.ALL, "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z M3 12h18 M12 3c3 3 3 15 0 18 M12 3c-3 3-3 15 0 18", "เลือกโมเดลแปลภาษา") { m -> downloadModel(m) }, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(14), dp(8), dp(14), 0) })
         val drops = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(8), dp(14), 0) }
         drops.addView(text("คำบรรยาย $count บรรทัด", 12f, Glass.TEXT2, true).apply { setPadding(0, 0, dp(8), 0) })
         drops.addView(dropButton("ตำแหน่ง") { v -> menu.show(v, "ตำแหน่งคำบรรยาย", listOf(GlassMenu.Option("ล่าง", posIcon(0.5f, 0.86f)), GlassMenu.Option("กลาง", posIcon(0.5f, 0.5f)), GlassMenu.Option("บน", posIcon(0.5f, 0.14f))), -1) { k -> styleCaptions(y = listOf(0.86f, 0.5f, 0.14f)[k]) } }, LinearLayout.LayoutParams(-2, dp(34)).apply { rightMargin = dp(6) })
@@ -2464,7 +2520,7 @@ class VideoEditorActivity : ComponentActivity() {
     // ---------- Lifecycle ----------
     override fun onPause() { player?.let { if (it.isPlaying) togglePlay() }; if (prog != null) th.ogay.luma.ai.AiPace.watching = false; super.onPause(); if (::trim.isInitialized && overlay == null) saveProject() }
     override fun onResume() { super.onResume(); if (prog != null) th.ogay.luma.ai.AiPace.watching = true }
-    override fun onDestroy() { (speech as? StudioSpeech)?.stop(); speech = null; if (hearingModels) { ModelStore.unlisten(modelEvents); hearingModels = false }; fxEq?.runCatching { release() }; fxEq = null; recorder?.runCatching { stop() }; recorder?.runCatching { release() }; recorder = null; handler.removeCallbacksAndMessages(null); releasePlayer(); musicPlayer?.runCatching { release() }; releaseLayerSound(); super.onDestroy() }
+    override fun onDestroy() { (speech as? StudioSpeech)?.stop(); speech = null; if (translating) { translateStopped = true; LlamaTranslator.cancel() }; if (hearingModels) { ModelStore.unlisten(modelEvents); hearingModels = false }; fxEq?.runCatching { release() }; fxEq = null; recorder?.runCatching { stop() }; recorder?.runCatching { release() }; recorder = null; handler.removeCallbacksAndMessages(null); releasePlayer(); musicPlayer?.runCatching { release() }; releaseLayerSound(); super.onDestroy() }
     override fun onSaveInstanceState(out: Bundle) {
         super.onSaveInstanceState(out); writeState(out)
         out.putString("projectId", projectId); out.putString("projectName", projectName); out.putBoolean("named", named)
