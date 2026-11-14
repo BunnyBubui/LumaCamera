@@ -80,7 +80,8 @@ class CameraActivity : ComponentActivity() {
             BarMode("PORTRAIT", "บุคคล", Icons.PORTRAIT), BarMode("PHOTO", "ภาพถ่าย", Icons.PHOTO),
             BarMode("VIDEO", "วิดีโอ", Icons.VIDEO), BarMode("PRO", "โปร", Icons.PRO),
             BarMode("HIRES", "ความละเอียดสูง", Icons.HIRES),
-            BarMode("QUICK", "ถ่ายเร็ว", Icons.FLASH), BarMode("FILM", "ฟิล์ม", Icons.FILM))
+            BarMode("QUICK", "ถ่ายเร็ว", Icons.FLASH), BarMode("FILM", "ฟิล์ม", Icons.FILM),
+            BarMode("NIGHT", "กลางคืน", Icons.NIGHT), BarMode("PANORAMA", "พาโนรามา", Icons.PANO), BarMode("DOCUMENT", "เอกสาร", Icons.DOC))
         /** Flash-fast, flash-quick and sport share one bar entry; a chip picks which. */
         /** Modes where the long-exposure button is offered (they share the multi-frame capture path). */
         // Long exposure merges frames, so it fits every mode that takes one still picture. Not offered where it would fight
@@ -91,7 +92,7 @@ class CameraActivity : ComponentActivity() {
         val QUICK_MODES = listOf(PhotoMode.FLASH_NIGHT, PhotoMode.FLASH_FAST, PhotoMode.SPORT)
         val QUICK_NAMES = listOf("แฟลชเร็ว", "แฟลชเร็วพิเศษ", "ถ่ายเร็ว")
         fun barKey(m: PhotoMode) = if (m in QUICK_MODES) "QUICK" else m.name
-        const val DEFAULT_BAR = "PORTRAIT,PHOTO,VIDEO,PRO"
+        const val DEFAULT_BAR = "PORTRAIT,PHOTO,VIDEO"
         val LOOKS = listOf("มาตรฐาน", "สดใส", "อบอุ่น", "เย็น", "ฟิล์ม", "ขาวดำ")
         val NIGHT_FRAMES = listOf(6, 9, 12)
     }
@@ -345,9 +346,26 @@ class CameraActivity : ComponentActivity() {
     }
 
     // ---------- Screen ----------
+    private var splashDone = false
+    /** Opening animation: the Lumora mark draws itself on the dark page, then the page lifts away and fades to reveal the camera. */
+    private fun launchSplash() {
+        if (isDestroyed || Glass.reduced(this)) return
+        val cover = FrameLayout(this).apply { setBackgroundColor(Glass.BG); isClickable = true; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
+        val logo = LumoraLogoView(this).apply { progress = 0f }
+        val word = text("Lumora", 22f, Glass.TEXT, true).apply { alpha = 0f; gravity = Gravity.CENTER; letterSpacing = 0.08f }
+        val stack = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; addView(logo, dp(96), dp(96)); addView(word, LinearLayout.LayoutParams(-2, -2).apply { topMargin = dp(14) }) }
+        cover.addView(stack, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
+        host.addView(cover, FrameLayout.LayoutParams(-1, -1))
+        cover.elevation = 60 * resources.displayMetrics.density
+        android.animation.ValueAnimator.ofFloat(0f, 1f).apply { duration = 700; interpolator = Glass.EASE; addUpdateListener { logo.progress = it.animatedValue as Float } }.start()
+        word.animate().alpha(1f).setStartDelay(350).setDuration(350).start()
+        stack.animate().scaleX(1.25f).scaleY(1.25f).alpha(0f).setStartDelay(1050).setDuration(380).setInterpolator(Glass.EASE).start()
+        cover.animate().alpha(0f).setStartDelay(1050).setDuration(420).setInterpolator(Glass.EASE).withEndAction { host.removeView(cover) }.start()
+    }
     private fun buildScreen() {
         host = FrameLayout(this)
         installRoot(host)
+        if (!splashDone) { splashDone = true; host.post { launchSplash() } }
         menu = GlassMenu(host) { on -> if (panel.showing || editor.showing || lookSheet.showing) { panel.recede(on); editor.recede(on); lookSheet.recede(on) } else pushBackSmooth(on) }
         panel = GlassSheet(host, { handlePivot() }) { pushBack(it) }
         editor = GlassSheet(host, { handlePivot() }) { pushBack(it) }
@@ -435,7 +453,7 @@ class CameraActivity : ComponentActivity() {
         lookButton = glassButton(IconView(this, Icons.FILM), 48, "ปรับแต่งภาพและฟิล์ม") { openLookSheet() }
         stage.addView(lookButton, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.BOTTOM or Gravity.END).apply { setMargins(0, 0, dp(14), dp(12)) })
 
-        chipFrame = FrameLayout(this).apply { background = glass(24); visibility = View.GONE }
+        chipFrame = FrameLayout(this).apply { visibility = View.GONE }
         chips = CenterStrip(this).apply { capsuleHeightDp = 44; onSelect = { i -> chipSelected(i) }; onLive = { i -> styleChips(i) } }
         chipFrame.addView(chips, FrameLayout.LayoutParams(-1, -1).apply { setMargins(dp(1), dp(1), dp(1), dp(1)) })
         stage.addView(chipFrame, FrameLayout.LayoutParams(-1, dp(56 * grow()), Gravity.BOTTOM).apply { setMargins(dp(16), 0, dp(16), dp(70)) })
@@ -500,7 +518,7 @@ class CameraActivity : ComponentActivity() {
         val lp = dock.layoutParams as LinearLayout.LayoutParams
         val want = if (tall) -dock.height else 0
         if (lp.topMargin != want) { lp.topMargin = want; dock.layoutParams = lp }
-        dock.setBackgroundColor(if (tall) Glass.alpha(BG, 0x66) else BG)
+        dock.setBackgroundColor(if (tall) 0 else BG)
         stage.clipToPadding = false
         val pad = if (tall) dock.height else 0
         if (stage.paddingBottom != pad) stage.setPadding(0, 0, 0, pad)
@@ -855,7 +873,7 @@ class CameraActivity : ComponentActivity() {
     }
 
     // ---------- Pro chips and dial ----------
-    private fun chipKeys(): List<String> = if (mode in QUICK_MODES) listOf("KIND") else if (mode != PhotoMode.PRO) emptyList() else buildList {
+    private fun chipKeys(): List<String> = if (mode in QUICK_MODES) QUICK_NAMES.indices.map { "Q$it" } else if (mode != PhotoMode.PRO) emptyList() else buildList {
         val m = manual; add("ALL"); if (m != null && m.canManual) { add("ISO"); add("S") }
         add("WB"); if (m != null && m.canKelvin) add("TINT"); if ((m?.minFocus ?: 0f) > 0f) add("AF"); add("EV")
         if (m != null) { if (m.contrastValues.isNotEmpty()) add("CON"); if (m.edgeValues.size > 1) add("SHP"); if (m.nrValues.size > 1) add("NR") }
@@ -865,6 +883,17 @@ class CameraActivity : ComponentActivity() {
         val keys = chipKeys(); chipTexts.clear(); valuesCache.clear()
         if (keys.isEmpty()) { chipFrame.visibility = View.GONE; closeDial(); return }
         chipFrame.visibility = View.VISIBLE
+        if (mode in QUICK_MODES) {
+            // The quick-shot kinds are a sliding strip like the manual values: swipe to the kind and the camera switches to it.
+            val quick = QUICK_NAMES.mapIndexed { i, n ->
+                val t = text("รูปแบบ", 10.5f, Glass.TEXT2).apply { gravity = Gravity.CENTER }; val v = text(n, 13f, Glass.TEXT, true).apply { gravity = Gravity.CENTER }
+                chipTexts += t to v
+                val wDp = (v.paint.measureText(n) / resources.displayMetrics.density + 32).roundToInt().coerceAtLeast(96)
+                CenterStrip.Item(keys[i], if (sideways) 52 else wDp, turnCell(LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; addView(t, -2, -2); addView(v, -2, -2) }, wDp, n))
+            }
+            chips.post { turnNow() }
+            chips.setItems(quick, QUICK_MODES.indexOf(mode).coerceAtLeast(0)); return
+        }
         val items = keys.map { k ->
             val t = text(chipTitle(k), 10.5f, Glass.TEXT2).apply { gravity = Gravity.CENTER }; val v = text(chipValue(k), 13f, Glass.TEXT, true).apply { gravity = Gravity.CENTER }
             chipTexts += t to v
@@ -876,6 +905,8 @@ class CameraActivity : ComponentActivity() {
         chips.setItems(items, keys.indexOf(openChip ?: prefs.getString("pro_chip", "ISO")).coerceAtLeast(0))
     }
     private fun styleChips(live: Int) {
+        if (mode in QUICK_MODES) { chipTexts.forEachIndexed { i, (t, v) -> val on = i == live; t.setTextColor(if (on) Color.WHITE else Glass.TEXT3); v.setTextColor(if (on) Glass.ACCENT else Glass.TEXT)
+            (v.parent as? View)?.animate()?.scaleX(if (on) 1f else 0.92f)?.scaleY(if (on) 1f else 0.92f)?.setDuration(300)?.start() }; return }
         val keys = chipKeys()
         chipTexts.forEachIndexed { i, (t, v) -> val on = i == live; t.setTextColor(if (on) Color.WHITE else Glass.TEXT3); v.text = chipValue(keys[i]); v.setTextColor(chipColor(keys[i])); (v.parent as? View)?.animate()?.scaleX(if (on) 1f else 0.92f)?.scaleY(if (on) 1f else 0.92f)?.setDuration(300)?.start() }
     }
@@ -943,6 +974,7 @@ class CameraActivity : ComponentActivity() {
     }
     private fun chipColor(k: String): Int { val i = chipIndex(k); if (i == chipAuto(k)) return Color.WHITE; val n = chipValues(k).size; val lo = if (chipSep(k)) 1 else 0; return Glass.mix(chipGrad(k), (i - lo).toFloat() / (n - 1 - lo).coerceAtLeast(1)) }
     private fun chipSelected(i: Int) {
+        if (mode in QUICK_MODES) { val pm = QUICK_MODES.getOrNull(i) ?: return; if (pm != mode && !busy) { prefs.edit().putString("quick_kind", pm.name).apply(); selectMode(pm) }; return }
         val k = chipKeys().getOrNull(i) ?: return; prefs.edit().putString("pro_chip", k).apply()
         if (openChip == k) closeDial() else openDial(k)
     }
@@ -1470,29 +1502,39 @@ class CameraActivity : ComponentActivity() {
     }
 
     // ---------- Mode bar editor ----------
+    // Layout follows the Design board "ปรับแต่งแถบโหมด": modes in the bar as draggable rows with x,
+    // then "โหมดอื่น ๆ" as rows with an orange + (tap the row or + to add, long-press to use once).
     private fun openEditor() {
         editor.open { box, sheet ->
             val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-            head.addView(text("ปรับแต่งแถบโหมด", 20f, Glass.TEXT, true), LinearLayout.LayoutParams(0, -2, 1f))
-            head.addView(text("เสร็จ", 14f, Glass.ON_ACCENT, true).apply { gravity = Gravity.CENTER; background = glass(22, Glass.ACCENT); setPadding(dp(16), 0, dp(16), 0); isClickable = true; glassTouch(); setOnClickListener { sheet.close() } }, -2, dp(48))
-            box.addView(head, -1, dp(52))
-            // Short and visual: rows show icon + name; the grip, − and + explain themselves (TalkBack gets actions).
-            val inBar = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = glass(22, 0x08ffffff); setPadding(dp(6), dp(6), dp(6), dp(6)) }
-            val more = GridLayout(this).apply { columnCount = 3 }
-            fun pitch(): Float = if (inBar.childCount > 1) (inBar.getChildAt(1).top - inBar.getChildAt(0).top).toFloat().coerceAtLeast(dp(40).toFloat()) else dp(60).toFloat()
+            head.addView(text("ปรับแต่งแถบโหมด", 17f, Glass.TEXT, true), LinearLayout.LayoutParams(0, -2, 1f))
+            val done = text("เสร็จ", 14f, Glass.ON_ACCENT, true).apply { gravity = Gravity.CENTER; background = glass(18, Glass.ACCENT); setPadding(dp(16), 0, dp(16), 0) }
+            head.addView(FrameLayout(this).apply { isClickable = true; contentDescription = "เสร็จ"; glassTouch(); setOnClickListener { sheet.close() }; addView(done, FrameLayout.LayoutParams(-2, dp(36), Gravity.CENTER)) }, -2, dp(48))
+            box.addView(head, -1, dp(48))
+            box.addView(text("ลากเพื่อเรียงลำดับ · กด x เพื่อเอาออกจากแถบ", 12f, Glass.TEXT2).apply { setPadding(dp(2), dp(2), 0, dp(6)) }, -1, -2)
+            val inBar = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; clipChildren = false }
+            val more = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            val moreTitle = text("โหมดอื่น ๆ", 13f, Glass.TEXT2).apply { setPadding(dp(2), dp(14), 0, dp(4)) }
+            fun pitch(): Float = if (inBar.childCount > 1) (inBar.getChildAt(1).top - inBar.getChildAt(0).top).toFloat().coerceAtLeast(dp(40).toFloat()) else dp(62).toFloat()
             fun render() {
-                inBar.removeAllViews(); more.removeAllViews(); inBar.clipChildren = false
+                inBar.removeAllViews(); more.removeAllViews()
                 val bar = barList().toMutableList()
                 bar.forEachIndexed { i, k ->
                     val m = ALL.first { it.key == k }
-                    val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(8), 0, dp(6), 0); background = glass(18, 0x1affffff) }
-                    val grip = IconView(this, "M9 6h.01 M15 6h.01 M9 12h.01 M15 12h.01 M9 18h.01 M15 18h.01", 3f).apply { tint = Glass.TEXT2; contentDescription = "ลากเพื่อเรียง${m.title}"; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES }
-                    row.addView(grip, dp(52), dp(52)); row.addView(IconView(this, m.icon), dp(22), dp(22))
+                    val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, 0, dp(2), 0); background = glass(18, 0x0fffffff) }
+                    val grip = IconView(this, "M9 6h.01 M15 6h.01 M9 12h.01 M15 12h.01 M9 18h.01 M15 18h.01", 3f).apply { tint = Glass.TEXT3; contentDescription = "ลากเพื่อเรียง${m.title}"; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES }
+                    // 44dp touch target around a 20dp glyph; the design's 12dp inset comes from the padding.
+                    row.addView(grip, LinearLayout.LayoutParams(dp(44), dp(52)))
+                    row.addView(IconView(this, m.icon).apply { tint = Glass.TEXT }, dp(22), dp(22))
                     // Dragging near the screen edge must not turn into the system back gesture (which left the app).
                     if (android.os.Build.VERSION.SDK_INT >= 29) grip.addOnLayoutChangeListener { v, l, t, r, b, _, _, _, _ -> v.systemGestureExclusionRects = listOf(android.graphics.Rect(0, 0, r - l, b - t)) }
-                    row.addView(text(m.title, 14f, Glass.TEXT, true).apply { setPadding(dp(10), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
-                    if (k == "PHOTO") row.addView(IconView(this, Icons.LOCK, 2f).apply { tint = Glass.TEXT3; contentDescription = "ภาพถ่าย ล็อกไว้ในแถบ" }, dp(48), dp(16))
-                    else row.addView(glassButton(IconView(this, Icons.MINUS, 2.4f), 48, "นำ${m.title}ออกจากแถบ") { saveBar(bar.filter { it != k }); render() }, dp(48), dp(48))
+                    row.addView(text(m.title, 15f, Glass.TEXT).apply { setPadding(dp(12), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
+                    if (k == "PHOTO") row.addView(IconView(this, Icons.CHECK, 2f).apply { tint = Glass.TEXT3; contentDescription = "ภาพถ่าย อยู่ในแถบเสมอ" }, dp(48), dp(18))
+                    else row.addView(FrameLayout(this).apply {
+                        isClickable = true; contentDescription = "นำ${m.title}ออกจากแถบ"; glassTouch()
+                        setOnClickListener { Glass.tick(this); saveBar(bar.filter { it != k }); post { render() } }
+                        addView(IconView(this@CameraActivity, Icons.CLOSE, 2f).apply { tint = Glass.TEXT2 }, FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER))
+                    }, dp(48), dp(48))
                     var startY = 0f
                     grip.setOnTouchListener { _, e ->
                         when (e.actionMasked) {
@@ -1512,27 +1554,29 @@ class CameraActivity : ComponentActivity() {
                     if (i > 0) androidx.core.view.ViewCompat.addAccessibilityAction(row, "เลื่อน${m.title}ขึ้น") { _, _ -> bar.removeAt(i); bar.add(i - 1, k); saveBar(bar); render(); true }
                     if (i < bar.size - 1) androidx.core.view.ViewCompat.addAccessibilityAction(row, "เลื่อน${m.title}ลง") { _, _ -> bar.removeAt(i); bar.add(i + 1, k); saveBar(bar); render(); true }
                     row.contentDescription = "${m.title} ลำดับ ${i + 1} จาก ${bar.size}"
-                    inBar.addView(row, LinearLayout.LayoutParams(-1, dp(52)).apply { setMargins(0, dp(3), 0, dp(3)) })
+                    inBar.addView(row, LinearLayout.LayoutParams(-1, dp(52)).apply { setMargins(0, dp(5), 0, dp(5)) })
                 }
                 ALL.filter { it.key !in bar }.forEach { m ->
-                    // Icon tiles: tap adds the mode to the bar, long-press uses it once without adding.
-                    val cell = LinearLayout(this).apply {
-                        orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; background = glass(20, 0x12ffffff); setPadding(dp(6), dp(12), dp(6), dp(10))
+                    val row = LinearLayout(this).apply {
+                        gravity = Gravity.CENTER_VERTICAL; setPadding(dp(12), 0, dp(10), 0); background = glass(18, 0x0affffff)
                         isClickable = true; isLongClickable = true; glassTouch(); contentDescription = "เพิ่ม${m.title}ลงแถบ แตะค้างเพื่อใช้ครั้งเดียว"
                         setOnClickListener { Glass.tick(this); saveBar(barList() + m.key); post { render() } }
                         setOnLongClickListener { sheet.close { useTemporary(m.key) }; true }
                     }
-                    val iconBox = FrameLayout(this)
-                    iconBox.addView(IconView(this, m.icon), FrameLayout.LayoutParams(dp(28), dp(28), Gravity.CENTER))
-                    iconBox.addView(IconView(this, Icons.PLUS, 2.6f).apply { tint = Glass.ACCENT }, FrameLayout.LayoutParams(dp(14), dp(14), Gravity.TOP or Gravity.END))
-                    cell.addView(iconBox, dp(44), dp(36))
-                    cell.addView(text(m.title, 12f, Glass.TEXT2).apply { gravity = Gravity.CENTER; maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END; setPadding(0, dp(6), 0, 0) }, -1, -2)
-                    more.addView(cell, GridLayout.LayoutParams(GridLayout.spec(GridLayout.UNDEFINED), GridLayout.spec(GridLayout.UNDEFINED, 1f)).apply { width = 0; height = GridLayout.LayoutParams.WRAP_CONTENT; setMargins(dp(4), dp(4), dp(4), dp(4)) })
+                    row.addView(IconView(this, m.icon).apply { tint = Glass.TEXT2 }, dp(22), dp(22))
+                    row.addView(text(m.title, 15f, Glass.TEXT2).apply { setPadding(dp(12), 0, 0, 0); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }, LinearLayout.LayoutParams(0, -2, 1f))
+                    row.addView(FrameLayout(this).apply {
+                        background = android.graphics.drawable.GradientDrawable().apply { shape = android.graphics.drawable.GradientDrawable.OVAL; setColor(Glass.alpha(Glass.ACCENT, 46)) }
+                        addView(IconView(this@CameraActivity, Icons.PLUS, 2.2f).apply { tint = Glass.ACCENT }, FrameLayout.LayoutParams(dp(18), dp(18), Gravity.CENTER))
+                    }, dp(32), dp(32))
+                    more.addView(row, LinearLayout.LayoutParams(-1, dp(52)).apply { setMargins(0, dp(5), 0, dp(5)) })
                 }
+                moreTitle.visibility = if (more.childCount == 0) View.GONE else View.VISIBLE
             }
+            box.addView(inBar, -1, -2)
+            box.addView(moreTitle, -1, -2)
+            box.addView(more, -1, -2)
             render()
-            box.addView(sectionTitle("ในแถบล่าง")); box.addView(inBar, -1, -2)
-            box.addView(sectionTitle("โหมดเพิ่มเติม").apply { setPadding(dp(2), dp(16), 0, dp(8)) }); box.addView(more, -1, -2)
         }
     }
     private fun saveBar(list: List<String>) { if (barKey(mode) !in list && ALL.any { it.key == barKey(mode) }) selectMode(PhotoMode.PHOTO); prefs.edit().putString("mode_bar", (if ("PHOTO" in list) list else listOf("PHOTO") + list).distinct().joinToString(",")).apply(); rebuildModeStrip() }
@@ -1589,7 +1633,7 @@ class CameraActivity : ComponentActivity() {
         if (chipped && (chipFrame.visibility != View.VISIBLE || chipKeys().size != chipTexts.size)) rebuildChips()
         if (!chipped && chipFrame.visibility == View.VISIBLE) { chipFrame.visibility = View.GONE; closeDial() }
         if (chipFrame.visibility == View.VISIBLE) styleChips(chips.selected)
-        val dlp = dial.layoutParams as FrameLayout.LayoutParams; val want = if (chipFrame.visibility == View.VISIBLE) dp(78 + 56 * grow()) else dp(70)
+        val dlp = dial.layoutParams as FrameLayout.LayoutParams; val want = if (chipFrame.visibility == View.VISIBLE) dp(24 + 56 * grow()) else dp(70)
         if (dlp.bottomMargin != want) { dlp.bottomMargin = want; dial.layoutParams = dlp }
     }
     private var hintVersion=0

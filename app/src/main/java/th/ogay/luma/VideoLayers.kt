@@ -51,6 +51,10 @@ data class VideoLayer(
     val music: Boolean = false,
     /** A text layer made as a caption (from speech or an .srt file); the caption menu styles and removes these together. */
     val caption: Boolean = false,
+    /** For a caption: how wide a line may run, as a share of the picture it is drawn in (0 = the old default). Keeps lines wide whatever the letter size. */
+    val wrap: Float = 0f,
+    /** For a caption: the words before it was translated, the language it was translated into (a tag such as "en-US"), and a group number shared by the lines one sentence was cut into. */
+    val orig: String = "", val trTo: String = "", val grp: Int = 0,
 ) {
     val matte get() = StudioMatte.Spec(key, keyTol, shape, feather, round)
     val end get() = at + length
@@ -80,7 +84,7 @@ data class VideoLayer(
         fun textSource(text: String, color: Int, style: Int): Uri = Uri.parse("lumoratext:" + Uri.encode("$color/$style/$text"))
         /** Packs a list of layers into a Bundle-friendly string (one line per layer). */
         fun save(list: List<VideoLayer>) = list.joinToString("\n") { l -> listOf(l.kind, l.source, l.at, l.length, l.from, l.x, l.y, l.size, l.aspect, l.volume,
-            l.opacity, l.fadeIn, l.fadeOut, Uri.encode(l.text).ifEmpty { "-" }, l.color, l.style, l.keys.ifEmpty { "-" }, l.turn, l.key, l.keyTol, l.shape, l.feather, l.round, if (l.hidden) 1 else 0, if (l.locked) 1 else 0, if (l.music) 1 else 0, if (l.caption) 1 else 0).joinToString("\t") }
+            l.opacity, l.fadeIn, l.fadeOut, Uri.encode(l.text).ifEmpty { "-" }, l.color, l.style, l.keys.ifEmpty { "-" }, l.turn, l.key, l.keyTol, l.shape, l.feather, l.round, if (l.hidden) 1 else 0, if (l.locked) 1 else 0, if (l.music) 1 else 0, if (l.caption) 1 else 0, l.wrap, Uri.encode(l.orig).ifEmpty { "-" }, l.trTo.ifEmpty { "-" }, l.grp).joinToString("\t") }
         fun load(text: String?): List<VideoLayer> = text.orEmpty().lines().filter { it.isNotBlank() }.mapNotNull { line ->
             val p = line.split("\t"); if (p.size < 10) return@mapNotNull null
             runCatching { VideoLayer(p[0].toInt(), Uri.parse(p[1]), p[2].toLong(), p[3].toLong(), p[4].toLong(), p[5].toFloat(), p[6].toFloat(), p[7].toFloat(), p[8].toFloat(), p[9].toFloat(),
@@ -88,7 +92,8 @@ data class VideoLayer(
                 p.getOrNull(13)?.takeIf { it != "-" }?.let { Uri.decode(it) } ?: "", p.getOrNull(14)?.toIntOrNull() ?: Color.WHITE, p.getOrNull(15)?.toIntOrNull() ?: 0,
                 p.getOrNull(16)?.takeIf { it != "-" } ?: "", p.getOrNull(17)?.toFloatOrNull() ?: 0f,
                 p.getOrNull(18)?.toIntOrNull() ?: 0, p.getOrNull(19)?.toFloatOrNull() ?: 0.4f, p.getOrNull(20)?.toIntOrNull() ?: 0, p.getOrNull(21)?.toFloatOrNull() ?: 0.1f,
-                p.getOrNull(22)?.toFloatOrNull() ?: 0f, p.getOrNull(23) == "1", p.getOrNull(24) == "1", p.getOrNull(25) == "1", p.getOrNull(26) == "1") }.getOrNull()
+                p.getOrNull(22)?.toFloatOrNull() ?: 0f, p.getOrNull(23) == "1", p.getOrNull(24) == "1", p.getOrNull(25) == "1", p.getOrNull(26) == "1", p.getOrNull(27)?.toFloatOrNull() ?: 0f,
+                p.getOrNull(28)?.takeIf { it != "-" }?.let { Uri.decode(it) } ?: "", p.getOrNull(29)?.takeIf { it != "-" } ?: "", p.getOrNull(30)?.toIntOrNull() ?: 0) }.getOrNull()
         }
     }
 }
@@ -96,8 +101,14 @@ data class VideoLayer(
 @androidx.annotation.OptIn(markerClass = [UnstableApi::class])
 object VideoLayers {
     /** Picture layers as overlays for the whole video (their times are times of the finished video). */
-    fun overlays(c: Context, layers: List<VideoLayer>): List<BitmapOverlay> = layers.filter { it.visual }.map { l ->
-        when (l.kind) { VideoLayer.IMAGE -> gif(c, l) ?: TimedOverlay(l, matted(picture(c, l.source, 1280), l.matte)); VideoLayer.TEXT -> TimedOverlay(l, textPicture(l)); else -> MovingOverlay(c, l) }
+    fun overlays(c: Context, layers: List<VideoLayer>): List<BitmapOverlay> {
+        val vis = layers.filter { it.visual }
+        // Hundreds of caption lines as separate overlays used up the graphics memory and made the export fail: they share one overlay that swaps its picture.
+        val caps = vis.filter { it.kind == VideoLayer.TEXT && it.caption && !it.animated && it.turn == 0f && shapeOf(it.text) < 0 }
+        val rest = vis.filter { l -> caps.none { it === l } }.map { l ->
+            when (l.kind) { VideoLayer.IMAGE -> gif(c, l) ?: TimedOverlay(l, matted(picture(c, l.source, 1280), l.matte)); VideoLayer.TEXT -> TimedOverlay(l, textPicture(l)); else -> MovingOverlay(c, l) }
+        }
+        return if (caps.isEmpty()) rest else rest + CaptionTrack(caps.sortedBy { it.at })
     }
     /** True when the file starts like a GIF picture. */
     fun isGif(c: Context, uri: Uri): Boolean = runCatching { c.contentResolver.openInputStream(uri)?.use { val b = ByteArray(4); it.read(b) == 4 && String(b, Charsets.US_ASCII) == "GIF8" } ?: false }.getOrDefault(false)
@@ -168,7 +179,7 @@ object VideoLayers {
             textSize = width * 0.105f; color = l.color
             typeface = android.graphics.Typeface.create(FONTS[font(l.style)], if (l.style and 4 != 0) android.graphics.Typeface.NORMAL else android.graphics.Typeface.BOLD)
             if (l.style and 3 == 0) setShadowLayer(textSize * 0.14f, 0f, textSize * 0.04f, 0xb0000000.toInt()) }
-        val pad = (paint.textSize * 0.4f).toInt(); val room = width - pad * 2
+        val pad = (paint.textSize * 0.4f).toInt(); val room = if (l.wrap > 0f) (width * l.wrap - pad * 2).toInt().coerceAtLeast(pad) else width - pad * 2
         val alignment = when (align(l.style)) { 1 -> android.text.Layout.Alignment.ALIGN_NORMAL; 2 -> android.text.Layout.Alignment.ALIGN_OPPOSITE; else -> android.text.Layout.Alignment.ALIGN_CENTER }
         fun layout(p: android.text.TextPaint, w: Int) = android.text.StaticLayout.Builder.obtain(words, 0, words.length, p, w).setAlignment(alignment).setIncludePad(true).build()
         val first = layout(paint, room)
@@ -275,6 +286,26 @@ object VideoLayers {
             if (!inside(presentationTimeUs)) return hidden
             if (!layer.animated) return shown
             val p = layer.pose(presentationTimeUs / 1000); return settings(p[0], p[1], p[2], p[3])
+        }
+    }
+
+    /** All caption lines as one overlay: it draws only the line that is on at that moment, so one picture is in memory at a time. */
+    private class CaptionTrack(private val cues: List<VideoLayer>) : BitmapOverlay() {
+        private val blank = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888)
+        private var frameW = 0; private var idx = -2; private var pic = blank
+        override fun configure(videoSize: Size) { super.configure(videoSize); frameW = videoSize.width }
+        private fun select(us: Long): Int {
+            val ms = us / 1000
+            val k = if (idx >= 0 && ms >= cues[idx].at && ms < cues[idx].end) idx else cues.indexOfFirst { ms >= it.at && ms < it.end }
+            if (k != idx) { idx = k; pic = if (k < 0) blank else textPicture(cues[k]) }
+            return k
+        }
+        override fun getBitmap(presentationTimeUs: Long): Bitmap { select(presentationTimeUs); return pic }
+        override fun getOverlaySettings(presentationTimeUs: Long): OverlaySettings {
+            val k = select(presentationTimeUs); val l = cues.getOrNull(k)
+            val scale = if (l == null) 1f else l.size * frameW / pic.width.coerceAtLeast(1)
+            return StaticOverlaySettings.Builder().setScale(scale, scale).setAlphaScale(if (l == null) 0f else l.opacity)
+                .setBackgroundFrameAnchor(((l?.x ?: 0.5f) * 2 - 1).coerceIn(-1f, 1f), (1 - (l?.y ?: 0.5f) * 2).coerceIn(-1f, 1f)).setOverlayFrameAnchor(0f, 0f).build()
         }
     }
 

@@ -44,8 +44,78 @@ object StudioMath {
         return out
     }
 
+    private val bracketed = Regex("""[(（\[【{<][^)）\]】}>]{0,40}[)）\]】}>]""")
+    private val soundMarks = Regex("""[♪♫♬🎵🎶]+""")
+    /** Phrases Whisper makes up on music or silence (it learned them from video subtitles); a line that is only these is dropped. */
+    private val invented = listOf("thank you for watching", "thanks for watching", "please subscribe", "subtitles by", "amara.org", "like and subscribe",
+        "ขอบคุณที่รับชม", "ขอบคุณที่ติดตาม", "ฝากกดติดตาม", "กดติดตามช่อง", "ซับไตเติ้ล", "字幕由", "字幕志愿者", "请不吝点赞", "感谢观看", "謝謝觀看", "明镜与点点栏目", "中文字幕", "ご視聴ありがとうございました")
+    /**
+     * Cleans one line from the speech recogniser. Returns null when it is not speech: only a sound tag such as (เพลง) or (music) or ♪,
+     * a phrase the recogniser invents on music, a loop of the same few letters, or far more letters than anyone can say in that time.
+     */
+    fun cleanSpeech(raw: String, seconds: Double = 0.0): String? {
+        var t = raw.replace(bracketed, " ").replace(soundMarks, " ").replace(Regex("""\s+"""), " ").trim()
+        if (t.none { it.isLetterOrDigit() }) return null
+        val low = t.lowercase()
+        var rest = low; invented.forEach { rest = rest.replace(it, " ") }
+        if (rest.none { it.isLetterOrDigit() }) return null
+        if (Regex("""(.)\1{7,}""").containsMatchIn(t)) return null
+        // A short chunk repeated again and again ("ha ha ha ha ha ha").
+        val letters = t.filter { it.isLetterOrDigit() }
+        if (letters.length >= 12) for (n in 2..8) {
+            val unit = letters.take(n); var at = 0; var runs = 0
+            while (letters.startsWith(unit, at)) { runs++; at += n }
+            if (runs >= 5 && runs * n >= letters.length * 0.6) return null
+        }
+        if (seconds > 0.5 && letters.length / seconds > 30.0) return null
+        return t
+    }
+
+    private val noStart = "ะัาำิีึืฺุู็่้๊๋์ํ๎ๆฯ"
+    private val noEnd = "เแโใไ"
+    /**
+     * Splits a line that is too long into consecutive lines: the time is shared by length, each part starts where the one before ends.
+     * Breaks fall on punctuation or spaces if there are any near the end of a part, then on word edges, and never inside a Thai syllable.
+     */
+    fun splitCue(c: Cue, maxChars: Int): List<Cue> {
+        val text = c.text.trim(); val max = maxChars.coerceAtLeast(8)
+        if (text.length <= max || c.to <= c.from) return listOf(c)
+        val parts = ArrayList<String>(); var rest = text
+        while (rest.length > max) { val cut = cutAt(rest, max); parts += rest.substring(0, cut).trim(); rest = rest.substring(cut).trim() }
+        if (rest.isNotEmpty()) parts += rest
+        val total = c.to - c.from; val sum = parts.sumOf { it.length }.coerceAtLeast(1); var t = c.from
+        return parts.mapIndexed { k, p ->
+            val end = if (k == parts.lastIndex) c.to else (t + total * p.length / sum).coerceAtMost(c.to)
+            Cue(t, end, p).also { t = end }
+        }
+    }
+    private fun cutAt(s: String, max: Int): Int {
+        val lo = max / 2
+        for (i in max downTo lo) if (i < s.length && (s[i] == ' ' || s[i] == '\n')) return i
+        for (i in max downTo lo) if (i <= s.length && i > 0 && s[i - 1] in ".,!?;:。，！？；、…") return i
+        val wb = java.text.BreakIterator.getWordInstance(java.util.Locale("th")).apply { setText(s) }
+        val at = wb.preceding(max + 1)
+        if (at != java.text.BreakIterator.DONE && at >= lo) return at
+        var i = max
+        while (i > lo && (i < s.length && s[i] in noStart || s[i - 1] in noEnd)) i--
+        return i.coerceAtLeast(1)
+    }
+
     /** One subtitle line: shown from [from] to [to] ms. */
     data class Cue(val from: Long, val to: Long, val text: String)
+    /**
+     * Timing for lines made from speech: each line stays [holdMs] after the voice stops, then goes away.
+     * It never runs into the next line, and a line is not kept longer than [maxMs] unless the voice itself lasted that long.
+     */
+    fun holdCues(cues: List<Cue>, holdMs: Long = 1000L, maxMs: Long = 7000L, minMs: Long = 300L): List<Cue> {
+        val sorted = cues.sortedBy { it.from }
+        return sorted.mapIndexed { i, c ->
+            val next = sorted.getOrNull(i + 1)?.from ?: Long.MAX_VALUE
+            val cap = maxOf(c.to, c.from + maxMs)
+            val end = minOf(c.to + holdMs, next, cap).coerceAtLeast(minOf(c.from + minMs, next))
+            Cue(c.from, end, c.text)
+        }
+    }
     private val srtTime = Regex("""(\d+):(\d+):(\d+)[,.](\d+)\s*-->\s*(\d+):(\d+):(\d+)[,.](\d+)""")
     /** Reads the text of an .srt file. Lines without a valid time or without words are skipped; formatting tags are removed. */
     fun parseSrt(text: String): List<Cue> = text.removePrefix(0xFEFF.toChar().toString()).replace("\r", "").split(Regex("""\n\s*\n""")).mapNotNull { block ->

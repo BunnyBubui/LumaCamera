@@ -39,6 +39,10 @@ object ExportJob {
         val cleanup: () -> Unit,
         /** Backdrop kind per step ([ExportProgress.Backdrop]), so the process page can be rebuilt from anywhere. */
         val kinds: List<Int> = emptyList(),
+        /** Sound only: AAC bitrate in kbps (0 = a picture export). */
+        val audioKbps: Int = 0,
+        /** Sound only: the file is made as AAC first and then turned into a .wav. */
+        val wav: Boolean = false,
     )
 
     class State(val plan: Plan) {
@@ -54,6 +58,18 @@ object ExportJob {
         fun percent(): Int {
             val w = plan.weights; val total = w.sum().coerceAtLeast(0.001f)
             return (((w.take(stage).sum() + w.getOrElse(stage) { 0f } * fraction.coerceIn(0f, 1f)) / total) * 100).toInt().coerceIn(0, 100)
+        }
+        private var timedStage = -1; private var stageClock = Eta.Tracker()
+        /**
+         * Milliseconds left: the rest of this step at the pace it is going, plus the estimates of the steps after it.
+         * Until the step has run long enough to measure, its own estimate stands in, so a number always shows.
+         */
+        @Synchronized fun leftMs(): Long {
+            if (stage != timedStage) { timedStage = stage; stageClock = Eta.Tracker() }
+            val w = plan.weights; val later = (w.drop(stage + 1).sum() * 60_000.0).toLong()
+            val own = if (etaMs > 0) etaMs else stageClock.left(fraction).takeIf { it >= 0 }
+                ?: ((w.getOrElse(stage) { 0f } * (1f - fraction.coerceIn(0f, 1f))) * 60_000.0).toLong()
+            return own + later
         }
         fun stepName() = plan.steps.getOrElse(stage) { "เสร็จแล้ว" }
     }
@@ -111,6 +127,7 @@ object ExportJob {
             override fun onCompleted(composition: Composition, result: ExportResult) {
                 transformer = null; h.removeCallbacks(poll); done += file
                 if (i + 1 < parts.size) { runPart(app, s, parts, i + 1, h, done); return }
+                if (s.plan.wav) { toWav(app, s, done.toList()); return }
                 val e = s.plan.enhance; val out = s.plan.finalFile
                 if (e != null && out != null) enhance(app, s, file, out, e) else publish(app, s, done)
             }
@@ -118,7 +135,7 @@ object ExportJob {
                 transformer = null; h.removeCallbacks(poll); file.delete()
                 fail(s, if (cancel.get()) null else "${e.errorCodeName} · ${e.cause?.message ?: e.localizedMessage}")
             }
-        }, h.looper)
+        }, h.looper, s.plan.audioKbps)
         transformer = t; t.start(composition, file.path); h.post(poll)
     }
 
@@ -136,9 +153,22 @@ object ExportJob {
         }.apply { name = "lumora-enhance"; priority = Thread.NORM_PRIORITY - 1 }.start()
     }
 
+    /** Sound only, as .wav: decodes the finished AAC file to plain PCM. */
+    private fun toWav(app: Context, s: State, files: List<File>) {
+        s.stage = s.plan.stageEnhance; s.fraction = 0f; s.detail = "กำลังแปลงเป็น WAV"; changed()
+        Thread {
+            var last = 0L; val made = ArrayList<File>()
+            val r = runCatching { files.forEach { f ->
+                val w = File(f.parentFile, f.nameWithoutExtension + ".wav"); made += w
+                AudioWav.fromFile(f, w, cancel) { p -> s.fraction = p; val now = SystemClock.elapsedRealtime(); if (now - last > 300) { last = now; changed() } }
+                f.delete() } }
+            r.onSuccess { publish(app, s, made) }.onFailure { made.forEach { it.delete() }; fail(s, if (cancel.get()) null else (it.message ?: it.javaClass.simpleName)) }
+        }.apply { name = "lumora-wav" }.start()
+    }
+
     private fun publish(app: Context, s: State, files: List<File>) {
         s.stage = s.plan.stageSave; s.fraction = 0.3f; s.detail = "กำลังบันทึกไฟล์"; changed()
-        runCatching { files.map { f -> if (f.extension == "m4a") MediaLedger.publishAudio(app, f, f.name, s.plan.note) else MediaLedger.publishVideo(app, f, f.name, s.plan.note) } }
+        runCatching { files.map { f -> if (f.extension == "m4a" || f.extension == "wav") MediaLedger.publishAudio(app, f, f.name, s.plan.note) else MediaLedger.publishVideo(app, f, f.name, s.plan.note) } }
             .onSuccess { u -> s.uris = u; s.outputs = files; s.stage = s.plan.steps.size; s.fraction = 0f; s.finished = true; s.detail = "เสร็จแล้ว"; end() }
             .onFailure { fail(s, "บันทึกไฟล์ไม่ได้ · ${it.localizedMessage}") }
     }
@@ -189,9 +219,11 @@ class ExportService : Service() {
     private fun notification(): android.app.Notification {
         val s = ExportJob.state
         val pc = s?.percent() ?: -1
-        val eta = s?.etaMs?.takeIf { it > 0 }?.let { if (it < 60_000) " · ไม่ถึง 1 นาที" else " · อีก ~${it / 60_000 + 1} นาที" } ?: ""
+        val left = s?.leftMs()?.takeIf { it > 0 }
+        val eta = left?.let { " · " + Eta.text(it) } ?: ""
         return LiveNotice.progress(this, "Lumora · ส่งออกวิดีโอ", (s?.stepName() ?: "กำลังเริ่ม") + eta, pc, openProcess(),
-            PendingIntent.getService(this, 1, Intent(this, ExportService::class.java).setAction(CANCEL), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
+            PendingIntent.getService(this, 1, Intent(this, ExportService::class.java).setAction(CANCEL), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT),
+            left?.let { Eta.chip(it) })
     }
 
     /** While the export runs, the notification opens the process page; once it is done, the gallery. */

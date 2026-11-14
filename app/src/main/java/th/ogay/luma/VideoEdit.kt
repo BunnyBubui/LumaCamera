@@ -36,6 +36,8 @@ import androidx.media3.transformer.Codec
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.DefaultAssetLoaderFactory
 import androidx.media3.transformer.DefaultDecoderFactory
+import androidx.media3.transformer.DefaultEncoderFactory
+import androidx.media3.transformer.VideoEncoderSettings
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.Effects
@@ -76,7 +78,9 @@ data class VideoEditSpec(
     /** Speed curve of the main clip (5 points, see [StudioMath.curveMul]); null = steady [speed]. */
     val mainCurve: FloatArray? = null,
     /** Only the sound: no picture track, no picture effects. */
-    val audioOnly: Boolean = false)
+    val audioOnly: Boolean = false,
+    /** Sound only: sample rate in Hz (0 = as recorded) and a mono mix. */
+    val audioHz: Int = 0, val audioMono: Boolean = false)
 
 /** A clip appended after the main one. [from]/[to] in ms of that clip. */
 data class VideoPart(val source: Uri, val from: Long, val to: Long, val speed: Float = 1f, val muted: Boolean = false, val volume: Float = 1f, val curve: FloatArray? = null)
@@ -227,6 +231,13 @@ object VideoEdit {
         if (s.layers.any { it.audible }) sequences += VideoLayers.sounds(requireNotNull(context) { "layers need a context" }, s.layers, s.duck) { gain(it) }
         val builder = Composition.Builder(sequences)
         if (whole.isNotEmpty() && !s.audioOnly) builder.setEffects(Effects(emptyList(), whole))
+        if (s.audioOnly && (s.audioHz > 0 || s.audioMono)) {
+            // The whole mix is shaped last: first to one channel, then to the chosen sample rate.
+            val end = ArrayList<AudioProcessor>()
+            if (s.audioMono) end += ChannelMixingAudioProcessor().apply { for (n in 1..2) putChannelMixingMatrix(ChannelMixingMatrix.create(n, 1)) }
+            if (s.audioHz > 0) end += androidx.media3.common.audio.SonicAudioProcessor().apply { setOutputSampleRateHz(s.audioHz) }
+            builder.setEffects(Effects(end, emptyList()))
+        }
         return builder.build()
     }
     private fun clipped(uri: Uri, from: Long, to: Long) = MediaItem.Builder().setUri(uri)
@@ -237,7 +248,7 @@ object VideoEdit {
      * so Android's software decoder goes first and only one frame is in flight. Phones keep the normal decoders.
      */
     /** [looper] runs the export and its callbacks on that thread (the export job); default is the caller's. */
-    fun transformer(c: Context, listener: Transformer.Listener, looper: android.os.Looper? = null): Transformer {
+    fun transformer(c: Context, listener: Transformer.Listener, looper: android.os.Looper? = null, audioKbps: Int = 0): Transformer {
         val emulator = Util.isRunningOnEmulator()
         val selector = MediaCodecSelector { mime, secure, tunnel ->
             val codecs = MediaCodecSelector.DEFAULT.getDecoderInfos(mime, secure, tunnel)
@@ -252,6 +263,11 @@ object VideoEdit {
         }
         return Transformer.Builder(c).setAssetLoaderFactory(DefaultAssetLoaderFactory(c, decoder, Clock.DEFAULT, null))
             .setMaxDelayBetweenMuxerSamplesMs(90_000).setVideoMimeType(if (c.getSharedPreferences("camera", Context.MODE_PRIVATE).getBoolean("export_hevc", false)) MimeTypes.VIDEO_H265 else MimeTypes.VIDEO_H264).setPortraitEncodingEnabled(true).addListener(listener)
-            .apply { if (looper != null) setLooper(looper) }.build()
+            .apply { if (looper != null) setLooper(looper)
+                // A fixed bitrate chosen in the export sheet (0 = let the encoder decide).
+                val mbps = c.getSharedPreferences("camera", Context.MODE_PRIVATE).getInt("export_mbps", 0)
+                // Sound only: the AAC bitrate chosen in the sheet.
+                if (audioKbps > 0) setEncoderFactory(DefaultEncoderFactory.Builder(c).setRequestedAudioEncoderSettings(androidx.media3.transformer.AudioEncoderSettings.Builder().setBitrate(audioKbps * 1000).build()).build())
+                else if (mbps > 0) setEncoderFactory(DefaultEncoderFactory.Builder(c).setRequestedVideoEncoderSettings(VideoEncoderSettings.Builder().setBitrate(mbps * 1_000_000).build()).build()) }.build()
     }
 }

@@ -8,16 +8,13 @@ import android.media.MediaCodec
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.net.Uri
-import android.os.Bundle
-import android.os.ParcelFileDescriptor
-import android.speech.RecognitionListener
-import android.speech.RecognitionSupport
-import android.speech.RecognitionSupportCallback
-import android.speech.RecognizerIntent
-import android.speech.SpeechRecognizer
-import androidx.annotation.RequiresApi
-import java.io.File
-import java.nio.ByteBuffer
+import com.k2fsa.sherpa.onnx.OfflineModelConfig
+import com.k2fsa.sherpa.onnx.OfflineRecognizer
+import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
+import com.k2fsa.sherpa.onnx.OfflineWhisperModelConfig
+import com.k2fsa.sherpa.onnx.SileroVadModelConfig
+import com.k2fsa.sherpa.onnx.Vad
+import com.k2fsa.sherpa.onnx.VadModelConfig
 import java.nio.ByteOrder
 
 /** Sound of part of a file as 16 kHz mono 16-bit samples, the format speech recognition reads. */
@@ -65,83 +62,132 @@ object StudioPcm {
     }
 }
 
+/** The spoken-language choice that means "find it for me". */
+const val CAPTION_AUTO = "auto"
+
 /** A stretch of sound to turn into one caption line: (file, from ms, to ms, where it starts in the finished video, speed). */
 class SpeechPiece(val uri: Uri, val from: Long, val to: Long, val outAt: Long, val speed: Float)
 
 /**
- * Captions from speech with the phone's own on-device speech recognition (Android 13 or newer). The sound is cut
- * into pieces at its pauses beforehand, so every recognised line gets the start and end time of its piece.
- * [pieces] are (file, from ms, to ms, where the piece starts in the finished video, speed).
+ * Captions from speech with a Whisper model that runs on the phone (sherpa-onnx). The sound is cut into pieces at its
+ * pauses beforehand, so every recognised line gets the start and end time of its piece. With [AUTO] Whisper first listens
+ * to a few of the longest pieces, takes the language most of them were in, and then reads every piece in that language.
  */
-@RequiresApi(33)
-class StudioSpeech(private val a: Activity, private val language: String, private val pieces: List<SpeechPiece>,
+class StudioSpeech(private val a: Activity, private val languageArg: String, private val pieces: List<SpeechPiece>, private val model: ModelSpec,
                    private val progress: (Int, Int) -> Unit, private val finished: (List<StudioMath.Cue>, String?) -> Unit) {
-    private var recognizer: SpeechRecognizer? = null
-    private val cues = ArrayList<StudioMath.Cue>()
-    private var index = 0; private var failures = 0; private var stopped = false
-    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
-    private val timeout = Runnable { recognizer?.cancel(); next(null) }
-    private var pfd: ParcelFileDescriptor? = null; private var file: File? = null
+    companion object {
+        const val AUTO = CAPTION_AUTO
+        /** Whisper's own code for a language tag such as "th-TH" ("" when the language is to be found automatically). */
+        fun whisperCode(tag: String): String {
+            if (tag == AUTO) return ""
+            val base = tag.lowercase().substringBefore('-')
+            return if (base == "fil") "tl" else base
+        }
+    }
+    /** Tells what the job is doing in words and which language (Whisper's code) it settled on. */
+    var onStage: (String) -> Unit = {}
+    var onDetected: (String) -> Unit = {}
+    /** The last text recognised, for showing while the job runs. */
+    var onText: (String) -> Unit = {}
+    @Volatile private var stopped = false
+    fun stop() { stopped = true }
+    fun start() { Thread({ work() }, "whisper-captions").start() }
 
-    private fun intent(extra: Intent.() -> Unit = {}) = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-        putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM); putExtra(RecognizerIntent.EXTRA_LANGUAGE, language)
-        putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true); extra() }
+    private fun ui(block: () -> Unit) { a.runOnUiThread { if (!stopped && !a.isDestroyed) block() } }
 
-    fun start() {
-        if (!SpeechRecognizer.isOnDeviceRecognitionAvailable(a)) { finished(emptyList(), "เครื่องนี้ไม่มีระบบแปลงเสียงพูดเป็นข้อความแบบทำงานในเครื่อง"); return }
-        val r = SpeechRecognizer.createOnDeviceSpeechRecognizer(a); recognizer = r
-        r.setRecognitionListener(listener)
-        // Ask first whether the language is ready on this phone; if it can be downloaded, start the download.
-        r.checkRecognitionSupport(intent(), a.mainExecutor, object : RecognitionSupportCallback {
-            override fun onSupportResult(s: RecognitionSupport) {
-                val tag = language.lowercase(); fun has(list: List<String>) = list.any { it.lowercase() == tag || it.lowercase().substringBefore('-') == tag.substringBefore('-') }
-                when {
-                    has(s.installedOnDeviceLanguages) -> run()
-                    has(s.supportedOnDeviceLanguages) || has(s.pendingOnDeviceLanguages) -> { runCatching { r.triggerModelDownload(intent()) }; stop(); finished(emptyList(), "กำลังดาวน์โหลดภาษานี้ลงเครื่อง · ลองใหม่อีกครั้งเมื่อดาวน์โหลดเสร็จ") }
-                    else -> { stop(); finished(emptyList(), "ระบบแปลงเสียงในเครื่องนี้ยังไม่รองรับภาษานี้") }
+    private fun config(language: String): OfflineRecognizerConfig {
+        fun f(n: String) = ModelStore.file(a, model, n).absolutePath
+        return OfflineRecognizerConfig(modelConfig = OfflineModelConfig(
+            whisper = OfflineWhisperModelConfig(encoder = f("${model.id}-encoder.int8.onnx"), decoder = f("${model.id}-decoder.int8.onnx"), language = language, task = "transcribe"),
+            tokens = f("${model.id}-tokens.txt"), numThreads = Runtime.getRuntime().availableProcessors().coerceIn(2, 4), provider = "cpu"))
+    }
+
+    private class Heard(val text: String, val lang: String)
+    private fun heard(rec: OfflineRecognizer, pcm: ShortArray): Heard {
+        val samples = FloatArray(pcm.size) { pcm[it] / 32768f }
+        val stream = rec.createStream()
+        try {
+            stream.acceptWaveform(samples, StudioPcm.RATE); rec.decode(stream)
+            val r = rec.getResult(stream)
+            return Heard(r.text.trim(), r.lang.removePrefix("<|").removeSuffix("|>").lowercase())
+        } finally { stream.release() }
+    }
+    /**
+     * Where real speech is inside a piece. Pieces are cut by loudness, so music and sound effects get through, and Whisper
+     * invents words for them; a voice detector (Silero) tells talking from the rest. Null = no speech, so the piece is skipped.
+     * Without the detector the whole piece counts, as before.
+     */
+    private var vad: Vad? = null
+    private class Span(val from: Int, val to: Int)
+    private fun speechIn(pcm: ShortArray): Span? {
+        val v = vad ?: return Span(0, pcm.size)
+        return runCatching {
+            v.clear(); v.reset()
+            val x = FloatArray(pcm.size) { pcm[it] / 32768f }
+            var i = 0; while (i < x.size) { v.acceptWaveform(x.copyOfRange(i, minOf(x.size, i + StudioPcm.RATE))); i += StudioPcm.RATE }
+            v.flush()
+            var first = -1L; var last = 0L; var total = 0L
+            while (!v.empty()) { val s = v.front(); if (first < 0) first = s.start; last = s.start + s.samples.size; total += s.samples.size; v.pop() }
+            if (first < 0 || total < StudioPcm.RATE / 4) null
+            // A little before and after, so the first and last sounds of a sentence are not cut.
+            else Span(maxOf(0L, first - StudioPcm.RATE / 5).toInt(), minOf(pcm.size.toLong(), last + StudioPcm.RATE * 3 / 10).toInt())
+        }.getOrDefault(Span(0, pcm.size))
+    }
+    private fun pcmOf(p: SpeechPiece): ShortArray = runCatching { StudioPcm.extract(a, p.uri, p.from, p.to) }.getOrDefault(ShortArray(0))
+    /** True when the text has at least one letter or digit, so a line of only dots or symbols is dropped. */
+    private fun worthKeeping(t: String) = t.any { it.isLetterOrDigit() }
+
+    private fun work() {
+        var rec: OfflineRecognizer? = null
+        try {
+            ui { onStage("กำลังโหลดโมเดล ${model.name} เข้าเครื่อง…") }
+            val code = whisperCode(languageArg)
+            rec = OfflineRecognizer(null, config(code))
+            vad = runCatching { Vad(a.assets, VadModelConfig(sileroVadModelConfig = SileroVadModelConfig(model = "silero_vad.onnx", threshold = 0.5f, minSilenceDuration = 0.4f,
+                minSpeechDuration = 0.2f, windowSize = 512, maxSpeechDuration = 30f), sampleRate = StudioPcm.RATE, numThreads = 1, provider = "cpu", debug = false)) }.getOrNull()
+            var language = code
+            if (code.isEmpty()) {
+                ui { onStage("ฟังเสียงเพื่อตรวจภาษาที่พูด…") }
+                val votes = HashMap<String, Int>()
+                // The longest few of the first pieces: short or noisy pieces make Whisper's language guess weak.
+                for (p in pieces.take(8).sortedByDescending { it.to - it.from }.take(3)) {
+                    if (stopped) return
+                    val pcm0 = pcmOf(p); if (pcm0.size < StudioPcm.RATE / 2) continue
+                    val sp0 = speechIn(pcm0) ?: continue
+                    val h = heard(rec, pcm0.copyOfRange(sp0.from, sp0.to))
+                    if (h.lang.isNotEmpty() && worthKeeping(h.text)) votes[h.lang] = (votes[h.lang] ?: 0) + h.text.length.coerceAtMost(60)
+                }
+                language = votes.maxByOrNull { it.value }?.key ?: "en"
+                ui { onDetected(language) }
+                // Whisper can switch language on a loaded model; if this build cannot, load it again with the language set.
+                val switched = runCatching { rec.setConfig(config(language)) }.isSuccess
+                if (!switched) { rec.release(); rec = OfflineRecognizer(null, config(language)) }
+            }
+            val cues = ArrayList<StudioMath.Cue>(); var failures = 0
+            for ((i, p) in pieces.withIndex()) {
+                if (stopped) return
+                ui { progress(i, pieces.size) }
+                val pcm = pcmOf(p); if (pcm.size < StudioPcm.RATE / 4) continue
+                val span = speechIn(pcm) ?: continue
+                val h = runCatching { heard(rec!!, pcm.copyOfRange(span.from, span.to)) }.getOrElse { failures++; null } ?: continue
+                val seconds = (span.to - span.from).toDouble() / StudioPcm.RATE
+                val words = StudioMath.cleanSpeech(h.text, seconds)
+                if (words != null) {
+                    // The line shows while the voice is heard, not through the whole piece.
+                    val from = p.outAt + (span.from * 1000L / StudioPcm.RATE / p.speed).toLong()
+                    val to = p.outAt + (span.to * 1000L / StudioPcm.RATE / p.speed).toLong()
+                    cues += StudioMath.Cue(from, maxOf(to, from + 300), words); ui { onText(words) }
                 }
             }
-            override fun onError(error: Int) { run() }
-        })
-    }
-    fun stop() { stopped = true; handler.removeCallbacks(timeout); recognizer?.runCatching { cancel(); destroy() }; recognizer = null; closeFile() }
-    private fun closeFile() { runCatching { pfd?.close() }; pfd = null; file?.delete(); file = null }
-
-    private fun run() {
-        if (stopped) return
-        if (index >= pieces.size) { stop(); finished(cues, if (cues.isEmpty()) (if (failures > 0) "แปลงเสียงไม่สำเร็จ" else "ไม่พบเสียงพูดที่แปลงได้") else null); return }
-        progress(index, pieces.size)
-        val p = pieces[index]
-        Thread {
-            val pcm = runCatching { StudioPcm.extract(a, p.uri, p.from, p.to) }.getOrDefault(ShortArray(0))
-            val f = File(a.cacheDir, "speech_$index.pcm")
-            runCatching { f.outputStream().use { o -> val b = ByteBuffer.allocate(pcm.size * 2).order(ByteOrder.LITTLE_ENDIAN); pcm.forEach { b.putShort(it) }; o.write(b.array()) } }
-            a.runOnUiThread {
-                if (stopped) { f.delete(); return@runOnUiThread }
-                if (pcm.size < StudioPcm.RATE / 4) { f.delete(); next(null); return@runOnUiThread }
-                file = f; pfd = ParcelFileDescriptor.open(f, ParcelFileDescriptor.MODE_READ_ONLY)
-                val i = intent { putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE, pfd); putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_CHANNEL_COUNT, 1)
-                    putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_ENCODING, AudioFormat.ENCODING_PCM_16BIT); putExtra(RecognizerIntent.EXTRA_AUDIO_SOURCE_SAMPLING_RATE, StudioPcm.RATE) }
-                handler.postDelayed(timeout, 25_000)
-                runCatching { recognizer?.startListening(i) }.onFailure { next(null) }
+            val problem = if (cues.isNotEmpty()) null else if (failures > 0) "ถอดเสียงไม่สำเร็จ" else "ไม่พบเสียงพูดที่ถอดเป็นข้อความได้"
+            ui { finished(cues, problem) }
+        } catch (t: Throwable) {
+            val why = when (t) {
+                is UnsatisfiedLinkError, is NoClassDefFoundError -> "เปิดตัวถอดเสียง Whisper ไม่ได้ (${t.message?.take(80)})"
+                is OutOfMemoryError -> "หน่วยความจำไม่พอสำหรับโมเดลนี้ ลองเลือกโมเดลที่เล็กลง"
+                else -> "ถอดเสียงไม่สำเร็จ: ${t.message?.take(100) ?: t.javaClass.simpleName}"
             }
-        }.start()
-    }
-    private fun next(text: String?) {
-        handler.removeCallbacks(timeout); closeFile()
-        val p = pieces.getOrNull(index)
-        if (p != null && !text.isNullOrBlank()) cues += StudioMath.Cue(p.outAt, p.outAt + ((p.to - p.from) / p.speed).toLong(), text.trim())
-        index++; handler.post { run() }
-    }
-    private val listener = object : RecognitionListener {
-        override fun onResults(b: Bundle?) { next(b?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull()) }
-        override fun onError(error: Int) {
-            if (error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED || error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE) { stop(); finished(cues, "ระบบแปลงเสียงในเครื่องนี้ยังไม่รองรับภาษานี้"); return }
-            if (error == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) { stop(); finished(cues, "ต้องอนุญาตให้ใช้ไมโครโฟนก่อน"); return }
-            if (error != SpeechRecognizer.ERROR_NO_MATCH && error != SpeechRecognizer.ERROR_SPEECH_TIMEOUT) failures++
-            next(null)
-        }
-        override fun onReadyForSpeech(p: Bundle?) {}; override fun onBeginningOfSpeech() {}; override fun onRmsChanged(v: Float) {}
-        override fun onBufferReceived(b: ByteArray?) {}; override fun onEndOfSpeech() {}; override fun onPartialResults(b: Bundle?) {}; override fun onEvent(t: Int, b: Bundle?) {}
+            ui { finished(emptyList(), why) }
+        } finally { runCatching { rec?.release() }; runCatching { vad?.release() }; vad = null }
     }
 }

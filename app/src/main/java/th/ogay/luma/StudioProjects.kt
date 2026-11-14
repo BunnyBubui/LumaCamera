@@ -14,8 +14,31 @@ import java.io.File
  * each file so a later version of the app can tell how to read an older project.
  */
 object StudioProjects {
+    /**
+     * Saving and listing projects run here, on their own thread. The shared photo/video reading thread can be busy for minutes with an
+     * export or caption job, and a project queued behind it would not be saved or shown until that job ended.
+     */
+    val io: java.util.concurrent.ExecutorService = java.util.concurrent.Executors.newSingleThreadExecutor()
+
     const val SCHEMA = 1
-    class Info(val id: String, val name: String, val source: Uri, val updated: Long, val thumb: File, val missing: Boolean)
+    class Info(val id: String, val name: String, val source: Uri, val updated: Long, val thumb: File, val missing: Boolean,
+        /** Short words for what was edited (for the list), and the length in seconds when it can be told simply (else 0). */
+        val tags: List<String> = emptyList(), val seconds: Long = 0)
+    private fun summary(st: Bundle): Pair<List<String>, Long> {
+        val extras = st.getStringArrayList("extras")?.size ?: 0
+        val speed = st.getFloat("speed", 1f)
+        val tags = ArrayList<String>()
+        if (extras > 0) tags += "${extras + 1} คลิป"
+        if (speed < 0.99f) tags += "สโลว์ ${"%.2f".format(speed).trimEnd('0').trimEnd('.')}×" else if (speed > 1.01f) tags += "เร็ว ${"%.1f".format(speed).trimEnd('0').trimEnd('.')}×"
+        if (!st.getString("music").isNullOrEmpty()) tags += "เพลง"
+        if (!st.getString("caption").isNullOrBlank()) tags += "คำบรรยาย"
+        if (st.getInt("crop") != 0) tags += "ครอป"
+        if (!st.getString("film").isNullOrEmpty()) tags += "ฟิลเตอร์"
+        val simple = extras == 0 && st.getLong("split", -1) < 0 && st.getLong("cutFrom", -1) < 0
+        val end = st.getLong("end", 0); val start = st.getLong("start", 0)
+        val secs = if (simple && end > start) ((end - start) / speed.coerceAtLeast(0.05f) / 1000f).toLong() else 0L
+        return tags.take(3) to secs
+    }
 
     private fun dir(c: Context) = File(c.filesDir, "studio").apply { mkdirs() }
     private fun file(c: Context, id: String) = File(dir(c), "$id.json")
@@ -69,7 +92,8 @@ object StudioProjects {
         runCatching {
             val o = JSONObject(f.readText()); val id = f.name.removeSuffix(".json"); val src = Uri.parse(o.getString("source"))
             val gone = runCatching { c.contentResolver.openAssetFileDescriptor(src, "r")?.close() ?: throw IllegalStateException() }.isFailure
-            Info(id, o.optString("name", "โปรเจกต์"), src, o.optLong("updated"), thumb(c, id), gone)
+            val (tags, secs) = runCatching { summary(decode(o.getJSONObject("state"))) }.getOrDefault(emptyList<String>() to 0L)
+            Info(id, o.optString("name", "โปรเจกต์"), src, o.optLong("updated"), thumb(c, id), gone, tags, secs)
         }.getOrNull()
     }.sortedByDescending { it.updated }
     fun rename(c: Context, id: String, name: String) { runCatching { val f = file(c, id); val o = JSONObject(f.readText()).put("name", name); f.writeText(o.toString()) } }

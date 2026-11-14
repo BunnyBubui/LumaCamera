@@ -18,7 +18,10 @@ import java.util.Locale
 import kotlin.math.ceil
 
 /** What the export sheet hands back: the short side in pixels, the frame rate and whether AI may enlarge. */
-data class ExportChoice(val shortSide: Int, val fps: Float, val ai: Boolean, val profile: th.ogay.luma.ai.EnhanceProfile = th.ogay.luma.ai.EnhanceProfile.NATURAL, val audioOnly: Boolean = false)
+data class ExportChoice(val shortSide: Int, val fps: Float, val ai: Boolean, val profile: th.ogay.luma.ai.EnhanceProfile = th.ogay.luma.ai.EnhanceProfile.NATURAL, val audioOnly: Boolean = false,
+    /** In-between frames: 0 finer, 1 balanced, 2 faster. */ val flowMode: Int = 1,
+    /** Fixed video bitrate in Mbps (0 = automatic), and for sound only: AAC kbps, sample rate in Hz (0 = as recorded) and mono. */ val mbps: Int = 0, val audioKbps: Int = 128, val audioHz: Int = 0, val audioMono: Boolean = false,
+    /** Sound only: 0 AAC in .m4a, 1 plain PCM in .wav. */ val audioFormat: Int = 0)
 
 /**
  * Export sheet in the style of TikTok's: the clip at the top, then two sliders (resolution and frame rate) like
@@ -64,6 +67,17 @@ object ExportSheet {
         val estimate = a.text("", 12.5f, Glass.TEXT2).apply { gravity = Gravity.CENTER }
         val go = a.text("ส่งออก", 16f, Glass.ON_ACCENT, true).apply { gravity = Gravity.CENTER; background = a.glass(26, Glass.ACCENT); isClickable = true; glassTouch(); contentDescription = "เริ่มส่งออก" }
 
+        // Video rows live in one box and sound rows in another: choosing "sound only" swaps them.
+        var into: LinearLayout = card
+        val videoBox = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
+        val audioBox = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }
+        val flowBox = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; visibility = View.GONE }
+        var audioOnly = false
+        var flowMode = prefs.getInt("export_flow", 1).coerceIn(0, 2)
+        var akbps = prefs.getInt("export_akbps", 128); var ahz = prefs.getInt("export_ahz", 0); var amono = prefs.getBoolean("export_amono", false)
+        var aformat = prefs.getInt("export_aformat", 0).coerceIn(0, 1)
+        val kBox = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
+        var shownAudio: Boolean? = null; var shownFlow: Boolean? = null
         // The model chip and its preview only matter when the picture gets bigger; set further down.
         var onBigger: (Boolean) -> Unit = {}
         fun refresh() {
@@ -85,9 +99,19 @@ object ExportSheet {
             // Always in place so the sheet keeps its height; it only matters (and is lit) when the picture gets bigger.
             aiChip.isEnabled = bigger; onBigger(bigger)
             val long = (src.longSide * s.toFloat() / src.shortSide).toInt()
-            val mb = FrameEncoder.bitrate(long, s, r) / 8.0 * src.durationMs / 1000.0 / 1_000_000.0
-            val minutes = minutes(src, s, r, ai() && bigger)
-            val ok = !(bigger || smoother) || FrameEncoder.pickMime(long / 2 * 2, s, r) != null
+            val chosen = prefs.getInt("export_mbps", 0)
+            val mb = if (audioOnly && aformat == 1) (if (ahz > 0) ahz else 48000) * (if (amono) 1 else 2) * 2.0 * src.durationMs / 1000.0 / 1_000_000.0
+                else if (audioOnly) akbps * 1000 / 8.0 * src.durationMs / 1000.0 / 1_000_000.0
+                else (if (chosen > 0) chosen * 1_000_000 else FrameEncoder.bitrate(long, s, r)) / 8.0 * src.durationMs / 1000.0 / 1_000_000.0
+            val minutes = if (audioOnly) 0.0 else minutes(src, s, r, ai() && bigger)
+            val ok = audioOnly || !(bigger || smoother) || FrameEncoder.pickMime(long / 2 * 2, s, r) != null
+            val kv = if (audioOnly && aformat == 1) View.GONE else View.VISIBLE
+            if (kBox.visibility != kv) { kBox.visibility = kv; sheet.unpin() }
+            val wantAudio = audioOnly; val wantFlow = smoother && !audioOnly
+            if (shownAudio != wantAudio || shownFlow != wantFlow) { val first = shownAudio == null; shownAudio = wantAudio; shownFlow = wantFlow
+                videoBox.visibility = if (wantAudio) View.GONE else View.VISIBLE; audioBox.visibility = if (wantAudio) View.VISIBLE else View.GONE
+                flowBox.visibility = if (wantFlow) View.VISIBLE else View.GONE
+                if (!first) sheet.unpin() }
             estimate.text = if (!ok) "เครื่องนี้เข้ารหัส ${sideName(s)} ${fpsName(r)} fps ไม่ได้ ลองลดความละเอียดหรือเฟรมเรต"
                 else "ไฟล์ประมาณ ${if (mb < 10) String.format(Locale.US, "%.1f", mb) else mb.toInt().toString()} MB" + (if (minutes > 0) " · ใช้เวลาประมาณ ${if (minutes < 1) "ไม่ถึง 1" else ceil(minutes).toInt().toString()} นาที" else "")
             estimate.setTextColor(if (ok) Glass.TEXT2 else 0xffff6b5e.toInt())
@@ -96,13 +120,11 @@ object ExportSheet {
         fun row(title: String, value: TextView, note: TextView, names: List<String>, start: Int, set: (Int) -> Unit) {
             val top = LinearLayout(a).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, a.dp(18), 0, 0) }
             top.addView(a.text(title, 14f, Glass.TEXT2, true), LinearLayout.LayoutParams(0, -2, 1f)); top.addView(value)
-            card.addView(top, -1, -2)
-            card.addView(GlassSlider(a).apply { values = names; index = start; grad = intArrayOf(0xff64d2ff.toInt(), Color.WHITE, Glass.ACCENT); contentDescription = title
+            into.addView(top, -1, -2)
+            into.addView(GlassSlider(a).apply { values = names; index = start; grad = intArrayOf(0xff64d2ff.toInt(), Color.WHITE, Glass.ACCENT); contentDescription = title
                 onChange = { k -> set(k); refresh() } }, LinearLayout.LayoutParams(-1, a.dp(46)))
-            card.addView(note, -1, -2)
+            into.addView(note, -1, -2)
         }
-        row("ความละเอียด", sideValue, sideNote, sides.map { sideName(it) }, side) { side = it }
-        row("อัตราเฟรม", rateValue, rateNote, rates.map { fpsName(it) }, rate) { rate = it }
         // Choices from a list open a glass menu, like the AI model below: the file type, and the compression.
         val pickMenu = GlassMenu(a.window.decorView as FrameLayout) { on -> sheet.recede(on) }
         fun pickRow(title: String, value: TextView, note: TextView, tap: (View) -> Unit) {
@@ -111,13 +133,28 @@ object ExportSheet {
             val pill = LinearLayout(a).apply { gravity = Gravity.CENTER_VERTICAL; background = a.glass(16, 0x26ffffff); setPadding(a.dp(14), 0, a.dp(10), 0); isClickable = true; glassTouch(); contentDescription = title
                 addView(value); addView(IconView(a, "M7 10l5 5 5-5", 2f).apply { tint = Glass.TEXT2 }, LinearLayout.LayoutParams(a.dp(16), a.dp(16)).apply { leftMargin = a.dp(6) }); setOnClickListener { tap(this) } }
             top.addView(pill, LinearLayout.LayoutParams(-2, a.dp(38)))
-            card.addView(top, -1, -2); card.addView(note.apply { setPadding(0, a.dp(4), 0, 0) }, -1, -2)
+            into.addView(top, -1, -2); into.addView(note.apply { setPadding(0, a.dp(4), 0, 0) }, -1, -2)
         }
-        var audioOnly = false
+        // What the file is comes first: choosing sound only takes the picture rows away and shows the sound ones.
         val typeValue = a.text("วิดีโอ", 14f, Glass.TEXT, true); val typeNote = a.text("ภาพพร้อมเสียง .mp4", 12f, Glass.TEXT3)
-        var onType: () -> Unit = {}
         if (!upscale) pickRow("ไฟล์ที่ได้", typeValue, typeNote) { v -> pickMenu.show(v, "ไฟล์ที่ได้", listOf(GlassMenu.Option("วิดีโอ", Icons.VIDEO, "ภาพพร้อมเสียง .mp4"), GlassMenu.Option("เสียงอย่างเดียว", Icons.SOUND, "ไฟล์เสียง .m4a ลงโฟลเดอร์เพลง")), if (audioOnly) 1 else 0) { k ->
-            audioOnly = k == 1; typeValue.text = if (audioOnly) "เสียงอย่างเดียว" else "วิดีโอ"; typeNote.text = if (audioOnly) "ไฟล์เสียง .m4a · ความละเอียดและอัตราเฟรมไม่มีผล" else "ภาพพร้อมเสียง .mp4"; onType() } }
+            audioOnly = k == 1; typeValue.text = if (audioOnly) "เสียงอย่างเดียว" else "วิดีโอ"; typeNote.text = if (audioOnly) "ไฟล์เสียง .m4a (AAC) ลงโฟลเดอร์เพลง" else "ภาพพร้อมเสียง .mp4"; refresh() } }
+        card.addView(videoBox, -1, -2); card.addView(audioBox, -1, -2)
+        into = videoBox
+        row("ความละเอียด", sideValue, sideNote, sides.map { sideName(it) }, side) { side = it }
+        row("อัตราเฟรม", rateValue, rateNote, rates.map { fpsName(it) }, rate) { rate = it }
+        // How the in-between frames are made: finer measuring of motion or faster. Shown only when the rate goes above the source.
+        videoBox.addView(flowBox, -1, -2); into = flowBox
+        run {
+            val flowNames = listOf("ละเอียด", "สมดุล", "เร็ว")
+            val flowNotes = listOf("วัดการเคลื่อนไหวละเอียดที่สุด ภาพแทรกเนียนกว่า แต่ช้าที่สุด", "ค่าเริ่มต้น คุณภาพกับความเร็วพอดีกัน", "เร็วที่สุด ขอบวัตถุที่ขยับเร็วอาจเบลอหรือเพี้ยนกว่า")
+            val flowValue = a.text("", 14f, Glass.TEXT, true); val flowNote = a.text("", 12f, Glass.TEXT3)
+            fun paintFlow(k: Int) { flowValue.text = flowNames[k]; flowNote.text = flowNotes[k] }
+            paintFlow(flowMode)
+            pickRow("ความเร็วเฟรมแทรก", flowValue, flowNote) { v -> pickMenu.show(v, "ความเร็วเฟรมแทรก", flowNames.indices.map { GlassMenu.Option(flowNames[it], Icons.FPS, if (it == 1) "แนะนำ" else flowNotes[it].substringBefore(" ")) }, flowMode) { k ->
+                flowMode = k; prefs.edit().putInt("export_flow", k).apply(); paintFlow(k) } }
+        }
+        into = videoBox
         // H.265 makes a smaller file at the same quality; it is offered only when this phone can encode it.
         val hevcOk = runCatching { android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS).codecInfos.any { it.isEncoder && it.supportedTypes.any { t -> t.equals("video/hevc", true) } } }.getOrDefault(false)
         if (hevcOk && !upscale) {
@@ -127,6 +164,56 @@ object ExportSheet {
             pickRow("การบีบอัด", codecValue, codecNote) { v -> pickMenu.show(v, "การบีบอัดวิดีโอ", listOf(GlassMenu.Option("H.264", "", "เปิดได้ทุกเครื่อง"), GlassMenu.Option("H.265", "", "ไฟล์เล็กกว่า")), if (prefs.getBoolean("export_hevc", false)) 1 else 0) { k ->
                 prefs.edit().putBoolean("export_hevc", k == 1).apply(); paintCodec(k) } }
         } else if (!hevcOk && prefs.getBoolean("export_hevc", false)) prefs.edit().putBoolean("export_hevc", false).apply()
+        // Container: MP4 plays everywhere; MOV is the same video under a QuickTime name, preferred by some editing software and Apple devices.
+        if (!upscale) {
+            val boxes = listOf("mp4" to "MP4", "mov" to "MOV")
+            val boxValue = a.text("", 14f, Glass.TEXT, true); val boxNote = a.text("", 12f, Glass.TEXT3)
+            fun paintBox(k: Int) { boxValue.text = boxes[k].second; boxNote.text = if (k == 0) "เปิดได้ทุกเครื่องและทุกแอป" else "ชื่อ .mov · ใช้กับโปรแกรมตัดต่อและอุปกรณ์ Apple" }
+            paintBox(boxes.indexOfFirst { it.first == prefs.getString("export_container", "mp4") }.coerceAtLeast(0))
+            pickRow("รูปแบบไฟล์", boxValue, boxNote) { v -> pickMenu.show(v, "รูปแบบไฟล์วิดีโอ", boxes.map { GlassMenu.Option(it.second, Icons.FILE, if (it.first == "mp4") "แนะนำ" else "QuickTime") }, boxes.indexOfFirst { it.first == prefs.getString("export_container", "mp4") }.coerceAtLeast(0)) { k ->
+                prefs.edit().putString("export_container", boxes[k].first).apply(); paintBox(k) } }
+        }
+        // Bitrate: how many megabits each second of video may use. More = sharper and bigger; automatic leaves it to the phone.
+        // A slider like resolution and frame rate, so any step from 1 to 100 Mbps can be picked.
+        if (!upscale) {
+            val mbpsList = listOf(0, 1, 2, 3, 4, 5, 6, 8, 10, 12, 14, 16, 20, 24, 30, 40, 50, 60, 80, 100)
+            val mbpsValue = a.text("", 15f, Glass.TEXT, true); val mbpsNote = a.text("", 12f, Glass.TEXT2)
+            fun paintRate(k: Int) { val m = mbpsList[k]; mbpsValue.text = if (m == 0) "อัตโนมัติ" else "$m Mbps"; mbpsValue.setTextColor(if (m == 0) Color.WHITE else Glass.ACCENT)
+                mbpsNote.text = if (m == 0) "แอปเลือกให้ตามขนาดภาพ · แนะนำ" else String.format(java.util.Locale.US, "ไฟล์ประมาณ %.0f MB · %s", m / 8.0 * src.durationMs / 1000.0, if (m <= 8) "ประหยัดที่ ภาพหยาบลง" else if (m <= 20) "สมดุล" else "คมที่สุด ไฟล์ใหญ่") }
+            val start = mbpsList.indexOf(prefs.getInt("export_mbps", 0)).let { if (it >= 0) it else mbpsList.indexOfFirst { m -> m >= prefs.getInt("export_mbps", 0) }.coerceAtLeast(0) }
+            paintRate(start)
+            row("บิตเรตวิดีโอ", mbpsValue, mbpsNote, mbpsList.map { if (it == 0) "อัตโนมัติ" else "$it Mbps" }, start) { k -> prefs.edit().putInt("export_mbps", mbpsList[k]).apply(); paintRate(k) }
+        }
+        // Sound only: the same kind of sliders and menus for the sound file.
+        into = audioBox
+        run {
+            val fmtValue = a.text("", 14f, Glass.TEXT, true); val fmtNote = a.text("", 12f, Glass.TEXT3)
+            fun paintFmt() { fmtValue.text = if (aformat == 1) "WAV" else "M4A · AAC"; fmtNote.text = if (aformat == 1) "PCM ไม่บีบอัด ใช้กับโปรแกรมตัดต่อ · ได้จาก AAC 320 kbps จึงไม่ใช่เสียงต้นฉบับแบบไม่สูญเสีย" else "เล็กและเปิดได้เกือบทุกเครื่อง · แนะนำ" }
+            paintFmt()
+            pickRow("รูปแบบเสียง", fmtValue, fmtNote) { v -> pickMenu.show(v, "รูปแบบไฟล์เสียง", listOf(GlassMenu.Option("M4A · AAC", Icons.SOUND, "แนะนำ"), GlassMenu.Option("WAV", Icons.SOUND, "ไม่บีบอัด ไฟล์ใหญ่")), aformat) { k ->
+                aformat = k; prefs.edit().putInt("export_aformat", k).apply(); paintFmt(); refresh() } }
+            audioBox.addView(kBox, -1, -2); into = kBox
+            val kbpsList = listOf(32, 48, 64, 96, 112, 128, 160, 192, 224, 256, 320)
+            val kValue = a.text("", 15f, Glass.TEXT, true); val kNote = a.text("", 12f, Glass.TEXT2)
+            fun paintK(k: Int) { val v = kbpsList[k]; kValue.text = "$v kbps"; kValue.setTextColor(if (v == 128) Color.WHITE else Glass.ACCENT)
+                kNote.text = String.format(java.util.Locale.US, "ไฟล์ประมาณ %.1f MB · %s", v * 1000 / 8.0 * src.durationMs / 1000.0 / 1_000_000.0, if (v <= 64) "เสียงพูด ไฟล์เล็ก" else if (v <= 128) "สมดุล เหมาะกับเพลงทั่วไป" else "คมชัดสูง ไฟล์ใหญ่") }
+            val startK = kbpsList.indexOf(akbps).let { if (it >= 0) it else kbpsList.indexOfFirst { v -> v >= akbps }.let { j -> if (j < 0) kbpsList.size - 1 else j } }
+            akbps = kbpsList[startK]; paintK(startK)
+            row("บิตเรตเสียง", kValue, kNote, kbpsList.map { "$it kbps" }, startK) { k -> akbps = kbpsList[k]; prefs.edit().putInt("export_akbps", akbps).apply(); paintK(k) }
+            into = audioBox
+            val hzList = listOf(0, 22050, 32000, 44100, 48000)
+            val hzValue = a.text("", 14f, Glass.TEXT, true); val hzNote = a.text("", 12f, Glass.TEXT3)
+            fun paintHz() { hzValue.text = if (ahz == 0) "ตามต้นฉบับ" else String.format(java.util.Locale.US, "%.1f kHz", ahz / 1000.0).replace(".0 kHz", " kHz"); hzNote.text = if (ahz == 0) "ไม่เปลี่ยนความถี่ของเสียง" else if (ahz < 32000) "ไฟล์เล็กลง เสียงแหลมจะหายไป" else "ใช้กันทั่วไป" }
+            paintHz()
+            pickRow("ความถี่เสียง", hzValue, hzNote) { v -> pickMenu.show(v, "ความถี่เสียง (sample rate)", hzList.map { GlassMenu.Option(if (it == 0) "ตามต้นฉบับ" else "${it / 1000.0} kHz".replace(".0 kHz", " kHz"), Icons.SOUND, if (it == 0) "แนะนำ" else if (it < 32000) "เล็ก ทึบขึ้น" else "มาตรฐาน") }, hzList.indexOf(ahz).coerceAtLeast(0)) { k ->
+                ahz = hzList[k]; prefs.edit().putInt("export_ahz", ahz).apply(); paintHz() } }
+            val chValue = a.text("", 14f, Glass.TEXT, true); val chNote = a.text("", 12f, Glass.TEXT3)
+            fun paintCh() { chValue.text = if (amono) "โมโน" else "สเตอริโอ"; chNote.text = if (amono) "รวมซ้ายขวาเป็นช่องเดียว ไฟล์เล็กลง" else "ตามต้นฉบับ" }
+            paintCh()
+            pickRow("ช่องเสียง", chValue, chNote) { v -> pickMenu.show(v, "ช่องเสียง", listOf(GlassMenu.Option("สเตอริโอ", Icons.SOUND, "ตามต้นฉบับ"), GlassMenu.Option("โมโน", Icons.SOUND, "ไฟล์เล็กลง")), if (amono) 1 else 0) { k ->
+                amono = k == 1; prefs.edit().putBoolean("export_amono", amono).apply(); paintCh() } }
+        }
+        into = card
         val names = listOf("ไม่ใช้ AI · เร็วที่สุด", "Natural SR3 · แนะนำ", "Classic SR2 · คมชัด")
         val notes = listOf("ขยายภาพแบบปกติ เร็วที่สุด", "คน ใบหน้า ตัวหนังสือ · เนียนตา", "วิว ตึก ใบไม้ · คมเต็มที่")
         val icons = listOf(Icons.PHOTO, th.ogay.luma.ai.EnhanceUi.LEAF, th.ogay.luma.ai.EnhanceUi.GEM)
@@ -150,7 +237,7 @@ object ExportSheet {
         // making in-between frames alone needs no AI model, so the box stays closed and the rows below move up.
         val aiBox = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
         aiBox.addView(aiChip, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(14) })
-        card.addView(aiBox, -1, -2)
+        videoBox.addView(aiBox, -1, -2)
         card.addView(estimate, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(16) })
         // Same preview as for photos: a before / after of the middle of the clip with the chosen model.
         val previewBtn = a.text("ดูตัวอย่างโมเดล", 14f, Glass.ACCENT, true).apply { gravity = Gravity.CENTER; isClickable = true; background = a.glass(24, 0x1affffff); glassTouch(); contentDescription = "ดูตัวอย่างผลของโมเดล AI"
@@ -185,7 +272,8 @@ object ExportSheet {
                 }
             }
         }
-        go.setOnClickListener { Glass.tick(go); close(); onExport(ExportChoice(sides[side], rates[rate], ai() && !audioOnly, if (model == 2) th.ogay.luma.ai.EnhanceProfile.CLASSIC else th.ogay.luma.ai.EnhanceProfile.NATURAL, audioOnly)) }
+        go.setOnClickListener { Glass.tick(go); close(); onExport(ExportChoice(sides[side], rates[rate], ai() && !audioOnly, if (model == 2) th.ogay.luma.ai.EnhanceProfile.CLASSIC else th.ogay.luma.ai.EnhanceProfile.NATURAL, audioOnly,
+            flowMode, prefs.getInt("export_mbps", 0), akbps, ahz, amono, aformat)) }
         card.addView(go, LinearLayout.LayoutParams(-1, a.dp(52)).apply { topMargin = a.dp(12) })
         card.addView(a.text("ยกเลิก", 14f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; isClickable = true; setPadding(0, a.dp(12), 0, 0); setOnClickListener { close() } }, -1, a.dp(44))
         refresh()
@@ -227,7 +315,7 @@ class ExportProgress(private val a: Activity, thumb: Bitmap?, private val steps:
     private var shownFrame: Bitmap? = null
     private val percent = a.text("0%", 40f, Glass.TEXT, true).apply { gravity = Gravity.CENTER }
     private val frames = a.text("", 13.5f, Glass.TEXT2).apply { gravity = Gravity.CENTER }
-    private val eta = a.text("", 17f, Glass.TEXT, true).apply { gravity = Gravity.CENTER }
+    private val eta = a.text("", 17f, Glass.ACCENT, true).apply { gravity = Gravity.CENTER }
     private val etaBox = LinearLayout(a)
     private val marks = ArrayList<TextView>(); private val labels = ArrayList<TextView>()
 
@@ -243,8 +331,8 @@ class ExportProgress(private val a: Activity, thumb: Bitmap?, private val steps:
         col.addView(percent, LinearLayout.LayoutParams(-2, -2).apply { topMargin = a.dp(10) })
         col.addView(frames, -1, -2)
         // Time left, highlighted: a glass pill with a clock.
-        etaBox.apply { gravity = Gravity.CENTER_VERTICAL; background = a.glass(22, (Glass.ACCENT and 0x00ffffff) or 0x2e000000); setPadding(a.dp(16), a.dp(8), a.dp(18), a.dp(8)); visibility = View.GONE
-            addView(IconView(a, Icons.TIMER, 2f).apply { tint = Glass.ACCENT }, a.dp(20), a.dp(20)); addView(eta.apply { setPadding(a.dp(8), 0, 0, 0) }) }
+        etaBox.apply { gravity = Gravity.CENTER_VERTICAL; background = a.glass(22, (Glass.ACCENT and 0x00ffffff) or 0x2e000000); setPadding(a.dp(16), a.dp(8), a.dp(18), a.dp(8)); visibility = View.VISIBLE
+            addView(IconView(a, Icons.TIMER, 2f).apply { tint = Glass.ACCENT }, a.dp(20), a.dp(20)); addView(eta.apply { setPadding(a.dp(8), 0, 0, 0); text = "กำลังคำนวณเวลา…" }) }
         col.addView(etaBox, LinearLayout.LayoutParams(-2, -2).apply { topMargin = a.dp(12) })
         val list = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; background = a.glass(20, 0x14ffffff); setPadding(a.dp(16), a.dp(10), a.dp(16), a.dp(10)) }
         steps.forEach { st ->
@@ -279,9 +367,9 @@ class ExportProgress(private val a: Activity, thumb: Bitmap?, private val steps:
         val i = s.stage
         backdrop.mode = kinds.getOrElse(i) { Backdrop.SAVE }
         frames.text = listOfNotNull(if (s.totalFrames > 0) "${String.format(Locale.US, "%,d", s.frames)} / ${String.format(Locale.US, "%,d", s.totalFrames)} เฟรม" else null, s.detail.takeIf { it.isNotEmpty() }).joinToString(" · ")
-        val ms = s.etaMs
-        etaBox.visibility = if (ms > 0) View.VISIBLE else View.GONE
-        eta.text = if (ms < 60_000) "เหลืออีกไม่ถึง 1 นาที" else "เหลืออีกประมาณ ${ms / 60_000 + 1} นาที"
+        // The AI step knows its own pace; every other step (and plain exports) is timed from how far the whole job has got.
+        etaBox.visibility = View.VISIBLE
+        eta.text = Eta.text(s.leftMs())
         marks.forEachIndexed { k, m ->
             m.text = if (k < i) "✓" else if (k == i) "●" else "○"
             m.setTextColor(if (k < i) 0xff30d158.toInt() else if (k == i) Glass.ACCENT else Glass.TEXT3)
@@ -291,7 +379,7 @@ class ExportProgress(private val a: Activity, thumb: Bitmap?, private val steps:
     fun remove() { layer.animate().alpha(0f).setDuration(200).withEndAction { (layer.parent as? FrameLayout)?.removeView(layer) }.start() }
 
     /** Rounded ring around the thumbnail; the lit part grows clockwise from the top. */
-    private class Ring(c: Context) : View(c) {
+    class Ring(c: Context) : View(c) {
         var progress = 0f; set(v) { field = v; invalidate() }
         private val d = c.resources.displayMetrics.density
         private val track = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 5 * d; color = 0x26ffffff }
@@ -381,4 +469,176 @@ class ExportProgress(private val a: Activity, thumb: Bitmap?, private val steps:
             }
         }
     }
+}
+
+
+/**
+ * The progress of a long job (captions, translation) in the look of the export screen: the same moving background, a ring
+ * round the first frame, a big percent, one readable line about what is happening now, the last sentence handled, and every
+ * step with a tick. "ย่อไปทำเบื้องหลัง" folds it into a small pill at the top so the video can be edited meanwhile; the pill opens it again.
+ */
+class CaptionProgress(
+    private val a: Activity, thumb: Bitmap?, private val steps: List<String>,
+    private val kinds: List<Int> = listOf(ExportProgress.Backdrop.EDIT, ExportProgress.Backdrop.FLOW, ExportProgress.Backdrop.AI, ExportProgress.Backdrop.AI, ExportProgress.Backdrop.SAVE),
+    private val headings: List<String> = listOf("กำลังเตรียมเสียง", "กำลังหาช่วงที่มีเสียงพูด", "กำลังตรวจภาษา", "กำลังถอดเสียง", "กำลังใส่คำบรรยาย"),
+    /** The title of the live alert while this job runs. */
+    private val noticeTitle: String = "สร้างคำบรรยาย",
+    onCancel: () -> Unit,
+) {
+    private val cancelJob = onCancel
+    private val layer = FrameLayout(a).apply { setBackgroundColor(Glass.alpha(Glass.BG, 0xf2)); isClickable = true; alpha = 0f }
+    private val backdrop = ExportProgress.Backdrop(a)
+    private val ring = ExportProgress.Ring(a)
+    private val percent = a.text("0%", 40f, Glass.TEXT, true).apply { gravity = Gravity.CENTER }
+    private val heading = a.text("", 17f, Glass.TEXT, true).apply { gravity = Gravity.CENTER }
+    private val detail = a.text("", 13.5f, Glass.TEXT2).apply { gravity = Gravity.CENTER; maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END }
+    private val heard = a.text("", 14.5f, Glass.TEXT).apply { gravity = Gravity.CENTER; maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END }
+    private val heardBox = LinearLayout(a).apply { background = a.glass(14, 0x1affffff); setPadding(a.dp(14), a.dp(8), a.dp(14), a.dp(8)); visibility = View.GONE }
+    private val marks = ArrayList<TextView>(); private val labels = ArrayList<TextView>()
+    private val eta = a.text("กำลังคำนวณเวลา…", 17f, Glass.ACCENT, true).apply { gravity = Gravity.CENTER }
+    private val etaBox = LinearLayout(a)
+    private val tracker = Eta.Tracker()
+    private val pillText = a.text("", 13.5f, Glass.TEXT, true).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }
+    private val pillEta = a.text("", 12f, Glass.ACCENT, true).apply { maxLines = 1 }
+    private val pillPct = a.text("0%", 14f, Glass.ON_ACCENT, true).apply { gravity = Gravity.CENTER }
+    private val pillBar = ModelBar(a)
+    private val pill = LinearLayout(a)
+    private var gone = false
+
+    init {
+        layer.addView(backdrop, -1, -1)
+        val col = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; setPadding(a.dp(24), a.dp(40), a.dp(24), a.dp(40)) }
+        val frame = FrameLayout(a)
+        frame.addView(ImageView(a).apply { scaleType = ImageView.ScaleType.CENTER_CROP; setImageBitmap(thumb); setBackgroundColor(0x22ffffff); clipToOutline = true
+            outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: android.graphics.Outline) = o.setRoundRect(0, 0, v.width, v.height, a.dp(18).toFloat()) } },
+            FrameLayout.LayoutParams(a.dp(110), a.dp(146), Gravity.CENTER))
+        frame.addView(ring, FrameLayout.LayoutParams(a.dp(128), a.dp(164), Gravity.CENTER))
+        col.addView(frame, a.dp(140), a.dp(170))
+        col.addView(percent, LinearLayout.LayoutParams(-2, -2).apply { topMargin = a.dp(4) })
+        col.addView(heading, LinearLayout.LayoutParams(-1, -2))
+        col.addView(detail, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(2) })
+        etaBox.apply { gravity = Gravity.CENTER_VERTICAL; background = a.glass(22, (Glass.ACCENT and 0x00ffffff) or 0x2e000000); setPadding(a.dp(16), a.dp(8), a.dp(18), a.dp(8))
+            addView(IconView(a, Icons.TIMER, 2f).apply { tint = Glass.ACCENT }, a.dp(20), a.dp(20)); addView(eta.apply { setPadding(a.dp(8), 0, 0, 0) }) }
+        col.addView(etaBox, LinearLayout.LayoutParams(-2, -2).apply { topMargin = a.dp(10) })
+        heardBox.addView(heard, LinearLayout.LayoutParams(-1, -2))
+        col.addView(heardBox, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(8) })
+        val list = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; background = a.glass(20, 0x14ffffff); setPadding(a.dp(16), a.dp(6), a.dp(16), a.dp(6)) }
+        steps.forEach { st ->
+            val r = LinearLayout(a).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, a.dp(5), 0, a.dp(5)) }
+            val m = a.text("○", 15f, Glass.TEXT3, true).apply { gravity = Gravity.CENTER }; marks += m
+            r.addView(m, a.dp(26), -2)
+            val l = a.text(st, 14f, Glass.TEXT3); labels += l
+            r.addView(l, LinearLayout.LayoutParams(0, -2, 1f))
+            list.addView(r, -1, -2)
+        }
+        col.addView(list, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(12) })
+        val buttons = LinearLayout(a)
+        buttons.addView(button("ย่อไปทำเบื้องหลัง", true) { minimize() }, LinearLayout.LayoutParams(0, a.dp(46), 1.4f))
+        buttons.addView(button("ยกเลิก", false) { onCancel() }, LinearLayout.LayoutParams(0, a.dp(46), 1f).apply { leftMargin = a.dp(10) })
+        col.addView(buttons, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(14) })
+        col.addView(a.text("ย่อแล้วยังตัดต่อต่อได้ · ถ้าออกจากหน้านี้ งานจะหยุด", 11.5f, Glass.TEXT3).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(8) })
+        layer.addView(android.widget.ScrollView(a).apply { isVerticalScrollBarEnabled = false; isFillViewport = true; addView(col, FrameLayout.LayoutParams(-1, -2, Gravity.CENTER)) }, -1, -1)
+
+        pill.apply { orientation = LinearLayout.VERTICAL; background = a.accentFrame(22); setPadding(a.dp(10), a.dp(10), a.dp(10), a.dp(12)); visibility = View.GONE; isClickable = true; glassTouch()
+            contentDescription = "ดูความคืบหน้า"; elevation = a.dp(8).toFloat() }
+        val prow = LinearLayout(a).apply { gravity = Gravity.CENTER_VERTICAL }
+        prow.addView(pillPct.apply { background = a.glass(16, Glass.ACCENT) }, a.dp(46), a.dp(32))
+        val names = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; setPadding(a.dp(10), 0, a.dp(6), 0) }
+        names.addView(pillText, -1, -2); names.addView(pillEta, -1, -2)
+        prow.addView(names, LinearLayout.LayoutParams(0, -2, 1f))
+        prow.addView(FrameLayout(a).apply { isClickable = true; glassTouch(); contentDescription = "ยกเลิก"; background = a.glass(16, 0x2effffff)
+            addView(IconView(a, Icons.CLOSE, 2f), FrameLayout.LayoutParams(a.dp(14), a.dp(14), Gravity.CENTER)); setOnClickListener { onCancel() } }, a.dp(32), a.dp(32))
+        pill.addView(prow, -1, -2)
+        pill.addView(pillBar, LinearLayout.LayoutParams(-1, a.dp(6)).apply { topMargin = a.dp(10) })
+        pill.setOnClickListener { expand() }
+        val root = a.window.decorView as FrameLayout
+        root.addView(layer, -1, -1)
+        root.addView(pill, FrameLayout.LayoutParams(a.dp(300), -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = a.dp(116) })
+        layer.animate().alpha(1f).setDuration(220).start()
+    }
+
+    private fun button(label: String, main: Boolean, click: () -> Unit) = FrameLayout(a).apply {
+        isClickable = true; glassTouch(); contentDescription = label; background = a.glass(23, if (main) Glass.ACCENT else 0x2effffff)
+        addView(a.text(label, 14.5f, if (main) Glass.ON_ACCENT else Glass.TEXT, true), FrameLayout.LayoutParams(-2, -2, Gravity.CENTER)); setOnClickListener { click() } }
+
+    fun minimize() { if (gone) return; layer.visibility = View.GONE; pill.visibility = View.VISIBLE }
+    fun expand() { if (gone) return; pill.visibility = View.GONE; layer.visibility = View.VISIBLE }
+
+    /** [stage] is the step now working (earlier ones show done); [fraction] is 0..1 of the whole job. */
+    var lastFraction = 0f; private set
+    var lastNote = ""; private set
+    fun render(stage: Int, fraction: Float, note: String, lastWords: String = "", etaMs: Long = -2L) {
+        if (lastWords.isEmpty()) { lastFraction = fraction; lastNote = note }
+        val f = fraction.coerceIn(0f, 1f); val pct = (f * 100).toInt()
+        ring.progress = f; percent.text = "$pct%"; pillBar.fraction = f; pillPct.text = "$pct%"
+        val left = if (etaMs != -2L) etaMs else tracker.left(f); val etaWords = if (left < 0) "กำลังคำนวณเวลา…" else Eta.text(left)
+        eta.text = etaWords; pillEta.text = etaWords
+        backdrop.mode = kinds.getOrElse(stage) { ExportProgress.Backdrop.SAVE }
+        val head = headings.getOrElse(stage) { "" }
+        heading.text = head; detail.text = note; pillText.text = head
+        if (!gone) TaskNotice.update(a, noticeTitle, head + if (note.isNotEmpty()) " · $note" else "", pct, left, cancelJob)
+        if (lastWords.isNotEmpty()) { heard.text = "“$lastWords”"; heardBox.visibility = View.VISIBLE }
+        marks.forEachIndexed { k, m ->
+            m.text = if (k < stage) "✓" else if (k == stage) "●" else "○"
+            m.setTextColor(if (k < stage) 0xff30d158.toInt() else if (k == stage) Glass.ACCENT else Glass.TEXT3)
+            labels[k].setTextColor(if (k <= stage) Color.WHITE else Glass.TEXT3)
+        }
+    }
+    fun remove() {
+        gone = true; pill.visibility = View.GONE; TaskNotice.stop(a)
+        layer.animate().alpha(0f).setDuration(200).withEndAction { (layer.parent as? FrameLayout)?.let { it.removeView(layer); it.removeView(pill) } }.start()
+    }
+}
+
+
+/** Time left, worded the same way everywhere (progress pages, pills and notifications). */
+object Eta {
+    fun text(ms: Long): String = when {
+        ms < 40_000 -> "เหลือไม่ถึง 1 นาที"
+        ms < 3_600_000 -> "เหลือประมาณ ${(ms + 30_000) / 60_000} นาที"
+        else -> "เหลือประมาณ ${ms / 3_600_000} ชม. ${(ms % 3_600_000 + 30_000) / 60_000} นาที"
+    }
+    /** Short form for the status-bar chip: "<1น." / "3น." / "1ชม.5น.". */
+    fun chip(ms: Long): String = when {
+        ms < 40_000 -> "<1น."
+        ms < 3_600_000 -> "${(ms + 30_000) / 60_000}น."
+        else -> "${ms / 3_600_000}ชม.${(ms % 3_600_000 + 30_000) / 60_000}น."
+    }
+    /** Learns the pace of a job from how far it got and how long that took, and smooths the guess so it does not jump. */
+    class Tracker {
+        private val t0 = android.os.SystemClock.elapsedRealtime(); private var smooth = -1L
+        /** Milliseconds left for a job that is [fraction] (0..1) done, or -1 while there is too little to go on. */
+        fun left(fraction: Float): Long {
+            if (fraction < 0.03f || fraction >= 1f) return if (fraction >= 1f) 0L else -1L
+            val raw = ((android.os.SystemClock.elapsedRealtime() - t0) * (1f - fraction) / fraction).toLong()
+            smooth = if (smooth < 0) raw else (smooth * 0.7 + raw * 0.3).toLong()
+            return smooth
+        }
+    }
+}
+
+
+/**
+ * Time left for speech-to-text on a long clip. A straight "percent so far" is wrong here: finding the speech is quick and
+ * transcribing it is slow, so the first stages looked nearly done. This works from the amount of speech instead:
+ * seconds of work per second of speech (learned from the first minute of this run and remembered for the next run)
+ * times the speech still to do. The percentage is then worked out from that, so the two always agree.
+ */
+class AsrClock(private val c: android.content.Context, private val modelId: String, private val totalMs: Long) {
+    private val prefs = c.getSharedPreferences("camera", android.content.Context.MODE_PRIVATE)
+    private val t0 = android.os.SystemClock.elapsedRealtime(); private var asr0 = 0L
+    private var speechMs = (totalMs * 0.8).toLong(); private var doneMs = 0L; private var shown = 0f
+    private val prior = prefs.getFloat("asr_rate_$modelId", 0.6f).toDouble()
+    private fun now() = android.os.SystemClock.elapsedRealtime()
+    /** Once the speech is found, its real length replaces the first guess. */
+    fun speech(ms: Long) { speechMs = ms.coerceAtLeast(1) }
+    /** Call at the start of each piece with how much speech is already finished. */
+    fun transcribing(done: Long) { if (asr0 == 0L) asr0 = now(); doneMs = done }
+    private fun measured(): Double? = if (asr0 > 0 && doneMs >= 5_000) (now() - asr0).toDouble() / doneMs else null
+    private fun rate(): Double { val w = (doneMs / 60_000.0).coerceIn(0.0, 1.0); return prior * (1 - w) + (measured() ?: prior) * w }
+    /** Milliseconds still to go. Before transcribing starts it also counts reading the whole clip's sound (about 3% of its length). */
+    fun leftMs(): Long = ((speechMs - doneMs).coerceAtLeast(0) * rate() + (if (asr0 == 0L) totalMs * 0.03 else 0.0) + 2_000).toLong()
+    fun fraction(): Float { val el = (now() - t0).toDouble(); val f = (el / (el + leftMs())).toFloat(); shown = maxOf(shown, minOf(f, 0.97f)); return shown }
+    /** Remembers the pace for next time (only when this run was long enough to measure it). */
+    fun finish() { measured()?.takeIf { doneMs >= 20_000 }?.let { prefs.edit().putFloat("asr_rate_$modelId", (0.5 * prior + 0.5 * it).toFloat().coerceIn(0.05f, 5f)).apply() } }
 }
