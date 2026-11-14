@@ -12,6 +12,9 @@ import com.k2fsa.sherpa.onnx.OfflineModelConfig
 import com.k2fsa.sherpa.onnx.OfflineRecognizer
 import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
 import com.k2fsa.sherpa.onnx.OfflineWhisperModelConfig
+import com.k2fsa.sherpa.onnx.SileroVadModelConfig
+import com.k2fsa.sherpa.onnx.Vad
+import com.k2fsa.sherpa.onnx.VadModelConfig
 import java.nio.ByteOrder
 
 /** Sound of part of a file as 16 kHz mono 16-bit samples, the format speech recognition reads. */
@@ -109,6 +112,27 @@ class StudioSpeech(private val a: Activity, private val languageArg: String, pri
             return Heard(r.text.trim(), r.lang.removePrefix("<|").removeSuffix("|>").lowercase())
         } finally { stream.release() }
     }
+    /**
+     * Where real speech is inside a piece. Pieces are cut by loudness, so music and sound effects get through, and Whisper
+     * invents words for them; a voice detector (Silero) tells talking from the rest. Null = no speech, so the piece is skipped.
+     * Without the detector the whole piece counts, as before.
+     */
+    private var vad: Vad? = null
+    private class Span(val from: Int, val to: Int)
+    private fun speechIn(pcm: ShortArray): Span? {
+        val v = vad ?: return Span(0, pcm.size)
+        return runCatching {
+            v.clear(); v.reset()
+            val x = FloatArray(pcm.size) { pcm[it] / 32768f }
+            var i = 0; while (i < x.size) { v.acceptWaveform(x.copyOfRange(i, minOf(x.size, i + StudioPcm.RATE))); i += StudioPcm.RATE }
+            v.flush()
+            var first = -1L; var last = 0L; var total = 0L
+            while (!v.empty()) { val s = v.front(); if (first < 0) first = s.start; last = s.start + s.samples.size; total += s.samples.size; v.pop() }
+            if (first < 0 || total < StudioPcm.RATE / 4) null
+            // A little before and after, so the first and last sounds of a sentence are not cut.
+            else Span(maxOf(0L, first - StudioPcm.RATE / 5).toInt(), minOf(pcm.size.toLong(), last + StudioPcm.RATE * 3 / 10).toInt())
+        }.getOrDefault(Span(0, pcm.size))
+    }
     private fun pcmOf(p: SpeechPiece): ShortArray = runCatching { StudioPcm.extract(a, p.uri, p.from, p.to) }.getOrDefault(ShortArray(0))
     /** True when the text has at least one letter or digit, so a line of only dots or symbols is dropped. */
     private fun worthKeeping(t: String) = t.any { it.isLetterOrDigit() }
@@ -119,6 +143,8 @@ class StudioSpeech(private val a: Activity, private val languageArg: String, pri
             ui { onStage("กำลังโหลดโมเดล ${model.name} เข้าเครื่อง…") }
             val code = whisperCode(languageArg)
             rec = OfflineRecognizer(null, config(code))
+            vad = runCatching { Vad(a.assets, VadModelConfig(sileroVadModelConfig = SileroVadModelConfig(model = "silero_vad.onnx", threshold = 0.5f, minSilenceDuration = 0.4f,
+                minSpeechDuration = 0.2f, windowSize = 512, maxSpeechDuration = 30f), sampleRate = StudioPcm.RATE, numThreads = 1, provider = "cpu", debug = false)) }.getOrNull()
             var language = code
             if (code.isEmpty()) {
                 ui { onStage("ฟังเสียงเพื่อตรวจภาษาที่พูด…") }
@@ -126,8 +152,9 @@ class StudioSpeech(private val a: Activity, private val languageArg: String, pri
                 // The longest few of the first pieces: short or noisy pieces make Whisper's language guess weak.
                 for (p in pieces.take(8).sortedByDescending { it.to - it.from }.take(3)) {
                     if (stopped) return
-                    val pcm = pcmOf(p); if (pcm.size < StudioPcm.RATE / 2) continue
-                    val h = heard(rec, pcm)
+                    val pcm0 = pcmOf(p); if (pcm0.size < StudioPcm.RATE / 2) continue
+                    val sp0 = speechIn(pcm0) ?: continue
+                    val h = heard(rec, pcm0.copyOfRange(sp0.from, sp0.to))
                     if (h.lang.isNotEmpty() && worthKeeping(h.text)) votes[h.lang] = (votes[h.lang] ?: 0) + h.text.length.coerceAtMost(60)
                 }
                 language = votes.maxByOrNull { it.value }?.key ?: "en"
@@ -141,9 +168,16 @@ class StudioSpeech(private val a: Activity, private val languageArg: String, pri
                 if (stopped) return
                 ui { progress(i, pieces.size) }
                 val pcm = pcmOf(p); if (pcm.size < StudioPcm.RATE / 4) continue
-                val h = runCatching { heard(rec!!, pcm) }.getOrElse { failures++; null } ?: continue
-                val words = StudioMath.cleanSpeech(h.text, (p.to - p.from) / 1000.0)
-                if (words != null) { cues += StudioMath.Cue(p.outAt, p.outAt + ((p.to - p.from) / p.speed).toLong(), words); ui { onText(words) } }
+                val span = speechIn(pcm) ?: continue
+                val h = runCatching { heard(rec!!, pcm.copyOfRange(span.from, span.to)) }.getOrElse { failures++; null } ?: continue
+                val seconds = (span.to - span.from).toDouble() / StudioPcm.RATE
+                val words = StudioMath.cleanSpeech(h.text, seconds)
+                if (words != null) {
+                    // The line shows while the voice is heard, not through the whole piece.
+                    val from = p.outAt + (span.from * 1000L / StudioPcm.RATE / p.speed).toLong()
+                    val to = p.outAt + (span.to * 1000L / StudioPcm.RATE / p.speed).toLong()
+                    cues += StudioMath.Cue(from, maxOf(to, from + 300), words); ui { onText(words) }
+                }
             }
             val problem = if (cues.isNotEmpty()) null else if (failures > 0) "ถอดเสียงไม่สำเร็จ" else "ไม่พบเสียงพูดที่ถอดเป็นข้อความได้"
             ui { finished(cues, problem) }
@@ -154,6 +188,6 @@ class StudioSpeech(private val a: Activity, private val languageArg: String, pri
                 else -> "ถอดเสียงไม่สำเร็จ: ${t.message?.take(100) ?: t.javaClass.simpleName}"
             }
             ui { finished(emptyList(), why) }
-        } finally { runCatching { rec?.release() } }
+        } finally { runCatching { rec?.release() }; runCatching { vad?.release() }; vad = null }
     }
 }

@@ -33,7 +33,7 @@ android {
     sourceSets["main"].java.srcDir(if (cameraUnitSdk) "src/cameraunitSdk/java" else "src/cameraunitStub/java")
     externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" } }
     buildFeatures { prefab = true }
-    androidResources { noCompress += "tflite" }
+    androidResources { noCompress += listOf("tflite", "onnx") }
     // Both the OpenCV AAR and this app's CMake build ship libc++_shared.so; keep one copy.
     packaging { jniLibs { pickFirsts += "**/libc++_shared.so" } }
     val keyFile = providers.environmentVariable("LUMA_KEYSTORE").orNull
