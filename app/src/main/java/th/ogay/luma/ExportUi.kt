@@ -410,9 +410,10 @@ class ExportProgress(private val a: Activity, thumb: Bitmap?, private val steps:
  * step with a tick. "ย่อไปทำเบื้องหลัง" folds it into a small pill at the top so the video can be edited meanwhile; the pill opens it again.
  */
 class CaptionProgress(
-    private val a: Activity, thumb: Bitmap?, private val steps: List<String>, onCancel: () -> Unit,
+    private val a: Activity, thumb: Bitmap?, private val steps: List<String>,
     private val kinds: List<Int> = listOf(ExportProgress.Backdrop.EDIT, ExportProgress.Backdrop.FLOW, ExportProgress.Backdrop.AI, ExportProgress.Backdrop.AI, ExportProgress.Backdrop.SAVE),
     private val headings: List<String> = listOf("กำลังเตรียมเสียง", "กำลังหาช่วงที่มีเสียงพูด", "กำลังตรวจภาษา", "กำลังถอดเสียง", "กำลังใส่คำบรรยาย"),
+    onCancel: () -> Unit,
 ) {
     private val layer = FrameLayout(a).apply { setBackgroundColor(Glass.alpha(Glass.BG, 0xf2)); isClickable = true; alpha = 0f }
     private val backdrop = ExportProgress.Backdrop(a)

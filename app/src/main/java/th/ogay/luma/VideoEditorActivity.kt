@@ -1756,9 +1756,9 @@ class VideoEditorActivity : ComponentActivity() {
         translating = true; translateStopped = false
         if (tool == 15) showTool(15, false)
         val ui = CaptionProgress(this, firstFrame, listOf("โหลดโมเดล ${m.name}", "แปลทีละบรรทัด", "ใส่ข้อความที่แปลลงไทม์ไลน์"),
-            { translateStopped = true; LlamaTranslator.cancel(); notice("กำลังหยุดแปล…") },
             listOf(ExportProgress.Backdrop.FLOW, ExportProgress.Backdrop.AI, ExportProgress.Backdrop.SAVE),
-            listOf("กำลังโหลดโมเดลแปล", "กำลังแปล ${TransLang.name(from)} → ${TransLang.name(to)}", "กำลังใส่ข้อความที่แปล"))
+            listOf("กำลังโหลดโมเดลแปล", "กำลังแปล ${TransLang.name(from)} → ${TransLang.name(to)}", "กำลังใส่ข้อความที่แปล")) {
+            translateStopped = true; LlamaTranslator.cancel(); notice("กำลังหยุดแปล…") }
         captionUi = ui; ui.render(0, 0.03f, "กำลังเปิด ${m.name} · ครั้งแรกอาจใช้เวลาสักครู่")
         val app = applicationContext
         Thread({
