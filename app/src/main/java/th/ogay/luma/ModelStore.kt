@@ -28,12 +28,20 @@ object ModelStore {
         @Volatile var cancelled = false
         @Volatile var error: String? = null
         @Volatile var finished = false
-        internal val listeners = ArrayList<(Job) -> Unit>()
+        @Volatile var doneBytes = 0L
+        @Volatile var totalBytes = 0L
         fun cancel() { cancelled = true }
     }
 
     private val main = Handler(Looper.getMainLooper())
     private val jobs = HashMap<String, Job>()
+    private val observers = ArrayList<(Job) -> Unit>()
+
+    /** Hears every progress step and every finish of any download, on the main thread. Add and remove on the main thread too. */
+    fun listen(f: (Job) -> Unit) { if (f !in observers) observers += f }
+    fun unlisten(f: (Job) -> Unit) { observers -= f }
+    fun active(): List<Job> = synchronized(jobs) { jobs.values.filter { !it.finished } }
+    fun cancelAll() = active().forEach { it.cancel() }
 
     private fun dir(c: Context, s: ModelSpec) = File(c.applicationContext.filesDir, "models/${s.group}/${s.id}")
     private fun prefs(c: Context) = c.applicationContext.getSharedPreferences("camera", Context.MODE_PRIVATE)
@@ -52,17 +60,18 @@ object ModelStore {
     fun delete(c: Context, s: ModelSpec) { job(s)?.cancel(); dir(c, s).deleteRecursively() }
 
     /**
-     * Downloads every file of [s] that is not complete yet, one after the other. Progress and the end come back on the
-     * main thread through [listener] (look at [Job.finished] and [Job.error]). Calling it again for a model that is
-     * already downloading returns that same job.
+     * Downloads every file of [s] that is not complete yet, one after the other, and keeps going when the screen is left
+     * (a foreground service shows the progress in a notification). Progress and the end go to everyone who [listen]s
+     * (look at [Job.finished] and [Job.error]). Calling it again for a model that is already downloading returns that same job.
      */
-    fun download(c: Context, s: ModelSpec, listener: (Job) -> Unit): Job {
+    fun download(c: Context, s: ModelSpec): Job {
         val app = c.applicationContext
         val job = synchronized(jobs) {
-            jobs[s.id]?.takeIf { !it.finished }?.let { it.listeners += listener; return it }
-            Job(s).also { jobs[s.id] = it; it.listeners += listener }
+            jobs[s.id]?.takeIf { !it.finished }?.let { return it }
+            Job(s).also { jobs[s.id] = it }
         }
-        fun tell() = main.post { ArrayList(job.listeners).forEach { it(job) } }
+        runCatching { androidx.core.content.ContextCompat.startForegroundService(app, android.content.Intent(app, ModelDownloadService::class.java)) }
+        fun tell() = main.post { ArrayList(observers).forEach { it(job) } }
         Thread({
             val d = dir(app, s); d.mkdirs()
             try {
@@ -70,10 +79,11 @@ object ModelStore {
                 val sizes = s.files.map { (_, url) -> remoteSize(url) }
                 val total = if (sizes.all { it > 0 }) sizes.sum() else s.approxMb * 1_048_576L
                 if (app.filesDir.usableSpace < total * 11 / 10) throw IllegalStateException("พื้นที่ในเครื่องไม่พอ ต้องใช้ประมาณ ${total / 1_048_576} MB")
+                job.totalBytes = total; tell()
                 var done = 0L
                 s.files.forEachIndexed { k, (name, url) ->
                     val target = File(d, name)
-                    if (target.length() > 0 && sizes[k] > 0 && target.length() == sizes[k]) { done += target.length(); job.fraction = (done.toFloat() / total).coerceIn(0f, 1f); tell(); return@forEachIndexed }
+                    if (target.length() > 0 && sizes[k] > 0 && target.length() == sizes[k]) { done += target.length(); job.doneBytes = done; job.fraction = (done.toFloat() / total).coerceIn(0f, 1f); tell(); return@forEachIndexed }
                     val part = File(d, "$name.part"); part.delete()
                     val conn = (URL(url).openConnection() as HttpURLConnection).apply { connectTimeout = 20_000; readTimeout = 30_000; instanceFollowRedirects = true }
                     try {
@@ -83,7 +93,7 @@ object ModelStore {
                             while (true) {
                                 if (job.cancelled) throw InterruptedException()
                                 val n = input.read(buf); if (n < 0) break
-                                out.write(buf, 0, n); done += n
+                                out.write(buf, 0, n); done += n; job.doneBytes = done
                                 val now = System.currentTimeMillis()
                                 if (now - last > 150) { last = now; job.fraction = (done.toFloat() / total).coerceIn(0f, 0.99f); tell() }
                             }
@@ -134,4 +144,49 @@ object WhisperModels {
         val real = ModelStore.sizeOnDisk(c, s)
         return if (ModelStore.installed(c, s) && real > 0) "${real / 1_048_576} MB" else "ประมาณ ${s.approxMb} MB"
     }
+}
+
+/** Keeps model downloads running after the screen is left, and shows them in a notification (like the video export does). */
+class ModelDownloadService : android.app.Service() {
+    private val id = 47011
+    private var last = 0L
+    private val update: (ModelStore.Job) -> Unit = { job -> refresh(job) }
+
+    override fun onBind(intent: android.content.Intent?): android.os.IBinder? = null
+
+    override fun onStartCommand(intent: android.content.Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == CANCEL) { ModelStore.cancelAll(); return START_NOT_STICKY }
+        val n = notification()
+        if (android.os.Build.VERSION.SDK_INT >= 29) startForeground(id, n, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC) else startForeground(id, n)
+        ModelStore.unlisten(update); ModelStore.listen(update)
+        return START_NOT_STICKY
+    }
+
+    private fun refresh(job: ModelStore.Job) {
+        if (job.finished && !ExportJob.appVisible()) {
+            if (job.error == null) LiveNotice.done(this, 47012, "ดาวน์โหลด ${job.spec.name} เสร็จแล้ว", "พร้อมใช้ถอดเสียงในตัวแก้ไขวิดีโอ", null)
+            else if (!job.cancelled) LiveNotice.done(this, 47012, "ดาวน์โหลด ${job.spec.name} ไม่สำเร็จ", job.error ?: "", null)
+        }
+        if (ModelStore.active().isEmpty()) return stop()
+        val now = android.os.SystemClock.elapsedRealtime(); if (now - last < 700) return; last = now
+        getSystemService(android.app.NotificationManager::class.java).notify(id, notification())
+    }
+
+    private fun notification(): android.app.Notification {
+        val j = ModelStore.active().firstOrNull()
+        val pc = j?.let { (it.fraction * 100).toInt() } ?: -1
+        val text = if (j == null) "กำลังเริ่ม" else "${j.spec.name} · ${j.doneBytes / 1_048_576} / ${(j.totalBytes.takeIf { it > 0 } ?: (j.spec.approxMb * 1_048_576L)) / 1_048_576} MB"
+        return LiveNotice.progress(this, "Lumora · ดาวน์โหลดโมเดล", text, pc, null,
+            android.app.PendingIntent.getService(this, 2, android.content.Intent(this, ModelDownloadService::class.java).setAction(CANCEL), android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT))
+    }
+
+    private fun stop() {
+        ModelStore.unlisten(update)
+        if (android.os.Build.VERSION.SDK_INT >= 24) stopForeground(STOP_FOREGROUND_REMOVE) else @Suppress("DEPRECATION") stopForeground(true)
+        stopSelf()
+    }
+
+    override fun onDestroy() { ModelStore.unlisten(update); super.onDestroy() }
+
+    companion object { const val CANCEL = "th.ogay.luma.model.CANCEL" }
 }

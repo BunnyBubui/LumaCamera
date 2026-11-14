@@ -413,22 +413,27 @@ class VideoEditorActivity : ComponentActivity() {
         startCaptions(captionLang(), m); showTool(15, false)
     }
     private var captionUi: CaptionProgress? = null
-    /** Says what the caption panel's model line should show; set while the panel is open, cleared when the screen closes. */
-    private var modelWatch: ((String) -> Unit)? = null
-    /** Downloads a Whisper model; with [startAfter] the captions start by themselves once it is ready. */
-    private fun downloadModel(m: ModelSpec, startAfter: Boolean = false) {
-        notice("กำลังดาวน์โหลด ${m.name} (${WhisperModels.sizeText(this, m)}) · ต้องต่ออินเทอร์เน็ต")
-        ModelStore.download(this, m) { job ->
-            if (isDestroyed) return@download
-            val pct = (job.fraction * 100).toInt()
-            modelWatch?.invoke(if (job.finished) "" else "กำลังดาวน์โหลด $pct%")
-            if (job.finished) {
-                if (job.error != null) notice(job.error!!)
-                else if (startAfter && speech == null && WhisperModels.selected(this).id == m.id) { notice("ดาวน์โหลดเสร็จแล้ว · เริ่มสร้างคำบรรยาย"); startCaptions(captionLang(), m) }
-                else notice("ดาวน์โหลด ${m.name} เสร็จแล้ว")
-                if (tool == 15) showTool(15, false)
+    /** The model whose download should start the captions by themselves when it finishes (set by the "create captions" button). */
+    private var startWhenReady: String? = null
+    private var hearingModels = false
+    private val modelEvents: (ModelStore.Job) -> Unit = { job ->
+        if (job.finished && !isDestroyed) {
+            val m = job.spec
+            when {
+                job.error != null -> { notice(job.error!!); startWhenReady = null }
+                startWhenReady == m.id && speech == null -> { startWhenReady = null; notice("ดาวน์โหลดเสร็จแล้ว · เริ่มสร้างคำบรรยาย"); startCaptions(captionLang(), m) }
+                else -> notice("ดาวน์โหลด ${m.name} เสร็จแล้ว")
             }
+            if (tool == 15) showTool(15, false)
         }
+    }
+    /** Downloads a Whisper model in the background (it goes on if this screen is closed); with [startAfter] the captions start when it is ready. */
+    private fun downloadModel(m: ModelSpec, startAfter: Boolean = false) {
+        if (!hearingModels) { ModelStore.listen(modelEvents); hearingModels = true }
+        LiveNotice.askPermissions(this)
+        if (startAfter) startWhenReady = m.id
+        ModelStore.download(this, m)
+        notice(if (startAfter) "ต้องดาวน์โหลด ${m.name} ก่อน · เสร็จแล้วจะเริ่มสร้างคำบรรยายให้เอง" else "เริ่มดาวน์โหลด ${m.name} · ปิดหน้านี้ได้ ดาวน์โหลดต่อเบื้องหลัง")
         if (tool == 15) showTool(15, false)
     }
     private fun stopCaptions() {
@@ -1743,18 +1748,8 @@ class VideoEditorActivity : ComponentActivity() {
         top.addView(dropButton("ภาษาที่พูด: $name") { v -> menu.show(v, "ภาษาที่พูดในวิดีโอ", spoken.map { GlassMenu.Option(it.first) }, spoken.indexOfFirst { it.second == lang }) { k ->
             getSharedPreferences("camera", MODE_PRIVATE).edit().putString("caption_lang", spoken[k].second).apply(); showTool(15, false) } }, LinearLayout.LayoutParams(-2, dp(38)))
         col.addView(top, -1, -2)
-        // Speech model: pick one of the Whisper models, download it once, delete it to free space.
-        val ws = WhisperModels.selected(this); val have = ModelStore.installed(this, ws); val running = ModelStore.job(ws)
-        val modelRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), 0, dp(14), dp(6)) }
-        modelRow.addView(dropButton("โมเดลถอดเสียง: ${ws.name}") { v -> menu.show(v, "เลือกโมเดลถอดเสียง", WhisperModels.ALL.map { m ->
-            GlassMenu.Option(m.name + " · " + m.badge, Icons.MIC, m.short + " · " + WhisperModels.sizeText(this, m) + if (ModelStore.installed(this, m)) " · ติดตั้งแล้ว" else " · ยังไม่ได้ดาวน์โหลด") }, WhisperModels.ALL.indexOf(ws)) { k ->
-            ModelStore.select(this, WhisperModels.ALL[k]); showTool(15, false) } }, LinearLayout.LayoutParams(-2, dp(38)))
-        val modelState = text(when { running != null -> "กำลังดาวน์โหลด ${(running.fraction * 100).toInt()}%"; have -> "ติดตั้งแล้ว · ${WhisperModels.sizeText(this, ws)}"; else -> "ยังไม่ได้ดาวน์โหลด · ${WhisperModels.sizeText(this, ws)}" }, 11.5f, if (have) Glass.TEXT2 else Glass.TEXT3).apply { setPadding(dp(10), 0, 0, 0) }
-        modelWatch = { t -> if (t.isNotEmpty() && modelState.isAttachedToWindow) modelState.text = t }
-        modelRow.addView(modelState, LinearLayout.LayoutParams(0, -2, 1f))
-        modelRow.addView(EditorKit.chip(this, if (running != null) "ยกเลิก" else if (have) "ลบ" else "ดาวน์โหลด", if (have || running != null) "" else Icons.DOWNLOAD) {
-            when { running != null -> running.cancel(); have -> { ModelStore.delete(this, ws); notice("ลบ ${ws.name} แล้ว"); showTool(15, false) }; else -> downloadModel(ws) } }, LinearLayout.LayoutParams(-2, dp(38)))
-        col.addView(modelRow, -1, -2)
+        // Speech model: a card that shows the chosen Whisper model, its download progress, and download / cancel / delete.
+        col.addView(ModelCard(this, menu, WhisperModels.ALL, Icons.MIC, "เลือกโมเดลถอดเสียง") { m -> downloadModel(m) }, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(14), 0, dp(14), dp(8)) })
         val go = LinearLayout(this).apply { gravity = Gravity.CENTER; background = glass(22, if (speech != null) 0x33ff453a else Glass.ACCENT); isClickable = true; glassTouch()
             contentDescription = if (speech != null) "หยุดสร้างคำบรรยาย" else "สร้างคำบรรยายอัตโนมัติ"
             addView(IconView(this@VideoEditorActivity, if (speech != null) "M7 7h10v10H7z" else "M4 6h16v10H8l-4 4z M8 10h8 M8 13h5", 2.2f).apply { tint = if (speech != null) Color.WHITE else Glass.ON_ACCENT }, dp(20), dp(20))
@@ -2469,7 +2464,7 @@ class VideoEditorActivity : ComponentActivity() {
     // ---------- Lifecycle ----------
     override fun onPause() { player?.let { if (it.isPlaying) togglePlay() }; if (prog != null) th.ogay.luma.ai.AiPace.watching = false; super.onPause(); if (::trim.isInitialized && overlay == null) saveProject() }
     override fun onResume() { super.onResume(); if (prog != null) th.ogay.luma.ai.AiPace.watching = true }
-    override fun onDestroy() { (speech as? StudioSpeech)?.stop(); speech = null; modelWatch = null; fxEq?.runCatching { release() }; fxEq = null; recorder?.runCatching { stop() }; recorder?.runCatching { release() }; recorder = null; handler.removeCallbacksAndMessages(null); releasePlayer(); musicPlayer?.runCatching { release() }; releaseLayerSound(); super.onDestroy() }
+    override fun onDestroy() { (speech as? StudioSpeech)?.stop(); speech = null; if (hearingModels) { ModelStore.unlisten(modelEvents); hearingModels = false }; fxEq?.runCatching { release() }; fxEq = null; recorder?.runCatching { stop() }; recorder?.runCatching { release() }; recorder = null; handler.removeCallbacksAndMessages(null); releasePlayer(); musicPlayer?.runCatching { release() }; releaseLayerSound(); super.onDestroy() }
     override fun onSaveInstanceState(out: Bundle) {
         super.onSaveInstanceState(out); writeState(out)
         out.putString("projectId", projectId); out.putString("projectName", projectName); out.putBoolean("named", named)
