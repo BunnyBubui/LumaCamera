@@ -465,7 +465,9 @@ class VideoEditorActivity : ComponentActivity() {
         if (whole.isEmpty()) { notice("วิดีโอนี้ไม่มีเสียงให้แปลง"); return }
         val auto = lang == StudioSpeech.AUTO
         val ui = CaptionProgress(this, firstFrame, listOf("เตรียมเสียงจากคลิป", "หาช่วงที่มีเสียงพูด", if (auto) "ตรวจภาษาที่พูด" else "ใช้ภาษาที่เลือกไว้", "ถอดเสียงด้วย ${model.name}", "ใส่คำบรรยายบนไทม์ไลน์")) { stopCaptions() }
-        captionUi = ui; ui.render(0, 0.02f, "กำลังเตรียมเสียงจากคลิป…")
+        val clock = AsrClock(this, model.id, whole.sumOf { it.to - it.from })
+        fun show(stage: Int, note: String, words: String = "") = ui.render(stage, clock.fraction(), note, words, clock.leftMs())
+        captionUi = ui; show(0, "กำลังเตรียมเสียงจากคลิป…")
         notice("กำลังหาช่วงที่มีเสียงพูด…")
         luma.readIo.execute {
             // Each clip is cut at its pauses so every caption line gets its own start and end; long stretches are cut every 8 seconds.
@@ -481,24 +483,26 @@ class VideoEditorActivity : ComponentActivity() {
                 if (isDestroyed) return@runOnUiThread
                 if (pieces.isEmpty()) { captionUi?.remove(); captionUi = null; notice("ไม่พบช่วงที่มีเสียงพูด"); return@runOnUiThread }
                 val used = pieces.take(80)
-                ui.render(if (auto) 2 else 3, 0.18f, "พบ ${used.size} ช่วงที่มีเสียงพูด" + if (used.size < pieces.size) " (ใช้ 80 ช่วงแรก)" else "")
+                clock.speech(used.sumOf { it.to - it.from })
+                show(if (auto) 2 else 3, "พบ ${used.size} ช่วงที่มีเสียงพูด" + if (used.size < pieces.size) " (ใช้ 80 ช่วงแรก)" else "")
                 var spoken = lang
                 val job = StudioSpeech(this, lang, used, model, { i, n ->
                     val p = used.getOrNull(i); val span = if (p != null) " · ${clock(p.from)}–${clock(p.to)} ของคลิป" else ""
                     val langName = LANGS.firstOrNull { it.second == spoken }?.first
-                    ui.render(3, 0.25f + 0.7f * i / n.coerceAtLeast(1), "ช่วงที่ ${i + 1} จาก $n$span" + (if (auto && langName != null) " · ภาษา $langName" else ""))
+                    clock.transcribing(used.take(i).sumOf { it.to - it.from })
+                    show(3, "ช่วงที่ ${i + 1} จาก $n$span" + (if (auto && langName != null) " · ภาษา $langName" else ""))
                     captionStatus?.takeIf { tool == 15 }?.let { it.text = "กำลังถอดเสียง ${i + 1}/$n" } }) { cues, problem ->
                     speech = null; if (isDestroyed) return@StudioSpeech
-                    ui.render(4, 0.97f, "กำลังใส่คำบรรยาย ${cues.size} บรรทัด…")
+                    clock.finish(); ui.render(4, 0.97f, "กำลังใส่คำบรรยาย ${cues.size} บรรทัด…", "", 5_000)
                     if (tool == 15) showTool(15, false)
                     val made = StudioMath.holdCues(cues).map { c -> val l = VideoLayer(VideoLayer.TEXT, VideoLayer.textSource(c.text, Color.WHITE, 1), c.from, c.to - c.from, text = c.text, style = 1); l to VideoLayers.textPicture(l, TEXT_PREVIEW) }
                     val added = if (made.isNotEmpty()) addCaptionLayers(made) else 0
                     ui.render(4, 1f, if (added > 0) "เสร็จแล้ว · เพิ่ม $added บรรทัด" else (problem ?: "ไม่พบเสียงพูดที่แปลงได้")); ui.remove(); captionUi = null
                     notice(when { added > 0 && problem == null -> "เพิ่มคำบรรยาย $added บรรทัด · ตรวจคำและเวลาก่อนส่งออก"; added > 0 -> "เพิ่มคำบรรยาย $added บรรทัด · $problem"; else -> problem ?: "ไม่พบเสียงพูดที่แปลงได้" })
                 }
-                job.onStage = { t -> ui.render(2, 0.2f, t) }
-                job.onDetected = { code -> val tag = LANGS.firstOrNull { StudioSpeech.whisperCode(it.second) == code }?.second ?: code; spoken = tag; detectedTag = tag; val n = LANGS.firstOrNull { it.second == tag }?.first ?: code; ui.render(3, 0.25f, "พบว่าพูดภาษา $n") }
-                job.onText = { t -> ui.render(3, ui.lastFraction, ui.lastNote, t) }
+                job.onStage = { t -> show(2, t) }
+                job.onDetected = { code -> val tag = LANGS.firstOrNull { StudioSpeech.whisperCode(it.second) == code }?.second ?: code; spoken = tag; detectedTag = tag; val n = LANGS.firstOrNull { it.second == tag }?.first ?: code; show(3, "พบว่าพูดภาษา $n") }
+                job.onText = { t -> ui.render(3, ui.lastFraction, ui.lastNote, t, clock.leftMs()) }
                 speech = job; job.start()
             }
         }

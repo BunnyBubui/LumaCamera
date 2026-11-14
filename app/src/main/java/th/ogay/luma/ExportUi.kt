@@ -496,11 +496,11 @@ class CaptionProgress(
     /** [stage] is the step now working (earlier ones show done); [fraction] is 0..1 of the whole job. */
     var lastFraction = 0f; private set
     var lastNote = ""; private set
-    fun render(stage: Int, fraction: Float, note: String, lastWords: String = "") {
+    fun render(stage: Int, fraction: Float, note: String, lastWords: String = "", etaMs: Long = -2L) {
         if (lastWords.isEmpty()) { lastFraction = fraction; lastNote = note }
         val f = fraction.coerceIn(0f, 1f); val pct = (f * 100).toInt()
         ring.progress = f; percent.text = "$pct%"; pillBar.fraction = f; pillPct.text = "$pct%"
-        val left = tracker.left(f); val etaWords = if (left < 0) "กำลังคำนวณเวลา…" else Eta.text(left)
+        val left = if (etaMs != -2L) etaMs else tracker.left(f); val etaWords = if (left < 0) "กำลังคำนวณเวลา…" else Eta.text(left)
         eta.text = etaWords; pillEta.text = etaWords
         backdrop.mode = kinds.getOrElse(stage) { ExportProgress.Backdrop.SAVE }
         val head = headings.getOrElse(stage) { "" }
@@ -543,4 +543,30 @@ object Eta {
             return smooth
         }
     }
+}
+
+
+/**
+ * Time left for speech-to-text on a long clip. A straight "percent so far" is wrong here: finding the speech is quick and
+ * transcribing it is slow, so the first stages looked nearly done. This works from the amount of speech instead:
+ * seconds of work per second of speech (learned from the first minute of this run and remembered for the next run)
+ * times the speech still to do. The percentage is then worked out from that, so the two always agree.
+ */
+class AsrClock(private val c: android.content.Context, private val modelId: String, private val totalMs: Long) {
+    private val prefs = c.getSharedPreferences("camera", android.content.Context.MODE_PRIVATE)
+    private val t0 = android.os.SystemClock.elapsedRealtime(); private var asr0 = 0L
+    private var speechMs = (totalMs * 0.8).toLong(); private var doneMs = 0L; private var shown = 0f
+    private val prior = prefs.getFloat("asr_rate_$modelId", 0.6f).toDouble()
+    private fun now() = android.os.SystemClock.elapsedRealtime()
+    /** Once the speech is found, its real length replaces the first guess. */
+    fun speech(ms: Long) { speechMs = ms.coerceAtLeast(1) }
+    /** Call at the start of each piece with how much speech is already finished. */
+    fun transcribing(done: Long) { if (asr0 == 0L) asr0 = now(); doneMs = done }
+    private fun measured(): Double? = if (asr0 > 0 && doneMs >= 5_000) (now() - asr0).toDouble() / doneMs else null
+    private fun rate(): Double { val w = (doneMs / 60_000.0).coerceIn(0.0, 1.0); return prior * (1 - w) + (measured() ?: prior) * w }
+    /** Milliseconds still to go. Before transcribing starts it also counts reading the whole clip's sound (about 3% of its length). */
+    fun leftMs(): Long = ((speechMs - doneMs).coerceAtLeast(0) * rate() + (if (asr0 == 0L) totalMs * 0.03 else 0.0) + 2_000).toLong()
+    fun fraction(): Float { val el = (now() - t0).toDouble(); val f = (el / (el + leftMs())).toFloat(); shown = maxOf(shown, minOf(f, 0.97f)); return shown }
+    /** Remembers the pace for next time (only when this run was long enough to measure it). */
+    fun finish() { measured()?.takeIf { doneMs >= 20_000 }?.let { prefs.edit().putFloat("asr_rate_$modelId", (0.5 * prior + 0.5 * it).toFloat().coerceIn(0.05f, 5f)).apply() } }
 }
