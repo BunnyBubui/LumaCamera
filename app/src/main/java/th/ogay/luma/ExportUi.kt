@@ -431,7 +431,7 @@ class CaptionProgress(
 
     init {
         layer.addView(backdrop, -1, -1)
-        val col = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; setPadding(a.dp(24), a.dp(48), a.dp(24), a.dp(24)) }
+        val col = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; setPadding(a.dp(24), a.dp(40), a.dp(24), a.dp(40)) }
         val frame = FrameLayout(a)
         frame.addView(ImageView(a).apply { scaleType = ImageView.ScaleType.CENTER_CROP; setImageBitmap(thumb); setBackgroundColor(0x22ffffff); clipToOutline = true
             outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: android.graphics.Outline) = o.setRoundRect(0, 0, v.width, v.height, a.dp(18).toFloat()) } },
