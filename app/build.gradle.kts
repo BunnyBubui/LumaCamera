@@ -38,6 +38,11 @@ android {
     packaging { jniLibs { pickFirsts += "**/libc++_shared.so" } }
     val keyFile = providers.environmentVariable("LUMA_KEYSTORE").orNull
     signingConfigs {
+        // One fixed key for every debug/CI build, so a new build installs over the old one and keeps its data.
+        // (The runner used to make a fresh random key each time, which Android refuses to update over.)
+        getByName("debug") {
+            storeFile = file("lumora-debug.keystore"); storePassword = "android"; keyAlias = "androiddebugkey"; keyPassword = "android"
+        }
         if (keyFile != null) {
             create("distribution") {
                 storeFile = file(keyFile)

@@ -88,13 +88,16 @@ object LlamaTranslator {
     /** What the text is (for example a Chinese martial-arts film), so the model picks matching words and tone. Empty = none. */
     @Volatile var context: String = ""
 
-    private fun prompt(f: TransFamily, from: String, to: String, text: String): String {
+    private fun prompt(f: TransFamily, from: String, to: String, text: String, ctx: String = context.trim().take(120)): String {
         val fn = TransLang.name(from); val tn = TransLang.name(to)
-        val hint = context.trim().take(120).let { if (it.isEmpty()) "" else "Context: the text is dialogue from $it. Choose vocabulary, tone and names that suit it.\n" }
-        return hint + when (f) {
-            TransFamily.HUNYUAN -> "Translate the following segment into $tn, without additional explanation.\n\n$text"
-            TransFamily.CHINDA -> "Translate $fn to $tn.\nRules:\n- Return only the translated text\n\n${TransLang.code(from).uppercase()}: $text"
-            TransFamily.TYPHOON -> "Translate the following $fn text into $tn. Return only the translated text, without explanations.\nSource Text:\n\n$text"
+        // The context goes inside the instruction. A line of its own was translated as if it were a caption (seen on a phone).
+        return when (f) {
+            // Tencent's context form: the context first, then the line to translate; the model is told not to translate the context.
+            TransFamily.HUNYUAN -> if (ctx.isEmpty()) "Translate the following segment into $tn, without additional explanation.\n\n$text"
+                else "Context: dialogue from $ctx.\n参考上面的信息，把下面的文本翻译成$tn，注意不需要翻译上文，也不要额外解释：\n$text"
+            TransFamily.CHINDA -> "Translate $fn to $tn.\nRules:\n- Return only the translated text\n" + (if (ctx.isEmpty()) "" else "- The text is dialogue from $ctx; choose words and tone to suit it\n") + "\n${TransLang.code(from).uppercase()}: $text"
+            TransFamily.TYPHOON -> "Translate the following $fn text into $tn. " + (if (ctx.isEmpty()) "" else "The text is dialogue from $ctx; choose words and tone that suit it. ") + "Return only the translated text, without explanations.\nSource Text:\n\n$text"
+            // TranslateGemma is a strict translator with a fixed prompt: extra words would be translated too, so no context here.
             TransFamily.GEMMA -> "You are a professional $fn (${TransLang.code(from)}) to $tn (${TransLang.code(to)}) translator. Your goal is to accurately convey the meaning and nuances of the original $fn text while adhering to $tn grammar, vocabulary, and cultural sensitivities.\n" +
                 "Produce only the $tn translation, without any additional explanations or commentary. Please translate the following $fn text into $tn:\n\n\n$text"
         }
@@ -134,12 +137,18 @@ object LlamaTranslator {
             loaded()
             lines.forEachIndexed { i, text ->
                 if (cancelled) return null
-                val ask = prompt(family, from, to, text)
-                // The model's own template first; if the file has none the library can read, the usual form for that family.
-                var wrapped = e.wrap(ask).ifEmpty { fallbackWrap(family, ask) }
-                if (wrapped.isEmpty()) return "ไฟล์โมเดลนี้ไม่มีรูปแบบแชทที่อ่านได้ ใช้แปลไม่ได้ · ลองโมเดลอื่น"
-                if (family == TransFamily.CHINDA && !wrapped.contains("<think>")) wrapped += "<think>\n\n</think>\n\n"
-                val out = clean(e.generate(wrapped, (text.length * 3).coerceIn(64, 512)))
+                fun ask(ctx: String): String? {
+                    val q = prompt(family, from, to, text, ctx)
+                    // The model's own template first; if the file has none the library can read, the usual form for that family.
+                    var wrapped = e.wrap(q).ifEmpty { fallbackWrap(family, q) }
+                    if (wrapped.isEmpty()) return null
+                    if (family == TransFamily.CHINDA && !wrapped.contains("<think>")) wrapped += "<think>\n\n</think>\n\n"
+                    return clean(e.generate(wrapped, (text.length * 3).coerceIn(64, 512)))
+                }
+                val ctx = context.trim().take(120)
+                var out = ask(ctx) ?: return "ไฟล์โมเดลนี้ไม่มีรูปแบบแชทที่อ่านได้ ใช้แปลไม่ได้ · ลองโมเดลอื่น"
+                // A line that came out far longer than the original means the model translated the context too: do it again without.
+                if (ctx.isNotEmpty() && out.length > text.length * 4 + 40) out = ask("") ?: out
                 progress(i + 1, lines.size, out.takeIf { it.isNotBlank() })
             }
             return null

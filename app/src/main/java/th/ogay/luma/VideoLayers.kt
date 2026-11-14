@@ -98,8 +98,14 @@ data class VideoLayer(
 @androidx.annotation.OptIn(markerClass = [UnstableApi::class])
 object VideoLayers {
     /** Picture layers as overlays for the whole video (their times are times of the finished video). */
-    fun overlays(c: Context, layers: List<VideoLayer>): List<BitmapOverlay> = layers.filter { it.visual }.map { l ->
-        when (l.kind) { VideoLayer.IMAGE -> gif(c, l) ?: TimedOverlay(l, matted(picture(c, l.source, 1280), l.matte)); VideoLayer.TEXT -> TimedOverlay(l, textPicture(l)); else -> MovingOverlay(c, l) }
+    fun overlays(c: Context, layers: List<VideoLayer>): List<BitmapOverlay> {
+        val vis = layers.filter { it.visual }
+        // Hundreds of caption lines as separate overlays used up the graphics memory and made the export fail: they share one overlay that swaps its picture.
+        val caps = vis.filter { it.kind == VideoLayer.TEXT && it.caption && !it.animated && it.turn == 0f && shapeOf(it.text) < 0 }
+        val rest = vis.filter { l -> caps.none { it === l } }.map { l ->
+            when (l.kind) { VideoLayer.IMAGE -> gif(c, l) ?: TimedOverlay(l, matted(picture(c, l.source, 1280), l.matte)); VideoLayer.TEXT -> TimedOverlay(l, textPicture(l)); else -> MovingOverlay(c, l) }
+        }
+        return if (caps.isEmpty()) rest else rest + CaptionTrack(caps.sortedBy { it.at })
     }
     /** True when the file starts like a GIF picture. */
     fun isGif(c: Context, uri: Uri): Boolean = runCatching { c.contentResolver.openInputStream(uri)?.use { val b = ByteArray(4); it.read(b) == 4 && String(b, Charsets.US_ASCII) == "GIF8" } ?: false }.getOrDefault(false)
@@ -277,6 +283,26 @@ object VideoLayers {
             if (!inside(presentationTimeUs)) return hidden
             if (!layer.animated) return shown
             val p = layer.pose(presentationTimeUs / 1000); return settings(p[0], p[1], p[2], p[3])
+        }
+    }
+
+    /** All caption lines as one overlay: it draws only the line that is on at that moment, so one picture is in memory at a time. */
+    private class CaptionTrack(private val cues: List<VideoLayer>) : BitmapOverlay() {
+        private val blank = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888)
+        private var frameW = 0; private var idx = -2; private var pic = blank
+        override fun configure(videoSize: Size) { super.configure(videoSize); frameW = videoSize.width }
+        private fun select(us: Long): Int {
+            val ms = us / 1000
+            val k = if (idx >= 0 && ms >= cues[idx].at && ms < cues[idx].end) idx else cues.indexOfFirst { ms >= it.at && ms < it.end }
+            if (k != idx) { idx = k; pic = if (k < 0) blank else textPicture(cues[k]) }
+            return k
+        }
+        override fun getBitmap(presentationTimeUs: Long): Bitmap { select(presentationTimeUs); return pic }
+        override fun getOverlaySettings(presentationTimeUs: Long): OverlaySettings {
+            val k = select(presentationTimeUs); val l = cues.getOrNull(k)
+            val scale = if (l == null) 1f else l.size * frameW / pic.width.coerceAtLeast(1)
+            return StaticOverlaySettings.Builder().setScale(scale, scale).setAlphaScale(if (l == null) 0f else l.opacity)
+                .setBackgroundFrameAnchor(((l?.x ?: 0.5f) * 2 - 1).coerceIn(-1f, 1f), (1 - (l?.y ?: 0.5f) * 2).coerceIn(-1f, 1f)).setOverlayFrameAnchor(0f, 0f).build()
         }
     }
 
