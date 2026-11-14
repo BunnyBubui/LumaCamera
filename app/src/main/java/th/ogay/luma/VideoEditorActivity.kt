@@ -2517,17 +2517,20 @@ class VideoEditorActivity : ComponentActivity() {
         val ranges = if (split >= 0 && !whole) listOf(start to split, split to end) else listOf(start to end)
         val steps = ArrayList<String>(); val weights = ArrayList<Float>(); val kinds = ArrayList<Int>()
         val slow = smooth && speed < 1f
-        if (slow) { steps += "สร้างเฟรมสโลว์ลื่นด้วย Optical flow"; weights += 3f; kinds += ExportProgress.Backdrop.FLOW }
-        val stageEdit = steps.size; steps += "ตัดต่อและใส่เอฟเฟกต์"; weights += 1f; kinds += ExportProgress.Backdrop.EDIT
+        // Weights are estimated minutes of work, so the percentage and the time left follow real effort. (The AI / in-between step used to be
+        // weighted far above the edit step, so a long clip sat at 0% through the whole edit.)
+        val editMin = (src.durationMs / 60_000.0 * 0.35).toFloat().coerceAtLeast(0.2f)
+        if (slow) { steps += "สร้างเฟรมสโลว์ลื่นด้วย Optical flow"; weights += editMin * 3f; kinds += ExportProgress.Backdrop.FLOW }
+        val stageEdit = steps.size; steps += "ตัดต่อและใส่เอฟเฟกต์"; weights += editMin; kinds += ExportProgress.Backdrop.EDIT
         var stageEnhance = -1
         enhance?.let { e ->
             stageEnhance = steps.size
             steps += listOfNotNull(if (bigger) (if (e.ai) "AI สร้างพิกเซลเพิ่มเป็น ${ExportSheet.sideName(c.shortSide)}" else "ขยายเป็น ${ExportSheet.sideName(c.shortSide)}") else null,
                 if (smoother) "สร้างเฟรมแทรกเป็น ${ExportSheet.fpsName(c.fps)} fps" else null).joinToString(" และ")
-            weights += (ExportSheet.minutes(src, c.shortSide, c.fps, e.ai) * 4).toFloat().coerceAtLeast(2f)
+            weights += ExportSheet.minutes(src, c.shortSide, c.fps, e.ai).toFloat().coerceAtLeast(0.5f)
             kinds += if (bigger && e.ai) ExportProgress.Backdrop.AI else ExportProgress.Backdrop.FLOW
         }
-        val stageSave = steps.size; steps += "บันทึกลงแกลเลอรี"; weights += 0.3f; kinds += ExportProgress.Backdrop.SAVE
+        val stageSave = steps.size; steps += "บันทึกลงแกลเลอรี"; weights += 0.1f; kinds += ExportProgress.Backdrop.SAVE
         val id = System.currentTimeMillis()
         val dir = File(filesDir, "video-exports/$id").apply { mkdirs() }
         val slowFile = File(cacheDir, "slowflow-$id.mp4")

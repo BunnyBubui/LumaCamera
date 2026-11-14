@@ -55,6 +55,18 @@ object ExportJob {
             val w = plan.weights; val total = w.sum().coerceAtLeast(0.001f)
             return (((w.take(stage).sum() + w.getOrElse(stage) { 0f } * fraction.coerceIn(0f, 1f)) / total) * 100).toInt().coerceIn(0, 100)
         }
+        private var timedStage = -1; private var stageClock = Eta.Tracker()
+        /**
+         * Milliseconds left: the rest of this step at the pace it is going, plus the estimates of the steps after it.
+         * Until the step has run long enough to measure, its own estimate stands in, so a number always shows.
+         */
+        @Synchronized fun leftMs(): Long {
+            if (stage != timedStage) { timedStage = stage; stageClock = Eta.Tracker() }
+            val w = plan.weights; val later = (w.drop(stage + 1).sum() * 60_000.0).toLong()
+            val own = if (etaMs > 0) etaMs else stageClock.left(fraction).takeIf { it >= 0 }
+                ?: ((w.getOrElse(stage) { 0f } * (1f - fraction.coerceIn(0f, 1f))) * 60_000.0).toLong()
+            return own + later
+        }
         fun stepName() = plan.steps.getOrElse(stage) { "เสร็จแล้ว" }
     }
 
@@ -186,11 +198,10 @@ class ExportService : Service() {
         getSystemService(android.app.NotificationManager::class.java).notify(id, notification())
     }
 
-    private val pacer = Eta.Tracker()
     private fun notification(): android.app.Notification {
         val s = ExportJob.state
         val pc = s?.percent() ?: -1
-        val left = s?.etaMs?.takeIf { it > 0 } ?: pacer.left(pc.coerceAtLeast(0) / 100f).takeIf { it > 0 }
+        val left = s?.leftMs()?.takeIf { it > 0 }
         val eta = left?.let { " · " + Eta.text(it) } ?: ""
         return LiveNotice.progress(this, "Lumora · ส่งออกวิดีโอ", (s?.stepName() ?: "กำลังเริ่ม") + eta, pc, openProcess(),
             PendingIntent.getService(this, 1, Intent(this, ExportService::class.java).setAction(CANCEL), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT),
