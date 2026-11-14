@@ -109,7 +109,7 @@ object ModelStore {
     /** Asks the server how big the file is without downloading it; 0 when it does not say. */
     private fun remoteSize(url: String): Long = runCatching {
         val conn = (URL(url).openConnection() as HttpURLConnection).apply { requestMethod = "HEAD"; connectTimeout = 15_000; readTimeout = 15_000; instanceFollowRedirects = true }
-        try { if (conn.responseCode in 200..299) conn.contentLengthLong.coerceAtLeast(0L) else 0L } finally { conn.disconnect() }
+        try { if (conn.responseCode in 200..299) (conn.getHeaderField("Content-Length")?.toLongOrNull() ?: 0L).coerceAtLeast(0L) else 0L } finally { conn.disconnect() }
     }.getOrDefault(0L)
 }
 
