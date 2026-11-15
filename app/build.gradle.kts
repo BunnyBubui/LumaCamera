@@ -47,12 +47,11 @@ android {
         }
     }
     buildTypes {
-        create("sr3test") {
-            initWith(getByName("debug"))
-            applicationIdSuffix = ".sr3test"
-            versionNameSuffix = "-sr3-test"
-            signingConfig = signingConfigs.getByName("debug")
-            matchingFallbacks += "debug"
+        // An existing key may be supplied for in-place updates; never generate a
+        // replacement distribution key here. Ordinary local builds keep their
+        // existing Android debug keystore when no explicit key is supplied.
+        getByName("debug") {
+            if (keyFile != null) signingConfig = signingConfigs.getByName("distribution")
         }
         create("beta") {
             initWith(getByName("release"))
