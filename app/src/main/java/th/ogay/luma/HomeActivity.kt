@@ -42,6 +42,10 @@ class HomeActivity : ComponentActivity() {
     companion object {
         /** Result extra: the photo mode the camera should switch to. */
         const val RESULT_MODE = "mode"
+        /** Set when the camera opened Home on top of itself; unset when Home is the first screen of the app. */
+        const val FROM_CAMERA = "from_camera"
+        /** Set on the camera that Home started, so its house button returns to the Home beneath. */
+        const val FROM_HOME = "from_home"
         const val HOUSE = "M3.5 11 12 4l8.5 7 M6 9.5V20h4.5v-5.5h3V20H18V9.5"
         const val BACK_SMALL = "M14.5 6.5 9 12l5.5 5.5"
     }
@@ -165,7 +169,12 @@ class HomeActivity : ComponentActivity() {
     override fun onDestroy() { loader.shutdownNow(); super.onDestroy() }
 
     private fun close() { finish(); @Suppress("DEPRECATION") overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out) }
-    private fun returnMode(m: PhotoMode) { setResult(RESULT_OK, Intent().putExtra(RESULT_MODE, m.name)); close() }
+    private fun returnMode(m: PhotoMode) {
+        if (intent.getBooleanExtra(FROM_CAMERA, false)) { setResult(RESULT_OK, Intent().putExtra(RESULT_MODE, m.name)); close(); return }
+        // First screen of the app: open the camera in that mode, with Home left beneath it.
+        getSharedPreferences("camera", MODE_PRIVATE).edit().putString("pending_mode", m.name).apply()
+        startActivity(Intent(this, CameraActivity::class.java).putExtra(FROM_HOME, true))
+    }
 
     // ---------- Pieces ----------
     /** A tool block: dark base with a soft light in the tool's colour, as on the mode cards. [fill] adds what is drawn on it. */

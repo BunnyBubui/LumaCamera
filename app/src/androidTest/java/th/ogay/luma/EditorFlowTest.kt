@@ -41,6 +41,12 @@ class EditorFlowTest {
         while (SystemClock.elapsedRealtime() < end) { if (check()) return; SystemClock.sleep(200) }
         assertTrue("$what · ${GlassNav.dump(device)}", check())
     }
+    /** Waits for a control to appear, then taps it; the editor animates between tools, so an immediate lookup can miss. */
+    private fun tap(sel: androidx.test.uiautomator.BySelector, what: String, ms: Long = 10000) {
+        val o = device.wait(Until.findObject(sel), ms)
+        assertNotNull("$what is missing · ${GlassNav.dump(device)}", o)
+        o!!.click()
+    }
     private fun picture(w: Int, h: Int): File {
         val b = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         Canvas(b).apply { drawColor(Color.rgb(40, 90, 160)); drawCircle(w / 3f, h / 2f, h / 4f, Paint().apply { color = Color.YELLOW }) }
@@ -78,16 +84,16 @@ class EditorFlowTest {
             val speedInput = device.wait(Until.findObject(By.clazz("android.widget.EditText")), 5000)
             assertNotNull("Speed input missing · ${GlassNav.dump(device)}", speedInput)
             speedInput!!.text = "2"
-            device.findObject(By.text("ตกลง")).click()
-            device.findObject(By.desc("ฟิลเตอร์")).click()
+            tap(By.text("ตกลง"), "OK button")
+            tap(By.desc("ฟิลเตอร์"), "Filter tab")
             device.wait(Until.findObject(By.descStartsWith("ฟิลเตอร์ ")), 5000)
             device.findObjects(By.descStartsWith("ฟิลเตอร์ ")).getOrNull(1)?.click()
-            device.findObject(By.desc("ข้อความ")).click()
+            tap(By.desc("ข้อความ"), "Text tab")
             device.wait(Until.findObject(By.desc("ข้อความบนวิดีโอ")), 5000)!!.text = "Lumora"
-            device.findObject(By.desc("ส่งออก")).click()
+            tap(By.desc("ส่งออก"), "Export button")
             // The export sheet opens first (resolution and frame rate); keep the source settings.
             assertNotNull("Export sheet · ${GlassNav.dump(device)}", device.wait(Until.findObject(By.desc("เริ่มส่งออก")), 5000))
-            device.findObject(By.desc("เริ่มส่งออก")).click()
+            tap(By.desc("เริ่มส่งออก"), "Start export button")
             // A short clip can finish (and the editor close) before the progress card is ever seen, so only the result is checked.
             until(150000, "No edited clip was published") { device.findObject(By.text("ส่งออกไม่ได้")) != null || MediaLedger.all(context).any { it.uri.toString() !in before && it.title.startsWith("Lumora_EDIT_") } }
             assertTrue("Export failed · ${device.findObject(By.textContains("วิดีโอต้นฉบับยังอยู่ครบ"))?.text}", device.findObject(By.text("ส่งออกไม่ได้")) == null)

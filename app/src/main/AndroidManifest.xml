@@ -44,7 +44,11 @@
             <meta-data android:name="androidx.work.WorkManagerInitializer" android:value="androidx.startup" tools:node="remove"/>
         </provider>
         <activity android:name=".GalleryActivity" android:exported="false"/>
-        <activity android:name=".HomeActivity" android:exported="false"/>
+        <activity android:name=".HomeActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
         <activity android:name=".StudioProjectsActivity" android:exported="false"/>
         <service android:name="androidx.work.impl.foreground.SystemForegroundService"
             android:foregroundServiceType="dataSync" tools:node="merge"/>
@@ -54,11 +58,7 @@
         <service android:name=".ExportService" android:exported="false" android:foregroundServiceType="dataSync"/>
         <service android:name=".ModelDownloadService" android:exported="false" android:foregroundServiceType="dataSync"/>
         <service android:name=".TaskNoticeService" android:exported="false" android:foregroundServiceType="dataSync"/>
-        <activity android:name=".CameraActivity" android:exported="true" android:configChanges="orientation|screenSize|screenLayout|keyboardHidden">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/>
-            </intent-filter>
-        </activity>
+        <activity android:name=".CameraActivity" android:exported="true" android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"/>
     </application>
 </manifest>
 

@@ -195,7 +195,8 @@ class CameraActivity : ComponentActivity() {
     }
     private fun openHome() {
         if (busy || timerRunning) return
-        home.launch(Intent(this, HomeActivity::class.java))
+        if (intent.getBooleanExtra(HomeActivity.FROM_HOME, false)) { finish(); @Suppress("DEPRECATION") overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out); return }
+        home.launch(Intent(this, HomeActivity::class.java).putExtra(HomeActivity.FROM_CAMERA, true))
         @Suppress("DEPRECATION") overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out)
     }
     /** Contents that turn upright in landscape: round buttons' icons, the gallery thumb, lens pills and mode icons. */
@@ -481,10 +482,11 @@ class CameraActivity : ComponentActivity() {
         val (stripBox, arrow) = ArrowTab.wrap(this, modeStrip, dp(58 * grow())) { openPanel() }
         modeArrow = arrow
         dock.clipChildren = false
-        dock.addView(stripBox, -1, -2)
         if (android.os.Build.VERSION.SDK_INT >= 29) modeStrip.addOnLayoutChangeListener { v, l, t, r, b, _, _, _, _ -> v.systemGestureExclusionRects = listOf(android.graphics.Rect(0, 0, r - l, b - t)) }
         val actions = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(36), 0, dp(36), 0) }
         dock.addView(actions, -1, dp(104))
+        // The mode names sit at the very bottom, under the shutter row.
+        dock.addView(stripBox, -1, -2)
         thumb = ImageView(this).apply {
             scaleType = ImageView.ScaleType.CENTER_CROP; background = glass(16); clipToOutline = true
             contentDescription = "เปิดรูปถ่ายล่าสุด"; setOnClickListener { startActivity(Intent(this@CameraActivity, GalleryActivity::class.java)) }
