@@ -2,10 +2,10 @@
     <string name="app_name">Lumora</string>
     <style name="LumaTheme" parent="@android:style/Theme.Material.NoActionBar">
         <item name="android:fontFamily">sans</item>
-        <item name="android:colorAccent">#DAEE8D</item>
-        <item name="android:windowBackground">#121613</item>
-        <item name="android:navigationBarColor">#121613</item>
-        <item name="android:statusBarColor">#121613</item>
+        <item name="android:colorAccent">#FF9F45</item>
+        <item name="android:windowBackground">#0A0A0B</item>
+        <item name="android:navigationBarColor">#0A0A0B</item>
+        <item name="android:statusBarColor">#0A0A0B</item>
         <item name="android:windowLightStatusBar">false</item>
     </style>
     <!-- A see-through screen for short permission steps over whatever screen asked for them. -->

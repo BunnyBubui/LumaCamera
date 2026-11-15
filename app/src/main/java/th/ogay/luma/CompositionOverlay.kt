@@ -83,7 +83,7 @@ class CompositionOverlay(context: Context) : View(context), SensorEventListener 
             var r=((roll%90)+90)%90;if(r>45)r-=90   // nearest horizontal or vertical axis
             val level=kotlin.math.abs(r)<1.2f;val cx=width/2f;val cy=height/2f
             paint.style=Paint.Style.STROKE;paint.strokeCap=Paint.Cap.ROUND;paint.strokeWidth=1.6f*density
-            paint.color=if(level)0xffffd60a.toInt() else 0xb3ffffff.toInt()
+            paint.color=if(level)Glass.FOCUS else 0xb3ffffff.toInt()
             if(!level){canvas.drawLine(cx-86*density,cy,cx-70*density,cy,paint);canvas.drawLine(cx+70*density,cy,cx+86*density,cy,paint)}
             if(kotlin.math.abs(r)<30f){canvas.save();canvas.rotate(-r,cx,cy);canvas.drawLine(cx-(if(level)86 else 44)*density,cy,cx+(if(level)86 else 44)*density,cy,paint);canvas.restore()}
             paint.strokeCap=Paint.Cap.BUTT

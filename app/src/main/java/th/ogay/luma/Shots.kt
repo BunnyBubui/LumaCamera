@@ -190,6 +190,21 @@ class LumaApp : Application(), Configuration.Provider {
         get() = Configuration.Builder().setExecutor(aiExecutor).build()
     override fun onCreate() {
         super.onCreate()
+        Theme.load(this)
+        // Screens remember the theme they were built with; one left behind after a theme change rebuilds itself when it comes back.
+        registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
+            private val built = java.util.WeakHashMap<android.app.Activity, Int>()
+            override fun onActivityCreated(a: android.app.Activity, b: android.os.Bundle?) { built[a] = Theme.version }
+            override fun onActivityResumed(a: android.app.Activity) {
+                val v = built[a] ?: return
+                if (v != Theme.version) { built[a] = Theme.version; a.recreate() }
+            }
+            override fun onActivityStarted(a: android.app.Activity) {}
+            override fun onActivityPaused(a: android.app.Activity) {}
+            override fun onActivityStopped(a: android.app.Activity) {}
+            override fun onActivitySaveInstanceState(a: android.app.Activity, b: android.os.Bundle) {}
+            override fun onActivityDestroyed(a: android.app.Activity) { built.remove(a) }
+        })
         if (applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0)
             android.os.StrictMode.setThreadPolicy(android.os.StrictMode.ThreadPolicy.Builder().detectDiskReads().detectDiskWrites().detectNetwork().penaltyLog().build())
         fileIo.execute {

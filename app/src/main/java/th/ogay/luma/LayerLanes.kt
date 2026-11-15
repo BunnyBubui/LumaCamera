@@ -28,7 +28,7 @@ class LayerLanes(context: Context) : View(context) {
     private val bar = Paint(Paint.ANTI_ALIAS_FLAG)
     private val edge = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 2 * d; color = 0xffffffff.toInt() }
     private val head = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xffffffff.toInt(); strokeWidth = 2 * d }
-    private val label = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xff0b0f1e.toInt(); textSize = 11 * d; isFakeBoldText = true }
+    private val label = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xff0a0a0b.toInt(); textSize = 11 * d; isFakeBoldText = true }
     private var dragging = false; private var lastX = 0f; private var downX = 0f
 
     init { contentDescription = "เลเยอร์ แตะเพื่อเลือก ลากแถบเพื่อเลื่อนเวลาเริ่ม"; isClickable = true }

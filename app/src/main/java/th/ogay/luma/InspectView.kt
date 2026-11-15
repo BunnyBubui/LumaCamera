@@ -244,7 +244,7 @@ class InspectView(context: Context) : View(context) {
     /** Heights of the shades under the floating bars (set by the gallery from its bar sizes). */
     var shadeTop=110*context.resources.displayMetrics.density
     var shadeBottom=170*context.resources.displayMetrics.density
-    private val bgPaint=Paint().apply{color=0xff05070f.toInt()}
+    private val bgPaint=Paint().apply{color=Glass.BG_DEEP}
     // ---- Reflection: a tiny copy of the picture, stretched (which blurs it) and mirrored past each edge.
     private var glow:Bitmap?=null
     var reflections=true

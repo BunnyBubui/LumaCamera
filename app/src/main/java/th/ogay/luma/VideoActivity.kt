@@ -693,10 +693,10 @@ class VideoActivity:ComponentActivity(){
     private fun chipGrad(k:String)=when(k){
         "ISO"->intArrayOf(0xff5ac8fa.toInt(),0xff7be3b0.toInt(),Glass.ACCENT,0xffff9f0a.toInt(),0xffff453a.toInt())
         "S"->intArrayOf(0xff64d2ff.toInt(),0xffbf9bff.toInt(),Glass.ACCENT,0xffff9f0a.toInt())
-        "WB"->intArrayOf(0xffff9a3d.toInt(),0xffffd9a8.toInt(),WHITE,0xffcfe5ff.toInt(),0xff7db8ff.toInt())
+        "WB"->intArrayOf(0xffff9a3d.toInt(),0xffffd9a8.toInt(),0xffffffff.toInt(),0xffcfe5ff.toInt(),0xff7db8ff.toInt())
         "AF"->intArrayOf(0xff8e8e93.toInt(),0xffbbf0ff.toInt(),0xff5ac8fa.toInt())
-        "ASP","RES","RATE","FPS"->intArrayOf(0xff8e8e93.toInt(),WHITE,Glass.ACCENT)
-        else->intArrayOf(0xff8e8e93.toInt(),WHITE)}
+        "ASP","RES","RATE","FPS"->intArrayOf(0xff8e8e93.toInt(),0xffffffff.toInt(),Glass.ACCENT)
+        else->intArrayOf(0xff8e8e93.toInt(),0xffffffff.toInt())}
     private fun refreshChips(){
         if(!::chips.isInitialized)return
         val keys=chipKeys();chipTexts.clear()

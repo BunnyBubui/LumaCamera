@@ -285,7 +285,7 @@ class GalleryActivity : ComponentActivity() {
         val content = findViewById<View>(android.R.id.content) as FrameLayout
         val bar = selectBar as? LinearLayout ?: LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL; background = glass(28, Glass.FILL_POP); setPadding(dp(18), 0, dp(8), 0); elevation = dp(8).toFloat()
-            addView(text("", 15f, Color.WHITE, true), LinearLayout.LayoutParams(0, -2, 1f))
+            addView(text("", 15f, Glass.TEXT, true), LinearLayout.LayoutParams(0, -2, 1f))
             fun act(icon: String, desc: String, f: () -> Unit) = addView(FrameLayout(this@GalleryActivity).apply { isClickable = true; glassTouch(); contentDescription = desc
                 addView(IconView(this@GalleryActivity, icon), FrameLayout.LayoutParams(dp(22), dp(22), Gravity.CENTER)); setOnClickListener { Glass.tick(this); f() } }, dp(52), dp(52))
             if (pickKind != null) {
@@ -346,8 +346,8 @@ class GalleryActivity : ComponentActivity() {
             note.addView(text("ย้ายไปถังขยะของเครื่อง กู้คืนได้จากแอปรูปภาพของเครื่องภายใน 30 วัน" + if (items.any { it.shot?.ai != null }) " · ภาพ AI ของรูปนี้จะถูกลบด้วย" else "", 12.5f, Glass.TEXT2).apply { maxLines = 4; ellipsize = null; setPadding(dp(10), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
             col.addView(note, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
             val buttons = LinearLayout(this)
-            buttons.addView(text("ยกเลิก", 14f, Color.WHITE, true).apply { gravity = Gravity.CENTER; background = glass(22, 0x1affffff); isClickable = true; glassTouch(); setOnClickListener { d.dismiss() } }, LinearLayout.LayoutParams(0, dp(48), 1f))
-            buttons.addView(text("ลบ", 14f, Color.WHITE, true).apply { gravity = Gravity.CENTER; background = glass(22, RED); isClickable = true; glassTouch(); setOnClickListener { d.dismiss(); trash(items) } }, LinearLayout.LayoutParams(0, dp(48), 1f).apply { leftMargin = dp(8) })
+            buttons.addView(text("ยกเลิก", 14f, Glass.TEXT, true).apply { gravity = Gravity.CENTER; background = glass(22, 0x1affffff); isClickable = true; glassTouch(); setOnClickListener { d.dismiss() } }, LinearLayout.LayoutParams(0, dp(48), 1f))
+            buttons.addView(text("ลบ", 14f, Glass.TEXT, true).apply { gravity = Gravity.CENTER; background = glass(22, RED); isClickable = true; glassTouch(); setOnClickListener { d.dismiss(); trash(items) } }, LinearLayout.LayoutParams(0, dp(48), 1f).apply { leftMargin = dp(8) })
             col.addView(buttons, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(14) })
         }.show()
     }
@@ -383,7 +383,7 @@ class GalleryActivity : ComponentActivity() {
                 if (isDestroyed) return@runOnUiThread
                 val ext = now.substringAfterLast('.', ""); val stem = if (ext.isEmpty()) now else now.dropLast(ext.length + 1)
                 GlassDialog.panel(this, "เปลี่ยนชื่อ") { col, d ->
-                    val field = EditText(this).apply { setText(stem); setSelection(stem.length); setTextColor(Color.WHITE); textSize = 15f; setSingleLine(); background = glass(16, 0x1fffffff); setPadding(dp(14), 0, dp(14), 0) }
+                    val field = EditText(this).apply { setText(stem); setSelection(stem.length); setTextColor(Glass.TEXT); textSize = 15f; setSingleLine(); background = glass(16, 0x1fffffff); setPadding(dp(14), 0, dp(14), 0) }
                     col.addView(field, LinearLayout.LayoutParams(-1, dp(50)).apply { topMargin = dp(8) })
                     col.addView(GlassDialog.actions(this, "ยกเลิก" to { d.dismiss() }, "บันทึก" to {
                         val clean = field.text.toString().trim().replace(Regex("[\\\\/:*?\"<>|]"), "_"); d.dismiss()
@@ -481,7 +481,7 @@ class GalleryActivity : ComponentActivity() {
     private fun topBar(title: String, back: () -> Unit): LinearLayout {
         val bar = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(12), dp(14), dp(6)) }
         bar.addView(roundButton(Icons.CHEVRON_LEFT, "ย้อนกลับ", back), dp(48), dp(48))
-        bar.addView(text(title, 20f, Color.WHITE, true).apply { setPadding(dp(12), 0, dp(4), 0); maxLines = 3; ellipsize = null; tag = "title" }, LinearLayout.LayoutParams(0, -2, 1f))
+        bar.addView(text(title, 20f, Glass.TEXT, true).apply { setPadding(dp(12), 0, dp(4), 0); maxLines = 3; ellipsize = null; tag = "title" }, LinearLayout.LayoutParams(0, -2, 1f))
         root.addView(bar, -1, -2); return bar
     }
     // A brighter fill than the default glass so the top controls read clearly on the dark page.
@@ -492,7 +492,7 @@ class GalleryActivity : ComponentActivity() {
     private fun rounded(v: View, r: Int) { v.clipToOutline = true; v.outlineProvider = object : ViewOutlineProvider() { override fun getOutline(view: View, o: Outline) { o.setRoundRect(0, 0, view.width, view.height, dp(r).toFloat()) } } }
     private fun sectionHead(title: String, end: String = "") = LinearLayout(this).apply {
         gravity = Gravity.BOTTOM; setPadding(dp(16), dp(10), dp(16), dp(8))
-        addView(text(title, 15f, Color.WHITE, true), LinearLayout.LayoutParams(0, -2, 1f))
+        addView(text(title, 15f, Glass.TEXT, true), LinearLayout.LayoutParams(0, -2, 1f))
         addView(text(end, 12.5f, Glass.TEXT2))
     }
     /** Sort orders, as in the phone's own gallery: by date taken, date added, size and name; then video or AI first. */
@@ -525,7 +525,7 @@ class GalleryActivity : ComponentActivity() {
         val bar = topBar(if (albumKind != null) albumTitle() else "รูปภาพ") { if (albumKind != null) closeAlbum() else finish() }
         val searchBox = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; background = glass(22, 0x40ffffff); setPadding(dp(14), 0, dp(6), 0) }
         val searchIcon = IconView(this, Icons.SEARCH, 2f)
-        val field = EditText(this).apply { hint = "ค้นหา"; setHintTextColor(Glass.TEXT3); setTextColor(Color.WHITE); textSize = 15f; background = null; setSingleLine(); visibility = View.GONE; setText(queryText); setSelection(queryText.length); setPadding(dp(8), 0, dp(4), 0)
+        val field = EditText(this).apply { hint = "ค้นหา"; setHintTextColor(Glass.TEXT3); setTextColor(Glass.TEXT); textSize = 15f; background = null; setSingleLine(); visibility = View.GONE; setText(queryText); setSelection(queryText.length); setPadding(dp(8), 0, dp(4), 0)
             imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
             setOnEditorActionListener { v, _, _ -> (getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager).hideSoftInputFromWindow(v.windowToken, 0); v.clearFocus(); true } }
         val close = IconView(this, Icons.CLOSE, 2f).apply { tint = Glass.TEXT2; setPadding(dp(11), dp(11), dp(11), dp(11)); visibility = View.GONE; contentDescription = "ปิดการค้นหา"; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES; isClickable = true }
@@ -589,10 +589,10 @@ class GalleryActivity : ComponentActivity() {
         if (!device && albumKind == null && !mediaGranted()) header.addView(accessCard(), LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(16), dp(4), dp(16), dp(8)) })
         if (device && partialAccess()) header.addView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL; background = glass(22); setPadding(dp(16), dp(14), dp(16), dp(14))
-            addView(text("Lumora เห็นเฉพาะรูปที่คุณเลือกให้ อนุญาตทั้งหมดเพื่อดูทุกอัลบั้ม", 13f, Color.WHITE).apply { maxLines = 4 })
+            addView(text("Lumora เห็นเฉพาะรูปที่คุณเลือกให้ อนุญาตทั้งหมดเพื่อดูทุกอัลบั้ม", 13f, Glass.TEXT).apply { maxLines = 4 })
             addView(LinearLayout(this@GalleryActivity).apply {
                 setPadding(0, dp(10), 0, 0)
-                addView(text("เลือกรูปเพิ่ม", 13.5f, Color.WHITE, true).apply { gravity = Gravity.CENTER; background = glass(16, 0x1affffff); isClickable = true; glassTouch(); setOnClickListener { mediaRequest.launch(mediaPermissions) } }, LinearLayout.LayoutParams(0, dp(48), 1f).apply { rightMargin = dp(8) })
+                addView(text("เลือกรูปเพิ่ม", 13.5f, Glass.TEXT, true).apply { gravity = Gravity.CENTER; background = glass(16, 0x1affffff); isClickable = true; glassTouch(); setOnClickListener { mediaRequest.launch(mediaPermissions) } }, LinearLayout.LayoutParams(0, dp(48), 1f).apply { rightMargin = dp(8) })
                 addView(text("อนุญาตทั้งหมด", 13.5f, Glass.ON_ACCENT, true).apply { gravity = Gravity.CENTER; background = glass(16, Glass.ACCENT); isClickable = true; glassTouch()
                     setOnClickListener { runCatching { startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:$packageName"))) } } }, LinearLayout.LayoutParams(0, dp(48), 1f))
             })
@@ -713,12 +713,12 @@ class GalleryActivity : ComponentActivity() {
     private fun cell(previous: FrameLayout?, item: Item, gridWidth: Int): View {
         val cell = previous ?: FrameLayout(this).apply {
             rounded(this, 14)
-            addView(View(this@GalleryActivity).apply { background = android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0xff1b2747.toInt(), 0xff0d1428.toInt())) }, -1, -1)
+            addView(View(this@GalleryActivity).apply { background = android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(Glass.PANEL, Glass.BG_DEEP)) }, -1, -1)
             addView(IconView(this@GalleryActivity, Icons.ALBUM, 1.6f).apply { tint = 0x66ffffff }, FrameLayout.LayoutParams(dp(26), dp(26), Gravity.CENTER))
             addView(ImageView(this@GalleryActivity).apply { scaleType = ImageView.ScaleType.CENTER_CROP }, -1, -1)
             addView(IconView(this@GalleryActivity, Icons.VIDEO, 2f).apply { shadow = true }, FrameLayout.LayoutParams(dp(18), dp(18), Gravity.BOTTOM or Gravity.END).apply { setMargins(0, 0, dp(6), dp(6)) })
             addView(text("AI", 10f, Glass.ACCENT, true).apply { setShadowLayer(4f, 0f, 1f, 0x99000000.toInt()) }, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.END).apply { setMargins(0, dp(4), dp(6), 0) })
-            addView(text("", 10.5f, Color.WHITE).apply { maxLines = 2; gravity = Gravity.CENTER; setPadding(dp(6), 0, dp(6), dp(8)) }, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+            addView(text("", 10.5f, Glass.TEXT).apply { maxLines = 2; gravity = Gravity.CENTER; setPadding(dp(6), 0, dp(6), dp(8)) }, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
             addView(FrameLayout(this@GalleryActivity).apply { addView(IconView(this@GalleryActivity, Icons.CHECK, 2.6f), FrameLayout.LayoutParams(dp(13), dp(13), Gravity.CENTER)) },
                 FrameLayout.LayoutParams(dp(24), dp(24), Gravity.TOP or Gravity.START).apply { setMargins(dp(6), dp(6), 0, 0) })
             // Child 7: a small turning ring while the photo is still being captured or processed.
@@ -864,7 +864,7 @@ class GalleryActivity : ComponentActivity() {
     }
     private fun accessCard() = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL; background = glass(22); setPadding(dp(16), dp(14), dp(16), dp(14))
-        addView(text("ตอนนี้แสดงเฉพาะรูปที่ถ่ายด้วย Lumora อนุญาตให้อ่านรูปในเครื่องเพื่อดูทุกรูปและอัลบั้ม", 13f, Color.WHITE).apply { maxLines = 8; ellipsize = null })
+        addView(text("ตอนนี้แสดงเฉพาะรูปที่ถ่ายด้วย Lumora อนุญาตให้อ่านรูปในเครื่องเพื่อดูทุกรูปและอัลบั้ม", 13f, Glass.TEXT).apply { maxLines = 8; ellipsize = null })
         addView(text("อนุญาต", 13.5f, Glass.ON_ACCENT, true).apply { gravity = Gravity.CENTER; background = glass(18, Glass.ACCENT); isClickable = true; glassTouch(); setOnClickListener { mediaRequest.launch(mediaPermissions) } },
             LinearLayout.LayoutParams(dp(120), dp(48)).apply { topMargin = dp(10) })
     }
@@ -926,7 +926,7 @@ class GalleryActivity : ComponentActivity() {
                 row.addView(LinearLayout(this).apply {
                     orientation = LinearLayout.VERTICAL; isClickable = true; isFocusable = true; contentDescription = "อัลบั้ม ${a.name} ${a.count} รายการ${if (a.pinned) " ปักหมุด" else ""}"
                     setPadding(dp(4), 0, dp(4), 0)
-                    val frame = FrameLayout(this@GalleryActivity).apply { background = android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0xff1b2747.toInt(), 0xff0d1428.toInt())) }
+                    val frame = FrameLayout(this@GalleryActivity).apply { background = android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(Glass.PANEL, Glass.BG_DEEP)) }
                     rounded(frame, 20)
                     frame.addView(IconView(this@GalleryActivity, a.icon, 1.8f).apply { tint = 0x88ffffff.toInt() }, FrameLayout.LayoutParams(dp(34), dp(34), Gravity.CENTER))
                     val img = ImageView(this@GalleryActivity).apply { scaleType = ImageView.ScaleType.CENTER_CROP }
@@ -935,7 +935,7 @@ class GalleryActivity : ComponentActivity() {
                         addView(IconView(this@GalleryActivity, Icons.PIN, 2f).apply { tint = Glass.ACCENT }, FrameLayout.LayoutParams(dp(14), dp(14), Gravity.CENTER)) }, FrameLayout.LayoutParams(dp(28), dp(28), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(8), dp(8), 0) })
                     a.cover?.let { c -> img.tag = c.key; thumbs.execute { val b = thumbnail(c, 360); runOnUiThread { if (!isDestroyed && img.tag == c.key && b != null) { img.setImageBitmap(b); if (!Glass.reduced(this@GalleryActivity)) { img.alpha = 0f; img.animate().alpha(1f).setDuration(180).start() } } } } }
                     addView(frame, LinearLayout.LayoutParams(-1, dp(156)))
-                    addView(text(a.name, 14f, Color.WHITE, true).apply { setPadding(dp(2), dp(8), 0, 0) }, -1, -2)
+                    addView(text(a.name, 14f, Glass.TEXT, true).apply { setPadding(dp(2), dp(8), 0, 0) }, -1, -2)
                     addView(text("${a.count} รายการ", 12f, Glass.TEXT2).apply { setPadding(dp(2), dp(2), 0, 0) }, -1, -2)
                     glassTouch(); setOnClickListener { Glass.tick(this); a.open() }
                 }, LinearLayout.LayoutParams(0, -2, 1f))
@@ -1166,7 +1166,7 @@ class GalleryActivity : ComponentActivity() {
         // Facts as a row of small tags rather than a line of text.
         val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(4), dp(12), dp(4), 0) }
         head.addView(FrameLayout(this).apply { background = glass(12, 0x1fffffff); addView(IconView(this@GalleryActivity, if (item.video) Icons.VIDEO else Icons.PHOTO, 1.8f).apply { tint = Glass.ACCENT }, FrameLayout.LayoutParams(dp(16), dp(16), Gravity.CENTER)) }, dp(30), dp(30))
-        head.addView(text(formatTime(item.time), 14.5f, Color.WHITE, true).apply { setPadding(dp(10), 0, 0, 0); maxLines = 1 }, LinearLayout.LayoutParams(0, -2, 1f))
+        head.addView(text(formatTime(item.time), 14.5f, Glass.TEXT, true).apply { setPadding(dp(10), 0, 0, 0); maxLines = 1 }, LinearLayout.LayoutParams(0, -2, 1f))
         left.addView(head, -1, -2)
         val tags = FlowLayout(this).apply { gap = dp(6); setPadding(dp(4), dp(8), dp(4), 0) }
         fun tag(t: String, accent: Boolean = false) = tags.addView(text(t, 11.5f, if (accent) Glass.ACCENT else Glass.TEXT2, accent).apply { gravity = Gravity.CENTER; maxLines = 1; background = glass(11, if (accent) Glass.ACCENT_SOFT else 0x14ffffff); setPadding(dp(9), 0, dp(9), 0) }, ViewGroup.LayoutParams(-2, dp(24)))
@@ -1198,7 +1198,7 @@ class GalleryActivity : ComponentActivity() {
         peekActions = actions; peekHot = null
         val layer = FrameLayout(this).apply { addView(dim, -1, -1); addView(card, FrameLayout.LayoutParams(-1, -2, Gravity.CENTER).apply { setMargins(dp(16), 0, dp(16), 0) }) }
         // The name of the button under the finger floats out to its left, over the picture.
-        val tip = text("", 14f, Color.WHITE, true).apply { background = glass(16, 0xee1c2233.toInt()); setPadding(dp(14), dp(8), dp(14), dp(8)); alpha = 0f; elevation = dp(8).toFloat() }
+        val tip = text("", 14f, Glass.TEXT, true).apply { background = glass(16, Glass.alpha(Glass.PANEL, 0xee)); setPadding(dp(14), dp(8), dp(14), dp(8)); alpha = 0f; elevation = dp(8).toFloat() }
         layer.addView(tip, FrameLayout.LayoutParams(-2, -2)); peekTip = tip
         host.addView(layer, -1, -1); peek = layer
         dim.animate().alpha(1f).setDuration(220).start(); Glass.blur(root, 14f)
@@ -1316,7 +1316,7 @@ class GalleryActivity : ComponentActivity() {
         if (item.video) { showVideoItem(item); return }
         showingId = item.key; viewerKind = ""; immersive(false); root.removeAllViews()
         viewerBar(if (item.video) "วิดีโอ" else "ไฟล์")
-        val frame = FrameLayout(this).apply { setBackgroundColor(Glass.NAVY_DEEP) }
+        val frame = FrameLayout(this).apply { setBackgroundColor(Glass.BG_DEEP) }
         val still = ImageView(this).apply { scaleType = ImageView.ScaleType.FIT_CENTER }
         frame.addView(still, -1, -1)
         frame.addView(FrameLayout(this).apply { background = glass(36, 0x40ffffff); contentDescription = "เล่นวิดีโอ"; isClickable = true; glassTouch()
@@ -1419,6 +1419,7 @@ class GalleryActivity : ComponentActivity() {
     private fun gallerySettings() {
         SettingsPage(this, "ตั้งค่าแกลเลอรี") { reload() }.apply {
             section("การแสดงผล")
+            action("ธีมสี", Icons.SUN, Theme.name()) { showThemeSettings { changedTheme -> if (changedTheme) { close(); recreate() } } }
             choose("จำนวนคอลัมน์", Icons.LIBRARY, "gallery_columns", listOf("2 คอลัมน์", "3 คอลัมน์", "4 คอลัมน์", "5 คอลัมน์"), listOf(2, 3, 4, 5), 3)
             choose("เรียงตามเริ่มต้น", Icons.UPDOWN, "gallery_sort2", SORTS, SORTS.indices.toList(), 0, SORT_ICONS)
             toggle("รวมภาพ AI กับต้นฉบับ", Icons.AI, "gallery_merge_ai", true, "ภาพที่ AI ปรับแล้วรวมเป็นรายการเดียวกับต้นฉบับ")
@@ -1511,7 +1512,7 @@ class GalleryActivity : ComponentActivity() {
                 val r = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(7), 0, dp(7)) }
                 r.addView(FrameLayout(this).apply { background = glass(14, 0x1affffff); addView(IconView(this@GalleryActivity, icon).apply { tint = Glass.ACCENT }, FrameLayout.LayoutParams(dp(18), dp(18), Gravity.CENTER)) }, dp(36), dp(36))
                 val t = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, 0, 0) }
-                t.addView(text(value, 14.5f, Color.WHITE, true).apply { maxLines = 2; ellipsize = null })
+                t.addView(text(value, 14.5f, Glass.TEXT, true).apply { maxLines = 2; ellipsize = null })
                 if (note.isNotEmpty()) t.addView(text(note, 12f, Glass.TEXT3).apply { maxLines = 2; ellipsize = null })
                 r.addView(t, LinearLayout.LayoutParams(0, -2, 1f))
                 col.addView(r, -1, -2)

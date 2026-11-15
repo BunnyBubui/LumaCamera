@@ -18,25 +18,31 @@ import kotlin.math.*
 
 /** Shared tokens, motion and drawing helpers for the glass UI. See docs/claude/UI_MOTION_PROPOSAL.md. */
 object Glass {
-    /** Theme: deep navy glass with a warm orange accent. */
-    const val ACCENT = 0xffff9f45.toInt()
-    const val ACCENT_HI = 0xffffbd6e.toInt()
-    const val ACCENT_LO = 0xffff7a2e.toInt()
-    const val ON_ACCENT = 0xff2a1300.toInt()
-    const val ACCENT_SOFT = 0x2eff9f45
-    const val TEXT2 = 0xb8ffffff.toInt()
-    const val TEXT3 = 0x99ffffff.toInt()
-    const val FOCUS_BLUE = 0xff64d2ff.toInt()
-    const val FILL = 0x8c17213a.toInt()
-    const val FILL_STRONG = 0xe0101829.toInt()
-    const val FILL_POP = 0xf0141d33.toInt()
-    const val NAVY = 0xff0b1122.toInt()
-    const val NAVY_DEEP = 0xff05070f.toInt()
-    private const val TINT_TOP = 0x34508a
-    private const val TINT_BOTTOM = 0x060a18
-    /** Page background: navy at the top fading to near black. */
+    /** Theme colours. Each one follows the palette in Settings › ธีมสี (Graphite by default); see [Theme]. */
+    val ACCENT: Int get() = Theme.p.accent
+    val ACCENT_HI: Int get() = Theme.accentHi
+    val ACCENT_LO: Int get() = Theme.accentLo
+    val ON_ACCENT: Int get() = Theme.onAccent
+    val ACCENT_SOFT: Int get() = Theme.accentSoft
+    /** Main text and icon colour, then the softer shades for secondary and hint text. */
+    val TEXT: Int get() = Theme.p.text
+    val TEXT2: Int get() = Theme.text2
+    val TEXT3: Int get() = Theme.text3
+    /** Focus box, focus rail, level line and other on-picture guides. */
+    val FOCUS: Int get() = Theme.p.focus
+    val FOCUS_BLUE: Int get() = FOCUS
+    val FILL: Int get() = Theme.fill
+    val FILL_STRONG: Int get() = Theme.fillStrong
+    val FILL_POP: Int get() = Theme.fillPop
+    /** Solid panel colour, for placeholders and tracks that must not show through. */
+    val PANEL: Int get() = Theme.p.panel
+    val BG: Int get() = Theme.p.background
+    val BG_DEEP: Int get() = Theme.bgDeep
+    /** [c] with its alpha set to [a] (0–255). */
+    fun alpha(c: Int, a: Int): Int = Theme.alpha(c, a)
+    /** Page background: a touch lighter at the top, fading to near black. */
     fun page(): android.graphics.drawable.GradientDrawable =
-        android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0xff111a33.toInt(), NAVY, NAVY_DEEP))
+        android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(Theme.bgTop, BG, BG_DEEP))
     private fun lerp(c: Int, to: Int, k: Float): Int {
         fun ch(s: Int) = (((c shr s) and 255) + ((((to shr s) and 255) - ((c shr s) and 255)) * k)).roundToInt().coerceIn(0, 255)
         return (c and 0xff000000.toInt()) or (ch(16) shl 16) or (ch(8) shl 8) or ch(0)
@@ -46,8 +52,8 @@ object Glass {
         return if (a > 0xc0 && lum > 0.8f) 0.06f else 0.32f
     }
     /** Top and bottom of the vertical gradient every glass fill is drawn with. */
-    fun top(c: Int): Int = if (c == ACCENT) ACCENT_HI else lerp(c, TINT_TOP, weight(c))
-    fun bottom(c: Int): Int = if (c == ACCENT) ACCENT_LO else lerp(c, TINT_BOTTOM, weight(c) + 0.06f)
+    fun top(c: Int): Int = if (c == ACCENT) ACCENT_HI else lerp(c, Theme.tintTop, weight(c))
+    fun bottom(c: Int): Int = if (c == ACCENT) ACCENT_LO else lerp(c, Theme.tintBottom, weight(c) + 0.06f)
     val EASE = PathInterpolator(0.32f, 0.72f, 0f, 1f)
     val SPRING = PathInterpolator(0.34f, 1.56f, 0.64f, 1f)
     val POP = PathInterpolator(0.2f, 0.9f, 0.25f, 1.15f)
@@ -286,7 +292,7 @@ object Icons {
 /** Stroked icon drawn from SVG path data, with optional text set inside the glyph. */
 class IconView(context: Context, d: String = "", var strokeDp: Float = 1.8f) : View(context) {
     var path: String = d; set(v) { field = v; invalidate() }
-    var tint: Int = Color.WHITE; set(v) { field = v; invalidate() }
+    var tint: Int = Glass.TEXT; set(v) { field = v; invalidate() }
     var inner: String = ""; set(v) { field = v; invalidate() }
     var shadow = false; set(v) { field = v; invalidate() }
     private val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
@@ -492,7 +498,7 @@ object GlassDialog {
         val d = android.app.Dialog(a)
         d.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
         val box = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; background = a.glass(28, Glass.FILL_STRONG); setPadding(a.dp(20), a.dp(18), a.dp(20), a.dp(16)) }
-        box.addView(a.text(title, 18f, Color.WHITE, true).apply { tag = "title" }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = a.dp(6) })
+        box.addView(a.text(title, 18f, Glass.TEXT, true).apply { tag = "title" }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = a.dp(6) })
         val column = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL }
         box.addView(android.widget.ScrollView(a).apply { isVerticalScrollBarEnabled = false; addView(column) }, LinearLayout.LayoutParams(-1, -2, 1f))
         build(column, d)
@@ -516,7 +522,7 @@ object GlassDialog {
         val d = android.app.Dialog(a)
         d.requestWindowFeature(android.view.Window.FEATURE_NO_TITLE)
         val box = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; background = a.glass(28, Glass.FILL_STRONG); setPadding(a.dp(20), a.dp(18), a.dp(20), a.dp(14)) }
-        box.addView(a.text(title, 18f, Color.WHITE, true), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = a.dp(8) })
+        box.addView(a.text(title, 18f, Glass.TEXT, true), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = a.dp(8) })
         val body = a.text(message, 14f, Glass.TEXT2).apply { maxLines = 60; ellipsize = null; setLineSpacing(0f, 1.15f) }
         box.addView(android.widget.ScrollView(a).apply { isVerticalScrollBarEnabled = false; addView(body) }, LinearLayout.LayoutParams(-1, -2, 1f))
         box.addView(a.text(button, 15f, Glass.ON_ACCENT, true).apply { gravity = Gravity.CENTER; background = a.glass(24, Glass.ACCENT); isClickable = true; setOnClickListener { d.dismiss() }; glassTouch() },

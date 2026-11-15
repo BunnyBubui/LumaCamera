@@ -74,13 +74,13 @@ class InlineVideo(c: Context, private val uri: Uri, still: Bitmap?, private val 
         // One slim glass capsule: play, elapsed time, the scrubber, the length, speed and sound.
         controls = LinearLayout(c).apply { gravity = Gravity.CENTER_VERTICAL; background = context.glass(26, 0x2effffff); setPadding(context.dp(6), context.dp(4), context.dp(6), context.dp(4)) }
         controls.addView(round(smallPlay, "เล่นหรือหยุด") { toggle() }, c.dp(44), c.dp(44))
-        now = c.text("0:00", 12.5f, Color.WHITE, true).apply { gravity = Gravity.CENTER; minWidth = c.dp(38) }
+        now = c.text("0:00", 12.5f, Glass.TEXT, true).apply { gravity = Gravity.CENTER; minWidth = c.dp(38) }
         controls.addView(now, -2, -2)
         scrub.onSeek = { ms, done -> seekTo(ms); if (done) scheduleHide() else removeCallbacks(hide) }
         controls.addView(scrub, LinearLayout.LayoutParams(0, c.dp(44), 1f).apply { leftMargin = c.dp(6); rightMargin = c.dp(6) })
         total = c.text("0:00", 12.5f, Glass.TEXT2).apply { gravity = Gravity.CENTER; minWidth = c.dp(38) }
         controls.addView(total, -2, -2)
-        val speedLabel = c.text("1×", 12.5f, Color.WHITE, true).apply { gravity = Gravity.CENTER }
+        val speedLabel = c.text("1×", 12.5f, Glass.TEXT, true).apply { gravity = Gravity.CENTER }
         controls.addView(FrameLayout(c).apply { isClickable = true; contentDescription = "ความเร็วการเล่น"; glassTouch(); addView(speedLabel, LayoutParams(-2, -2, Gravity.CENTER))
             setOnClickListener { Glass.tick(this); speed = when (speed) { 1f -> 1.5f; 1.5f -> 2f; 2f -> 0.5f; else -> 1f }
                 speedLabel.text = "${if (speed % 1f == 0f) speed.toInt().toString() else speed.toString()}×"; applySpeed() } }, c.dp(44), c.dp(44))

@@ -16,11 +16,11 @@ import androidx.core.view.WindowInsetsCompat
 import java.util.Locale
 import kotlin.math.roundToInt
 
-val BG = 0xff070b16.toInt()
-val PANEL = 0xff18213a.toInt()
-val WHITE = 0xffffffff.toInt()
+val BG: Int get() = Glass.BG
+val PANEL: Int get() = Glass.PANEL
+val WHITE: Int get() = Glass.TEXT
 val MUTED = 0xffa7a7ad.toInt()
-val LIME = 0xffff9f45.toInt()
+val LIME: Int get() = Glass.ACCENT
 fun Context.dp(x: Int) = (resources.displayMetrics.density*x).roundToInt()
 fun shape(color: Int, radius: Float = 32f) = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(Glass.top(color), Glass.bottom(color))).apply { cornerRadius = radius * 1.2f }
 fun Context.label(value: String, sp: Float, tint: Int = WHITE) = TextView(this).apply {
@@ -40,7 +40,7 @@ fun TextView.selectionStyle(selected:Boolean){
     selectedStyles[this]=selected
     isSelected=selected
     background=shape(if(selected)LIME else PANEL,context.dp(22).toFloat())
-    setTextColor(if(selected)BG else WHITE)
+    setTextColor(if(selected)Glass.ON_ACCENT else WHITE)
     typeface=if(selected)Typeface.DEFAULT_BOLD else Typeface.DEFAULT
     ViewCompat.setStateDescription(this,if(selected)"เลือกอยู่" else null)
 }

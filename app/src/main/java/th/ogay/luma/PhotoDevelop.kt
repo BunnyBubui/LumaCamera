@@ -276,7 +276,7 @@ class CurveView(context: android.content.Context, private val curve: FloatArray)
         for (i in 0 until 5) {
             val x = r.left + r.width() * i / 4f; val y = r.bottom - r.height() * at(channel, i)
             val big = i == held
-            dot.color = 0xff0b0f1e.toInt(); c.drawCircle(x, y, (if (big) 9f else 6.5f) * d, dot)
+            dot.color = 0xff0a0a0b.toInt(); c.drawCircle(x, y, (if (big) 9f else 6.5f) * d, dot)
             ring.color = color; c.drawCircle(x, y, (if (big) 9f else 6.5f) * d, ring)
             if (big) { dot.color = color; c.drawCircle(x, y, 3.5f * d, dot) }
         }

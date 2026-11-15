@@ -35,7 +35,7 @@ class DocumentActivity:ComponentActivity(){
         val top=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(dp(14),dp(10),dp(14),dp(6))}
         top.addView(FrameLayout(this).apply{background=glass(22,0x40ffffff);contentDescription="ย้อนกลับ";isClickable=true;glassTouch();setOnClickListener{finish()}
             addView(IconView(this@DocumentActivity,Icons.CHEVRON_LEFT,2.1f),FrameLayout.LayoutParams(dp(20),dp(20),Gravity.CENTER))},dp(48),dp(48))
-        top.addView(text("สแกนเอกสาร",20f,Color.WHITE,true).apply{setPadding(dp(12),0,dp(6),0);maxLines=3;ellipsize=null},LinearLayout.LayoutParams(0,-2,1f))
+        top.addView(text("สแกนเอกสาร",20f,Glass.TEXT,true).apply{setPadding(dp(12),0,dp(6),0);maxLines=3;ellipsize=null},LinearLayout.LayoutParams(0,-2,1f))
         pageCount=text("0 หน้า",13f,Glass.ACCENT,true).apply{gravity=Gravity.CENTER;background=glass(18,Glass.ACCENT_SOFT);setPadding(dp(14),0,dp(14),0);minHeight=dp(40)}
         top.addView(pageCount,-2,-2);root.addView(top,-1,-2)
         status=text("ลากจุดมุมทั้ง 4 เพื่อแก้ perspective",13f,Glass.TEXT2).apply{gravity=Gravity.CENTER;maxLines=3;setPadding(dp(16),dp(4),dp(16),dp(8))};root.addView(status,-1,-2)
@@ -53,7 +53,7 @@ class DocumentActivity:ComponentActivity(){
         tool(Icons.DOC,"อ่านข้อความ","อ่านข้อความไทยและอังกฤษบนเครื่อง"){ocr()}
         root.addView(tools,-1,-2)
         val actions=LinearLayout(this).apply{setPadding(dp(14),dp(8),dp(14),dp(14))}
-        actions.addView(text("เก็บหน้านี้",15f,Color.WHITE,true).apply{gravity=Gravity.CENTER;background=glass(24,0x33ffffff);isClickable=true;glassTouch();setOnClickListener{savePage()}},LinearLayout.LayoutParams(0,dp(52),1f).apply{rightMargin=dp(10)})
+        actions.addView(text("เก็บหน้านี้",15f,Glass.TEXT,true).apply{gravity=Gravity.CENTER;background=glass(24,0x33ffffff);isClickable=true;glassTouch();setOnClickListener{savePage()}},LinearLayout.LayoutParams(0,dp(52),1f).apply{rightMargin=dp(10)})
         actions.addView(text("สร้าง PDF",15f,Glass.ON_ACCENT,true).apply{gravity=Gravity.CENTER;background=glass(24,Glass.ACCENT);isClickable=true;glassTouch();setOnClickListener{pdf()}},LinearLayout.LayoutParams(0,dp(52),1f))
         root.addView(actions,-1,-2)
         intent.data?.let{load(it)}?:addPage.launch(arrayOf("image/*"))

@@ -54,7 +54,7 @@ object EditorKit {
     fun chip(c: Context, label: String, icon: String = "", on: Boolean = false, click: () -> Unit): LinearLayout = LinearLayout(c).apply {
         gravity = Gravity.CENTER; isClickable = true; contentDescription = label; minimumHeight = c.dp(48); setPadding(c.dp(14), 0, c.dp(14), 0)
         if (icon.isNotEmpty()) addView(IconView(c, icon, 2f), LinearLayout.LayoutParams(c.dp(18), c.dp(18)).apply { rightMargin = c.dp(6) })
-        addView(c.text(label, 13.5f, Color.WHITE, true))
+        addView(c.text(label, 13.5f, Glass.TEXT, true))
         glassTouch(); setOnClickListener { Glass.tick(this); click() }
         mark(this, on)
     }
@@ -223,7 +223,7 @@ object EditorKit {
         GlassDialog.panel(a, title) { col, d ->
             col.addView(a.text(note, 13.5f, Glass.TEXT2).apply { maxLines = 4 })
             col.addView(GlassDialog.actions(a, "ไม่บันทึก" to { d.dismiss(); discard() }, saveLabel to { d.dismiss(); save() }), LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(16) })
-            col.addView(a.text("แก้ต่อ", 14f, Color.WHITE, true).apply { gravity = Gravity.CENTER; minHeight = a.dp(46); isClickable = true; contentDescription = "แก้ต่อ"; setOnClickListener { d.dismiss() } }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(4) })
+            col.addView(a.text("แก้ต่อ", 14f, Glass.TEXT, true).apply { gravity = Gravity.CENTER; minHeight = a.dp(46); isClickable = true; contentDescription = "แก้ต่อ"; setOnClickListener { d.dismiss() } }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(4) })
         }.show()
     }
 

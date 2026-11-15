@@ -37,14 +37,14 @@ fun Activity.showStudioSettings(rawAvailable: Boolean, closed: () -> Unit = {}, 
         setOnClickListener { dialog.dismiss() }
     }
     top.addView(back, dp(48), dp(48))
-    top.addView(text("ตั้งค่า", 17f, Color.WHITE, true).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(0, -2, 1f))
+    top.addView(text("ตั้งค่า", 17f, Glass.TEXT, true).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(0, -2, 1f))
     top.addView(View(this), dp(48), dp(48))
     column.addView(top, -1, -2)
 
     val search = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; background = glass(14, 0x1fffffff); setPadding(dp(12), 0, dp(12), 0) }
     search.addView(IconView(this, Icons.SEARCH).apply { tint = Glass.TEXT2 }, dp(18), dp(18))
     val query = EditText(this).apply {
-        hint = "ค้นหาการตั้งค่า"; setHintTextColor(Glass.TEXT3); setTextColor(Color.WHITE); textSize = 15f; background = null
+        hint = "ค้นหาการตั้งค่า"; setHintTextColor(Glass.TEXT3); setTextColor(Glass.TEXT); textSize = 15f; background = null
         setSingleLine(); imeOptions = EditorInfo.IME_ACTION_SEARCH; setPadding(dp(8), 0, 0, 0)
     }
     search.addView(query, LinearLayout.LayoutParams(0, -1, 1f))
@@ -114,6 +114,19 @@ fun Activity.showStudioSettings(rawAvailable: Boolean, closed: () -> Unit = {}, 
         row(title, icon, end = input).also { input.layoutParams = LinearLayout.LayoutParams(dp(140), -2) }
     }
 
+    section("ธีมสี")
+    run {
+        // Background, panel and accent of the theme in use, side by side.
+        val dots = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        listOf(Glass.BG, Glass.PANEL, Glass.ACCENT).forEachIndexed { i, c ->
+            dots.addView(View(this).apply { background = android.graphics.drawable.GradientDrawable().apply { shape = android.graphics.drawable.GradientDrawable.OVAL; setColor(c); setStroke(dp(1), 0x40ffffff) } },
+                LinearLayout.LayoutParams(dp(18), dp(18)).apply { if (i > 0) leftMargin = dp(4) })
+        }
+        dots.addView(IconView(this, Icons.CHEVRON_RIGHT, 2f).apply { tint = Glass.TEXT3 }, LinearLayout.LayoutParams(dp(18), dp(18)).apply { leftMargin = dp(6) })
+        row("ธีมสี", Icons.SUN, Theme.name() + " · ปรับสีเน้น พื้นหลัง แผง ตัวอักษร และกรอบโฟกัส", dots) {
+            showThemeSettings { changedTheme -> if (changedTheme) { dialog.dismiss(); recreate() } }
+        }
+    }
     section("ภาพถ่าย")
     choose("สัดส่วนภาพ", Icons.FRAME, "aspect", Aspects.available(prefs), Aspects.available(prefs), "4:3", Aspects.available(prefs).map { Aspects.note(it) }, Aspects.available(prefs).map { aspectIconPath(it) })
     choose("ตั้งเวลาถ่าย", Icons.TIMER, "timer", SelfTimer.STEPS.map { SelfTimer.label(it) }, SelfTimer.STEPS.map { it.toString() }, "0")
