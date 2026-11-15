@@ -58,6 +58,7 @@ Use the **same original capture** for both Classic and Natural export, same
 scale and crop. Compare colours and texture using:
 
 ```sh
+python -m pip install -r model/requirements-sr3-eval.txt
 python model/evaluate_natural.py --original base.jpg \
   --classic classic-x2.jpg --natural natural-x2.jpg --output result.json
 ```

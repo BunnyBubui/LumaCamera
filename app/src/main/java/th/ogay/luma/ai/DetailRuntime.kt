@@ -18,6 +18,8 @@ class DetailRuntime(private val context: Context, private val forceCpu: Boolean 
         private set
     var fallbackReason: String? = null
         private set
+    var modelSha256 = ""
+        private set
     private val rgb = FloatArray(EnhanceSpec.INPUT * EnhanceSpec.INPUT * 3)
 
     init {
@@ -28,9 +30,12 @@ class DetailRuntime(private val context: Context, private val forceCpu: Boolean 
         if (model == null) open(false)
     }
     private fun open(useGpu: Boolean) {
-        val fingerprint = context.assets.open("luma-detail-sr2.json").bufferedReader().use {
-            JSONObject(it.readText()).getString("sha256").take(20)
+        modelSha256 = context.assets.open(EnhanceSpec.MODEL_MANIFEST).bufferedReader().use {
+            JSONObject(it.readText()).getString("sha256").also { hash ->
+                check(hash.matches(Regex("[0-9a-f]{64}"))) { "ข้อมูลตรวจสอบโมเดลไม่ถูกต้อง" }
+            }
         }
+        val fingerprint = modelSha256.take(20)
         val options = CompiledModel.Options(if (useGpu) Accelerator.GPU else Accelerator.CPU).apply {
             cpuOptions = CompiledModel.CpuOptions(numThreads = minOf(4, Runtime.getRuntime().availableProcessors()))
             if (useGpu) gpuOptions = CompiledModel.GpuOptions(
@@ -39,7 +44,7 @@ class DetailRuntime(private val context: Context, private val forceCpu: Boolean 
                 modelCacheKey = "detail-$fingerprint-${EnhanceSpec.INPUT}",
                 serializeProgramCache = true)
         }
-        model = CompiledModel.create(context.assets, "luma-detail-sr2.tflite", options)
+        model = CompiledModel.create(context.assets, EnhanceSpec.MODEL_ASSET, options)
         try {
             inputs = model!!.createInputBuffers()
             outputs = model!!.createOutputBuffers()

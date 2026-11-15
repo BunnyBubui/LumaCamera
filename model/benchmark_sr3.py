@@ -22,7 +22,7 @@ from evaluate_natural import measure, open_rgb, text_cer
 REQUIRED = ("id", "category", "scale", "original", "classic", "natural")
 TEXT_FILES = ("text_gt", "text_classic", "text_natural")
 METRICS = ("inputConsistencyMAE", "lowFrequencyColourDriftMAE",
-           "clippedChannelFraction", "PSNR_dB", "referenceMAE")
+           "clippedChannelFraction", "PSNR_dB", "referenceMAE", "SSIM_RGB")
 
 
 def resolve_file(base, path):
@@ -38,6 +38,38 @@ def sha256(file):
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def export_reports(case, base, original_hash, expected):
+    keys = ("report_classic", "report_natural")
+    if not any(k in case for k in keys):
+        return None
+    if not all(k in case for k in keys):
+        raise ValueError("Provide both export reports or neither")
+    reports = {}
+    for key, profile in zip(keys, ("CLASSIC", "NATURAL")):
+        file = resolve_file(base, case[key])
+        report = json.loads(file.read_text(encoding="utf-8"))
+        if not isinstance(report,dict):
+            raise ValueError(f"{case['id']}: export report must be an object")
+        if (report.get("schema") != "lumora-sr-render-v2" or report.get("profile") != profile
+                or report.get("sourceSha256") != original_hash
+                or report.get("scale") != case["scale"]
+                or (report.get("outputWidth"), report.get("outputHeight")) != expected):
+            raise ValueError(f"{case['id']}: export report does not match source/profile/scale/output")
+        digest = report.get("modelSha256", "")
+        if not isinstance(digest, str) or len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+            raise ValueError(f"{case['id']}: missing model SHA256")
+        if not isinstance(report.get("renderRevision"), str) or not report["renderRevision"]:
+            raise ValueError(f"{case['id']}: missing render revision")
+        if type(report.get("strength")) is not int or not 0 <= report["strength"] <= (100 if profile == "NATURAL" else 150):
+            raise ValueError(f"{case['id']}: invalid strength")
+        reports[profile.lower()] = {k:report.get(k) for k in (
+            "modelAsset", "modelSha256", "renderRevision", "strength", "backend",
+            "appVersion", "appVersionCode", "totalMs", "inferenceMs", "fallback")}
+    if reports["classic"]["strength"] != reports["natural"]["strength"]:
+        raise ValueError(f"{case['id']}: paired benchmark requires equal strengths")
+    return reports
 
 
 def evaluate_case(case, base):
@@ -66,6 +98,10 @@ def evaluate_case(case, base):
               "inputSha256": {key: sha256(value) for key, value in files.items()},
               "classic": measure(original, classic, reference),
               "natural": measure(original, natural, reference)}
+    reports = export_reports(case, base, result["inputSha256"]["original"], expected)
+    result["exportProvenanceChecked"] = reports is not None
+    if reports is not None:
+        result["exportReports"] = reports
     if all(k in files for k in TEXT_FILES):
         gt, klassic, nat = (files[k].read_text(encoding="utf-8") for k in TEXT_FILES)
         result["textCER"] = {"classic": round(text_cer(gt, klassic), 6),

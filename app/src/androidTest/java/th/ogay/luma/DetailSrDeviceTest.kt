@@ -86,6 +86,28 @@ class DetailSrDeviceTest {
             assertFalse(output.exists())
         } finally { source.delete(); output.delete() }
     }
+    @Test fun bothProfilesRecordTheActualSharedWeightsAndDistinctRenderRevisions() {
+        val source=fixture();val output=File(context.cacheDir,"detail-audit-${System.nanoTime()}.jpg")
+        try {
+            val reports=EnhanceProfile.entries.map { profile ->
+                JSONObject(DetailSuperResolution(context).process(shot(source),output,
+                    EnhanceSpec(2,70,profile),{false}).json)
+            }
+            val expectedSource=java.security.MessageDigest.getInstance("SHA-256").digest(source.readBytes())
+                .joinToString("") { "%02x".format(it.toInt() and 255) }
+            for ((i,report) in reports.withIndex()) {
+                assertEquals("lumora-sr-render-v2",report.getString("schema"))
+                assertEquals(expectedSource,report.getString("sourceSha256"))
+                assertEquals(EnhanceSpec.MODEL_ASSET,report.getString("modelAsset"))
+                assertEquals(64,report.getString("modelSha256").length)
+                assertEquals(EnhanceProfile.entries[i].name,report.getString("profile"))
+                assertEquals(EnhanceSpec.NATIVE_SCALE,report.getInt("nativeScale"))
+                assertEquals(70,report.getInt("strength"))
+            }
+            assertEquals(reports[0].getString("modelSha256"),reports[1].getString("modelSha256"))
+            assertNotEquals(reports[0].getString("renderRevision"),reports[1].getString("renderRevision"))
+        } finally { source.delete();output.delete() }
+    }
     @Test fun cancelledWorkerCannotCompleteANewerRequestAndOldFilesAreNamedSeparately() {
         val directory=File(context.cacheDir,"detail-db-${System.nanoTime()}").apply { mkdirs() }
         val isolated=object: ContextWrapper(context) {
