@@ -454,7 +454,7 @@ class VideoActivity:ComponentActivity(){
         dock.addView(chipFrame,LinearLayout.LayoutParams(-1,(dp(56)*grow).roundToInt()).apply{setMargins(dp(16),dp(6),dp(16),dp(4))})
         modeStrip=CenterStrip(this).apply{onSelect={i->pickMode(i)};onLive={i->styleModes(i)};contentDescription="แถบโหมด"}
         dock.clipChildren=false
-        dock.addView(ArrowTab.wrap(this,modeStrip,(dp(58)*grow).roundToInt()){settings(true)}.first,-1,-2)
+        val stripBox=ArrowTab.wrap(this,modeStrip,(dp(58)*grow).roundToInt()){settings(true)}.first
         if(android.os.Build.VERSION.SDK_INT>=29)modeStrip.addOnLayoutChangeListener{v,l,t,r,b,_,_,_,_->v.systemGestureExclusionRects=listOf(android.graphics.Rect(0,0,r-l,b-t))}
         buildModeStrip()
         val actions=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(dp(36),0,dp(36),0)}
@@ -471,6 +471,7 @@ class VideoActivity:ComponentActivity(){
         flip=roundButton(flipIcon,56,"สลับกล้องวิดีโอ"){if(!busy()&&!dual){flipIcon.animate().rotationBy(180f).setInterpolator(Glass.EASE).setDuration(420).start();freeze(true);rear=!rear;selectedCameraId=null;manualFocusOff();bind()}}
         if(dual)flip.alpha=0.35f
         actions.addView(flip,dp(56),dp(56));dock.addView(actions,-1,dp(104))
+        dock.addView(stripBox,-1,-2) // mode names at the very bottom, under the shutter row
         val pinch=android.view.ScaleGestureDetector(this,object:android.view.ScaleGestureDetector.SimpleOnScaleGestureListener(){override fun onScale(d:android.view.ScaleGestureDetector):Boolean{if(zoomLocked())return true;val s=camera?.cameraInfo?.zoomState?.value?:return false;zoomTo((if(zFollow?.isRunning==true)zGoal else zNow(s))*d.scaleFactor);return true}})
         var axis=0;var zone=1;var sy=0f;var ev0=0f;var fd0=0f
         val taps=android.view.GestureDetector(this,object:android.view.GestureDetector.SimpleOnGestureListener(){
