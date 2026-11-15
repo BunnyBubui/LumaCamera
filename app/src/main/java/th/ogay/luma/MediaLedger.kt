@@ -33,7 +33,8 @@ object MediaLedger {
     fun view(c:Context,uri:Uri,mime:String) { runCatching{c.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri,mime).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))}.onFailure{c.notice("ยังไม่มีแอปเปิดไฟล์ประเภทนี้ ใช้ปุ่มส่งออกเพื่อบันทึกไฟล์")}}
     /** Saves a sound file (AAC in an .m4a file) to the phone's music folder, under Lumora. */
     fun publishAudio(c:Context,file:File,title:String,note:String=""):Uri {
-        val values=ContentValues().apply{put(MediaStore.Audio.Media.DISPLAY_NAME,title);put(MediaStore.Audio.Media.MIME_TYPE,"audio/mp4")}
+        val mime=if(title.endsWith(".wav",true))"audio/x-wav" else "audio/mp4"
+        val values=ContentValues().apply{put(MediaStore.Audio.Media.DISPLAY_NAME,title);put(MediaStore.Audio.Media.MIME_TYPE,mime)}
         if(Build.VERSION.SDK_INT>=29){values.put(MediaStore.Audio.Media.RELATIVE_PATH,"Music/Lumora/");values.put(MediaStore.Audio.Media.IS_PENDING,1)}
         else {
             @Suppress("DEPRECATION") val target=File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MUSIC),"Lumora/$title")
@@ -43,11 +44,14 @@ object MediaLedger {
         val uri=c.contentResolver.insert(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI,values)?:error("สร้างไฟล์เสียงไม่ได้")
         try{
             if(Build.VERSION.SDK_INT>=29){ c.contentResolver.openOutputStream(uri,"wt")!!.use{out->file.inputStream().use{it.copyTo(out)}};c.contentResolver.update(uri,ContentValues().apply{put(MediaStore.Audio.Media.IS_PENDING,0)},null,null) }
-            add(c,uri,title,"audio/mp4",note);return uri
+            add(c,uri,title,mime,note);return uri
         }catch(e:Exception){c.contentResolver.delete(uri,null,null);throw e}
     }
-    fun publishVideo(c:Context,file:File,title:String,note:String=""):Uri {
-        val values=ContentValues().apply{put(MediaStore.Video.Media.DISPLAY_NAME,title);put(MediaStore.Video.Media.MIME_TYPE,"video/mp4");put(MediaStore.Video.Media.DATE_TAKEN,System.currentTimeMillis())}
+    fun publishVideo(c:Context,file:File,name:String,note:String=""):Uri {
+        // The container the user chose in the export sheet: MOV is the same H.264/H.265 stream under a QuickTime name and type.
+        val mov=c.getSharedPreferences("camera",Context.MODE_PRIVATE).getString("export_container","mp4")=="mov"&&name.endsWith(".mp4",true)&&name.startsWith("Lumora_EDIT")
+        val title=if(mov)name.dropLast(4)+".mov" else name;val mime=if(mov)"video/quicktime" else "video/mp4"
+        val values=ContentValues().apply{put(MediaStore.Video.Media.DISPLAY_NAME,title);put(MediaStore.Video.Media.MIME_TYPE,mime);put(MediaStore.Video.Media.DATE_TAKEN,System.currentTimeMillis())}
         if(Build.VERSION.SDK_INT>=29){values.put(MediaStore.Video.Media.RELATIVE_PATH,"Movies/Lumora/");values.put(MediaStore.Video.Media.IS_PENDING,1)}
         else {
             @Suppress("DEPRECATION") val target=File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES),"Lumora/$title")
@@ -57,7 +61,7 @@ object MediaLedger {
         val uri=c.contentResolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI,values)?:error("สร้างไฟล์วิดีโอไม่ได้")
         try{
             if(Build.VERSION.SDK_INT>=29){ c.contentResolver.openOutputStream(uri,"wt")!!.use{out->file.inputStream().use{it.copyTo(out)}};c.contentResolver.update(uri,ContentValues().apply{put(MediaStore.Video.Media.IS_PENDING,0)},null,null) }
-            add(c,uri,title,"video/mp4",note);return uri
+            add(c,uri,title,mime,note);return uri
         }catch(e:Exception){c.contentResolver.delete(uri,null,null);throw e}
     }
     fun rememberFile(c:Context,file:File,mime:String,note:String=""):Uri {

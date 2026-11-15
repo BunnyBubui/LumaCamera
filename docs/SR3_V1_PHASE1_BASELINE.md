@@ -48,7 +48,7 @@ Omit `reference_hr` **unless** independently captured/aligned high-resolution gr
 Run:
 
 ```bash
-python -m pip install numpy==2.1.3 Pillow==11.3.0
+python -m pip install -r model/requirements-sr3-eval.txt
 python -m unittest discover -s model -p 'test_benchmark_sr3.py' -v
 python model/benchmark_sr3.py --manifest /private/sr3/manifest.json --output /private/sr3/baseline-report.json
 ```

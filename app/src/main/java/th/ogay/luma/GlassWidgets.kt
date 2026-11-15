@@ -348,6 +348,8 @@ class ZoomWheel(context: Context) : View(context) {
     private var lastStep = Int.MIN_VALUE
     var zoom = 1f; set(v) { field = v; if (open > 0.05f) { val step = Math.round(ln(v) / ln(2f) * 14f); if (step != lastStep) { if (lastStep != Int.MIN_VALUE) Glass.tick(this, HapticFeedbackConstants.CLOCK_TICK); lastStep = step } }; invalidate() }
     var lenses = listOf(1f); var maxZoom = 10f; var minZoom = 1f
+    /** Moves the drawing down inside the view (dp) when the wheel should sit closer to the controls. */
+    var shiftDp = 0f
     private var open = 0f
     private val glass = context.glass(0)
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -363,6 +365,7 @@ class ZoomWheel(context: Context) : View(context) {
         if (open <= 0.01f) return
         val d = context.px(1f); val cx = width / 2f; val radius = 320 * d; val cy = 34 * d + radius
         val save = c.saveLayer(0f, 0f, width.toFloat(), height.toFloat(), null)
+        c.save(); c.translate(0f, shiftDp * d)
         glass.radius = radius; glass.setBounds((cx - radius).toInt(), (34 * d).toInt(), (cx + radius).toInt(), (cy + radius).toInt()); glass.draw(c)
         val degPerStop = 30f
         fun deg(z: Float) = ((ln(z) - ln(zoom)) / ln(2f)) * degPerStop
@@ -386,6 +389,7 @@ class ZoomWheel(context: Context) : View(context) {
         val label = zoomText(zoom); val tw = paint.measureText(label) + 24 * d
         glass.radius = 14 * d; glass.setBounds((cx - tw / 2).toInt(), 0, (cx + tw / 2).toInt(), (26 * d).toInt()); glass.draw(c)
         paint.color = Glass.ACCENT; paint.textSize = 15 * d; c.drawText(label, cx, 18.5f * d, paint)
+        c.restore()
         fade.shader = LinearGradient(0f, 0f, 0f, height.toFloat(), intArrayOf(Color.BLACK, Color.BLACK, 0x99000000.toInt(), 0), floatArrayOf(0f, 0.4f, 0.7f, 1f), Shader.TileMode.CLAMP)
         c.drawRect(0f, 0f, width.toFloat(), height.toFloat(), fade); c.restoreToCount(save)
     }
@@ -619,7 +623,9 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
         val loc = IntArray(2); val hl = IntArray(2); anchor.getLocationInWindow(loc); host.getLocationInWindow(hl)
         val ax = loc[0] - hl[0]; val ay = loc[1] - hl[1]
         val nav = if (android.os.Build.VERSION.SDK_INT >= 30) host.rootWindowInsets?.getInsets(android.view.WindowInsets.Type.systemBars())?.bottom ?: 0 else 0
-        val padT = host.paddingTop + c.dp(12); val padB = max(host.paddingBottom, nav) + c.dp(18)
+        val statusTop = if (android.os.Build.VERSION.SDK_INT >= 30) host.rootWindowInsets?.getInsets(android.view.WindowInsets.Type.systemBars())?.top ?: 0 else 0
+        // The top clearance counts the status bar even when the host is the window's decor view (its own padding is zero).
+        val padT = max(host.paddingTop, statusTop) + c.dp(12); val padB = max(host.paddingBottom, nav) + c.dp(18)
         val avail = host.height - padT - padB
         val w = max(c.dp(232), anchor.width).coerceAtMost(host.width - c.dp(24))
         val x = (ax + anchor.width / 2 - w / 2).coerceIn(c.dp(12), max(c.dp(12), host.width - c.dp(12) - w))
@@ -997,7 +1003,7 @@ class AiRing(context: Context) : View(context) {
         if (caption.isNotEmpty()) { big.textSize = 19 * d; c.drawText(caption, cx, y, big); y += 30 * d }
         if (detail.isNotEmpty()) { small.textSize = 15 * d; small.color = Glass.TEXT2; c.drawText(detail, cx, y, small); y += 26 * d }
         if (eta.isNotEmpty()) {
-            small.textSize = 15 * d; small.color = Color.WHITE; small.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            small.textSize = 15 * d; small.color = Glass.ACCENT; small.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
             val tw = small.measureText(eta); val icon = 22 * d; val w = tw + icon + 40 * d; val l = cx - w / 2
             etaPill.color = 0x40ff9f45; c.drawRoundRect(l, y, l + w, y + 38 * d, 19 * d, 19 * d, etaPill)
             val ix = l + 18 * d + icon / 2; val iy = y + 19 * d

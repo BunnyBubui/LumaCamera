@@ -28,7 +28,7 @@ class LumoraLogoView(context: Context) : View(context) {
     private val d = resources.displayMetrics.density
     private val strokes: List<Path>
     /** When each stroke starts and ends, as shares of [progress]. */
-    private val windows = listOf(0f to 0.38f, 0.22f to 0.62f, 0.5f to 0.76f, 0.66f to 0.92f)
+    private val windows = listOf(0f to 0.55f, 0.35f to 0.8f, 0.65f to 0.92f)
     private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
     private val glow = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND }
@@ -37,16 +37,16 @@ class LumoraLogoView(context: Context) : View(context) {
 
     init {
         // 108-unit grid, like the launcher icon.
-        val ring = Path().apply { addCircle(54f, 54f, 19f, Path.Direction.CW) }
-        val orbit = Path().apply {
-            addOval(RectF(54f - 36f, 56f - 11f, 54f + 36f, 56f + 11f), Path.Direction.CW)
-            transform(Matrix().apply { setRotate(-18f, 54f, 56f) })
+        // Camera body with its bump, the lens ring and a small star of light.
+        val body = Path().apply {
+            moveTo(30f, 40f); lineTo(39f, 40f); lineTo(43f, 33f); lineTo(65f, 33f); lineTo(69f, 40f); lineTo(78f, 40f)
+            quadTo(82f, 40f, 82f, 44f); lineTo(82f, 72f); quadTo(82f, 76f, 78f, 76f); lineTo(30f, 76f); quadTo(26f, 76f, 26f, 72f); lineTo(26f, 44f); quadTo(26f, 40f, 30f, 40f); close()
         }
-        val inner = Path().apply { addCircle(54f, 54f, 8.5f, Path.Direction.CW) }
+        val ring = Path().apply { addCircle(54f, 58f, 12f, Path.Direction.CW) }
         val spark = Path().apply {
-            moveTo(78f, 19f); quadTo(79.2f, 27.8f, 88f, 29f); quadTo(79.2f, 30.2f, 78f, 39f); quadTo(76.8f, 30.2f, 68f, 29f); quadTo(76.8f, 27.8f, 78f, 19f); close()
+            moveTo(61f, 50f); quadTo(61.7f, 53.3f, 65f, 54f); quadTo(61.7f, 54.7f, 61f, 58f); quadTo(60.3f, 54.7f, 57f, 54f); quadTo(60.3f, 53.3f, 61f, 50f); close()
         }
-        strokes = listOf(ring, orbit, inner, spark)
+        strokes = listOf(body, ring, spark)
         importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO
     }
 
@@ -55,8 +55,7 @@ class LumoraLogoView(context: Context) : View(context) {
         val m = Matrix().apply { setScale(s, s); postTranslate((w - 108f * s) / 2f, (h - 108f * s) / 2f) }
         scaled.clear(); strokes.forEach { p -> scaled += Path(p).apply { transform(m) } }
         line.strokeWidth = 3.4f * s; glow.strokeWidth = 9f * s
-        line.shader = SweepGradient(w / 2f, h / 2f, intArrayOf(Glass.ACCENT, 0xffff5e8a.toInt(), 0xff8e7dff.toInt(), 0xff64d2ff.toInt(), Glass.ACCENT), null)
-        glow.shader = line.shader
+        line.color = Color.WHITE; glow.color = Color.WHITE
     }
 
     override fun onDraw(c: Canvas) {
@@ -79,11 +78,9 @@ class LumoraLogoView(context: Context) : View(context) {
             } while (pm2.nextContour())
             c.drawPath(partial, line)
         }
-        if (end > 0f) {
+        if (end > 0f && scaled.size > 2) {
             fill.color = Color.WHITE; fill.alpha = (235 * end).toInt()
             c.drawPath(scaled[2], fill)
-            fill.color = Glass.ACCENT; fill.alpha = (255 * end).toInt()
-            c.drawPath(scaled[3], fill)
         }
     }
 

@@ -6,6 +6,32 @@ import kotlin.math.roundToInt
 
 /** Area downsampling from native x4, on a fixed pixel lattice shared by all tiles. */
 object DetailResampler {
+    /** Same source lattice and halo as export, including the crop's outermost pixels. */
+    fun copyBaseline(input: IntArray, scale: Int, coreW: Int, coreH: Int,
+                     destination: IntArray, stride: Int, left: Int) {
+        require(scale in 2..4 && input.size == EnhanceSpec.INPUT*EnhanceSpec.INPUT)
+        require(coreW in 1..EnhanceSpec.CORE && coreH in 1..EnhanceSpec.CORE)
+        require(left >= 0 && left + coreW*scale <= stride && destination.size >= stride*coreH*scale)
+        val edge = EnhanceSpec.INPUT
+        for (y in 0 until coreH*scale) {
+            val fy = EnhanceSpec.HALO + (y + 0.5)/scale - 0.5
+            val by = floor(fy).toInt(); val wy = (fy-by).toFloat()
+            for (x in 0 until coreW*scale) {
+                val fx = EnhanceSpec.HALO + (x + 0.5)/scale - 0.5
+                val bx = floor(fx).toInt(); val wx = (fx-bx).toFloat()
+                var color = -0x1000000
+                for (c in 0..2) {
+                    val shift = 16-c*8
+                    fun sample(dx: Int, dy: Int) = ((input[(by+dy)*edge+bx+dx] ushr shift) and 255).toFloat()
+                    val value = (sample(0,0)*(1-wx)+sample(1,0)*wx)*(1-wy) +
+                        (sample(0,1)*(1-wx)+sample(1,1)*wx)*wy
+                    color = color or (value.roundToInt().coerceIn(0,255) shl shift)
+                }
+                destination[y*stride+left+x] = color
+            }
+        }
+    }
+
     fun copyCore(native: FloatArray, input: IntArray, scale: Int, strength: Int,
                  coreW: Int, coreH: Int, destination: IntArray, stride: Int, left: Int,
                  profile: EnhanceProfile = EnhanceProfile.CLASSIC,
@@ -17,6 +43,10 @@ object DetailResampler {
         require(native.size == outEdge*outEdge*3 && input.size == edge*edge)
         require(coreW in 1..EnhanceSpec.CORE && coreH in 1..EnhanceSpec.CORE)
         require(left >= 0 && left + coreW*scale <= stride && destination.size >= stride*coreH*scale)
+        if (strength == 0) {
+            copyBaseline(input,scale,coreW,coreH,destination,stride,left)
+            return
+        }
         if (profile == EnhanceProfile.NATURAL) {
             require(textMask == null || textMask.size == coreW*coreH) { "invalid source text mask" }
             require(personMask == null || personMask.size == coreW*coreH) { "invalid source person mask" }

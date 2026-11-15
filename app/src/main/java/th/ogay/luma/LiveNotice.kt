@@ -35,34 +35,39 @@ object LiveNotice {
     }
 
     /** An ongoing progress notification. [percent] < 0 means "starting" (an indeterminate bar). */
-    fun progress(c: Context, title: String, text: String, percent: Int, open: PendingIntent?, cancel: PendingIntent?): Notification {
+    fun progress(c: Context, title: String, text: String, percent: Int, open: PendingIntent?, cancel: PendingIntent?, etaChip: String? = null): Notification {
         channels(c)
         val p = percent.coerceIn(-1, 100)
+        val chip = if (p < 0) "…" else if (etaChip.isNullOrEmpty()) "$p%" else "$p%·$etaChip"
         if (Build.VERSION.SDK_INT >= 36) {
             val style = Notification.ProgressStyle()
-                .setProgressSegments(listOf(Notification.ProgressStyle.Segment(100).setColor(Glass.ACCENT)))
+                // Five orange segments with small gaps: it reads as a bar made of steps, and the unfilled part stays dim.
+                .setProgressSegments(List(5) { Notification.ProgressStyle.Segment(20).setColor(Glass.ACCENT) })
                 .setStyledByProgress(true)
                 .setProgress(p.coerceAtLeast(0))
                 .setProgressIndeterminate(p < 0)
-            icon(c)?.let { style.setProgressTrackerIcon(Icon.createWithBitmap(it)) }
             val b = Notification.Builder(c, CHANNEL)
                 .setSmallIcon(R.drawable.ic_stat_ai).setContentTitle(title).setContentText(text)
                 .setStyle(style).setOngoing(true).setOnlyAlertOnce(true).setCategory(Notification.CATEGORY_PROGRESS)
                 .setColor(Glass.ACCENT).setContentIntent(open)
                 // Live-update request and the status-bar chip text (the same extras the builder setters write).
-                .addExtras(android.os.Bundle().apply { putBoolean("android.requestPromotedOngoing", true); putString("android.shortCriticalText", if (p < 0) "…" else "$p%") })
+                .addExtras(android.os.Bundle().apply { putBoolean("android.requestPromotedOngoing", true); putString("android.shortCriticalText", chip) })
             icon(c)?.let { b.setLargeIcon(Icon.createWithBitmap(it)) }
             cancel?.let { b.addAction(Notification.Action.Builder(Icon.createWithResource(c, android.R.drawable.ic_menu_close_clear_cancel), "ยกเลิก", it).build()) }
             return b.build()
         }
-        val live = android.os.Bundle().apply { putBoolean("android.requestPromotedOngoing", true); putString("android.shortCriticalText", if (p < 0) "…" else "$p%") }
+        val live = android.os.Bundle().apply { putBoolean("android.requestPromotedOngoing", true); putString("android.shortCriticalText", chip) }
         val b = NotificationCompat.Builder(c, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_ai).setLargeIcon(icon(c)).setContentTitle(title).setContentText(text)
-            .setSubText(if (p < 0) null else "$p%").setCategory(NotificationCompat.CATEGORY_PROGRESS).setContentIntent(open)
+            .setSubText(if (p < 0) null else chip).setCategory(NotificationCompat.CATEGORY_PROGRESS).setContentIntent(open)
             .setOngoing(true).setOnlyAlertOnce(true).setProgress(100, p.coerceAtLeast(0), p < 0).addExtras(live).setColor(Glass.ACCENT)
         cancel?.let { b.addAction(android.R.drawable.ic_menu_close_clear_cancel, "ยกเลิก", it) }
         return b.build()
     }
+
+    /** Brings the app back to the screen it was on (or opens it): for alerts about work that has no page of its own, such as a model download. */
+    fun openApp(c: Context): PendingIntent? = c.packageManager.getLaunchIntentForPackage(c.packageName)?.let {
+        PendingIntent.getActivity(c, 9, it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT) }
 
     /** A one-off "finished" notification. */
     fun done(c: Context, id: Int, title: String, text: String, open: PendingIntent?) = runCatching {

@@ -24,6 +24,16 @@ object AudioPeaks {
         val peaks = runCatching { decode(c.applicationContext, uri) }.getOrDefault(FloatArray(0))
         synchronized(cache) { cache[uri.toString()] = peaks }; return peaks }
 
+    /**
+     * The loudness of just [fromMs]..[toMs] of a file, indexed by absolute time like the full waveform (steps before [fromMs] stay empty).
+     * Only that stretch is decoded, so a one-hour file trimmed to one minute costs one minute, not an hour. A waveform already
+     * decoded is reused when it reaches that far. Call it off the main thread.
+     */
+    fun range(c: Context, uri: Uri, fromMs: Long, toMs: Long): FloatArray {
+        get(uri)?.takeIf { it.isNotEmpty() && toMs <= LIMIT_MS }?.let { return it }
+        return runCatching { decode(c.applicationContext, uri, fromMs.coerceAtLeast(0), toMs) }.getOrDefault(FloatArray(0))
+    }
+
     /** Starts decoding if it has not been done; [done] runs on the calling executor's thread when the waveform is ready. */
     fun load(c: Context, uri: Uri, io: Executor, done: () -> Unit) {
         val key = uri.toString()
@@ -36,7 +46,7 @@ object AudioPeaks {
         }
     }
 
-    private fun decode(c: Context, uri: Uri): FloatArray {
+    private fun decode(c: Context, uri: Uri, fromMs: Long = 0, toMs: Long = LIMIT_MS): FloatArray {
         val ex = MediaExtractor()
         var codec: MediaCodec? = null
         try {
@@ -44,7 +54,9 @@ object AudioPeaks {
             val track = (0 until ex.trackCount).firstOrNull { ex.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true } ?: return FloatArray(0)
             ex.selectTrack(track)
             val format = ex.getTrackFormat(track)
-            val durMs = (if (format.containsKey(MediaFormat.KEY_DURATION)) format.getLong(MediaFormat.KEY_DURATION) / 1000 else LIMIT_MS).coerceIn(1, LIMIT_MS)
+            val fileMs = if (format.containsKey(MediaFormat.KEY_DURATION)) format.getLong(MediaFormat.KEY_DURATION) / 1000 else toMs
+            val durMs = minOf(fileMs, toMs).coerceAtLeast(1)
+            if (fromMs > 0) ex.seekTo(fromMs * 1000, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
             val out = FloatArray((durMs / STEP_MS).toInt() + 2)
             codec = MediaCodec.createDecoderByType(format.getString(MediaFormat.KEY_MIME)!!).apply { configure(format, null, null, 0); start() }
             val info = MediaCodec.BufferInfo(); var inDone = false; var outDone = false; var float = false; var guard = 0
@@ -53,7 +65,7 @@ object AudioPeaks {
                     val i = codec.dequeueInputBuffer(2000)
                     if (i >= 0) {
                         val n = ex.readSampleData(codec.getInputBuffer(i)!!, 0)
-                        if (n < 0 || ex.sampleTime / 1000 > LIMIT_MS) { codec.queueInputBuffer(i, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM); inDone = true }
+                        if (n < 0 || ex.sampleTime / 1000 > toMs) { codec.queueInputBuffer(i, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM); inDone = true }
                         else { codec.queueInputBuffer(i, 0, n, ex.sampleTime, 0); ex.advance() }
                     }
                 }

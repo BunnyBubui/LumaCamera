@@ -57,7 +57,7 @@ class VideoActivity:ComponentActivity(){
     private lateinit var tabs:FrameLayout;private lateinit var knob:View;private val tabLabels=mutableListOf<TextView>()
     private lateinit var chipFrame:FrameLayout;private lateinit var chips:CenterStrip;private val chipTexts=mutableListOf<Pair<TextView,TextView>>()
     private lateinit var dial:LinearLayout;private lateinit var dialTitle:TextView;private lateinit var dialValue:TextView;private lateinit var slider:GlassSlider
-    private var category=1;private var openChip:String?=null;private var zoomStops:List<Float> = emptyList()
+    private var category=0;private var openChip:String?=null;private var zoomStops:List<Float> = emptyList()
     // The last frame stays over the preview while the camera reopens, so a changed setting never flashes black.
     private val rebind=Runnable{if(recording==null&&!starting&&!finalizing)freeze(false);bind()}
     /** A choice from the sheet rebinds after the menu has closed, so its closing animation is not cut by the camera reopening. */
@@ -223,7 +223,7 @@ class VideoActivity:ComponentActivity(){
         val lp=dock.layoutParams as LinearLayout.LayoutParams
         val want=if(tall)-dock.height else 0
         if(lp.topMargin!=want){lp.topMargin=want;dock.layoutParams=lp}
-        dock.setBackgroundColor(if(tall&&recording==null)0x66070b16 else 0)
+        dock.setBackgroundColor(0)
         stage.clipToPadding=false
         val pad=if(tall)dock.height else 0
         if(stage.paddingBottom!=pad)stage.setPadding(0,0,0,pad)
@@ -364,7 +364,7 @@ class VideoActivity:ComponentActivity(){
         if(key==kind){if(modeStrip.byTap)settings();return}
         if(busy()){notice("หยุดคลิปก่อนเปลี่ยนโหมด");modeStrip.select(barKeys.indexOf(kind),true);return}
         when(key){
-            "VIDEO","MOVIE","SLOW"->{handler.removeCallbacks(rebind);intent=intent.putExtra("mode",key);loadSettings();openChip=null;category=1;provider?.unbindAll();camera=null;buildScreen();bind()}
+            "VIDEO","MOVIE","SLOW"->{handler.removeCallbacks(rebind);intent=intent.putExtra("mode",key);loadSettings();openChip=null;category=0;provider?.unbindAll();camera=null;buildScreen();bind()}
             "TIMELAPSE"->{startActivity(Intent(this,SpecialVideoActivity::class.java).putExtra("mode",key));finish();noAnimation()}
             // Photo modes live in the camera screen: hand the choice back and close without a transition.
             else->{prefs.edit().putString("pending_mode",key).apply();finish();noAnimation()}
@@ -425,7 +425,7 @@ class VideoActivity:ComponentActivity(){
         if(slow)stage.addView(text("Slow-motion · ไม่มีเสียง",12.5f,Glass.TEXT2,true).apply{gravity=Gravity.CENTER;maxLines=3;ellipsize=null;maxWidth=dp(170);minHeight=dp(48);background=glass(22);setPadding(dp(14),0,dp(14),0)},FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.START).apply{setMargins(dp(12),dp(6),0,0)})
         // The same small wide-view map as photo mode, shown past 10×.
         zoomMap=ZoomMap(this).also{m->m.busy={false};stage.addView(m,FrameLayout.LayoutParams(dp(98),dp(130),Gravity.TOP or Gravity.END).apply{setMargins(0,dp(64),dp(12),0)})}
-        wheel=ZoomWheel(this).apply{alpha=0f;visibility=android.view.View.VISIBLE};stage.addView(wheel,FrameLayout.LayoutParams(-1,dp(150),Gravity.BOTTOM).apply{bottomMargin=dp(4)})
+        wheel=ZoomWheel(this).apply{alpha=0f;visibility=android.view.View.VISIBLE;shiftDp=44f};stage.addView(wheel,FrameLayout.LayoutParams(-1,dp(150),Gravity.BOTTOM).apply{bottomMargin=dp(4)})
         zooms=ZoomCapsule(this).apply{background=glass(28);setPadding(dp(4),dp(4),dp(4),dp(4));contentDescription="ระยะเลนส์ ลากซ้ายขวาเพื่อซูมละเอียด"}
         stage.addView(zooms,FrameLayout.LayoutParams(-2,dp(56),Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply{bottomMargin=dp(8)});zooms.visibility=android.view.View.GONE
         installZoomDrag()
@@ -447,24 +447,14 @@ class VideoActivity:ComponentActivity(){
         dockRef=dock;dock.addOnLayoutChangeListener{_,_,t,_,b,_,ot,_,ob->if(b-t!=ob-ot)dock.post{applyStageShape()}}
         androidx.core.view.ViewCompat.addAccessibilityAction(dock,"เปิดตั้งค่าวิดีโอ"){_,_->settings();true}
         // No arrow: a swipe up on the dock, or a second tap on the active mode, opens the settings sheet.
-        if(!slow){
-            tabs=FrameLayout(this).apply{background=glass(20,0x1fffffff)}
-            knob=android.view.View(this).apply{background=glass(17,0x38ffffff)};tabs.addView(knob,FrameLayout.LayoutParams(0,-1).apply{setMargins(dp(3),dp(3),dp(3),dp(3))})
-            val row=LinearLayout(this);tabLabels.clear()
-            listOf("ปรับแต่ง" to "ปรับแต่งวิดีโอ","คุณภาพ" to "คุณภาพวิดีโอ").forEachIndexed{i,(t,desc)->val l=text(t,13.5f,if(i==category)WHITE else Glass.TEXT2,true).apply{gravity=Gravity.CENTER;isClickable=true;contentDescription=desc;maxLines=1;ellipsize=null;setOnClickListener{if(category!=i){category=i;slideKnob(true);closeDial();refreshChips()}}};tabLabels+=l;row.addView(l,LinearLayout.LayoutParams(0,-1,1f))}
-            tabs.addView(row,-1,-1);tabs.post{slideKnob(false)}
-            // Landscape has no room in the side dock, so the tabs float over the viewfinder there.
-            if(landscape)stage.addView(tabs,FrameLayout.LayoutParams(dp(260),dp(48),Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply{bottomMargin=dp(72)})
-            else dock.addView(tabs,LinearLayout.LayoutParams(-1,dp(48)).apply{setMargins(dp(16),dp(8),dp(16),dp(4))})
-        }
-        chipFrame=FrameLayout(this).apply{background=glass(24)}
+        chipFrame=FrameLayout(this)
         chips=CenterStrip(this).apply{capsuleHeightDp=44;onSelect={i->chipKeys().getOrNull(i)?.let{k->if(openChip==k)closeDial() else openDial(k)}};onLive={i->styleChips(i)}}
         chipFrame.addView(chips,FrameLayout.LayoutParams(-1,-1).apply{setMargins(dp(1),dp(1),dp(1),dp(1))})
         val grow=((resources.configuration.fontScale+1f)/2f).coerceAtLeast(1f)
         dock.addView(chipFrame,LinearLayout.LayoutParams(-1,(dp(56)*grow).roundToInt()).apply{setMargins(dp(16),dp(6),dp(16),dp(4))})
         modeStrip=CenterStrip(this).apply{onSelect={i->pickMode(i)};onLive={i->styleModes(i)};contentDescription="แถบโหมด"}
         dock.clipChildren=false
-        dock.addView(ArrowTab.wrap(this,modeStrip,(dp(58)*grow).roundToInt()){settings(true)}.first,-1,-2)
+        val stripBox=ArrowTab.wrap(this,modeStrip,(dp(58)*grow).roundToInt()){settings(true)}.first
         if(android.os.Build.VERSION.SDK_INT>=29)modeStrip.addOnLayoutChangeListener{v,l,t,r,b,_,_,_,_->v.systemGestureExclusionRects=listOf(android.graphics.Rect(0,0,r-l,b-t))}
         buildModeStrip()
         val actions=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL;setPadding(dp(36),0,dp(36),0)}
@@ -481,6 +471,7 @@ class VideoActivity:ComponentActivity(){
         flip=roundButton(flipIcon,56,"สลับกล้องวิดีโอ"){if(!busy()&&!dual){flipIcon.animate().rotationBy(180f).setInterpolator(Glass.EASE).setDuration(420).start();freeze(true);rear=!rear;selectedCameraId=null;manualFocusOff();bind()}}
         if(dual)flip.alpha=0.35f
         actions.addView(flip,dp(56),dp(56));dock.addView(actions,-1,dp(104))
+        dock.addView(stripBox,-1,-2) // mode names at the very bottom, under the shutter row
         val pinch=android.view.ScaleGestureDetector(this,object:android.view.ScaleGestureDetector.SimpleOnScaleGestureListener(){override fun onScale(d:android.view.ScaleGestureDetector):Boolean{if(zoomLocked())return true;val s=camera?.cameraInfo?.zoomState?.value?:return false;zoomTo((if(zFollow?.isRunning==true)zGoal else zNow(s))*d.scaleFactor);return true}})
         var axis=0;var zone=1;var sy=0f;var ev0=0f;var fd0=0f
         val taps=android.view.GestureDetector(this,object:android.view.GestureDetector.SimpleOnGestureListener(){

@@ -64,7 +64,35 @@ fun Activity.installRoot(root: View) {
 fun zoomText(ratio: Float): String = String.format(Locale.US,
     if (kotlin.math.abs(ratio-ratio.roundToInt()) < 0.025f) "%.0f×" else "%.1f×",ratio)
 fun pixelsText(pixels: Long) = String.format(Locale.US,"%.2f MP",pixels/1e6)
-fun Context.notice(message: String) = Toast.makeText(this,message,Toast.LENGTH_LONG).show()
+private var lastNotice: java.lang.ref.WeakReference<View>? = null
+/**
+ * A short message in the app's own glass style, a pill above the bottom bar that fades away. Where there is no screen to
+ * draw on (a service, a destroyed activity) it falls back to the system toast.
+ */
+/** A dark card with a full orange outline: stands out on any picture, unlike a plain dark glass card. */
+fun Context.accentFrame(radiusDp: Int): android.graphics.drawable.GradientDrawable = android.graphics.drawable.GradientDrawable().apply {
+    cornerRadius = dp(radiusDp).toFloat(); setColor(Glass.alpha(Glass.BG, 0xf5)); setStroke(dp(2), Glass.ACCENT)
+}
+
+fun Context.notice(message: String) {
+    var c: Context? = this
+    while (c is android.content.ContextWrapper && c !is android.app.Activity) c = c.baseContext
+    val act = c as? android.app.Activity
+    if (act == null || act.isFinishing || act.isDestroyed) { Toast.makeText(this, message, Toast.LENGTH_LONG).show(); return }
+    val root = act.window.decorView as? android.widget.FrameLayout ?: run { Toast.makeText(this, message, Toast.LENGTH_LONG).show(); return }
+    lastNotice?.get()?.let { (it.parent as? android.view.ViewGroup)?.removeView(it) }
+    val box = android.widget.LinearLayout(act).apply {
+        gravity = android.view.Gravity.CENTER_VERTICAL; background = act.accentFrame(22); setPadding(act.dp(18), act.dp(12), act.dp(18), act.dp(12)); alpha = 0f
+        isClickable = true; elevation = act.dp(6).toFloat(); contentDescription = message
+        addView(act.text(message, 13.5f, Glass.TEXT, true).apply { maxLines = 4 }, android.widget.LinearLayout.LayoutParams(-2, -2))
+    }
+    root.addView(box, android.widget.FrameLayout.LayoutParams(-2, -2, android.view.Gravity.BOTTOM or android.view.Gravity.CENTER_HORIZONTAL).apply { bottomMargin = act.dp(112); leftMargin = act.dp(20); rightMargin = act.dp(20) })
+    lastNotice = java.lang.ref.WeakReference(box)
+    box.animate().alpha(1f).setDuration(180).start()
+    val hold = (1800 + message.length * 45L).coerceAtMost(5000L)
+    box.setOnClickListener { box.animate().cancel(); box.animate().alpha(0f).setDuration(140).withEndAction { (box.parent as? android.view.ViewGroup)?.removeView(box) }.start() }
+    box.postDelayed({ if (box.parent != null) box.animate().alpha(0f).setDuration(260).withEndAction { (box.parent as? android.view.ViewGroup)?.removeView(box) }.start() }, hold)
+}
 
 class Glyph(context: Context, private val kind: String, desc: String, action: () -> Unit) : View(context) {
     override fun getAccessibilityClassName():CharSequence="android.widget.Button"

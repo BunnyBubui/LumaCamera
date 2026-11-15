@@ -1,0 +1,38 @@
+{
+  "dataset_version": "REPLACE-with-your-reviewed-dataset-version",
+  "images": [
+    {
+      "id": "train-foliage-001",
+      "path": "private/hr/train-foliage-001.jpg",
+      "split": "train",
+      "scene_id": "scene-001",
+      "group_ids": ["capture-session-001"],
+      "category": "foliage",
+      "license": "owner-consent",
+      "attribution": "REPLACE-with-owner-and-permission-record",
+      "rights_confirmed": false
+    },
+    {
+      "id": "validation-text-001",
+      "path": "private/hr/validation-text-001.jpg",
+      "split": "val",
+      "scene_id": "scene-002",
+      "group_ids": ["capture-session-002"],
+      "category": "thai_text",
+      "license": "owner-consent",
+      "attribution": "REPLACE-with-owner-and-permission-record",
+      "rights_confirmed": false
+    },
+    {
+      "id": "test-portrait-001",
+      "path": "private/hr/test-portrait-001.jpg",
+      "split": "test",
+      "scene_id": "scene-003",
+      "group_ids": ["capture-session-003", "person-001"],
+      "category": "portrait",
+      "license": "owner-consent",
+      "attribution": "REPLACE-with-owner-and-permission-record",
+      "rights_confirmed": false
+    }
+  ]
+}

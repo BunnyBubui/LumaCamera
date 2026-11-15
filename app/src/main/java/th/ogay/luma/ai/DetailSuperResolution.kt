@@ -29,6 +29,18 @@ class DetailSuperResolution(private val context: Context) {
         var decodeMs = 0L; var inferMs = 0L; var renderMs = 0L; var encodeMs = 0L
         var count = 0; var lastProgress = -1
         fun checkpoint() { if (stopped()) throw CancellationException() }
+        checkpoint()
+        val sourceDigest = java.security.MessageDigest.getInstance("SHA-256")
+        context.contentResolver.openInputStream(shot.uri)?.use { input ->
+            val buffer = ByteArray(64*1024)
+            while (true) {
+                checkpoint()
+                val read = input.read(buffer)
+                if (read < 0) break
+                sourceDigest.update(buffer,0,read)
+            }
+        } ?: throw IOException("ไม่พบไฟล์ต้นฉบับ")
+        val sourceSha256 = sourceDigest.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
         context.contentResolver.openInputStream(shot.uri)?.use { input ->
             val decoder = BitmapRegionDecoder.newInstance(input, false) ?: throw IOException("อ่านภาพต้นฉบับไม่ได้")
             try {
@@ -93,7 +105,7 @@ class DetailSuperResolution(private val context: Context) {
                                     AiPace.afterTile(context, SystemClock.elapsedRealtime()-t)
                                     val textMask = textScan?.mask?.forCore(left,top,w,h)
                                     val personMask = personScan?.mask?.forCore(left,top,w,h)
-                                    renders[slot] = renderExec.submit { AiPace.helperPriority(context); timed(renderT) { DetailResampler.copyCore(enhanced,pixels,spec.scale,spec.strength,w,h,stripe,output.w,left*spec.scale,spec.profile,textMask,personMask) } }
+                                    renders[slot] = renderExec.submit { AiPace.helperPriority(context); timed(renderT) { DetailResampler.copyCore(enhanced,pixels,spec.scale,spec.effectiveStrength,w,h,stripe,output.w,left*spec.scale,spec.profile,textMask,personMask) } }
                                     slot = 1-slot
                                     count++
                                     AiProgress.tile(count)
@@ -118,8 +130,17 @@ class DetailSuperResolution(private val context: Context) {
                     PhotoMedia.tag(file,exif?.rotationDegrees ?: 0,
                         exif?.getAttribute(ExifInterface.TAG_DATETIME_ORIGINAL),ai=true,version=shot.aiVersion)
                     progress(100)
+                    val appInfo = context.packageManager.getPackageInfo(context.packageName,0)
                     val report = JSONObject().put("model",EnhanceSpec.MODEL).put("scale",spec.scale)
-                        .put("nativeScale",4).put("strength",spec.strength)
+                        .put("schema","lumora-sr-render-v2")
+                        .put("sourceSha256",sourceSha256)
+                        .put("modelAsset",EnhanceSpec.MODEL_ASSET).put("modelSha256",runtime.modelSha256)
+                        .put("renderRevision",if (spec.profile == EnhanceProfile.NATURAL)
+                            EnhanceSpec.NATURAL_RENDER_REVISION else EnhanceSpec.CLASSIC_RENDER_REVISION)
+                        .put("appVersion",appInfo.versionName)
+                        .put("appVersionCode",appInfo.versionCode)
+                        .put("nativeScale",EnhanceSpec.NATIVE_SCALE).put("strength",spec.effectiveStrength)
+                        .put("requestedStrength",spec.strength)
                         .put("profile",spec.profile.name).put("outputModel",spec.modelId)
                         .put("textGuardStatus",textScan?.status ?: "not-requested")
                         .put("textGuardRegions",textScan?.boxCount ?: 0)

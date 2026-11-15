@@ -47,5 +47,5 @@ object AiProgress {
         val per = (SystemClock.elapsedRealtime() - firstTileAt).toDouble() / d
         return (per * (t - d)).toLong() + 1500
     }
-    fun etaText(): String { val ms = etaMs(); return when { ms <= 0 -> ""; ms < 60_000 -> "เหลืออีกไม่ถึง 1 นาที"; else -> "เหลืออีกประมาณ ${ms / 60_000 + 1} นาที" } }
+    fun etaText(): String { val ms = etaMs(); return if (ms <= 0) "" else th.ogay.luma.Eta.text(ms) }
 }

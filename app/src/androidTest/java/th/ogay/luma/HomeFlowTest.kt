@@ -22,9 +22,10 @@ class HomeFlowTest {
         return null
     }
 
-    /** Home lists the features, and a photo-mode card answers the camera with that mode. */
+    /** Opened by the camera, Home lists the features and a photo-mode card answers the camera with that mode. */
     @Test(timeout = 60_000) fun homeShowsFeaturesAndReturnsAMode() {
-        val scenario = ActivityScenario.launchActivityForResult(HomeActivity::class.java)
+        val scenario = ActivityScenario.launchActivityForResult<HomeActivity>(
+            android.content.Intent(InstrumentationRegistry.getInstrumentation().targetContext, HomeActivity::class.java).putExtra(HomeActivity.FROM_CAMERA, true))
         Thread.sleep(1500)
         scenario.onActivity { a ->
             val root = a.window.decorView

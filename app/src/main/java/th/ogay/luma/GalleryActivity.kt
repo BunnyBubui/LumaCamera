@@ -121,7 +121,7 @@ class GalleryActivity : ComponentActivity() {
         if (r.resultCode == RESULT_OK) afterGrant?.invoke()
         if (r.resultCode == RESULT_OK) pendingNext?.let { selected = it.ifEmpty { null }; useAi = false }
         pendingNext = null
-        afterGrant = null; pendingForget = emptyList(); endSelection(); reload()
+        afterGrant = null; pendingForget = emptyList(); endSelection(false); reload()
     }
     private var afterGrant: (() -> Unit)? = null
     /** After a system delete request: the picture to show next ("" = back to the grid). */
@@ -159,7 +159,7 @@ class GalleryActivity : ComponentActivity() {
             override fun handleOnBackPressed() {
                 when {
                     sortMenu.showing -> sortMenu.dismiss(true)
-                    selecting -> endSelection()
+                    selecting && !(pickKind != null && albumKind != null) -> endSelection()
                     peek != null -> closePeek()
                     // The newest photo opened straight from the camera: Back returns to the camera, not to the grid.
                     selected != null && viewerFromCamera -> finish()
@@ -269,8 +269,9 @@ class GalleryActivity : ComponentActivity() {
     private fun startSelection(first: Item?) {
         selecting = true; first?.let { picked += it.key }; refreshCells(); updateSelectBar()
     }
-    private fun endSelection() {
-        if (pickKind != null) { finish(); return }
+    /** [cancel] true when the person closes selecting; false when the page only changes (an album opens) and a picker must stay open. */
+    private fun endSelection(cancel: Boolean = true) {
+        if (pickKind != null) { if (cancel) finish(); return }
         selecting = false; picked.clear(); refreshCells()
         selectBar?.let { b -> b.animate().translationY(b.height.toFloat() + dp(40)).alpha(0f).setDuration(200).withEndAction { (b.parent as? ViewGroup)?.removeView(b) }.start() }; selectBar = null
     }
@@ -323,13 +324,8 @@ class GalleryActivity : ComponentActivity() {
         contentResolver.query(u, arrayOf(MediaStore.MediaColumns.OWNER_PACKAGE_NAME), null, null, null)?.use { c -> c.moveToFirst() && c.getString(0) == packageName } ?: false
     }.getOrDefault(false)
     private fun confirmDelete(items: List<Item>) {
-        // Pictures from other apps: Android shows its own "move to bin?" question, so a second one from Lumora is skipped.
-        if (Build.VERSION.SDK_INT >= 30) {
-            luma.readIo.execute {
-                val anyOwn = items.any { it.shot != null || it.key.startsWith("ledger:") || (it.uri.authority == MediaStore.AUTHORITY && ownFile(it.uri)) }
-                runOnUiThread { if (!isDestroyed) { if (anyOwn && prefs.getBoolean("gallery_ask_delete", true)) askDelete(items) else trash(items) } }
-            }
-        } else if (prefs.getBoolean("gallery_ask_delete", true)) askDelete(items) else trash(items)
+        // Lumora's own question comes first for every picture; for pictures from other apps Android then adds its own consent sheet, which cannot be skipped.
+        if (prefs.getBoolean("gallery_ask_delete", true)) askDelete(items) else trash(items)
     }
     private fun askDelete(items: List<Item>) {
         GlassDialog.panel(this, if (items.size == 1) "ลบ${if (items[0].video) "วิดีโอ" else "รูป"}นี้ไหม" else "ลบ ${items.size} รายการไหม") { col, d ->
@@ -621,7 +617,7 @@ class GalleryActivity : ComponentActivity() {
         val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; addView(header, -1, -2); addView(FrameLayout(this@GalleryActivity).apply { addView(grid, -1, -1); addView(empty, -1, -1) }, LinearLayout.LayoutParams(-1, 0, 1f)) }
         root.addView(column, LinearLayout.LayoutParams(-1, 0, 1f))
         if (albumKind == null) root.addView(bottomNav(), LinearLayout.LayoutParams(-1, dp(60)).apply { setMargins(dp(40), dp(4), dp(40), dp(12)) })
-        pageView = if (albumKind == null) column else null; swipeKeep = strip
+        pageView = if (albumKind == null || pickKind != null) column else null; swipeKeep = strip
         if (closingViewer) { closingViewer = false; if (!Glass.reduced(this)) { column.alpha = 0f; column.scaleX = 0.96f; column.scaleY = 0.96f; column.animate().alpha(1f).scaleX(1f).scaleY(1f).setInterpolator(Glass.EASE).setDuration(300).start() } }
         else slideIn(column)
         var shown = all
@@ -760,7 +756,7 @@ class GalleryActivity : ComponentActivity() {
 
     // ---------- Albums tab (OPPO-style): my media first, then the phone's albums; pin, hide and reorder ----------
     private fun albumTitle() = when (albumKind) { "lumora" -> "ถ่ายด้วย Lumora"; "video" -> "วิดีโอ"; "fav" -> "รายการโปรด"; "raw" -> "RAW"; "ai" -> "ภาพ AI"; else -> album ?: "อัลบั้ม" }
-    private fun openAlbum(kind: String, name: String? = null) { albumKind = kind; album = name; category = 0; endSelection(); reload() }
+    private fun openAlbum(kind: String, name: String? = null) { albumKind = kind; album = name; category = 0; endSelection(false); reload() }
     private fun closeAlbum() { albumKind = null; album = null; section = 1; category = 0; reload() }
     private fun isRaw(i: Item) = i.shot?.output?.needsRaw == true || i.name.endsWith(".dng", true) || i.mime == "image/x-adobe-dng"
     /** Whether an item belongs on the open page. Hidden albums stay out of the รูปภาพ tab. */
@@ -784,10 +780,42 @@ class GalleryActivity : ComponentActivity() {
     }.also { navTabs = it }
     private fun switchSection(i: Int, swiped: Boolean) {
         tabMove = if (i > section) 1 else -1; swipeEnter = swiped
-        section = i; managing = false; albumKind = null; album = null; prefs.edit().putInt("gallery_section", i).apply(); endSelection()
+        section = i; managing = false; albumKind = null; album = null; prefs.edit().putInt("gallery_section", i).apply(); endSelection(false)
         if (swiped) reload() else root.postDelayed({ if (!isDestroyed) reload() }, if (Glass.reduced(this)) 0 else 120)
     }
 
+    // ---------- Picker: swipe sideways to move between albums ----------
+    private var pkX = 0f; private var pkY = 0f; private var pkOn = false; private var pkOff = true
+    private fun pickerAlbums(): List<String?> = listOf<String?>(null) + albums(lastItems.filter { pickAllows(it) }).map { it.name }
+    /** In the picker a sideways swipe on the grid goes to the next or previous album (the first page is everything). */
+    private fun albumSwipe(e: MotionEvent, slop: Int): Boolean {
+        val page = pageView ?: return false
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> { pkOn = false; pkOff = selected != null || !page.isAttachedToWindow || sortMenu.showing || inside(swipeKeep, e) || (albumKind != null && albumKind != "bucket"); pkX = e.rawX; pkY = e.rawY }
+            MotionEvent.ACTION_POINTER_DOWN -> if (!pkOn) pkOff = true
+            MotionEvent.ACTION_MOVE -> {
+                val dx = e.rawX - pkX; val dy = e.rawY - pkY
+                if (!pkOn && !pkOff) {
+                    if (kotlin.math.abs(dx) > slop * 1.5f && kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.5f) { pkOn = true; pkX = e.rawX - dx
+                        val c = MotionEvent.obtain(e); c.action = MotionEvent.ACTION_CANCEL; super.dispatchTouchEvent(c); c.recycle()
+                    } else if (kotlin.math.abs(dy) > slop * 1.5f) pkOff = true
+                }
+                if (pkOn) { page.translationX = dx * 0.5f; page.alpha = 1f - 0.4f * kotlin.math.min(1f, kotlin.math.abs(dx) / page.width.coerceAtLeast(1)); return true }
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> if (pkOn) {
+                pkOn = false; val dx = e.rawX - pkX; val w = page.width.coerceAtLeast(1)
+                val names = pickerAlbums(); val at = if (albumKind == "bucket") names.indexOf(album).coerceAtLeast(0) else 0
+                val to = at + if (dx < 0) 1 else -1
+                if (e.actionMasked == MotionEvent.ACTION_UP && kotlin.math.abs(dx) > w * 0.2f && to in names.indices) {
+                    tabMove = if (dx < 0) 1 else -1; swipeEnter = true
+                    albumKind = if (names[to] == null) null else "bucket"; album = names[to]; category = 0
+                    Glass.tick(page); notice(names[to] ?: "ทุกอัลบั้ม"); reload()
+                } else page.animate().translationX(0f).alpha(1f).setInterpolator(Glass.SPRING).setDuration(360).start()
+                return true
+            }
+        }
+        return false
+    }
     // ---------- Swiping between the two tabs ----------
     private var navTabs: GlassTabs? = null
     /** The tab page that a sideways swipe moves (the grid column or the albums list); null on other screens. */
@@ -807,6 +835,7 @@ class GalleryActivity : ComponentActivity() {
         // A dropdown opened by holding a button keeps following that finger: slide to a row and lift to pick it.
         GlassMenu.route(e) { super.dispatchTouchEvent(it) }?.let { return it }
         val slop = android.view.ViewConfiguration.get(this).scaledTouchSlop
+        if (pickKind != null && albumSwipe(e, slop)) return true
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> { swiping = false; swOff = !canSwipe() || inside(swipeKeep, e) || inside(navTabs, e); swX = e.rawX; swY = e.rawY
                 swTracker?.recycle(); swTracker = android.view.VelocityTracker.obtain().also { it.addMovement(e) } }
@@ -1350,7 +1379,7 @@ class GalleryActivity : ComponentActivity() {
         if (!::ring.isInitialized || ring.visibility != View.VISIBLE || showingId != id || isDestroyed) return
         val p = th.ogay.luma.ai.AiProgress
         if (p.shotId == id) {
-            if (p.total > 0) ring.update(p.fraction() * 99f, ring.caption, listOf("${String.format(Locale.US, "%,d", p.done)} / ${String.format(Locale.US, "%,d", p.total)} ไทล์", p.model).filter { it.isNotEmpty() }.joinToString(" · "), p.etaText())
+            if (p.total > 0) ring.update(p.fraction() * 99f, ring.caption, listOf("${String.format(Locale.US, "%,d", p.done)} / ${String.format(Locale.US, "%,d", p.total)} ไทล์", p.model).filter { it.isNotEmpty() }.joinToString(" · "), p.etaText().ifEmpty { "กำลังคำนวณเวลา…" })
             else ring.update(null, ring.caption, p.step)
         }
         host.postDelayed(this, 330)
