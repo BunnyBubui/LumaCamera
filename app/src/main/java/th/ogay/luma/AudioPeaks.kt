@@ -29,9 +29,9 @@ object AudioPeaks {
      * Only that stretch is decoded, so a one-hour file trimmed to one minute costs one minute, not an hour. A waveform already
      * decoded is reused when it reaches that far. Call it off the main thread.
      */
-    fun range(c: Context, uri: Uri, fromMs: Long, toMs: Long): FloatArray {
+    fun range(c: Context, uri: Uri, fromMs: Long, toMs: Long, onProgress: ((Float) -> Unit)? = null): FloatArray {
         get(uri)?.takeIf { it.isNotEmpty() && toMs <= LIMIT_MS }?.let { return it }
-        return runCatching { decode(c.applicationContext, uri, fromMs.coerceAtLeast(0), toMs) }.getOrDefault(FloatArray(0))
+        return runCatching { decode(c.applicationContext, uri, fromMs.coerceAtLeast(0), toMs, onProgress) }.getOrDefault(FloatArray(0))
     }
 
     /** Starts decoding if it has not been done; [done] runs on the calling executor's thread when the waveform is ready. */
@@ -46,7 +46,7 @@ object AudioPeaks {
         }
     }
 
-    private fun decode(c: Context, uri: Uri, fromMs: Long = 0, toMs: Long = LIMIT_MS): FloatArray {
+    private fun decode(c: Context, uri: Uri, fromMs: Long = 0, toMs: Long = LIMIT_MS, onProgress: ((Float) -> Unit)? = null): FloatArray {
         val ex = MediaExtractor()
         var codec: MediaCodec? = null
         try {
@@ -80,6 +80,7 @@ object AudioPeaks {
                         else { val sb = buf.asShortBuffer(); var k = 0; while (k < sb.limit()) { val v = kotlin.math.abs(sb.get(k).toInt()) / 32768f; if (v > peak) peak = v; k += 8 } }
                         val at = (info.presentationTimeUs / 1000 / STEP_MS).toInt()
                         if (at in out.indices && peak > out[at]) out[at] = peak
+                        if (onProgress != null && at % 20 == 0) onProgress(((info.presentationTimeUs / 1000 - fromMs).toFloat() / (toMs - fromMs).coerceAtLeast(1)).coerceIn(0f, 1f))
                     }
                     if (info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0) outDone = true
                     codec.releaseOutputBuffer(o, false)

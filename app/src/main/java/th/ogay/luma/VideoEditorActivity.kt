@@ -473,9 +473,18 @@ class VideoEditorActivity : ComponentActivity() {
         luma.readIo.execute {
             // Each clip is cut at its pauses so every caption line gets its own start and end; long stretches are cut every 8 seconds.
             val pieces = ArrayList<SpeechPiece>()
-            runOnUiThread { captionUi?.render(1, 0.08f, "อ่านระดับเสียงเพื่อหาช่วงที่มีคนพูด…") }
+            runOnUiThread { captionUi?.render(1, 0.02f, "อ่านระดับเสียงเพื่อหาช่วงที่มีคนพูด… 0%") }
+            val allMs = whole.sumOf { it.to - it.from }.coerceAtLeast(1); var doneMs = 0L; var lastShown = 0L
             for (p in whole) {
-                val pk = AudioPeaks.range(this, p.uri, p.from, p.to).takeIf { it.isNotEmpty() } ?: continue
+                // Reading the sound is the first long wait: show how far it has got, at most about 6 times a second.
+                val pk = AudioPeaks.range(this, p.uri, p.from, p.to) { part ->
+                    val now = android.os.SystemClock.elapsedRealtime()
+                    if (now - lastShown >= 160) {
+                        lastShown = now
+                        val at = doneMs + ((p.to - p.from) * part).toLong(); val f = (at.toFloat() / allMs).coerceIn(0f, 1f)
+                        runOnUiThread { captionUi?.render(1, 0.02f + 0.12f * f, "อ่านระดับเสียง ${(f * 100).toInt()}% · ${clock(at)} จาก ${clock(allMs)}", "", clock.leftMs()) }
+                    }
+                }.takeIf { it.isNotEmpty() }.also { doneMs += p.to - p.from } ?: continue
                 for ((a, b) in StudioMath.keepRanges(pk, AudioPeaks.STEP_MS.toLong(), p.from, p.to, quiet = 0.1f, minMs = 350, padMs = 120)) {
                     var x = a; while (x < b) { val y = if (b - x > 10_000) x + 8_000 else b; pieces += SpeechPiece(p.uri, x, y, p.outAt + ((x - p.from) / p.speed).toLong(), p.speed); x = y }
                 }
