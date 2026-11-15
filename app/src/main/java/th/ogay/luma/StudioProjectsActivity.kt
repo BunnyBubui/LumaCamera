@@ -50,6 +50,8 @@ class StudioProjectsActivity : ComponentActivity() {
     private var newName = ""
     /** Step 1 names the project, step 2 picks its video, then the editor opens already carrying that name. */
     private fun create() {
+        // A new project needs the phone's encoder and memory, so wait until the video being saved is finished.
+        if (ExportJob.state?.active == true) { notice("กำลังส่งออกวิดีโออยู่ · รอให้เรนเดอร์เสร็จก่อน จึงสร้างโปรเจกต์ใหม่ได้"); return }
         val field = GlassDialog.field(this, "ชื่อโปรเจกต์", "โปรเจกต์ ${StudioProjects.list(this).size + 1}"); field.selectAll()
         GlassDialog.ask(this, "โปรเจกต์ใหม่", Icons.PLUS, "ตั้งชื่อก่อน แล้วเลือกวิดีโอที่จะตัดต่อ", field, "เลือกวิดีโอ", focus = field) {
             newName = field.text.toString().trim().ifEmpty { "โปรเจกต์ใหม่" }; pick()

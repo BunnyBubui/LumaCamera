@@ -414,7 +414,7 @@ class VideoEditorActivity : ComponentActivity() {
         return out
     }
     private fun autoCaptions() {
-        if (speech != null) { stopCaptions(); return }
+        if (speech != null || scanning) { stopCaptions(); return }
         val m = WhisperModels.selected(this)
         if (!ModelStore.installed(this, m)) { downloadModel(m, startAfter = true); return }
         startCaptions(captionLang(), m); showTool(15, false)
@@ -457,7 +457,12 @@ class VideoEditorActivity : ComponentActivity() {
         notice(if (startAfter) "ต้องดาวน์โหลด ${m.name} ก่อน · เสร็จแล้วจะเริ่มสร้างคำบรรยายให้เอง" else "เริ่มดาวน์โหลด ${m.name} · ปิดหน้านี้ได้ ดาวน์โหลดต่อเบื้องหลัง")
         if (tool == 15) showTool(15, false)
     }
+    /** Each caption run gets a number; stopping bumps it, so an older run that is still reading sound drops its work instead of mixing with a new one. */
+    private var captionRun = 0
+    private var scanning = false
+    private class RunStopped : RuntimeException()
     private fun stopCaptions() {
+        captionRun++; scanning = false
         (speech as? StudioSpeech)?.stop(); speech = null; captionUi?.remove(); captionUi = null
         notice("หยุดสร้างคำบรรยายแล้ว"); if (tool == 15) showTool(15, false)
     }
@@ -467,30 +472,35 @@ class VideoEditorActivity : ComponentActivity() {
         val auto = lang == StudioSpeech.AUTO
         val ui = CaptionProgress(this, firstFrame, listOf("เตรียมเสียงจากคลิป", "หาช่วงที่มีเสียงพูด", if (auto) "ตรวจภาษาที่พูด" else "ใช้ภาษาที่เลือกไว้", "ถอดเสียงด้วย ${model.name}", "ใส่คำบรรยายบนไทม์ไลน์")) { stopCaptions() }
         val clock = AsrClock(this, model.id, whole.sumOf { it.to - it.from })
-        fun show(stage: Int, note: String, words: String = "") = ui.render(stage, clock.fraction(), note, words, clock.leftMs())
+        val run = ++captionRun; scanning = true
+        fun show(stage: Int, note: String, words: String = "") = ui.render(stage, clock.fraction(), note, words, clock.eta())
         captionUi = ui; show(0, "กำลังเตรียมเสียงจากคลิป…")
         notice("กำลังหาช่วงที่มีเสียงพูด…")
         luma.readIo.execute {
             // Each clip is cut at its pauses so every caption line gets its own start and end; long stretches are cut every 8 seconds.
             val pieces = ArrayList<SpeechPiece>()
-            runOnUiThread { captionUi?.render(1, 0.02f, "อ่านระดับเสียงเพื่อหาช่วงที่มีคนพูด… 0%") }
+            runOnUiThread { if (run == captionRun) ui.render(1, 0.02f, "อ่านระดับเสียงเพื่อหาช่วงที่มีคนพูด… 0%", "", -1L) }
             val allMs = whole.sumOf { it.to - it.from }.coerceAtLeast(1); var doneMs = 0L; var lastShown = 0L
             for (p in whole) {
                 // Reading the sound is the first long wait: show how far it has got, at most about 6 times a second.
+                if (run != captionRun) return@execute
                 val pk = AudioPeaks.range(this, p.uri, p.from, p.to) { part ->
+                    if (run != captionRun) throw RunStopped()
                     val now = android.os.SystemClock.elapsedRealtime()
                     if (now - lastShown >= 160) {
                         lastShown = now
                         val at = doneMs + ((p.to - p.from) * part).toLong(); val f = (at.toFloat() / allMs).coerceIn(0f, 1f)
-                        runOnUiThread { captionUi?.render(1, 0.02f + 0.12f * f, "อ่านระดับเสียง ${(f * 100).toInt()}% · ${clock(at)} จาก ${clock(allMs)}", "", clock.leftMs()) }
+                        runOnUiThread { if (run == captionRun) ui.render(1, 0.02f + 0.12f * f, "อ่านระดับเสียง ${(f * 100).toInt()}% · ${clock(at)} จาก ${clock(allMs)}", "", -1L) }
                     }
                 }.takeIf { it.isNotEmpty() }.also { doneMs += p.to - p.from } ?: continue
                 for ((a, b) in StudioMath.keepRanges(pk, AudioPeaks.STEP_MS.toLong(), p.from, p.to, quiet = 0.1f, minMs = 350, padMs = 120)) {
                     var x = a; while (x < b) { val y = if (b - x > 10_000) x + 8_000 else b; pieces += SpeechPiece(p.uri, x, y, p.outAt + ((x - p.from) / p.speed).toLong(), p.speed); x = y }
                 }
             }
+            if (run != captionRun) return@execute
             runOnUiThread {
-                if (isDestroyed) return@runOnUiThread
+                if (isDestroyed || run != captionRun) return@runOnUiThread
+                scanning = false
                 if (pieces.isEmpty()) { captionUi?.remove(); captionUi = null; notice("ไม่พบช่วงที่มีเสียงพูด"); return@runOnUiThread }
                 val used = pieces.take(80)
                 clock.speech(used.sumOf { it.to - it.from })
@@ -1754,7 +1764,25 @@ class VideoEditorActivity : ComponentActivity() {
     /** The language the lines are in: the one chosen, else what Whisper heard, else the other of Thai and English. */
     private fun captionFrom(to: String): String {
         val l = captionLang(); if (l != CAPTION_AUTO) return l
-        return detectedTag ?: if (TransLang.code(to) == "th") "en-US" else "th-TH"
+        return scriptTag() ?: detectedTag ?: if (TransLang.code(to) == "th") "en-US" else "th-TH"
+    }
+    /** The language the caption text is written in, when its letters say so (Thai, Chinese, Japanese, Korean); null for Latin letters, which many languages share. */
+    private fun scriptTag(): String? {
+        var th = 0; var han = 0; var kana = 0; var hangul = 0; var other = 0
+        for (l in layers) if (l.caption) for (ch in l.text) when {
+            ch in '\u0E00'..'\u0E7F' -> th++
+            ch in '\u3040'..'\u30FF' -> kana++
+            ch in '\uAC00'..'\uD7AF' -> hangul++
+            ch in '\u4E00'..'\u9FFF' -> han++
+            ch.isLetter() -> other++ }
+        val total = th + han + kana + hangul + other; if (total < 4) return null
+        return when {
+            kana * 5 >= total -> "ja-JP"
+            hangul * 2 >= total -> "ko-KR"
+            han * 2 >= total -> "zh-CN"
+            th * 2 >= total -> "th-TH"
+            else -> null
+        }
     }
     /** "แปลเลย": ML Kit when it is the chosen translator, else a model that runs through llama.cpp (stops the running one if pressed again). */
     private fun translateNow() {
@@ -1785,8 +1813,11 @@ class VideoEditorActivity : ComponentActivity() {
         val app = applicationContext
         Thread({
             LlamaTranslator.context = transContext()
-            val err = LlamaTranslator.run(app, m, from, to, texts, { runOnUiThread { ui.render(1, 0.1f, "เริ่มแปลบรรทัดแรก…") } }) { done, total, t -> out[done - 1] = t
-                runOnUiThread { ui.render(1, 0.1f + 0.85f * done / total, "บรรทัดที่ $done จาก $total", t ?: "") } }
+            var t1 = 0L
+            val err = LlamaTranslator.run(app, m, from, to, texts, { t1 = android.os.SystemClock.elapsedRealtime(); runOnUiThread { ui.render(1, 0.1f, "เริ่มแปลบรรทัดแรก…", "", -1L) } }) { done, total, t -> out[done - 1] = t
+                // Time left from how long the lines so far took, not from a general guess.
+                val left = if (t1 > 0) (android.os.SystemClock.elapsedRealtime() - t1) / done * (total - done) else -1L
+                runOnUiThread { ui.render(1, 0.1f + 0.85f * done / total, "บรรทัดที่ $done จาก $total", t ?: "", left) } }
             LlamaTranslator.release()
             runOnUiThread { finishLlmTranslate(groups, firsts, texts, out, err, to) }
         }, "luma-translate").start()

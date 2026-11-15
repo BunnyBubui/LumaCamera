@@ -627,11 +627,14 @@ object Eta {
 class AsrClock(private val c: android.content.Context, private val modelId: String, private val totalMs: Long) {
     private val prefs = c.getSharedPreferences("camera", android.content.Context.MODE_PRIVATE)
     private val t0 = android.os.SystemClock.elapsedRealtime(); private var asr0 = 0L
+    private var known = false
     private var speechMs = (totalMs * 0.8).toLong(); private var doneMs = 0L; private var shown = 0f
     private val prior = prefs.getFloat("asr_rate_$modelId", 0.6f).toDouble()
     private fun now() = android.os.SystemClock.elapsedRealtime()
     /** Once the speech is found, its real length replaces the first guess. */
-    fun speech(ms: Long) { speechMs = ms.coerceAtLeast(1) }
+    fun speech(ms: Long) { speechMs = ms.coerceAtLeast(1); known = true }
+    /** Time left to show: unknown (-1) until the real amount of speech is found, since the first guess can be far off. */
+    fun eta(): Long = if (known) leftMs() else -1L
     /** Call at the start of each piece with how much speech is already finished. */
     fun transcribing(done: Long) { if (asr0 == 0L) asr0 = now(); doneMs = done }
     private fun measured(): Double? = if (asr0 > 0 && doneMs >= 5_000) (now() - asr0).toDouble() / doneMs else null
