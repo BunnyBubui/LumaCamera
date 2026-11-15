@@ -90,7 +90,9 @@ class EditorFlowTest {
             device.findObjects(By.descStartsWith("ฟิลเตอร์ ")).getOrNull(1)?.click()
             tap(By.desc("ข้อความ"), "Text tab")
             device.wait(Until.findObject(By.desc("ข้อความบนวิดีโอ")), 5000)!!.text = "Lumora"
+            // The first tap can only close the keyboard that the text field opened, so tap again if the sheet has not appeared.
             tap(By.desc("ส่งออก"), "Export button")
+            repeat(2) { if (device.wait(Until.findObject(By.desc("เริ่มส่งออก")), 4000) == null) { tap(By.desc("ส่งออก"), "Export button") } }
             // The export sheet opens first (resolution and frame rate); keep the source settings.
             val startBtn = device.wait(Until.findObject(By.desc("เริ่มส่งออก")), 8000)
             if (startBtn == null) {

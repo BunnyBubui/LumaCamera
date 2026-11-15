@@ -2546,6 +2546,7 @@ class VideoEditorActivity : ComponentActivity() {
     }
     /** Opens the export sheet (resolution and frame rate); the export starts from there. */
     private fun export() {
+        android.util.Log.w("LumoraExport", "export() transformer=${transformer != null} prog=${prog != null}")
         if (transformer != null || prog != null) return
         if (filesDir.usableSpace < 200L * 1024 * 1024) { notice("พื้นที่ว่างไม่พอส่งออก"); return }
         player?.let { if (it.isPlaying) togglePlay() }
