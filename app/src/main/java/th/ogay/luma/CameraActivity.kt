@@ -250,6 +250,7 @@ class CameraActivity : ComponentActivity() {
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
         th.ogay.luma.backend.CameraCapabilityRepository.refreshAsync(this)   // background; the camera opens on CameraX without waiting
+        if (state == null && intent.getBooleanExtra(HomeActivity.FROM_HOME, false) && !Glass.reduced(this)) Cine.enterReveal(this) { cineReveal() }
         requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT   // the screen stays upright; only the picture and the icons turn
         output = runCatching { CaptureOutput.valueOf(prefs.getString("output", CaptureOutput.JPEG.name)!!) }.getOrDefault(CaptureOutput.JPEG)
         // RAW Log is no longer offered: anyone who had it keeps plain RAW.
@@ -552,6 +553,17 @@ class CameraActivity : ComponentActivity() {
         return (host.height - (loc[1] - h[1]).toFloat()).coerceAtLeast(0f)
     }
     private var dockView: View? = null
+
+    /** Film-style entrance: the picture pushes in from slightly large and dim while the controls rise. */
+    private fun cineReveal() {
+        if (::preview.isInitialized) {
+            val sx = preview.scaleX; val sy = preview.scaleY
+            preview.scaleX = sx * 1.1f; preview.scaleY = sy * 1.1f; preview.alpha = 0.35f
+            preview.animate().scaleX(sx).scaleY(sy).alpha(1f).setDuration(650).setInterpolator(android.view.animation.DecelerateInterpolator(2f)).start()
+        }
+        dockView?.let { Cine.rise(it, 240, dp(24).toFloat()) }
+        Glass.tick(window.decorView, android.view.HapticFeedbackConstants.CLOCK_TICK)
+    }
     private lateinit var apertureButton: TextView
     private lateinit var portraitView: ImageView
     private var portraitLive: PortraitPreview? = null

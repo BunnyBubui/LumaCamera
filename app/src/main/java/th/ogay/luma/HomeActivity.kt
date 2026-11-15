@@ -83,6 +83,13 @@ class HomeActivity : ComponentActivity() {
         // a soft shade under the status bar keeps the clock readable over the blocks.
         val scroll = ScrollView(this).apply { isVerticalScrollBarEnabled = false; clipToPadding = false; overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS; addView(col) }
         host.addView(scroll, -1, -1)
+        if (state == null && !intent.getBooleanExtra(FROM_CAMERA, false) && !Glass.reduced(this)) {
+            col.alpha = 0f
+            Cine.intro(this) {
+                col.alpha = 1f
+                for (i in 0 until col.childCount) Cine.rise(col.getChildAt(i), 120L + i * 55L, dp(14).toFloat(), 480)
+            }
+        }
         val shade = View(this).apply { importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
             background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(Glass.alpha(Glass.BG, 0xf2), Glass.alpha(Glass.BG, 0xa0), Glass.alpha(Glass.BG, 0))) }
         host.addView(shade, FrameLayout.LayoutParams(-1, dp(40)))
@@ -173,7 +180,9 @@ class HomeActivity : ComponentActivity() {
         if (intent.getBooleanExtra(FROM_CAMERA, false)) { setResult(RESULT_OK, Intent().putExtra(RESULT_MODE, m.name)); close(); return }
         // First screen of the app: open the camera in that mode, with Home left beneath it.
         getSharedPreferences("camera", MODE_PRIVATE).edit().putString("pending_mode", m.name).apply()
-        startActivity(Intent(this, CameraActivity::class.java).putExtra(FROM_HOME, true))
+        Glass.tick(window.decorView, android.view.HapticFeedbackConstants.CLOCK_TICK)
+        val go = { startActivity(Intent(this, CameraActivity::class.java).putExtra(FROM_HOME, true)); @Suppress("DEPRECATION") overridePendingTransition(0, 0) }
+        if (Glass.reduced(this)) go() else Cine.leaveHome(this, go)
     }
 
     // ---------- Pieces ----------
