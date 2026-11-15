@@ -147,15 +147,15 @@ class HomeActivity : ComponentActivity() {
         // Photo modes as short chips, two per row.
         col.addView(text("โหมดถ่าย", 15f, Glass.TEXT2, true).apply { setPadding(dp(4), dp(24), 0, dp(10)) }, -1, -2)
         val cardsList = listOf(
-            modeCard("PORTRAIT", Icons.PORTRAIT, "บุคคล", 0xffff9a7a, Motif.HALO) { returnMode(PhotoMode.PORTRAIT) },
-            modeCard("PRO", Icons.PRO, "โปร", 0xff5fd3c6, Motif.GRID) { returnMode(PhotoMode.PRO) },
-            modeCard("HIRES", Icons.HIRES, "ความละเอียดสูง", 0xffc9d2e0, Motif.GRID) { returnMode(PhotoMode.HIRES) },
-            modeCard("VIDEO", Icons.VIDEO, "วิดีโอ", 0xffff5b50, Motif.STREAK) { startActivity(Intent(this, VideoActivity::class.java).putExtra("mode", "VIDEO")) },
-            modeCard("SLOW", Icons.SLOWMO, "สโลว์โมชัน", 0xff6cc8e8, Motif.STREAK) { startActivity(Intent(this, VideoActivity::class.java).putExtra("mode", "SLOW")) },
-            modeCard("NIGHT", Icons.NIGHT, "กลางคืน", 0xffb9a6ff, Motif.DOTS) { returnMode(PhotoMode.NIGHT) },
-            modeCard("PANORAMA", Icons.PANO, "พาโนรามา", 0xff7fd18b, Motif.STREAK) { returnMode(PhotoMode.PANORAMA) },
-            modeCard("DOCUMENT", Icons.DOC, "เอกสาร", 0xffe8d27a, Motif.GRID) { returnMode(PhotoMode.DOCUMENT) },
-            modeCard("QUICK", Icons.FLASH, "ถ่ายเร็ว", 0xffffb347, Motif.HALO) { returnMode(PhotoMode.SPORT) })
+            modeCard("PORTRAIT", Icons.PORTRAIT, "บุคคล", Glass.ACCENT, Motif.HALO) { returnMode(PhotoMode.PORTRAIT) },
+            modeCard("PRO", Icons.PRO, "โปร", Glass.ACCENT, Motif.GRID) { returnMode(PhotoMode.PRO) },
+            modeCard("HIRES", Icons.HIRES, "ความละเอียดสูง", Glass.ACCENT, Motif.GRID) { returnMode(PhotoMode.HIRES) },
+            modeCard("VIDEO", Icons.VIDEO, "วิดีโอ", Glass.ACCENT, Motif.STREAK) { startActivity(Intent(this, VideoActivity::class.java).putExtra("mode", "VIDEO")) },
+            modeCard("SLOW", Icons.SLOWMO, "สโลว์โมชัน", Glass.ACCENT, Motif.STREAK) { startActivity(Intent(this, VideoActivity::class.java).putExtra("mode", "SLOW")) },
+            modeCard("NIGHT", Icons.NIGHT, "กลางคืน", Glass.ACCENT, Motif.DOTS) { returnMode(PhotoMode.NIGHT) },
+            modeCard("PANORAMA", Icons.PANO, "พาโนรามา", Glass.ACCENT, Motif.STREAK) { returnMode(PhotoMode.PANORAMA) },
+            modeCard("DOCUMENT", Icons.DOC, "เอกสาร", Glass.ACCENT, Motif.GRID) { returnMode(PhotoMode.DOCUMENT) },
+            modeCard("QUICK", Icons.FLASH, "ถ่ายเร็ว", Glass.ACCENT, Motif.HALO) { returnMode(PhotoMode.SPORT) })
         cardsList.chunked(2).forEach { pair ->
             val row = LinearLayout(this)
             row.addView(pair[0], LinearLayout.LayoutParams(0, dp(96), 1f))
@@ -248,7 +248,7 @@ class HomeActivity : ComponentActivity() {
             scaleType = ImageView.ScaleType.CENTER_CROP
             background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(shades[i], Theme.mix(shades[i], 0xff000000.toInt(), 0.6f)))
         } }
-        return toolCard(0xff5f5f66.toInt(), "แกลเลอรี", "แกลเลอรี รูปและวิดีโอทั้งหมด", {
+        return toolCard(Glass.ACCENT, "แกลเลอรี", "แกลเลอรี รูปและวิดีโอทั้งหมด", {
             startActivity(Intent(this, GalleryActivity::class.java).putExtra("from", "home")) }) {
             val mosaic = LinearLayout(this@HomeActivity).apply { orientation = LinearLayout.VERTICAL }
             for (r in 0 until 2) {
@@ -290,7 +290,7 @@ class HomeActivity : ComponentActivity() {
     }
 
     /** Film: amber light, perforation holes down both edges and four dots for the looks. */
-    private fun filmBlock(): View = toolCard(0xffe8b04a.toInt(), "ฟิล์ม", "ฟิล์ม โทนสีและเกรนฟิล์ม", { returnMode(PhotoMode.FILM) }) {
+    private fun filmBlock(): View = toolCard(Glass.ACCENT, "ฟิล์ม", "ฟิล์ม โทนสีและเกรนฟิล์ม", { returnMode(PhotoMode.FILM) }) {
         addView(Perforations(this@HomeActivity), FrameLayout.LayoutParams(-1, -1))
         val dots = LinearLayout(this@HomeActivity).apply { gravity = Gravity.CENTER_VERTICAL }
         listOf(0xffb8893a, 0xff5a6f8a, 0xffa8707a, 0xff707070).forEachIndexed { i, col ->
@@ -306,7 +306,7 @@ class HomeActivity : ComponentActivity() {
      * project is always where you stopped.
      */
     private fun videoBlock(open: () -> Unit): View {
-        val coral = 0xffff6f91.toInt()
+        val coral = Glass.ACCENT
         val chips = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
         fun pill(label: String, filled: Boolean, desc: String, go: () -> Unit) = FrameLayout(this).apply {
             isClickable = true; contentDescription = desc; glassTouch()
@@ -336,14 +336,14 @@ class HomeActivity : ComponentActivity() {
     }
 
     /** Photo editor: lime light and three slider lines drawn faintly on the right. */
-    private fun photoBlock(open: () -> Unit): View = toolCard(0xffa6e05a.toInt(), "ตัดต่อภาพ", "ตัดต่อภาพ สี เส้นโค้ง ครอป", open) {
-        addView(SlidersArt(this@HomeActivity, 0xffa6e05a.toInt()), FrameLayout.LayoutParams(-1, -1))
-        putChip(EditorKit.ADJUST, 0xffa6e05a.toInt(), Gravity.TOP or Gravity.START)
+    private fun photoBlock(open: () -> Unit): View = toolCard(Glass.ACCENT, "ตัดต่อภาพ", "ตัดต่อภาพ สี เส้นโค้ง ครอป", open) {
+        addView(SlidersArt(this@HomeActivity, Glass.ACCENT), FrameLayout.LayoutParams(-1, -1))
+        putChip(EditorKit.ADJUST, Glass.ACCENT, Gravity.TOP or Gravity.START)
     }
 
     /** AI sharpening: magenta light with faint sparkles and a small photo / video switch that decides what the gallery shows. */
     private fun aiBlock(open: () -> Unit): View {
-        val mg = 0xffe58ae0.toInt()
+        val mg = Glass.ACCENT
         return toolCard(mg, "แต่งชัดด้วย AI", "แต่งชัดด้วย AI เลือกภาพหรือวิดีโอ", open) {
             for ((x, y, sz, a) in listOf(listOf(100, 36, 30, 0x2e), listOf(140, 62, 16, 0x38), listOf(84, 66, 12, 0x2e)))
                 addView(IconView(this@HomeActivity, Icons.AI, 1.6f).apply { tint = Glass.alpha(mg, a) }, FrameLayout.LayoutParams(dp(sz), dp(sz), Gravity.TOP or Gravity.START).apply { leftMargin = dp(x); topMargin = dp(y) })
@@ -355,7 +355,7 @@ class HomeActivity : ComponentActivity() {
     private fun showAiChooser(go: (Boolean) -> Unit) {
         val host = hostRef ?: return
         if (aiOverlay != null) return
-        val photoHue = 0xffe58ae0.toInt(); val videoHue = 0xffff6f91.toInt()
+        val photoHue = Glass.ACCENT; val videoHue = Glass.ACCENT
         val root = FrameLayout(this).apply { setBackgroundColor(Glass.BG); isClickable = true }
         root.addView(Aurora(this, photoHue, videoHue), -1, -1)
         fun half(icon: String, hue: Int, title: String, desc: String, steps: List<String>, video: Boolean) = LinearLayout(this).apply {
@@ -436,8 +436,8 @@ class HomeActivity : ComponentActivity() {
      * A mode card with its own backdrop: a dark base, a soft light in the mode's colour, a faint pattern, and the
      * mode icon large and faint in the corner. The colours belong to the mode, not to the theme.
      */
-    private fun modeCard(key: String, icon: String, title: String, hue: Long, motif: Motif, open: () -> Unit): View = FrameLayout(this).apply {
-        val t = hue.toInt()
+    private fun modeCard(key: String, icon: String, title: String, hue: Int, motif: Motif, open: () -> Unit): View = FrameLayout(this).apply {
+        val t = hue
         background = ModeBackdrop(this@HomeActivity, t, motif)
         clipToOutline = true
         outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: android.graphics.Outline) = o.setRoundRect(0, 0, v.width, v.height, dp(22).toFloat()) }
