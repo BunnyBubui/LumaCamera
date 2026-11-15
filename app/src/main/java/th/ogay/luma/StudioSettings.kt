@@ -131,6 +131,9 @@ fun Activity.showStudioSettings(rawAvailable: Boolean, closed: () -> Unit = {}, 
     choose("สัดส่วนภาพ", Icons.FRAME, "aspect", Aspects.available(prefs), Aspects.available(prefs), "4:3", Aspects.available(prefs).map { Aspects.note(it) }, Aspects.available(prefs).map { aspectIconPath(it) })
     choose("ตั้งเวลาถ่าย", Icons.TIMER, "timer", SelfTimer.STEPS.map { SelfTimer.label(it) }, SelfTimer.STEPS.map { it.toString() }, "0")
     choose("คุณภาพ JPEG", Icons.FILE, "jpeg_quality", listOf("ประหยัด 85%", "มาตรฐาน 95%", "สูงสุด 100%"), listOf("85", "95", "100"), "95")
+    // Opt-in exposure blending: keeps the regular Photo UI and existing HDR EF1/EF2 engines.
+    toggle("ภาพถ่าย: Natural HDR (ทดลอง)", Icons.HISTO, "natural_hdr", false, "ถ่ายหลายค่าแสงแล้วรวมเป็น JPEG เดียว ใช้เฉพาะโหมดภาพถ่าย กล้องหลัง และปิดแฟลช")
+    choose("Natural HDR: ระยะห่างค่าแสง", Icons.SUN, "hdr_spread", listOf("±1 EV", "±2 EV (แนะนำ)", "±3 EV"), listOf("1", "2", "3"), "2", listOf("เคลื่อนไหวน้อยและแสงต่างไม่มาก", "ภาพย้อนแสงทั่วไป", "ฉากต่างแสงสูง ต้องถือกล้องให้นิ่ง"))
     choose("ครอปจากเลนส์", Icons.SEARCH, "crop_from", listOf("ปิด", "เลนส์หลัก 1×", "เลนส์ 2×", "เลนส์เทเล 3.5×"), listOf("0", "1", "2", "3.5"), if (prefs.getBoolean("software", false)) "1" else "0", listOf("สลับเลนส์ตามระยะซูม", "ซูมด้วยการครอปจากเลนส์หลัก", "ครอปจากระยะ 2×", "ครอปจากระยะ 3.5×"))
     section("หน้าจอกล้อง")
     toggle("ปุ่มซูม", Icons.SEARCH, "show_zoom", true)

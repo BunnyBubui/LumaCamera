@@ -78,7 +78,7 @@ class CameraActivity : ComponentActivity() {
         val APERTURES = listOf(1.2f, 1.4f, 1.8f, 2f, 2.8f, 4f, 5.6f, 8f, 11f, 16f)
         val ALL = listOf(
             BarMode("PORTRAIT", "บุคคล", Icons.PORTRAIT), BarMode("PHOTO", "ภาพถ่าย", Icons.PHOTO),
-            BarMode("VIDEO", "วิดีโอ", Icons.VIDEO), BarMode("PRO", "โปร", Icons.PRO),
+            BarMode("HDR", "Natural HDR", Icons.HDR), BarMode("VIDEO", "วิดีโอ", Icons.VIDEO), BarMode("PRO", "โปร", Icons.PRO),
             BarMode("HIRES", "ความละเอียดสูง", Icons.HIRES),
             BarMode("QUICK", "ถ่ายเร็ว", Icons.FLASH), BarMode("FILM", "ฟิล์ม", Icons.FILM),
             BarMode("NIGHT", "กลางคืน", Icons.NIGHT), BarMode("PANORAMA", "พาโนรามา", Icons.PANO), BarMode("DOCUMENT", "เอกสาร", Icons.DOC))
@@ -92,7 +92,7 @@ class CameraActivity : ComponentActivity() {
         val QUICK_MODES = listOf(PhotoMode.FLASH_NIGHT, PhotoMode.FLASH_FAST, PhotoMode.SPORT)
         val QUICK_NAMES = listOf("แฟลชเร็ว", "แฟลชเร็วพิเศษ", "ถ่ายเร็ว")
         fun barKey(m: PhotoMode) = if (m in QUICK_MODES) "QUICK" else m.name
-        const val DEFAULT_BAR = "PORTRAIT,PHOTO,VIDEO"
+        const val DEFAULT_BAR = "PORTRAIT,PHOTO,HDR,VIDEO"
         val LOOKS = listOf("มาตรฐาน", "สดใส", "อบอุ่น", "เย็น", "ฟิล์ม", "ขาวดำ")
         val NIGHT_FRAMES = listOf(6, 9, 12)
     }
@@ -257,8 +257,12 @@ class CameraActivity : ComponentActivity() {
         if (output == CaptureOutput.RAW_LOG) { output = CaptureOutput.RAW; prefs.edit().putString("output", output.name).apply() }
         if (output.enhance) output = CaptureOutput.JPEG
         if (prefs.getInt("night_frames", 6) > 12 || prefs.getInt("night_frames", 6) < 6) prefs.edit().putInt("night_frames", 6).apply()
-        // HDR is no longer a mode; a phone that was left on it opens in Photo.
-        mode = runCatching { PhotoMode.valueOf(prefs.getString("photo_mode", "PHOTO")!!) }.getOrDefault(PhotoMode.PHOTO).let { if (it == PhotoMode.HDR) PhotoMode.PHOTO else it }
+        // Add Natural HDR to existing custom mode bars once; future user removals stay respected.
+        if (!prefs.getBoolean("natural_hdr_bar_migrated", false)) {
+            val oldBar = prefs.getString("mode_bar", DEFAULT_BAR) ?: DEFAULT_BAR
+            prefs.edit().putString("mode_bar", addNaturalHdrMode(oldBar)).putBoolean("natural_hdr_bar_migrated", true).apply()
+        }
+        mode = runCatching { PhotoMode.valueOf(prefs.getString("photo_mode", "PHOTO")!!) }.getOrDefault(PhotoMode.PHOTO)
         if (ALL.none { it.key == barKey(mode) }) mode = PhotoMode.PHOTO   // a mode that no longer exists (night, pro video) falls back to photo
         if(ALL.none { it.key == barKey(mode) })mode=PhotoMode.PHOTO
         shutterSound.load(MediaActionSound.SHUTTER_CLICK)
@@ -1105,7 +1109,10 @@ class CameraActivity : ComponentActivity() {
                 grid.removeAllViews()
                 val flashNames = listOf("ปิด", "อัตโนมัติ", "เปิด"); val flashModes = listOf(ImageCapture.FLASH_MODE_OFF, ImageCapture.FLASH_MODE_AUTO, ImageCapture.FLASH_MODE_ON)
                 tile("แฟลช", if (flash == ImageCapture.FLASH_MODE_OFF) Icons.FLASH_OFF else Icons.FLASH, flashNames[flashModes.indexOf(flash).coerceAtLeast(0)], flash != ImageCapture.FLASH_MODE_OFF, isMenu = true) { v ->
-                    menu.show(v, "แฟลช", listOf(GlassMenu.Option("ปิด", Icons.FLASH_OFF), GlassMenu.Option("อัตโนมัติ", Icons.FLASH, "เปิดเมื่อแสงน้อย"), GlassMenu.Option("เปิด", Icons.FLASH)), flashModes.indexOf(flash)) { i -> flash = flashModes[i]; capture?.flashMode = flash; refresh(); reopen() }
+                    menu.show(v, "แฟลช", listOf(GlassMenu.Option("ปิด", Icons.FLASH_OFF), GlassMenu.Option("อัตโนมัติ", Icons.FLASH, "เปิดเมื่อแสงน้อย"), GlassMenu.Option("เปิด", Icons.FLASH)), flashModes.indexOf(flash)) { i ->
+                        if (mode == PhotoMode.HDR && i != 0) hint("Natural HDR ไม่รองรับแฟลช · ปิดแฟลชไว้เพื่อถ่ายหลายค่าแสง", 2300)
+                        else { flash = flashModes[i]; capture?.flashMode = flash; refresh(); reopen() }
+                    }
                 }
                 val timer = prefs.getString("timer", "0")?.toIntOrNull() ?: 0
                 // Like the other adjusters: the sheet closes and a slider with every step opens above the shutter.
@@ -1695,7 +1702,8 @@ class CameraActivity : ComponentActivity() {
             fun selector() = if(rear) CameraSelector.DEFAULT_BACK_CAMERA else CameraSelector.DEFAULT_FRONT_CAMERA
             if(!provider.hasCamera(selector())) rear=!rear
             val baseSelector=selector()
-            val extension=when(mode){PhotoMode.HDR->ExtensionMode.HDR;PhotoMode.NIGHT->ExtensionMode.NIGHT;PhotoMode.PORTRAIT->ExtensionMode.BOKEH;else->ExtensionMode.NONE}
+            // Natural HDR is Lumora exposure fusion, not the vendor HDR extension.
+            val extension=when(mode){PhotoMode.NIGHT->ExtensionMode.NIGHT;PhotoMode.PORTRAIT->ExtensionMode.BOKEH;else->ExtensionMode.NONE}
             // Maker portrait/night extensions open slowly (or not at all) on some phones and hide the f-number control,
             // so Lumora's own portrait blur and AI night are the default; the maker versions are an opt-in setting.
             val oemAllowed=extension==ExtensionMode.HDR||extension==ExtensionMode.NIGHT||prefs.getBoolean("oem_extensions",false)
@@ -2037,9 +2045,29 @@ class CameraActivity : ComponentActivity() {
     private fun captureNow() {
         if(filesDir.usableSpace<32L*1024*1024){hint("พื้นที่ว่างไม่พอสำหรับถ่ายภาพ กรุณาคืนพื้นที่แล้วลองใหม่",5000);return}
         val useCase=capture ?: return
-        if(mode==PhotoMode.HDR&&!activeExtension){takeHdr(useCase);return}
         if((mode==PhotoMode.FLASH_NIGHT||mode==PhotoMode.FLASH_FAST)&&camera?.cameraInfo?.hasFlashUnit()!=true){hint("กล้องนี้ไม่มีแฟลช",1600);return}
         if(busy || zoomSettling) return
+        // Dedicated Natural HDR mode shares the EF1/EF2 bracket pipeline with the Photo pilot.
+        // Unsupported lenses/flash settings fall through to an ordinary JPEG shot, never an unusable bracket.
+        if (mode == PhotoMode.HDR) {
+            if (rear && flash == ImageCapture.FLASH_MODE_OFF && !torchLit &&
+                camera?.cameraInfo?.exposureState?.isExposureCompensationSupported == true) {
+                takeHdr(useCase)
+                return
+            }
+            hint("Natural HDR ต้องใช้กล้องหลัง ปิดแฟลช และรองรับการชดเชยแสง · ถ่ายภาพปกติแทน", 3000)
+        }
+        // Natural HDR pilot is opt-in: route standard JPEG Photo through the existing EF1 fusion.
+        // All other modes, RAW, front camera, flash and night-assisted captures keep their original path.
+        if (mode == PhotoMode.PHOTO && output == CaptureOutput.JPEG && rear &&
+            flash == ImageCapture.FLASH_MODE_OFF && !nightOn && !torchLit &&
+            prefs.getBoolean("natural_hdr", false)) {
+            if (camera?.cameraInfo?.exposureState?.isExposureCompensationSupported == true) {
+                takeHdr(useCase)
+                return
+            }
+            hint("กล้องนี้ไม่รองรับการชดเชยแสง · ใช้การถ่ายภาพปกติ", 2500)
+        }
         // Fast flash: the torch comes on for a blink so exposure settles on the lit scene, the picture is taken at once
         // (no pre-flash sequence), and the light goes off again.
         if(mode==PhotoMode.FLASH_FAST&&!torchLit){
@@ -2193,6 +2221,11 @@ class CameraActivity : ComponentActivity() {
         if(next==PhotoMode.VIDEO){openVideo("VIDEO");return}
         if(panoFiles.isNotEmpty()&&next!=PhotoMode.PANORAMA){notice("ต่อภาพพาโนรามาหรือกลับมาถ่ายต่อได้ในโหมดพาโนรามา")}
         val quickSwap=mode in QUICK_MODES&&next in QUICK_MODES
+        if (next == PhotoMode.HDR) {
+            // Exposure brackets must be taken without flash to avoid inconsistent illumination.
+            flash = ImageCapture.FLASH_MODE_OFF
+            if (torchLit) { camera?.cameraControl?.enableTorch(false); torchLit = false }
+        }
         mode=next
         if(next!=PhotoMode.PHOTO&&next!=PhotoMode.PRO){output=CaptureOutput.JPEG;prefs.edit().putString("output",output.name).apply()}
         prefs.edit().putString("photo_mode",next.name).apply()
