@@ -5,6 +5,11 @@ import org.junit.Test
 import th.ogay.luma.Dimensions
 
 class EnhanceSpecTest {
+    @Test fun diagnosticsUseTheStrengthActuallyAppliedByEachProfile() {
+        assertEquals(100,EnhanceSpec(2,150,EnhanceProfile.NATURAL).effectiveStrength)
+        assertEquals(150,EnhanceSpec(2,150,EnhanceProfile.CLASSIC).effectiveStrength)
+        assertEquals(0,EnhanceSpec(4,0,EnhanceProfile.NATURAL).effectiveStrength)
+    }
     @Test fun scalesBothAxesWithoutTwelveMegapixelClamp() {
         val input=Dimensions(4000,3000)
         assertEquals(Dimensions(8000,6000),EnhanceSpec(2).output(input))

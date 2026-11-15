@@ -6,7 +6,7 @@ from tempfile import TemporaryDirectory
 import unittest
 
 from PIL import Image
-from benchmark_sr3 import run_manifest
+from benchmark_sr3 import run_manifest, sha256
 from evaluate_natural import text_cer
 
 
@@ -35,6 +35,7 @@ class BenchmarkSR3Tests(unittest.TestCase):
         self.assertTrue(report["cases"][0]["hasIndependentHR"])
         self.assertEqual(len(report["cases"][0]["inputSha256"]["original"]), 64)
         self.assertIn("PSNR_dB", report["cases"][0]["classic"])
+        self.assertIsNone(report["cases"][0]["classic"]["SSIM_RGB"])
         self.assertIn("scale:2", report["summary"])
         self.assertEqual(report["summary"]["scale:2"]["independentHR"], 1)
         json.dumps(report, allow_nan=False)
@@ -48,6 +49,8 @@ class BenchmarkSR3Tests(unittest.TestCase):
             report = run_manifest(self.manifest())
             self.assertEqual(report["cases"][0]["natural"]["width"], 5 * scale)
             self.assertIn(f"scale:{scale}", report["summary"])
+            if scale==4:
+                self.assertAlmostEqual(report["cases"][0]["classic"]["SSIM_RGB"],1.0,places=3)
 
     def test_reject_mismatched_export_size(self):
         self.case["scale"] = 3
@@ -70,6 +73,7 @@ class BenchmarkSR3Tests(unittest.TestCase):
         report = run_manifest(self.manifest())
         self.assertFalse(report["cases"][0]["hasIndependentHR"])
         self.assertNotIn("PSNR_dB", report["cases"][0]["natural"])
+        self.assertNotIn("SSIM_RGB", report["cases"][0]["natural"])
 
     def test_text_cer_treats_identical_thai_as_zero(self):
         self.assertEqual(text_cer("ข้อความ ๑๒๓", "ข้อความ ๑๒๓"), 0)
@@ -89,6 +93,41 @@ class BenchmarkSR3Tests(unittest.TestCase):
         report = run_manifest(self.manifest())
         self.assertNotIn("qualityPass", report)
         self.assertNotIn("trainedWeights", report)
+
+    def reports(self):
+        reports=[]
+        for profile in ("CLASSIC","NATURAL"):
+            value={"schema":"lumora-sr-render-v2","profile":profile,
+                "sourceSha256":sha256(self.root/"source.png"),"scale":2,
+                "outputWidth":10,"outputHeight":8,"strength":100,
+                "modelSha256":"a"*64,"renderRevision":"test-v1","backend":"CPU"}
+            reports.append(value)
+            key="report_"+profile.lower()
+            self.case[key]=profile+".json"
+            (self.root/self.case[key]).write_text(json.dumps(value))
+        return reports
+
+    def test_export_reports_verify_both_profiles_and_source(self):
+        self.reports()
+        result=run_manifest(self.manifest())["cases"][0]
+        self.assertTrue(result["exportProvenanceChecked"])
+        self.assertEqual(result["exportReports"]["natural"]["backend"],"CPU")
+
+    def test_legacy_exports_explicitly_lack_verified_reports(self):
+        self.assertFalse(run_manifest(self.manifest())["cases"][0]["exportProvenanceChecked"])
+
+    def test_rejects_stale_wrong_profile_and_wrong_strength_reports(self):
+        for field,value in (("sourceSha256","b"*64),("profile","CLASSIC"),("strength",70),
+                            ("scale",4),("modelSha256","not-a-hash")):
+            reports=self.reports();reports[1][field]=value
+            (self.root/"NATURAL.json").write_text(json.dumps(reports[1]))
+            with self.subTest(field=field),self.assertRaises(ValueError):
+                run_manifest(self.manifest())
+
+    def test_rejects_only_one_sidecar(self):
+        self.reports();self.case.pop("report_natural")
+        with self.assertRaisesRegex(ValueError,"both export"):
+            run_manifest(self.manifest())
 
 
 if __name__ == "__main__":

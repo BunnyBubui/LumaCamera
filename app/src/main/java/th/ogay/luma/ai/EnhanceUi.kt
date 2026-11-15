@@ -29,7 +29,7 @@ object EnhanceUi {
     private val MODELS = listOf(
         Model(EnhanceProfile.NATURAL, "Natural SR3", "แนะนำ", LEAF,
             "คน ใบหน้า ตัวหนังสือ · เนียนตา",
-            "เหมาะกับภาพคน ใบหน้า ผิว ภาพในร่ม และภาพที่มีป้ายหรือตัวหนังสือ โมเดลหาบริเวณคนและตัวหนังสือก่อน แล้วเติมรายละเอียดตรงนั้นให้เบาลง ผิวจึงไม่เป็นเม็ด และตัวอักษรไม่ถูกแต่งจนอ่านเป็นคำอื่น ผลที่ได้ดูเป็นภาพถ่ายจริงมากกว่าคมจัด",
+            "เหมาะกับภาพคน ภาพในร่ม และภาพที่มีตัวหนังสือ ระบบตรวจหาคนและข้อความเพื่อลดการปรับรายละเอียดในบริเวณนั้น ช่วยลดผิวหยาบและขอบแข็ง ควรตรวจใบหน้าและตัวอักษรในผลลัพธ์ก่อนบันทึก",
             "strength_natural", 70, 100),
         Model(EnhanceProfile.CLASSIC, "Classic SR2", "คมชัด", GEM,
             "วิว ตึก ใบไม้ · คมเต็มที่",
@@ -191,7 +191,7 @@ object EnhanceUi {
                 addView(IconView(activity, model.icon, 1.8f).apply { tint = Glass.ACCENT }, LinearLayout.LayoutParams(activity.dp(15), activity.dp(15)))
                 addView(activity.text(model.name, 12f, Glass.ACCENT, true).apply { setPadding(activity.dp(5), 0, 0, 0) }) }, android.view.ViewGroup.LayoutParams(-2, activity.dp(26)))
             fun tag(t: String) = tags.addView(activity.text(t, 12f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; background = activity.glass(13, 0x14ffffff); setPadding(activity.dp(10), 0, activity.dp(10), 0) }, android.view.ViewGroup.LayoutParams(-2, activity.dp(26)))
-            tag("×${spec.scale}"); tag("ความแรง ${spec.strength}%"); tag("ส่วนกลางภาพ")
+            tag("×${spec.scale}"); tag("ความแรง ${spec.effectiveStrength}%"); tag("ส่วนกลางภาพ")
             head.addView(LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL; addView(title); addView(tags) }, LinearLayout.LayoutParams(0, -2, 1f))
             head.addView(FrameLayout(activity).apply { background = activity.glass(22, 0x1affffff); isClickable = true; contentDescription = "ปิดตัวอย่าง"; glassTouch()
                 addView(IconView(activity, Icons.CLOSE, 2f), FrameLayout.LayoutParams(activity.dp(18), activity.dp(18), Gravity.CENTER)); setOnClickListener { Glass.tick(this); sh.close() } }, activity.dp(44), activity.dp(44))
@@ -204,6 +204,8 @@ object EnhanceUi {
             var a: Bitmap? = null; var b: Bitmap? = null
             try {
                 DetailComputeGate.run({ stopped.get() }) {
+                    fun checkpoint() { if (stopped.get()) throw java.util.concurrent.CancellationException() }
+                    checkpoint()
                     val rotation = activity.contentResolver.openInputStream(imageUri)?.use { ExifInterface(it).rotationDegrees } ?: 0
                     activity.contentResolver.openInputStream(imageUri)?.use { stream ->
                         val decoder = BitmapRegionDecoder.newInstance(stream,false) ?: error("อ่านภาพไม่ได้")
@@ -214,15 +216,17 @@ object EnhanceUi {
                             val whole = Dimensions(decoder.width,decoder.height)
                             val textScan = if (spec.profile == EnhanceProfile.NATURAL) DetailTextGuard.scan(activity.applicationContext,imageUri,whole) { stopped.get() } else null
                             val personScan = if (spec.profile == EnhanceProfile.NATURAL) DetailPersonGuard.scan(activity.applicationContext,imageUri,whole) { stopped.get() } else null
+                            checkpoint()
                             val input = DetailSuperResolution.readInput(decoder,left,top)
-                            val before = IntArray(w*h) { i -> input[(i/w+EnhanceSpec.HALO)*EnhanceSpec.INPUT+i%w+EnhanceSpec.HALO] }
-                            val raw = Bitmap.createBitmap(before,w,h,Bitmap.Config.ARGB_8888)
-                            a=Bitmap.createScaledBitmap(raw,w*spec.scale,h*spec.scale,true)
-                            if(a!==raw) raw.recycle()
+                            val before = IntArray(w*spec.scale*h*spec.scale)
+                            DetailResampler.copyBaseline(input,spec.scale,w,h,before,w*spec.scale,0)
+                            a=Bitmap.createBitmap(before,w*spec.scale,h*spec.scale,Bitmap.Config.ARGB_8888)
                             DetailRuntime(activity.applicationContext).use { runtime ->
+                                checkpoint()
                                 val result = runtime.run(input)
+                                checkpoint()
                                 val output=IntArray(w*spec.scale*h*spec.scale)
-                                DetailResampler.copyCore(result,input,spec.scale,spec.strength,w,h,output,w*spec.scale,0,spec.profile,
+                                DetailResampler.copyCore(result,input,spec.scale,spec.effectiveStrength,w,h,output,w*spec.scale,0,spec.profile,
                                     textScan?.mask?.forCore(left,top,w,h),personScan?.mask?.forCore(left,top,w,h))
                                 b=Bitmap.createBitmap(output,w*spec.scale,h*spec.scale,Bitmap.Config.ARGB_8888)
                             }
@@ -242,6 +246,9 @@ object EnhanceUi {
             } catch(e: Exception) {
                 a?.recycle(); b?.recycle()
                 activity.runOnUiThread { if(!stopped.get() && !activity.isDestroyed) { sheet.close(); activity.notice(e.message ?: "สร้างตัวอย่างไม่ได้") } }
+            } catch(e: OutOfMemoryError) {
+                a?.recycle(); b?.recycle()
+                activity.runOnUiThread { if(!stopped.get() && !activity.isDestroyed) { sheet.close(); activity.notice("หน่วยความจำไม่พอสำหรับตัวอย่าง กรุณาลองสเกลที่เล็กลง") } }
             } catch(e: LinkageError) {
                 a?.recycle(); b?.recycle()
                 activity.runOnUiThread { if(!stopped.get() && !activity.isDestroyed) { sheet.close(); activity.notice("โหลดระบบ AI ไม่สำเร็จ") } }

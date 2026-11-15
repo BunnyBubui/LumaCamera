@@ -8,6 +8,7 @@ enum class EnhanceProfile { NATURAL, CLASSIC }
 data class EnhanceSpec(val scale: Int = 2, val strength: Int = 100,
                        val profile: EnhanceProfile = EnhanceProfile.CLASSIC) {
     val modelId: String get() = if (profile == EnhanceProfile.NATURAL) NATURAL_MODEL else MODEL
+    val effectiveStrength: Int get() = if (profile == EnhanceProfile.NATURAL) strength.coerceAtMost(100) else strength
     init {
         require(scale in 2..4) { "เลือกขนาด ×2, ×3 หรือ ×4" }
         require(strength in 0..150) { "ความแรงต้องอยู่ระหว่าง 0–150" }
@@ -25,6 +26,11 @@ data class EnhanceSpec(val scale: Int = 2, val strength: Int = 100,
         const val MODEL = "DetailSR2"
         // Phase 1 Natural is a conservative profile over the existing SR2 model, not new trained weights.
         const val NATURAL_MODEL = "NaturalSR3P1"
+        // Rendering identity is distinct from the neural weights shared by both profiles.
+        const val NATURAL_RENDER_REVISION = "natural-luma-guards-v1"
+        const val CLASSIC_RENDER_REVISION = "classic-rgb-v1"
+        const val MODEL_ASSET = "luma-detail-sr2.tflite"
+        const val MODEL_MANIFEST = "luma-detail-sr2.json"
         // Must match model/build_detail.py (the model's input is CORE + 2 * HALO square).
         const val CORE = 192
         // SRVGG: 34 consecutive 3x3 convolutions => radius 34, plus resize gutter.

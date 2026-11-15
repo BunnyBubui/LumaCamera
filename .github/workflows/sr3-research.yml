@@ -1,0 +1,25 @@
+name: SR3 research regression
+on:
+  pull_request:
+    paths: ['model/**', '.github/workflows/sr3-research.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-training:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install 'numpy==2.1.3' 'Pillow==11.3.0'
+      - run: python -m pip install 'torch==2.6.0' --index-url https://download.pytorch.org/whl/cpu
+      - run: python -m pip install 'tensorflow-cpu==2.19.0'
+      - name: Test dataset isolation, native scales and deterministic resume
+        run: |
+          python -m unittest discover -s model -p 'test_sr3_dataset.py' -v
+          python -m unittest discover -s model -p 'test_natural_x2.py' -v
+          python -m unittest discover -s model -p 'test_sr3_training_resume.py' -v
+          python -m unittest discover -s model -p 'test_export_natural_sr.py' -v

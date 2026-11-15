@@ -3,13 +3,15 @@
 
 Input: one original JPEG/PNG and two exported images of the SAME exposure.
 No source photographs are uploaded, no model weights are downloaded.
-Requires Pillow and NumPy. Optional true high-resolution reference enables PSNR.
+Install requirements-sr3-eval.txt. An independent aligned HR reference enables
+PSNR and 11x11 Gaussian RGB SSIM (sigma=1.5, population covariance, range=255).
 """
 import argparse
 import json
 from pathlib import Path
 import numpy as np
 from PIL import Image, ImageFilter
+from skimage.metrics import structural_similarity
 
 
 def open_rgb(path):
@@ -64,6 +66,13 @@ def measure(original, candidate, reference=None):
         report["PSNR_dB"] = None if mse == 0 else round(10.0 * np.log10(255.0**2 / mse), 4)
         report["referenceExactMatch"] = bool(mse == 0)
         report["referenceMAE"] = round(float(np.abs(ref - out).mean()), 4)
+        if min(reference.size) >= 11:
+            report["SSIM_RGB"] = round(float(structural_similarity(
+                ref,out,data_range=255,channel_axis=2,gaussian_weights=True,
+                sigma=1.5,use_sample_covariance=False)),6)
+        else:
+            report["SSIM_RGB"] = None
+            report["SSIM_status"] = "reference-smaller-than-11px-window"
     return report
 
 

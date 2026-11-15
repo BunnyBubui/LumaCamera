@@ -47,6 +47,13 @@ android {
         }
     }
     buildTypes {
+        create("sr3test") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".sr3test"
+            versionNameSuffix = "-sr3-test"
+            signingConfig = signingConfigs.getByName("debug")
+            matchingFallbacks += "debug"
+        }
         create("beta") {
             initWith(getByName("release"))
             applicationIdSuffix = ".beta"
