@@ -64,6 +64,12 @@ class HomeActivity : ComponentActivity() {
     }
 
     private var hostRef: FrameLayout? = null
+    /** The bars shut when Home hands over to the camera; they open again when the person comes back. */
+    private var shutter: Curtain? = null
+    override fun onRestart() {
+        super.onRestart()
+        shutter?.let { it.open(320); shutter = null }
+    }
     private var aiOverlay: View? = null
     private val cards = ArrayList<View>()
     private val loader = Executors.newSingleThreadExecutor()
@@ -182,7 +188,7 @@ class HomeActivity : ComponentActivity() {
         getSharedPreferences("camera", MODE_PRIVATE).edit().putString("pending_mode", m.name).apply()
         Glass.tick(window.decorView, android.view.HapticFeedbackConstants.CLOCK_TICK)
         val go = { startActivity(Intent(this, CameraActivity::class.java).putExtra(FROM_HOME, true)); @Suppress("DEPRECATION") overridePendingTransition(0, 0) }
-        if (Glass.reduced(this)) go() else Cine.leaveHome(this, go)
+        if (Glass.reduced(this)) go() else shutter = Cine.leaveHome(this, go)
     }
 
     // ---------- Pieces ----------

@@ -75,7 +75,7 @@ object Cine {
     }
 
     /** Home → camera, first half: the bars shut, then the camera starts underneath and opens them (see [enterReveal]). */
-    fun leaveHome(a: ComponentActivity, go: () -> Unit) { Curtain(a).close(190) { go() } }
+    fun leaveHome(a: ComponentActivity, go: () -> Unit): Curtain = Curtain(a).also { it.close(190) { go() } }
 
     /** The camera's side: it starts behind shut bars, which open on a slow push-in while the controls rise. [dolly] runs as they open. */
     fun enterReveal(a: ComponentActivity, dolly: () -> Unit) {
