@@ -92,7 +92,7 @@ class EditorFlowTest {
             device.wait(Until.findObject(By.desc("ข้อความบนวิดีโอ")), 5000)!!.text = "Lumora"
             tap(By.desc("ส่งออก"), "Export button")
             // The export sheet opens first (resolution and frame rate); keep the source settings.
-            assertNotNull("Export sheet · ${GlassNav.dump(device)}", device.wait(Until.findObject(By.desc("เริ่มส่งออก")), 5000))
+            assertNotNull("Export sheet (free space ${context.filesDir.usableSpace / 1_000_000} MB) · ${GlassNav.dump(device)}", device.wait(Until.findObject(By.desc("เริ่มส่งออก")), 5000))
             tap(By.desc("เริ่มส่งออก"), "Start export button")
             // A short clip can finish (and the editor close) before the progress card is ever seen, so only the result is checked.
             until(150000, "No edited clip was published") { device.findObject(By.text("ส่งออกไม่ได้")) != null || MediaLedger.all(context).any { it.uri.toString() !in before && it.title.startsWith("Lumora_EDIT_") } }
