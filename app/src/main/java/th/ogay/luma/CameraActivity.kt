@@ -2028,6 +2028,17 @@ class CameraActivity : ComponentActivity() {
         if(mode==PhotoMode.HDR&&!activeExtension){takeHdr(useCase);return}
         if((mode==PhotoMode.FLASH_NIGHT||mode==PhotoMode.FLASH_FAST)&&camera?.cameraInfo?.hasFlashUnit()!=true){hint("กล้องนี้ไม่มีแฟลช",1600);return}
         if(busy || zoomSettling) return
+        // Natural HDR pilot is opt-in: route standard JPEG Photo through the existing EF1 fusion.
+        // All other modes, RAW, front camera, flash and night-assisted captures keep their original path.
+        if (mode == PhotoMode.PHOTO && output == CaptureOutput.JPEG && rear &&
+            flash == ImageCapture.FLASH_MODE_OFF && !nightOn && !torchLit &&
+            prefs.getBoolean("natural_hdr", false)) {
+            if (camera?.cameraInfo?.exposureState?.isExposureCompensationSupported == true) {
+                takeHdr(useCase)
+                return
+            }
+            hint("กล้องนี้ไม่รองรับการชดเชยแสง · ใช้การถ่ายภาพปกติ", 2500)
+        }
         // Fast flash: the torch comes on for a blink so exposure settles on the lit scene, the picture is taken at once
         // (no pre-flash sequence), and the light goes off again.
         if(mode==PhotoMode.FLASH_FAST&&!torchLit){
