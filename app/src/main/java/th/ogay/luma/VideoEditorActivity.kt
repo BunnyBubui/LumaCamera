@@ -999,72 +999,146 @@ class VideoEditorActivity : ComponentActivity() {
     private class AutoSrc(val uri: Uri, val from: Long, val to: Long, val muted: Boolean, val template: Extra)
     private var autoRun = 0
 
-    /** The options page: an optional typed instruction and who reads it, then style, length, picture shape, captions, and start. */
+    /**
+     * The auto edit sheet, built like the export sheet: the clip at the top, one row per choice (a value on the right, a line
+     * of explanation under it), a slider for the length, and one big button. Rows that depend on another choice are rebuilt in place.
+     */
     private fun autoEditSheet() {
         val st = AutoEdit.STYLES; val p = getSharedPreferences("camera", 0)
-        // The model chosen on this page is the one the model store downloads and loads.
-        AutoBrain.MODELS.getOrNull(p.getInt("auto_model", 0))?.let { ModelStore.select(this, it) }
-        var page: SettingsPage? = null
-        fun reopen() { page?.close(); window.decorView.post { autoEditSheet() } }
-        // Any choice can change which rows belong on the page (API rows, the model's download row), so the page is rebuilt.
-        page = SettingsPage(this, "ตัดต่ออัตโนมัติ") { AutoBrain.MODELS.getOrNull(p.getInt("auto_model", 0))?.let { ModelStore.select(this, it) }
-            // The callback also runs when the page is closed; only a change made while it is open rebuilds it (or it could never be left).
-            if (page?.showing == true) reopen() }.apply {
-            if (analysing) { section("กำลังทำงาน"); action("หยุดตัดต่ออัตโนมัติ", Icons.CLOSE, "ทิ้งงานที่กำลังวิเคราะห์") { close(); stopAutoEdit() } }
-            section("คำสั่ง")
+        val sheet = screenSheet()
+        val card = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(4), 0, dp(4), dp(4)) }
+        val menu = GlassMenu(window.decorView as FrameLayout) { on -> sheet.recede(on) }
+        var build: () -> Unit = {}
+        fun heading(t: String) = card.addView(text(t, 12.5f, Glass.ACCENT, true).apply { setPadding(0, dp(22), 0, 0) }, -1, -2)
+        /** A choice from a list: title on the left, the value in a pill that opens a menu, the value's note underneath. */
+        fun pick(title: String, key: String, labels: List<String>, notes: List<String>, values: List<Int>, default: Int, icon: String = Icons.AI) {
+            val cur = values.indexOf(p.getInt(key, default)).coerceAtLeast(0)
+            val top = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(16), 0, 0) }
+            top.addView(text(title, 14f, Glass.TEXT2, true), LinearLayout.LayoutParams(0, -2, 1f))
+            val pill = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; background = glass(16, 0x26ffffff); setPadding(dp(14), 0, dp(10), 0); isClickable = true; glassTouch(); contentDescription = "$title ${labels[cur]}"
+                addView(text(labels[cur], 14f, Glass.TEXT, true).apply { maxLines = 1 }); addView(IconView(this@VideoEditorActivity, "M7 10l5 5 5-5", 2f).apply { tint = Glass.TEXT2 }, LinearLayout.LayoutParams(dp(16), dp(16)).apply { leftMargin = dp(6) })
+                setOnClickListener { v -> menu.show(v, title, labels.mapIndexed { i, l -> GlassMenu.Option(l, icon, notes.getOrElse(i) { "" }) }, cur) { i -> p.edit().putInt(key, values[i]).apply(); build() } } }
+            top.addView(pill, LinearLayout.LayoutParams(-2, dp(38)))
+            card.addView(top, -1, -2)
+            notes.getOrNull(cur)?.takeIf { it.isNotEmpty() }?.let { card.addView(text(it, 12f, Glass.TEXT3).apply { setPadding(0, dp(4), 0, 0) }, -1, -2) }
+        }
+        /** A tappable glass tile: icon, a small caption, the value in bold and a note (the model tile of the export sheet). */
+        fun tile(caption: String, value: String, note: String, icon: String, accent: Boolean = false, tap: () -> Unit) {
+            val t = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; background = glass(20, 0x1affffff); setPadding(dp(10), dp(8), dp(12), dp(8)); isClickable = true; glassTouch(); contentDescription = "$caption $value"
+                setOnClickListener { Glass.tick(it); tap() } }
+            t.addView(FrameLayout(this).apply { background = glass(12, 0x24ffffff); addView(IconView(this@VideoEditorActivity, icon, 1.8f).apply { tint = Glass.ACCENT }, FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER)) }, dp(38), dp(38))
+            t.addView(LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, dp(8), 0)
+                addView(text(caption, 11.5f, Glass.TEXT3)); addView(text(value, 15f, if (accent) Glass.ACCENT else Glass.TEXT, true).apply { maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END })
+                if (note.isNotEmpty()) addView(text(note, 12f, Glass.TEXT2).apply { maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END }) }, LinearLayout.LayoutParams(0, -2, 1f))
+            t.addView(IconView(this, Icons.CHEVRON_RIGHT, 2f).apply { tint = Glass.TEXT3 }, dp(18), dp(18))
+            card.addView(t, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
+        }
+        fun switchRow(title: String, note: String, key: String, default: Boolean) {
+            val sw = GlassSwitch(this); sw.set(p.getBoolean(key, default), false); sw.contentDescription = title
+            sw.onToggle = { v -> p.edit().putBoolean(key, v).apply() }
+            val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(16), 0, 0); isClickable = true; setOnClickListener { sw.performClick() } }
+            row.addView(LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, 0, dp(12), 0); addView(text(title, 14f, Glass.TEXT2, true)); addView(text(note, 12f, Glass.TEXT3).apply { setPadding(0, dp(4), 0, 0) }) }, LinearLayout.LayoutParams(0, -2, 1f))
+            row.addView(sw, LinearLayout.LayoutParams(dp(51), dp(31)))
+            card.addView(row, -1, -2)
+        }
+        fun ask(title: String, hint: String, note: String, value: String, icon: String, secret: Boolean = false, lines: Int = 1, save: (String) -> Unit) {
+            val field = GlassDialog.field(this, hint, value, false, lines)
+            if (secret) field.inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+            GlassDialog.ask(this, title, icon, note, field, focus = field) { save(field.text.toString().trim()); build(); true }
+        }
+        val go = text("เริ่มตัดต่ออัตโนมัติ", 16f, Glass.ON_ACCENT, true).apply { gravity = Gravity.CENTER; background = glass(26, Glass.ACCENT); isClickable = true; glassTouch() }
+
+        build = {
+            card.removeAllViews()
+            // The model chosen here is the one the model store downloads and loads.
+            AutoBrain.MODELS.getOrNull(p.getInt("auto_model", 0))?.let { ModelStore.select(this, it) }
+            val total = totalOut(); val clips = order().size
+            // The clip and what it is now.
+            val head = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+            head.addView(ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP; setImageBitmap(firstFrame); setBackgroundColor(0x22ffffff); clipToOutline = true
+                outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: android.graphics.Outline) = o.setRoundRect(0, 0, v.width, v.height, dp(12).toFloat()) } }, dp(62), dp(84))
+            head.addView(LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), 0, 0, 0)
+                addView(text("ตัดต่ออัตโนมัติ", 20f, Glass.TEXT, true)); addView(text("ยาว ${clock(total)} · $clips คลิป · กดย้อนกลับเพื่อคืนของเดิมได้", 12.5f, Glass.TEXT2)) }, LinearLayout.LayoutParams(0, -2, 1f))
+            card.addView(head, -1, -2)
+
+            heading("คำสั่ง")
             val said = p.getString("auto_prompt", "").orEmpty()
-            action("พิมพ์สิ่งที่อยากได้", EditorKit.TEXT, said.ifEmpty { "ไม่บังคับ · เช่น \"คลิปสั้น 20 วิ เน้นช่วงที่หัวเราะ ใส่ชื่อเรื่องว่า ทริปทะเล\"" }) {
-                val field = GlassDialog.field(this@VideoEditorActivity, "อยากให้ตัดแบบไหน", said, false, 3)
-                GlassDialog.ask(this@VideoEditorActivity, "คำสั่งตัดต่อ", EditorKit.TEXT, "ว่างไว้ = ใช้แนวที่เลือกด้านล่างอย่างเดียว", field, focus = field) { p.edit().putString("auto_prompt", field.text.toString().trim()).apply(); reopen(); true }
-            }
-            choose("ผู้อ่านคำสั่ง", Icons.AI, "auto_brain", listOf("ไม่ใช้ (แนวสำเร็จรูป)", "โมเดลบนเครื่อง", "API ภายนอก"), listOf(0, 1, 2), 1,
-                notes = listOf("ไม่อ่านคำสั่งที่พิมพ์", "ไม่ใช้เน็ต ช้ากว่า", "ส่งเฉพาะข้อความ ไม่ส่งวิดีโอ ต้องมี key"))
+            tile("สิ่งที่อยากได้ · ไม่บังคับ", said.ifEmpty { "แตะเพื่อพิมพ์คำสั่ง" }, if (said.isEmpty()) "เช่น \"คลิปสั้น 20 วิ เน้นช่วงที่หัวเราะ ใส่ชื่อเรื่องว่า ทริปทะเล\"" else "", EditorKit.TEXT, said.isEmpty()) {
+                ask("คำสั่งตัดต่อ", "อยากให้ตัดแบบไหน", "ว่างไว้ = ใช้แนวที่เลือกด้านล่างอย่างเดียว", said, EditorKit.TEXT, lines = 3) { p.edit().putString("auto_prompt", it).apply() } }
+            pick("ผู้อ่านคำสั่ง", "auto_brain", listOf("ไม่ใช้", "โมเดลบนเครื่อง", "API ภายนอก"),
+                listOf("ไม่อ่านคำสั่งที่พิมพ์ ใช้แนวสำเร็จรูปอย่างเดียว", "ไม่ใช้เน็ต ทำงานในเครื่อง ช้ากว่า", "ส่งเฉพาะข้อความ ไม่ส่งวิดีโอ ต้องมี key ของคุณเอง"), listOf(0, 1, 2), 1)
             when (p.getInt("auto_brain", 1)) {
                 1 -> {
-                    val m = AutoBrain.selected(this@VideoEditorActivity)
-                    choose("โมเดล", Icons.AI, "auto_model", AutoBrain.MODELS.map { it.name }, AutoBrain.MODELS.indices.toList(), 0, notes = AutoBrain.MODELS.map { it.short })
-                    val ok = ModelStore.installed(this@VideoEditorActivity, m)
-                    action(if (ok) "${m.name} พร้อมใช้" else "ดาวน์โหลด ${m.name}", Icons.CHECK, if (ok) "อยู่ในเครื่องแล้ว" else "ประมาณ ${m.approxMb} MB · ดาวน์โหลดครั้งเดียว") {
-                        if (!ok) { close(); downloadModel(m) } }
+                    pick("โมเดล", "auto_model", AutoBrain.MODELS.map { it.name }, AutoBrain.MODELS.map { it.short }, AutoBrain.MODELS.indices.toList(), 0)
+                    val m = AutoBrain.MODELS.getOrElse(p.getInt("auto_model", 0)) { AutoBrain.MODELS[0] }
+                    val blocked = Device.cannotRun(this, m, llm = true); val ok = ModelStore.installed(this, m); val job = ModelStore.job(m)
+                    when {
+                        blocked != null -> tile("ใช้กับเครื่องนี้ไม่ได้", m.name, blocked, Icons.CLOSE) {}
+                        ok -> tile("พร้อมใช้", m.name, "อยู่ในเครื่องแล้ว", Icons.CHECK) {}
+                        job != null -> tile("กำลังดาวน์โหลด", m.name, "ดูความคืบหน้าในการแจ้งเตือน · เสร็จแล้วเปิดหน้านี้อีกครั้ง", Icons.CHECK, true) {}
+                        else -> tile("ต้องดาวน์โหลดก่อน", "ดาวน์โหลด ${m.name}", "ประมาณ ${m.approxMb} MB · ครั้งเดียว", "M12 4v10 M7 10l5 5 5-5 M5 20h14", true) { sheet.close(); downloadModel(m) }
+                    }
                 }
                 2 -> {
-                    val pr = AutoBrain.provider(this@VideoEditorActivity)
-                    choose("ผู้ให้บริการ", Icons.AI, "auto_api_provider", AutoBrain.PROVIDERS.map { it.name }, AutoBrain.PROVIDERS.indices.toList(), 0)
-                    val k = AutoBrain.key(this@VideoEditorActivity)
-                    action("API key", Icons.LOCK, if (k.isEmpty()) "ยังไม่ได้ใส่" else "ใส่แล้ว ••••" + k.takeLast(4)) {
-                        val field = GlassDialog.field(this@VideoEditorActivity, "วาง API key", "", false, 1).apply { inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD }
-                        GlassDialog.ask(this@VideoEditorActivity, "API key ของ ${pr.name}", Icons.LOCK, "เก็บไว้ในแอปบนเครื่องนี้เท่านั้น", field, focus = field) { AutoBrain.setKey(this@VideoEditorActivity, field.text.toString()); reopen(); true }
-                    }
-                    action("ชื่อโมเดล", Icons.AI, AutoBrain.model(this@VideoEditorActivity).ifEmpty { "ยังไม่ได้ใส่" }) {
-                        val field = GlassDialog.field(this@VideoEditorActivity, "เช่น ${pr.model.ifEmpty { "gpt-4.1-mini" }}", AutoBrain.model(this@VideoEditorActivity), false, 1)
-                        GlassDialog.ask(this@VideoEditorActivity, "ชื่อโมเดล", Icons.AI, "ใช้ชื่อตามที่ผู้ให้บริการกำหนด", field, focus = field) { AutoBrain.setModel(this@VideoEditorActivity, field.text.toString()); reopen(); true }
-                    }
-                    val ms = Mcp.servers(this@VideoEditorActivity)
-                    action("เครื่องมือ MCP", Icons.GRID, if (ms.isEmpty()) "ไม่บังคับ · ให้โมเดลเรียกเครื่องมือภายนอก เช่น ค้นเพลง" else "${ms.size} เซิร์ฟเวอร์ · ${ms.joinToString { it.name }}") { close(); mcpSheet() }
-                    if (pr.id == "custom") action("Base URL", Icons.FILE, AutoBrain.base(this@VideoEditorActivity).ifEmpty { "ยังไม่ได้ใส่" }) {
-                        val field = GlassDialog.field(this@VideoEditorActivity, "https://…/v1", AutoBrain.base(this@VideoEditorActivity), false, 1)
-                        GlassDialog.ask(this@VideoEditorActivity, "Base URL", Icons.FILE, "ที่อยู่ที่รับ /chat/completions แบบ OpenAI", field, focus = field) { AutoBrain.setBase(this@VideoEditorActivity, field.text.toString()); reopen(); true }
-                    }
+                    val pr = AutoBrain.provider(this)
+                    pick("ผู้ให้บริการ", "auto_api_provider", AutoBrain.PROVIDERS.map { it.name }, AutoBrain.PROVIDERS.map { if (it.id == "custom") "ที่อยู่ API แบบ OpenAI ที่คุณกำหนดเอง" else "โมเดลตั้งต้น ${it.model}" }, AutoBrain.PROVIDERS.indices.toList(), 0)
+                    val k = AutoBrain.key(this)
+                    tile("API key ของ ${pr.name}", if (k.isEmpty()) "แตะเพื่อใส่ key" else "ใส่แล้ว ••••" + k.takeLast(4), "เก็บแบบเข้ารหัสในเครื่องนี้เท่านั้น", Icons.LOCK, k.isEmpty()) {
+                        ask("API key ของ ${pr.name}", "วาง API key", "เก็บแบบเข้ารหัสในเครื่องนี้เท่านั้น", "", Icons.LOCK, secret = true) { AutoBrain.setKey(this, it) } }
+                    tile("ชื่อโมเดล", AutoBrain.model(this).ifEmpty { "แตะเพื่อใส่ชื่อโมเดล" }, "ใช้ชื่อตามที่ผู้ให้บริการกำหนด", Icons.AI) {
+                        ask("ชื่อโมเดล", "เช่น ${pr.model.ifEmpty { "gpt-4.1-mini" }}", "ใช้ชื่อตามที่ผู้ให้บริการกำหนด", AutoBrain.model(this), Icons.AI) { AutoBrain.setModel(this, it) } }
+                    if (pr.id == "custom") tile("Base URL", AutoBrain.base(this).ifEmpty { "แตะเพื่อใส่ที่อยู่" }, "ที่อยู่ที่รับ /chat/completions", Icons.FILE) {
+                        ask("Base URL", "https://…/v1", "ที่อยู่ที่รับ /chat/completions แบบ OpenAI", AutoBrain.base(this), Icons.FILE) { AutoBrain.setBase(this, it) } }
+                    val ms = Mcp.servers(this)
+                    tile("เครื่องมือ MCP · ไม่บังคับ", if (ms.isEmpty()) "ยังไม่มีเซิร์ฟเวอร์" else "${ms.size} เซิร์ฟเวอร์", if (ms.isEmpty()) "ให้โมเดลเรียกเครื่องมือภายนอก เช่น ค้นเพลง" else ms.joinToString { it.name }, Icons.GRID) { sheet.close(); mcpSheet() }
                 }
             }
-            section("แนวและผลลัพธ์")
-            choose("แนว", Icons.AI, "auto_style", st.map { it.name }, st.indices.toList(), 0, notes = st.map { it.note })
-            choose("ความยาว", Icons.TIMER, "auto_len", listOf("ตามแนวหรือคำสั่ง", "15 วินาที", "30 วินาที", "60 วินาที", "3 นาที"), listOf(0, 15, 30, 60, 180), 0)
-            choose("สัดส่วนภาพ", Icons.FRAME, "auto_crop", listOf("ตามแนวหรือคำสั่ง", "คงเดิม", "แนวตั้ง 9:16"), listOf(0, 1, 2), 0)
-            toggle("ใส่ซับจากเสียงพูด", EditorKit.TEXT, "auto_captions", true, "ถอดเสียงหลังตัดเสร็จ ใช้เวลาเพิ่มตามความยาววิดีโอ")
-            section("เสียง")
-            val lib = SoundLibrary.all(this@VideoEditorActivity)
-            if (layers.any { it.music && !it.hidden }) row("ใช้เพลงที่มีในโปรเจกต์อยู่แล้ว", EditorKit.MUSIC, "ตัดให้ลงจังหวะเพลงนั้น ไม่เพิ่มเพลงใหม่")
-            else choose("เพลงประกอบ", EditorKit.MUSIC, "auto_music", listOf("ตามแนวหรือคำสั่ง", "ไม่ใส่เพลง") + lib.map { it.name }, (0 until lib.size + 2).toList(), 0,
-                notes = listOf("ไวรัล/Vlog/ไฮไลต์/ภาพยนตร์ได้เพลง คนพูดไม่ได้", "") + lib.map { it.note })
-            toggle("เอฟเฟกต์เสียง", Icons.SOUND, "auto_sfx", true, "วูชตอนเปลี่ยนช็อต ป๊อปตอนชื่อเรื่อง (ไวรัล ไฮไลต์ ภาพยนตร์ หรือเมื่อคำสั่งขอ)")
-            action("นำเข้าเพลงเข้าคลัง", Icons.PLUS, "เพลงของคุณเอง แอปวัดจังหวะให้ เลือกได้ในแถวเพลงประกอบ") { close(); importSongs.launch(arrayOf("audio/*")) }
-            val mine = SoundLibrary.imported(this@VideoEditorActivity)
-            if (mine.isNotEmpty()) action("จัดการเพลงที่นำเข้า", EditorKit.MUSIC, "${mine.size} เพลง · ลบออกจากคลังได้") { close(); librarySheet() }
-            section("เริ่ม")
-            action("เริ่มตัดต่ออัตโนมัติ", Icons.AI, "จัดคลิปใหม่ทั้งวิดีโอ กดย้อนกลับเพื่อคืนของเดิมได้") { close(); runAutoEdit() }
+
+            heading("แนวและผลลัพธ์")
+            pick("แนว", "auto_style", st.map { it.name }, st.map { it.note }, st.indices.toList(), 0)
+            // Length: a slider, like the resolution and frame rate of the export sheet.
+            val lens = listOf(0, 15, 30, 60, 180); val lenNames = listOf("ตามแนว", "15 วิ", "30 วิ", "60 วิ", "3 นาที")
+            val style = st.getOrElse(p.getInt("auto_style", 0)) { st[0] }
+            val lenValue = text("", 14f, Glass.TEXT, true); val lenNote = text("", 12f, Glass.TEXT3)
+            val estimate = text("", 12.5f, Glass.TEXT2).apply { gravity = Gravity.CENTER }
+            fun paintLen(i: Int) {
+                val want = if (lens[i] > 0) lens[i] * 1000L else style.targetMs
+                lenValue.text = lenNames[i]; lenValue.setTextColor(if (i == 0) Glass.TEXT else Glass.ACCENT)
+                lenNote.text = when { lens[i] == 0 && style.targetMs == 0L -> "แนว ${style.name} ไม่จำกัดความยาว ตัดเฉพาะส่วนที่ไม่ใช้"; lens[i] == 0 -> "แนว ${style.name} ยาวไม่เกิน ${clock(style.targetMs)} (คำสั่งที่พิมพ์เปลี่ยนได้)"
+                    want >= total -> "วิดีโอสั้นกว่านี้อยู่แล้ว จะไม่ถูกบังคับให้สั้นลง"; else -> "เลือกช่วงเด่นจนได้ประมาณ ${clock(want)}" }
+                estimate.text = "วิดีโอ ${clock(total)}" + (if (want in 1 until total) " → ประมาณ ${clock(want)}" else " → ตัดเฉพาะช่วงที่ไม่ใช้") + " · แนว ${style.name}"
+            }
+            val li = lens.indexOf(p.getInt("auto_len", 0)).coerceAtLeast(0)
+            val top = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(18), 0, 0) }
+            top.addView(text("ความยาว", 14f, Glass.TEXT2, true), LinearLayout.LayoutParams(0, -2, 1f)); top.addView(lenValue)
+            card.addView(top, -1, -2)
+            card.addView(GlassSlider(this).apply { values = lenNames; index = li; grad = intArrayOf(0xff64d2ff.toInt(), Color.WHITE, Glass.ACCENT); contentDescription = "ความยาว"
+                onChange = { k -> p.edit().putInt("auto_len", lens[k]).apply(); paintLen(k) } }, LinearLayout.LayoutParams(-1, dp(46)))
+            card.addView(lenNote, -1, -2); paintLen(li)
+            pick("สัดส่วนภาพ", "auto_crop", listOf("ตามแนว", "คงเดิม", "แนวตั้ง 9:16"), listOf("ไวรัลเป็นแนวตั้ง ภาพยนตร์เป็นจอกว้าง แนวอื่นคงเดิม", "ไม่ครอปภาพ", "ครอปเป็นแนวตั้งสำหรับคลิปสั้น"), listOf(0, 1, 2), 0, Icons.FRAME)
+            switchRow("ใส่ซับจากเสียงพูด", "ถอดเสียงหลังตัดเสร็จ ใช้เวลาเพิ่มตามความยาววิดีโอ", "auto_captions", true)
+
+            heading("เสียง")
+            val lib = SoundLibrary.all(this)
+            if (layers.any { it.music && !it.hidden }) card.addView(text("ใช้เพลงที่มีในโปรเจกต์อยู่แล้ว · ตัดให้ลงจังหวะเพลงนั้น ไม่เพิ่มเพลงใหม่", 12.5f, Glass.TEXT2).apply { setPadding(0, dp(14), 0, 0) }, -1, -2)
+            else pick("เพลงประกอบ", "auto_music", listOf("ตามแนว", "ไม่ใส่เพลง") + lib.map { it.name }, listOf("ไวรัล Vlog ไฮไลต์ ภาพยนตร์ได้เพลงตามแนว · คนพูดไม่ใส่", "ไม่เพิ่มเพลง") + lib.map { it.note.ifEmpty { "${it.bpm.toInt()} BPM" } }, (0 until lib.size + 2).toList(), 0, EditorKit.MUSIC)
+            switchRow("เอฟเฟกต์เสียง", "วูชตอนเปลี่ยนช็อต ป๊อปตอนชื่อเรื่อง (ไวรัล ไฮไลต์ ภาพยนตร์ หรือเมื่อคำสั่งขอ)", "auto_sfx", true)
+            val mine = SoundLibrary.imported(this)
+            val chips = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(14), 0, 0) }
+            chips.addView(EditorKit.chip(this, "นำเข้าเพลง", Icons.PLUS) { sheet.close(); importSongs.launch(arrayOf("audio/*")) }, LinearLayout.LayoutParams(-2, dp(40)).apply { rightMargin = dp(8) })
+            if (mine.isNotEmpty()) chips.addView(EditorKit.chip(this, "เพลงที่นำเข้า ${mine.size}", EditorKit.MUSIC) { sheet.close(); librarySheet() }, LinearLayout.LayoutParams(-2, dp(40)))
+            card.addView(chips, -1, -2)
+
+            card.addView(estimate, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(18) })
+            go.text = if (analysing) "หยุดงานที่กำลังทำ" else "เริ่มตัดต่ออัตโนมัติ"; go.contentDescription = go.text
+            (go.parent as? android.view.ViewGroup)?.removeView(go)
+            card.addView(go, LinearLayout.LayoutParams(-1, dp(52)).apply { topMargin = dp(12) })
+            card.addView(text("ยกเลิก", 14f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; isClickable = true; setPadding(0, dp(12), 0, 0); setOnClickListener { sheet.close() } }, -1, dp(44))
+            sheet.unpin()
         }
-        page?.show()
+        go.setOnClickListener { Glass.tick(go); sheet.close(); if (analysing) stopAutoEdit() else runAutoEdit() }
+        build()
+        sheet.open { body, _ -> body.addView(card, -1, -2) }
     }
     /** Puts the plan's music and one track of sound effects on the timeline (rendered in the background). */
     private fun addAutoSound(plan: AutoEdit.Plan, track: SoundLibrary.Track?, sfxOn: Boolean) {
