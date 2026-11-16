@@ -14,18 +14,19 @@ object Ambient {
     val LABELS = listOf("ปิด", "ต่ำ", "กลาง", "สูง", "สูงสุด")
 
     /**
-     * [width] pixels across the copy of the picture; [blur] how many times smaller it is made and grown back (1 = not blurred);
+     * [width] pixels across the copy of the picture (more = finer colour); [blur] how soft it is, as a share of that width
+     * (the light is always blurred; a higher level blurs less in step with its finer copy, so colours stay closer to the edge);
      * [strength] brightness of the light (0..1); [saturation] colour boost; [spread] how far the photo's light may smear sideways
      * (1 = freely, small = it stays above and below the picture); [everyMs] time between video frames used as light.
      */
-    class Spec(val width: Int, val blur: Int, val strength: Float, val saturation: Float, val spread: Float, val everyMs: Long)
+    class Spec(val width: Int, val blur: Float, val strength: Float, val saturation: Float, val spread: Float, val everyMs: Long)
 
     private val SPECS = listOf(
-        Spec(0, 1, 0f, 1f, 0f, 0L),
-        Spec(16, 3, 0.45f, 1.2f, 1f, 150L),
-        Spec(32, 3, 0.65f, 1.3f, 1f, 110L),
-        Spec(96, 2, 0.80f, 1.35f, 0.5f, 90L),
-        Spec(256, 1, 0.92f, 1.4f, 0.25f, 66L),
+        Spec(0, 0f, 0f, 1f, 0f, 0L),
+        Spec(16, 0.10f, 0.45f, 1.2f, 1f, 150L),
+        Spec(32, 0.08f, 0.65f, 1.3f, 1f, 110L),
+        Spec(96, 0.06f, 0.80f, 1.35f, 0.5f, 90L),
+        Spec(256, 0.045f, 0.92f, 1.4f, 0.25f, 66L),
     )
     fun spec(level: Int): Spec = SPECS[level.coerceIn(0, SPECS.lastIndex)]
 
@@ -41,13 +42,35 @@ object Ambient {
     /** Height of the small copy for a picture of [srcW]×[srcH]. */
     fun heightFor(spec: Spec, srcW: Int, srcH: Int): Int = if (srcW <= 0) 4 else (spec.width.toFloat() * srcH / srcW).toInt().coerceIn(4, spec.width * 4)
 
-    /** A small, softened copy of [b] for the light; [b] itself is left untouched. Null when it cannot be made. */
+    /** A small, softly blurred copy of [b] for the light; [b] itself is left untouched. Null when it cannot be made. */
     fun soften(b: Bitmap, spec: Spec): Bitmap? = runCatching {
         if (b.isRecycled || b.width <= 0 || spec.width <= 0) return@runCatching null
         val w = spec.width; val h = heightFor(spec, b.width, b.height)
         val small = Bitmap.createScaledBitmap(b, w, h, true)
-        if (spec.blur <= 1) return@runCatching small
-        val tiny = Bitmap.createScaledBitmap(small, (w / spec.blur).coerceAtLeast(2), (h / spec.blur).coerceAtLeast(2), true)
-        Bitmap.createScaledBitmap(tiny, w, h, true).also { if (it !== small && small !== b) small.recycle(); if (it !== tiny) tiny.recycle() }
+        val px = IntArray(w * h); small.getPixels(px, 0, w, 0, 0, w, h)
+        if (small !== b) small.recycle()
+        boxBlur(px, w, h, Math.round(w * spec.blur).coerceAtLeast(1))
+        Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888)
     }.getOrNull()
+
+    /** Three passes of a box blur in each direction, which comes close to a Gaussian blur; edges repeat their last pixel. */
+    fun boxBlur(px: IntArray, w: Int, h: Int, r: Int) {
+        if (r < 1 || w < 2 || h < 2) return
+        val buf = IntArray(maxOf(w, h))
+        repeat(3) {
+            for (y in 0 until h) line(px, y * w, 1, w, r, buf)
+            for (x in 0 until w) line(px, x, w, h, r, buf)
+        }
+    }
+    private fun line(px: IntArray, start: Int, step: Int, n: Int, r: Int, buf: IntArray) {
+        var sr = 0; var sg = 0; var sb = 0
+        val d = 2 * r + 1
+        for (i in -r..r) { val c = px[start + step * i.coerceIn(0, n - 1)]; sr += (c shr 16) and 255; sg += (c shr 8) and 255; sb += c and 255 }
+        for (i in 0 until n) {
+            buf[i] = (0xff shl 24) or ((sr / d) shl 16) or ((sg / d) shl 8) or (sb / d)
+            val add = px[start + step * (i + r + 1).coerceIn(0, n - 1)]; val rem = px[start + step * (i - r).coerceIn(0, n - 1)]
+            sr += ((add shr 16) and 255) - ((rem shr 16) and 255); sg += ((add shr 8) and 255) - ((rem shr 8) and 255); sb += (add and 255) - (rem and 255)
+        }
+        for (i in 0 until n) px[start + step * i] = buf[i]
+    }
 }
