@@ -209,4 +209,35 @@ object StudioMath {
         if (curve == null || src <= 0) return base
         return partSpeeds(base, curve)[((off.toDouble() / src) * CURVE_PARTS).toInt().coerceIn(0, CURVE_PARTS - 1)]
     }
+
+    /** How loud a clip is: the average of its louder half of loudness readings (quiet gaps do not pull it down). 0 = silent. */
+    fun loudness(peaks: FloatArray): Float {
+        val v = peaks.filter { it > 0.003f }.sorted(); if (v.size < 10) return 0f
+        return v.subList(v.size / 2, v.size).average().toFloat()
+    }
+
+    /** Volume for each clip so all match the middle loudness; between 0.3 and 2 (the volume slider's range). Null for silent clips. */
+    fun matchGains(levels: List<Float>): List<Float?> {
+        val heard = levels.filter { it > 0f }.sorted(); if (heard.isEmpty()) return levels.map { null }
+        val target = heard[heard.size / 2]
+        return levels.map { if (it <= 0f) null else (target / it).coerceIn(0.3f, 2f) }
+    }
+
+    /**
+     * Where layout [n] puts a layer of shape [aspect] (width / height) on a picture of shape [ratio]: centre x, centre y
+     * (0..1 of the picture) and width (share of the picture's width). 0 full screen (covering it), 1–4 corners (top right, top
+     * left, bottom right, bottom left) at a third of the width, 5–6 left and right halves, 7 the middle at 60 %.
+     */
+    fun layerPlace(n: Int, aspect: Float, ratio: Float): Triple<Float, Float, Float> {
+        val m = 0.04f
+        fun hOf(size: Float) = size * ratio / aspect.coerceAtLeast(0.01f) // the layer's height as a share of the picture's height
+        return when (n) {
+            0 -> Triple(0.5f, 0.5f, maxOf(1f, aspect / ratio))
+            in 1..4 -> { val s = 0.34f; val h = hOf(s)
+                Triple(if (n == 1 || n == 3) 1f - m - s / 2 else m + s / 2, if (n <= 2) m * ratio + h / 2 else 1f - m * ratio - h / 2, s) }
+            5 -> Triple(0.25f, 0.5f, 0.5f)
+            6 -> Triple(0.75f, 0.5f, 0.5f)
+            else -> Triple(0.5f, 0.5f, 0.6f)
+        }
+    }
 }

@@ -1469,6 +1469,52 @@ class VideoEditorActivity : ComponentActivity() {
         }
     }
 
+    /** The frame under the playhead, at the video's full size, saved to the gallery as a photo. */
+    private fun saveFrame() {
+        val uri = clipUri(playIndex); val at = trim.playhead
+        luma.readIo.execute {
+            val r = runCatching {
+                val m = MediaMetadataRetriever()
+                val b = try { m.setDataSource(this, uri); m.getFrameAtTime(at * 1000, MediaMetadataRetriever.OPTION_CLOSEST) } finally { runCatching { m.release() } } ?: error("อ่านภาพตรงนี้ไม่ได้")
+                val t = System.currentTimeMillis(); val f = java.io.File(cacheDir, "frame_$t.jpg")
+                f.outputStream().use { b.compress(Bitmap.CompressFormat.JPEG, 95, it) }
+                PhotoMedia.publish(this, f, "Lumora_frame_$t.jpg", t).also { f.delete() }
+            }
+            runOnUiThread { if (!isDestroyed) notice(if (r.isSuccess) "บันทึกภาพนิ่งลงแกลเลอรีแล้ว" else "บันทึกภาพไม่ได้ · ${r.exceptionOrNull()?.message}") }
+        }
+    }
+
+    /** Every clip's sound set to the same loudness (the middle one of them), so no clip jumps out louder or quieter. */
+    private fun matchLoudness() {
+        val ks = order().filter { !isMuted(it) }
+        if (ks.size < 2) { notice("ต้องมีอย่างน้อย 2 คลิปที่เปิดเสียง"); return }
+        val parts = ks.map { k -> Triple(k, clipUri(k), clipFrom(k) to (if (k == 0) end else extras[k - 1].to)) }
+        notice("กำลังวัดความดังของ ${ks.size} คลิป…")
+        luma.readIo.execute {
+            val levels = parts.map { (k, u, r) -> k to runCatching { AudioPeaks.range(this, u, r.first, r.second) }.getOrDefault(FloatArray(0)).let { pk -> StudioMath.loudness(pk) } }
+            runOnUiThread {
+                if (isDestroyed) return@runOnUiThread
+                val gains = StudioMath.matchGains(levels.map { it.second })
+                levels.forEachIndexed { n, (k, _) -> gains[n]?.let { setClipVolume(k, it) } }
+                showTool(9, false)
+                notice("ปรับให้ดังเท่ากันแล้ว" + (if (gains.any { it == null }) " · ข้ามคลิปที่เงียบ" else "") + " · กดย้อนกลับเพื่อคืนค่าเดิม")
+            }
+        }
+    }
+
+    /** Ready-made places for a picture or video layer: full screen, a corner (picture in picture) or one half (side by side). */
+    private fun layoutMenu(anchor: View, i: Int) {
+        val names = listOf("เต็มจอ", "มุมขวาบน", "มุมซ้ายบน", "มุมขวาล่าง", "มุมซ้ายล่าง", "ครึ่งซ้าย", "ครึ่งขวา", "กลางภาพ")
+        val icons = listOf("M3 4h18v16H3z", "M3 4h18v16H3z M14 6h5v4h-5z", "M3 4h18v16H3z M5 6h5v4H5z", "M3 4h18v16H3z M14 14h5v4h-5z", "M3 4h18v16H3z M5 14h5v4H5z",
+            "M3 4h18v16H3z M3 4h9v16H3z", "M3 4h18v16H3z M12 4h9v16h-9z", "M3 4h18v16H3z M8 8h8v8H8z")
+        toolMenu.show(anchor, "จัดวางด่วน", names.mapIndexed { n, s -> GlassMenu.Option(s, icons[n], "") }, -1) { n ->
+            val l = layers.getOrNull(i) ?: return@show
+            val ratio = if (visible.height() > 0) visible.width().toFloat() / visible.height() else 9f / 16f
+            val (x, y, size) = StudioMath.layerPlace(n, l.aspect, ratio)
+            layers[i] = posed(l, x = x, y = y, size = size); placeLayers(); refreshTimeline(); showTool(tool, false)
+        }
+    }
+
     private fun stopAutoEdit() { autoRun++; analysing = false; AutoBrain.stop(); autoUi?.remove(); autoUi = null; notice("หยุดตัดต่ออัตโนมัติแล้ว") }
 
     /** Words already captioned, per clip of [srcs], as (from, to, text) in ms of that clip's file. */
@@ -2059,6 +2105,7 @@ class VideoEditorActivity : ComponentActivity() {
             EditorKit.action(this, "M4 12h6 M14 12h6 M10 8v8 M14 8v8", "แยกเสียง") { detachSound(); showTool(0, false) },
             EditorKit.action(this, "M8 5v14 M16 5v14 M4 12h2 M18 12h2", "ค้างเฟรม") { freezeFrame() },
             EditorKit.action(this, "M7 7H4V4 M4.5 7.5A8 8 0 1 1 4 12 M12 8v4l3 2", "ย้อนกลับ") { reverseClip() },
+            EditorKit.action(this, "M4 7h3l2-2h6l2 2h3v12H4z M12 10a3 3 0 1 0 0 6 3 3 0 0 0 0-6", "บันทึกภาพ") { saveFrame() },
             run { lateinit var me: View; me = EditorKit.action(this, ClipMotion.ICONS[1], if (motionOf(playIndex) == 0) "ซูม/แพน" else ClipMotion.NAMES[motionOf(playIndex)], motionOf(playIndex) != 0) { motionMenu(me) }; me },
             EditorKit.action(this, "M3 5h18v14H3z M12 5v14", "หาฉาก") { findScenes() },
             EditorKit.action(this, "M7 4v16 M7 5h10l-2.5 3.5L17 12H7", "แยกตามมาร์กเกอร์") { splitAtMarkers() },
@@ -2412,6 +2459,7 @@ class VideoEditorActivity : ComponentActivity() {
             slider("ความดังคลิปนี้", pct, (clipVolume(k) * 20).roundToInt()) { v -> setClipVolume(k, v / 20f) }
             val all = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(0, dp(2), 0, dp(4)) }
             all.addView(EditorKit.chip(this, "ใช้ความดังนี้กับทุกคลิป", Icons.SOUND) { val v = clipVolume(k); volume = v; extras.forEach { it.volume = v }; applySound(); notice("ทุกคลิปดัง ${(v * 100).roundToInt()}%") }, LinearLayout.LayoutParams(-2, dp(34)).apply { setMargins(dp(3), 0, dp(3), 0) })
+            if (extras.isNotEmpty()) all.addView(EditorKit.chip(this, "ดังเท่ากันทุกคลิป", "M3 12h3 M8 8v8 M12 5v14 M16 8v8 M20 12h1") { matchLoudness() }, LinearLayout.LayoutParams(-2, dp(40)).apply { rightMargin = dp(8) })
             all.addView(EditorKit.chip(this, if (keepSound) "ปิดเสียงทุกคลิป" else "เปิดเสียงทุกคลิป", "M4 9v6h4l5 4V5L8 9H4z", !keepSound) { keepSound = !keepSound; applySound(); showTool(9, false) }, LinearLayout.LayoutParams(-2, dp(34)).apply { setMargins(dp(3), 0, dp(3), 0) })
             box.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(all) }, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.CENTER_HORIZONTAL })
         }
@@ -3151,6 +3199,7 @@ class VideoEditorActivity : ComponentActivity() {
         fun refresh() { placeLayers(); refreshTimeline() }
         val actions = ArrayList<View>()
         if (l.visual) {
+            run { lateinit var me: View; me = EditorKit.action(this, "M3 4h18v16H3z M13 12h6v6h-6z", "จัดวางด่วน") { layoutMenu(me, i) }; actions += me }
             // A keyframe remembers where the layer is, how big and how solid at one moment. With two or more, the layer glides between them.
             val t = outNow() - l.at; val here = l.keyList.firstOrNull { abs(it.t - t) <= 150 }
             actions += EditorKit.action(this, "M12 4l8 8-8 8-8-8z M12 9v6 M9 12h6", "คีย์เฟรม +", here != null) {
