@@ -1364,6 +1364,24 @@ class VideoEditorActivity : ComponentActivity() {
         page?.show()
     }
 
+    /**
+     * A tip drawn as pictures: a row of small icons (a hand on a bar, an arrow, …) with an ⓘ. The sentence appears only when
+     * the row is tapped, so panels carry pictures instead of paragraphs.
+     */
+    private fun tip(into: LinearLayout, words: String, vararg icons: String, top: Int = 6) {
+        val row = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(0, dp(top), 0, dp(4)); isClickable = true; contentDescription = words; glassTouch()
+            setOnClickListener { notice(words) } }
+        icons.forEachIndexed { i, ic ->
+            if (i > 0) row.addView(IconView(this, "M9 6l6 6-6 6", 2f).apply { tint = Glass.TEXT3 }, LinearLayout.LayoutParams(dp(12), dp(12)).apply { leftMargin = dp(4); rightMargin = dp(4) })
+            row.addView(FrameLayout(this).apply { background = glass(10, 0x1affffff); addView(IconView(this@VideoEditorActivity, ic, 1.8f).apply { tint = Glass.TEXT2 }, FrameLayout.LayoutParams(dp(16), dp(16), Gravity.CENTER)) }, dp(28), dp(28))
+        }
+        row.addView(text("ⓘ", 13f, Glass.TEXT3, true).apply { setPadding(dp(8), 0, 0, 0) })
+        into.addView(row, -1, -2)
+    }
+    private val TAP = "M9 11V6a1.5 1.5 0 0 1 3 0v4 M12 10V5a1.5 1.5 0 0 1 3 0v6 M15 9a1.5 1.5 0 0 1 3 0v4a6 6 0 0 1-6 6h-1a5 5 0 0 1-4-2l-3-4a1.5 1.5 0 0 1 2.4-1.8L9 13"
+    private val BAR = "M3 10h18v4H3z"
+    private val DRAG = "M5 12h14 M8 9l-3 3 3 3 M16 9l3 3-3 3"
+
     // ---------- Freeze frame, reverse, slow moves ----------
     private val toolMenu by lazy { GlassMenu(window.decorView as FrameLayout) {} }
     private fun motionMenu(anchor: View) {
@@ -2121,7 +2139,7 @@ class VideoEditorActivity : ComponentActivity() {
         fun setCurve(c: FloatArray?) { if (e != null) e.curve = c else { mainCurve = c; if (c != null) smooth = false }; curveSpeedSet = 0f; showTime() }
         val head = text("คลิป ${order().indexOf(playIndex) + 1} · ยาว ${clock(lenOf(playIndex))}" + (if (curve() == null) " · ${speedName(base())}" else " · เส้นโค้ง"), 13f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; setPadding(0, dp(2), 0, dp(4)) }
         col.addView(head, -1, -2)
-        if (e == null && cutValid()) { col.addView(text("คลิปนี้ตัดช่วงกลางออกไว้ จึงใช้ได้เฉพาะความเร็วคงที่", 11.5f, Glass.TEXT3).apply { gravity = Gravity.CENTER }, -1, -2) }
+        if (e == null && cutValid()) col.addView(text("ตัดช่วงกลางไว้ · ความเร็วคงที่เท่านั้น", 11.5f, Glass.TEXT3).apply { gravity = Gravity.CENTER }, -1, -2)
         val tabs = LinearLayout(this).apply { gravity = Gravity.CENTER }
         listOf("ความเร็วคงที่", "เส้นโค้งความเร็ว").forEachIndexed { i, n -> val on = i == speedTab
             tabs.addView(text(n, 12.5f, if (on) Glass.ACCENT else Color.WHITE, on).apply { gravity = Gravity.CENTER; background = glass(16, if (on) Glass.ACCENT_SOFT else 0x1fffffff); setPadding(dp(14), 0, dp(14), 0)
@@ -2146,7 +2164,7 @@ class VideoEditorActivity : ComponentActivity() {
                     if (v == null || v <= 0f) { notice("ใส่ตัวเลขมากกว่า 0"); false } else { setCurve(null); setBase(v.coerceIn(0.001f, 5000f)); showTool(2, false); true } } }, LinearLayout.LayoutParams(-2, dp(34)).apply { setMargins(dp(3), 0, dp(3), 0) })
             col.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(row) }, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.CENTER_HORIZONTAL; topMargin = dp(4) })
             val sp = allSpeeds()
-            if (hasAudio && sp.any { it !in SOUND_MIN..SOUND_MAX }) col.addView(text("มีบางคลิปช้ากว่า 0.25× หรือเร็วกว่า 4× · วิดีโอที่ส่งออกจะไม่มีเสียงคลิป", 11f, Glass.TEXT3).apply { gravity = Gravity.CENTER; setPadding(dp(16), dp(4), dp(16), 0) }, -1, -2)
+            if (hasAudio && sp.any { it !in SOUND_MIN..SOUND_MAX }) col.addView(text("ต่ำกว่า 0.25× หรือเกิน 4× · ไม่มีเสียงคลิป", 11f, Glass.TEXT3).apply { gravity = Gravity.CENTER; setPadding(dp(16), dp(4), dp(16), 0) }, -1, -2)
             if (e == null && speed < 1f && mainCurve == null) col.addView(EditorKit.chip(this, if (smooth) "สโลว์ลื่น (Optical flow) · เปิด" else "สโลว์ลื่น (Optical flow) · ปิด", SMOOTH, smooth) {
                 smooth = !smooth; showTool(2, false)
                 if (smooth) notice("สร้างเฟรมแทรก ${SlowFlow.factor(speed) - 1} เฟรมต่อเฟรมตอนส่งออก · ใช้เวลานานขึ้น · ไม่มีเสียงคลิป")
@@ -2240,7 +2258,7 @@ class VideoEditorActivity : ComponentActivity() {
             if (w.isEmpty()) askText("") { addText(it) } else addText(w)
             (getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).hideSoftInputFromWindow(field.windowToken, 0) }, LinearLayout.LayoutParams(-2, dp(40)).apply { leftMargin = dp(8) })
         col.addView(top, -1, -2)
-        if (cur == null) { col.addView(text("พิมพ์แล้วแตะ \"เพิ่ม\" · แตะแถบสีเหลืองบนไทม์ไลน์เพื่อแก้ข้อความที่มีอยู่", 11.5f, Glass.TEXT3).apply { gravity = Gravity.CENTER; setPadding(dp(16), dp(10), dp(16), 0) }, -1, -2); return }
+        if (cur == null) { tip(col, "พิมพ์แล้วแตะ \"เพิ่ม\" · แตะแถบสีเหลืองบนไทม์ไลน์เพื่อแก้ข้อความที่มีอยู่", EditorKit.TEXT, TAP, BAR, top = 10); return }
         val drops = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), 0, dp(14), 0) }
         fun drop(v: View) = drops.addView(v, LinearLayout.LayoutParams(-2, dp(36)).apply { rightMargin = dp(8) })
         val fi = VideoLayers.font(cur.style).coerceIn(0, VideoLayers.FONT_NAMES.size - 1)
@@ -2406,7 +2424,7 @@ class VideoEditorActivity : ComponentActivity() {
         toggle("เสียงพูดชัด", voice) { voice = !voice }
         toggle("ลดเพลงตอนมีเสียงพูด", duck) { duck = !duck }
         box.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(toggles) }, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.CENTER_HORIZONTAL })
-        box.addView(text("แตะแถบเพลงหรือเสียงบนไทม์ไลน์เพื่อปรับแถบนั้น · ลากแถบเพื่อเลือกช่วงที่เล่น · ตัดและแยกได้ที่เมนูตัด", 11f, Glass.TEXT3).apply { gravity = Gravity.CENTER; setPadding(dp(16), dp(2), dp(16), dp(8)) }, -1, -2)
+        tip(box, "แตะแถบเพลงหรือเสียงบนไทม์ไลน์เพื่อปรับแถบนั้น · ลากแถบเพื่อเลือกช่วงที่เล่น · ตัดและแยกได้ที่เมนูตัด", TAP, BAR, DRAG, top = 2)
     }
 
     private val LANGS = listOf("ภาษาไทย" to "th-TH", "English" to "en-US", "日本語" to "ja-JP", "한국어" to "ko-KR", "中文 (普通话)" to "zh-CN", "粵語" to "yue-Hant-HK",
@@ -2601,7 +2619,7 @@ class VideoEditorActivity : ComponentActivity() {
             onChange = { k -> pending = 50 + k * 5; value.text = "$pending%"; if (!dragging) applyCaptionScale(pending) }
             onDrag = { d -> dragging = d; if (!d) applyCaptionScale(pending) } }
         card.addView(slider, LinearLayout.LayoutParams(-1, dp(40)))
-        card.addView(text("ใช้กับทุกบรรทัดพร้อมกัน ปรับได้ทั้งก่อนและหลังสร้าง", 11.5f, Glass.TEXT3))
+        card.addView(text("ใช้กับทุกบรรทัด", 11.5f, Glass.TEXT3))
         return card
     }
     /** The caption panel scrolls, so everything stays reachable however tall it gets. */
@@ -2809,7 +2827,7 @@ class VideoEditorActivity : ComponentActivity() {
     private fun transitionTools(col: LinearLayout) {
         val icons = listOf(EditorKit.SCISSORS, "M4 12h16 M4 6h16 M4 18h16", "M12 3v4 M12 17v4 M3 12h4 M17 12h4 M6 6l2.5 2.5 M15.5 15.5L18 18 M18 6l-2.5 2.5 M8.5 15.5L6 18", "M10 4H4v6 M14 4h6v6 M10 20H4v-6 M14 20h6v-6", "M4 12h12 M12 7l5 5-5 5 M20 5v14", "M4 4h8v16H4z M15 4v16 M19 4v16", "M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16 M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8")
         val items = TRANSITIONS.mapIndexed { i, n -> EditorKit.StripItem(this, icons[i], n) }
-        if (extras.isEmpty()) col.addView(text("ทรานซิชันอยู่ระหว่างคลิป · เพิ่มคลิปที่แท็บคลิปก่อน", 11.5f, Glass.TEXT3).apply { gravity = Gravity.CENTER; setPadding(dp(16), 0, dp(16), dp(6)) }, -1, -2)
+        if (extras.isEmpty()) tip(col, "ทรานซิชันอยู่ระหว่างคลิป · เพิ่มคลิปก่อน (ปุ่ม + ท้ายไทม์ไลน์)", "M4 6h7v12H4z M13 6h7v12h-7z", Icons.PLUS, top = 0)
         col.addView(EditorKit.strip(this, items.map { it to 70 }, transition, 60, { k -> items.forEachIndexed { j, v -> v.lit(j == k) } }) { k -> transition = k },
             LinearLayout.LayoutParams(-1, dp(70)))
     }
@@ -2824,7 +2842,7 @@ class VideoEditorActivity : ComponentActivity() {
         chips.addView(EditorKit.chip(this, "รูป / GIF ของฉัน", ADD) { pickSticker.launch(arrayOf("image/*")) }, LinearLayout.LayoutParams(-2, dp(36)).apply { setMargins(dp(4), 0, dp(4), 0) })
         if (stickers.isNotEmpty()) chips.addView(EditorKit.chip(this, "ลบอีโมจิล่าสุด", "M9 14L4 9l5-5 M4 9h10a6 6 0 0 1 0 12h-3") { stickers.removeAt(stickers.size - 1); rebuildStickers(); showTool(12, false) }, LinearLayout.LayoutParams(-2, dp(36)).apply { setMargins(dp(4), 0, dp(4), 0) })
         col.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(chips) }, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.CENTER_HORIZONTAL })
-        col.addView(text("ลากอีโมจิบนภาพเพื่อย้าย แตะเพื่อปรับขนาด · รูปของคุณปรับต่อได้ที่เมนูเลเยอร์", 11.5f, Glass.TEXT3).apply { gravity = Gravity.CENTER; setPadding(dp(16), dp(8), dp(16), 0) }, -1, -2)
+        tip(col, "ลากอีโมจิบนภาพเพื่อย้าย แตะเพื่อปรับขนาด · รูปของคุณปรับต่อได้ที่เมนูเลเยอร์", DRAG, TAP, top = 8)
     }
     private val pickSticker = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) { runCatching { contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }; addLayers(listOf(uri), VideoLayer.IMAGE, home = 12, size = 0.3f) }
@@ -2844,7 +2862,7 @@ class VideoEditorActivity : ComponentActivity() {
             getSharedPreferences("camera", MODE_PRIVATE).edit().putInt("lane_dp", v).apply(); timeline.laneDp = v.toFloat(); laneCount = -1; refreshTimeline(); showTool(LAYER_TOOL, false) }, LinearLayout.LayoutParams(0, dp(42), 1f).apply { setMargins(dp(3), 0, dp(3), dp(4)) }) } }, -1, -2)
         val l = layers.getOrNull(layerPick)
         if (l == null || !l.visual || !barActive) {
-            col.addView(text("เพิ่มภาพหรือวิดีโอซ้อนบนคลิป · แตะแถบบนไทม์ไลน์หรือแตะบนภาพเพื่อปรับเลเยอร์นั้น", 12f, Glass.TEXT3).apply { gravity = Gravity.CENTER; setPadding(dp(16), dp(24), dp(16), 0) }, -1, -2)
+            tip(col, "เพิ่มภาพหรือวิดีโอซ้อนบนคลิป · แตะแถบบนไทม์ไลน์หรือแตะบนภาพเพื่อปรับเลเยอร์นั้น", Icons.PLUS, TAP, BAR, top = 24)
             return
         }
         val controls = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
