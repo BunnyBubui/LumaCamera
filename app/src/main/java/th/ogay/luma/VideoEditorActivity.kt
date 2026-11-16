@@ -578,7 +578,9 @@ class VideoEditorActivity : ComponentActivity() {
         if (state == null && intent.hasExtra("project")) StudioProjects.load(this, projectId)?.let { p -> projectName = p.name; reopened = p.state; restore(p.state); tool = 0; layerPick = -1 }
         named = state?.getBoolean("named") ?: (!intent.hasExtra("project") && !intent.getStringExtra("name").isNullOrBlank())
         // Shared from another app together with more videos: they join the end of the timeline, in the order they were sent.
-        if (state == null && !intent.hasExtra("project")) intent.getStringArrayListExtra("share_more")?.takeIf { it.isNotEmpty() }?.let { more -> window.decorView.post { importShared(more) } }
+        // Not tied to a fresh start: if the screen is rebuilt before the import finished, the new copy does it again.
+        shareDone = state?.getBoolean("shareDone") == true
+        if (!shareDone && !intent.hasExtra("project")) intent.getStringArrayListExtra("share_more")?.takeIf { it.isNotEmpty() }?.let { more -> window.decorView.post { importShared(more) } }
         if (projectName.isEmpty()) projectName = "โปรเจกต์ " + android.text.format.DateFormat.format("d MMM HH:mm", System.currentTimeMillis())
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         installRoot(root)
@@ -705,12 +707,14 @@ class VideoEditorActivity : ComponentActivity() {
         convertLegacyMusic()
         rebuildStickers(); loadLayerThumbs()
     }
+    private var shareDone = false
     private fun importShared(more: List<String>) {
         luma.readIo.execute {
             val got = more.mapNotNull { u -> readExtra(Uri.parse(u))?.let { u to it } }
             runOnUiThread {
                 if (isDestroyed) return@runOnUiThread
                 got.forEach { (u, e) -> extraCache[u] = e; extras += e.copy() }
+                shareDone = true
                 if (got.isNotEmpty()) { showTime(); showTool(10, false); saveProject() }
                 notice(if (got.size == more.size) "เพิ่มอีก ${got.size} คลิปต่อท้ายแล้ว" else "เพิ่มได้ ${got.size} จาก ${more.size} คลิป · บางไฟล์เปิดไม่ได้")
             }
@@ -2729,7 +2733,7 @@ class VideoEditorActivity : ComponentActivity() {
     override fun onDestroy() { (speech as? StudioSpeech)?.stop(); speech = null; TaskNotice.stop(this); if (translating) { translateStopped = true; LlamaTranslator.cancel() }; if (hearingModels) { ModelStore.unlisten(modelEvents); hearingModels = false }; fxEq?.runCatching { release() }; fxEq = null; recorder?.runCatching { stop() }; recorder?.runCatching { release() }; recorder = null; handler.removeCallbacksAndMessages(null); releasePlayer(); musicPlayer?.runCatching { release() }; releaseLayerSound(); super.onDestroy() }
     override fun onSaveInstanceState(out: Bundle) {
         super.onSaveInstanceState(out); writeState(out)
-        out.putString("projectId", projectId); out.putString("projectName", projectName); out.putBoolean("named", named)
+        out.putString("projectId", projectId); out.putString("projectName", projectName); out.putBoolean("named", named); out.putBoolean("shareDone", shareDone)
     }
     private fun state() = Bundle().also { writeState(it) }
     private fun writeState(out: Bundle) {

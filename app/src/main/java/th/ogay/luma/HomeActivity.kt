@@ -595,13 +595,13 @@ class HomeActivity : ComponentActivity() {
 
         fun setPicture(i: Int, b: Bitmap) { views.getOrNull(i)?.let { it.setImageBitmap(b); it.visibility = View.VISIBLE; layoutPages() } }
 
-        private fun schedule() { removeCallbacks(tick); if (!still && count > 1 && running) postDelayed(tick, 6500) }
+        private fun schedule() { removeCallbacks(tick); if (!still && count > 1 && running) postDelayed(tick, 5000) }
         private fun startZoom() {
             zoomAnim?.cancel()
             if (still || count == 0 || !running) return
             val i = page
             zoomAnim = android.animation.ValueAnimator.ofFloat(zoom[i], 1f).apply {
-                duration = 7000; interpolator = android.view.animation.DecelerateInterpolator(1.4f)
+                duration = 5200; interpolator = android.view.animation.LinearInterpolator()
                 addUpdateListener { zoom[i] = it.animatedValue as Float; layoutPages() }; start() }
         }
         /** Moves [step] pictures ahead (or back) with a smooth slide, then zooms the new one. */
@@ -624,8 +624,9 @@ class HomeActivity : ComponentActivity() {
             views.forEachIndexed { i, v ->
                 var d = (((i - offset) % n) + n) % n; if (d > n / 2f) d -= n
                 val near = Math.abs(d) < 1.01f
-                v.translationX = d * w
-                val sc = 1f + 0.12f * zoom[i]
+                // While it waits its turn the picture zooms in and drifts a little to one side (the side alternates per picture).
+                v.translationX = d * w + (if (i % 2 == 0) -1f else 1f) * 0.025f * w * zoom[i]
+                val sc = 1f + 0.14f * zoom[i]
                 v.scaleX = sc; v.scaleY = sc
                 v.alpha = 1f - 0.25f * Math.min(1f, Math.abs(d))
                 v.visibility = if (near && v.drawable != null) View.VISIBLE else View.INVISIBLE

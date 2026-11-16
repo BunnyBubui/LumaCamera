@@ -50,7 +50,8 @@ class ShareReceiverActivity : ComponentActivity() {
                     val name = "แชร์เข้ามา " + android.text.format.DateFormat.format("d MMM HH:mm", stamp)
                     startActivity(VideoEditorActivity.intent(this, copied[0]).putExtra("name", name)
                         .putStringArrayListExtra("share_more", ArrayList(copied.drop(1).map { it.toString() })))
-                    if (images.isNotEmpty()) notice("ตัดต่อวิดีโอรับเฉพาะวิดีโอ · ข้ามรูปที่แชร์มาด้วย")
+                    // Says how many arrived, so a missing clip is visible at once instead of silently dropped.
+                    notice("รับวิดีโอ ${copied.size} จาก ${videos.size} ไฟล์ที่แชร์มา" + (if (images.isNotEmpty()) " · ข้ามรูป ${images.size} รูป" else ""))
                     finish()
                 }
             } else if (images.isNotEmpty()) {
