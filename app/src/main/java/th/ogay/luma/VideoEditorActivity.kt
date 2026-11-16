@@ -1007,7 +1007,9 @@ class VideoEditorActivity : ComponentActivity() {
         var page: SettingsPage? = null
         fun reopen() { page?.close(); window.decorView.post { autoEditSheet() } }
         // Any choice can change which rows belong on the page (API rows, the model's download row), so the page is rebuilt.
-        page = SettingsPage(this, "ตัดต่ออัตโนมัติ") { AutoBrain.MODELS.getOrNull(p.getInt("auto_model", 0))?.let { ModelStore.select(this, it) }; reopen() }.apply {
+        page = SettingsPage(this, "ตัดต่ออัตโนมัติ") { AutoBrain.MODELS.getOrNull(p.getInt("auto_model", 0))?.let { ModelStore.select(this, it) }
+            // The callback also runs when the page is closed; only a change made while it is open rebuilds it (or it could never be left).
+            if (page?.showing == true) reopen() }.apply {
             if (analysing) { section("กำลังทำงาน"); action("หยุดตัดต่ออัตโนมัติ", Icons.CLOSE, "ทิ้งงานที่กำลังวิเคราะห์") { close(); stopAutoEdit() } }
             section("คำสั่ง")
             val said = p.getString("auto_prompt", "").orEmpty()
@@ -1201,10 +1203,11 @@ class VideoEditorActivity : ComponentActivity() {
         val sfxOn = p.getBoolean("auto_sfx", true)
         val run = ++autoRun; analysing = true
         val reader = when (brain) { 1 -> model.name; 2 -> AutoBrain.provider(this).name; else -> "" }
-        val ui = CaptionProgress(this, firstFrame, listOf("วัดเสียงและภาพทุกคลิป", "หาช่วงที่มีคนพูด", if (brain == 0) "วางแผนการตัด" else "$reader อ่านคำสั่งและวางแผน", "ใส่เพลงและจัดลงไทม์ไลน์"),
-            listOf(ExportProgress.Backdrop.EDIT, ExportProgress.Backdrop.FLOW, ExportProgress.Backdrop.AI, ExportProgress.Backdrop.SAVE),
-            listOf("กำลังวัดเสียงและภาพ", "กำลังหาช่วงที่มีคนพูด", "กำลังวางแผน", "กำลังจัดวาง"), noticeTitle = "ตัดต่ออัตโนมัติ") { stopAutoEdit() }
-        autoUi = ui; ui.render(0, 0.01f, "เตรียมอ่าน ${srcs.size} คลิป")
+        val ui = CaptionProgress(this, firstFrame,
+            listOf("ฟังเสียงทุกคลิป", "ดูการเปลี่ยนภาพและฉาก", "หาช่วงที่มีคนพูด", if (brain == 0) "วางแผนการตัดตามแนว ${style.name}" else "$reader อ่านคำสั่งและวางแผน", "เตรียมเพลงและเอฟเฟกต์เสียง", "จัดลงไทม์ไลน์"),
+            listOf(ExportProgress.Backdrop.EDIT, ExportProgress.Backdrop.FLOW, ExportProgress.Backdrop.FLOW, ExportProgress.Backdrop.AI, ExportProgress.Backdrop.EDIT, ExportProgress.Backdrop.SAVE),
+            listOf("กำลังฟังเสียง", "กำลังดูการเปลี่ยนภาพ", "กำลังหาช่วงที่มีคนพูด", "กำลังวางแผน", "กำลังเตรียมเสียง", "กำลังจัดวาง"), noticeTitle = "ตัดต่ออัตโนมัติ") { stopAutoEdit() }
+        autoUi = ui; ui.render(0, 0.01f, "เตรียมอ่าน ${srcs.size} คลิป · รวม ${clock(srcs.sumOf { it.to - it.from })}")
         val totalMs = srcs.sumOf { (it.to - it.from).coerceAtLeast(1) }.toFloat()
         var lastPaint = 0L
         // Progress from the worker: stage, overall fraction, note; at most about eight paints a second.
@@ -1212,33 +1215,46 @@ class VideoEditorActivity : ComponentActivity() {
             val now = System.currentTimeMillis(); if (!force && now - lastPaint < 120) return; lastPaint = now
             runOnUiThread { if (run == autoRun && autoUi === ui) ui.render(stage, f, note, etaMs = eta) }
         }
+        /** What a step just found, shown in the box under the heading. */
+        fun found(text: String) = runOnUiThread { if (run == autoRun && autoUi === ui) ui.found(text) }
+        fun label(i: Int) = if (srcs.size > 1) "คลิป ${i + 1} จาก ${srcs.size}" else "คลิปนี้"
         luma.readIo.execute { try {
             val stop = { isDestroyed || run != autoRun }
             class Stopped : RuntimeException()
-            // 1. Loudness and picture changes, clip by clip (0–55 % of the bar).
+            // 1. Loudness of every clip (0–20 % of the bar).
             var doneMs = 0L
-            val measured = srcs.mapIndexed { i, c ->
-                val len = c.to - c.from; val share = len / totalMs; val base = doneMs / totalMs
-                val label = if (srcs.size > 1) "คลิป ${i + 1} จาก ${srcs.size}" else "คลิปนี้"
-                val pk = if (c.muted) FloatArray(0) else runCatching { AudioPeaks.range(this, c.uri, c.from, c.to) { f -> if (stop()) throw Stopped(); paint(0, 0.55f * (base + share * 0.4f * f), "$label · ฟังเสียง") } }.getOrDefault(FloatArray(0))
+            val peaks = srcs.mapIndexed { i, c ->
+                val len = c.to - c.from; val share = len / totalMs; val base = doneMs / totalMs; doneMs += len
+                val pk = if (c.muted) FloatArray(0) else runCatching { AudioPeaks.range(this, c.uri, c.from, c.to) { f -> if (stop()) throw Stopped(); paint(0, 0.20f * (base + share * f), "${label(i)} · วัดความดังทุก 0.05 วินาที") } }.getOrDefault(FloatArray(0))
                 if (stop()) return@execute
+                if (pk.any { it > 0f }) pk else FloatArray(0)
+            }
+            val heardClips = peaks.count { it.isNotEmpty() }
+            val quietShare = peaks.filter { it.isNotEmpty() }.flatMap { it.asIterable() }.let { all -> if (all.isEmpty()) 0 else all.count { it < 0.05f } * 100 / all.size }
+            found(if (heardClips == 0) "ไม่มีเสียงให้วัด (คลิปปิดเสียงหรือไม่มีเสียง)" else "เสียง: $heardClips คลิปมีเสียง · เงียบประมาณ $quietShare% ของเวลา")
+            // 2. Picture changes, frame by frame (20–55 %).
+            doneMs = 0L
+            val measured = srcs.mapIndexed { i, c ->
+                val len = c.to - c.from; val share = len / totalMs; val base = doneMs / totalMs; doneMs += len
                 // A phone with little memory or few cores looks at half as many frames.
                 val step = when { len > 600_000 -> 1_000L; len > 120_000 -> 500L; else -> 250L } * (if (Device.low(this)) 2 else 1)
-                val diffs = frameDiffs(c.uri, c.from, c.to, step, stop) { f -> paint(0, 0.55f * (base + share * (0.4f + 0.6f * f)), "$label · ดูการเปลี่ยนภาพ") }
-                doneMs += len
-                Triple(if (pk.any { it > 0f }) pk else FloatArray(0), diffs, step)
+                val diffs = frameDiffs(c.uri, c.from, c.to, step, stop) { f -> paint(1, 0.20f + 0.35f * (base + share * f), "${label(i)} · เทียบภาพทุก ${if (step >= 1000) "${step / 1000} วินาที" else "$step มิลลิวินาที"} · ถึง ${clock((len * f).toLong())}") }
+                Triple(peaks[i], diffs, step)
             }
             if (stop()) return@execute
-            // 2. Where people talk (55–70 %).
+            found("ภาพ: พบจุดเปลี่ยนฉาก ${measured.sumOf { StudioMath.sceneCuts(it.second, it.third).size }} จุด จากภาพ ${measured.sumOf { it.second.size }} เฟรมที่ดู")
+            // 3. Where people talk (55–70 %).
             doneMs = 0L
             val voices = srcs.mapIndexed { i, c ->
                 val len = c.to - c.from; val base = doneMs / totalMs; val share = len / totalMs; doneMs += len
                 if (c.muted || measured[i].first.isEmpty() || len > (if (Device.low(this)) 10 else 30) * 60_000L) null
-                else VoiceFinder.find(this, c.uri, c.from, c.to, stop) { f -> paint(1, 0.55f + 0.15f * (base + share * f), if (srcs.size > 1) "คลิป ${i + 1} จาก ${srcs.size}" else "ฟังว่ามีคนพูดช่วงไหน") }
+                else VoiceFinder.find(this, c.uri, c.from, c.to, stop) { f -> paint(2, 0.55f + 0.15f * (base + share * f), "${label(i)} · แยกเสียงพูดจากเพลงและเสียงรอบข้าง") }
             }
             if (stop()) return@execute
+            val talk = voices.filterNotNull().flatten()
+            found(if (voices.all { it == null }) "เสียงพูด: ข้ามขั้นนี้ (ไม่มีเสียง หรือคลิปยาวเกินไป)" else "เสียงพูด: ${talk.size} ช่วง รวม ${clock(talk.sumOf { it.second - it.first })}")
             val inputs = srcs.indices.map { i -> AutoEdit.ClipInput(i, srcs[i].from, srcs[i].to, measured[i].first, AudioPeaks.STEP_MS.toLong(), measured[i].second, measured[i].third, speech[i], voices[i]) }
-            paint(2, 0.72f, if (brain == 0) "เลือกช่วงตามแนว ${style.name}" else "ส่งรายการช็อตให้ $reader", if (brain == 0) -2L else -1L, force = true)
+            paint(3, 0.72f, if (brain == 0) "ให้คะแนนแต่ละช่วงจากเสียง ภาพ และเสียงพูด" else "ส่งรายการช็อตให้ $reader", if (brain == 0) -2L else -1L, force = true)
             val beats = song?.let { s -> runCatching {
                 val pk = AudioPeaks.range(this, s.source, s.from, s.from + s.length)
                 StudioMath.beats(pk, AudioPeaks.STEP_MS.toLong()).filter { it >= s.from && it < s.from + s.length }.map { s.at + it - s.from }
@@ -1247,9 +1263,10 @@ class VideoEditorActivity : ComponentActivity() {
             if (brain != 0 && !stop()) {
                 val shots = AutoEdit.shots(inputs)
                 val ask = AutoEdit.prompt(said, inputs, shots, style, if (song == null) lib.map { it.id to "${it.name}, ${it.bpm.toInt()} BPM, energy ${it.energy}/9. ${it.note}" } else emptyList())
-                paint(2, 0.75f, if (brain == 1) "โมเดลในเครื่องกำลังคิด · อาจใช้เวลาหลายสิบวินาที" else "รอคำตอบจาก $reader", -1L, force = true)
+                found("ส่งให้ผู้อ่านคำสั่ง: ${shots.size} ช็อต · คำสั่ง \"${said.take(60)}\"")
+                paint(3, 0.75f, if (brain == 1) "โมเดลในเครื่องกำลังคิด · อาจใช้เวลาหลายสิบวินาที" else "รอคำตอบจาก $reader", -1L, force = true)
                 val answer = if (brain == 1) AutoBrain.local(this, model, ask, lib.map { it.id })
-                    else AutoBrain.api(this, ask) { tool -> paint(2, 0.8f, "เรียกเครื่องมือ $tool", -1L, force = true) }
+                    else AutoBrain.api(this, ask) { tool -> paint(3, 0.8f, "เรียกเครื่องมือ $tool", -1L, force = true); found("เครื่องมือ MCP: $tool") }
                 val brief = answer.getOrNull()?.let { AutoEdit.parseBrief(it, style) }
                 if (brief != null) {
                     val b = if (target > 0) AutoEdit.Brief(brief.style, (target / 1000).toInt(), brief.crop, brief.transition, brief.captions, brief.film, brief.order, brief.keep, brief.drop, brief.title, brief.music, brief.sfx) else brief
@@ -1258,13 +1275,15 @@ class VideoEditorActivity : ComponentActivity() {
             }
             if (stop()) return@execute
             var final = plan ?: AutoEdit.plan(inputs, style, target, beats)
+            found("แผน: ${final.pieces.size} ช็อต · จาก ${clock(final.beforeMs)} เหลือ ${clock(final.afterMs)}" + (if (final.by.isNotEmpty()) " · วางโดย ${final.by}" else " · แนว ${final.style.name}"))
+            paint(4, 0.88f, if (song != null) "ใช้เพลงที่มีในโปรเจกต์" else "เลือกเพลงและขยับจุดตัดให้ลงจังหวะ", force = true)
             // Music: the user's pick wins, then the model's, then the style's; a link from a tool is downloaded into the library.
             var track: SoundLibrary.Track? = null
             if (song == null) {
                 val want = if (musicPick != "auto") musicPick else final.music.takeIf { it != "auto" } ?: (SoundLibrary.forStyle(final.style.id) ?: "none")
                 track = when {
                     want == "none" -> null
-                    want.startsWith("https://") -> { paint(3, 0.9f, "ดาวน์โหลดเพลงที่เครื่องมือแนะนำ", -1L, force = true); SoundLibrary.download(this, want) ?: SoundLibrary.byId(this, SoundLibrary.forStyle(final.style.id)) }
+                    want.startsWith("https://") -> { paint(4, 0.9f, "ดาวน์โหลดเพลงที่เครื่องมือแนะนำ", -1L, force = true); SoundLibrary.download(this, want) ?: SoundLibrary.byId(this, SoundLibrary.forStyle(final.style.id)) }
                     else -> SoundLibrary.byId(this, want) ?: SoundLibrary.byId(this, SoundLibrary.forStyle(final.style.id))
                 }
                 // Cuts land on the new music's beats.
@@ -1273,7 +1292,9 @@ class VideoEditorActivity : ComponentActivity() {
             }
             runOnUiThread {
                 if (stop()) return@runOnUiThread
-                analysing = false; ui.render(3, 0.96f, "จัดลงไทม์ไลน์"); ui.remove(); autoUi = null
+                analysing = false; ui.render(5, 1f, "วาง ${final.pieces.size} ช็อตลงไทม์ไลน์" + (track?.let { " · เพลง ${it.name}" } ?: ""))
+                // The finished state stays for a moment so the last step and the plan can be read.
+                window.decorView.postDelayed({ ui.remove(); if (autoUi === ui) autoUi = null }, 500)
                 if (why.isNotEmpty()) notice("$why · ใช้แนวสำเร็จรูปแทน")
                 if (final.pieces.isEmpty()) { notice("ไม่พบช่วงที่เก็บไว้ได้ จึงไม่เปลี่ยนวิดีโอ"); return@runOnUiThread }
                 applyPlan(final, srcs, cropMode, subs, track, sfxOn)

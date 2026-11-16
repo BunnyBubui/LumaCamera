@@ -584,6 +584,8 @@ class CaptionProgress(
             labels[k].setTextColor(if (k <= stage) Color.WHITE else Glass.TEXT3)
         }
     }
+    /** A plain line under the heading for what a step just found (no quotation marks, unlike heard words). */
+    fun found(text: String) { if (text.isEmpty()) return; heard.text = text; heardBox.visibility = View.VISIBLE }
     fun remove() {
         gone = true; pill.visibility = View.GONE; TaskNotice.stop(a)
         layer.animate().alpha(0f).setDuration(200).withEndAction { (layer.parent as? FrameLayout)?.let { it.removeView(layer); it.removeView(pill) } }.start()
