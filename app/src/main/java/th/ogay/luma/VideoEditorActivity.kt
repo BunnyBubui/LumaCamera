@@ -342,6 +342,7 @@ class VideoEditorActivity : ComponentActivity() {
     private var player: MediaPlayer? = null; private var musicPlayer: MediaPlayer? = null
     private var surface: Surface? = null; private var prepared = false
     private val handler = Handler(Looper.getMainLooper())
+    private var tickCount = 0
     private val tick = object : Runnable { override fun run() {
         val p = player ?: return
         if (prepared && p.isPlaying) {
@@ -354,6 +355,7 @@ class VideoEditorActivity : ComponentActivity() {
             } else if (playIndex > 0 && !switching) extras.getOrNull(playIndex - 1)?.let { e ->
                 if (pos >= e.to - 30) playClip(nextOf(playIndex)) else trim.playhead = pos.coerceIn(e.from, e.to) }
             showTime(); syncLayerSound(true)
+            if (++tickCount % 30 == 0) preloadNext()
         }
         handler.postDelayed(this, 33)
     } }
@@ -633,6 +635,10 @@ class VideoEditorActivity : ComponentActivity() {
             val now = outNow(); val near = markers.firstOrNull { abs(it - now) <= 150 }
             if (near != null) markers.remove(near) else { markers += now; markers.sort() }
             Glass.tick(timeline); refreshTimeline() }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { rightMargin = dp(6) })
+        // Folds the tool panel away so the picture and the timeline get its room; any tool tab opens it again.
+        collapseIcon = IconView(this, "M6 9l6 6 6-6", 2f)
+        transport.addView(FrameLayout(this).apply { background = glass(22, 0x40ffffff); isClickable = true; contentDescription = "ย่อหรือขยายแถบเครื่องมือ"; glassTouch(); setOnClickListener { Glass.tick(it); setCollapsed(!collapsed) }
+            addView(collapseIcon, FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER)) }, LinearLayout.LayoutParams(dp(44), dp(44)))
         root.addView(transport, -1, -2)
         timeline = StudioTimeline(this).apply { contentDescription = "ไทม์ไลน์ ลากเพื่อเลื่อนเวลา แตะคลิปเพื่อเลือก ลากขอบคลิปที่เลือกเพื่อตัด กดค้างแล้วลากเพื่อสลับลำดับ" }
         timeline.onSeek = { t, done -> if (player?.isPlaying == true) togglePlay(); val (k, at) = locate(t); jumpTo(k, at, done) }
@@ -685,8 +691,11 @@ class VideoEditorActivity : ComponentActivity() {
         root.addView(tools, LinearLayout.LayoutParams(-1, dp(124)))
         toolBar = EditorKit.ToolBar(this, listOf(EditorKit.SCISSORS to "ตัด", EditorKit.SPEED to "ความเร็ว", EditorKit.CROP to "ครอป", EditorKit.TEXT to "ข้อความ", Icons.FILM to "ฟิลเตอร์",
             EditorKit.ADJUST to "ปรับแต่งภาพ", EditorKit.ROTATE to "หมุน", Icons.SOUND to "เสียง", JOIN to "ทรานซิชัน", STICKER to "สติกเกอร์", LAYERS to "เลเยอร์",
-            "M4 6h16v10H8l-4 4z M8 10h8 M8 13h5" to "คำบรรยาย", "M12 4a3 3 0 0 0-3 3v5a3 3 0 0 0 6 0V7a3 3 0 0 0-3-3z M6 11a6 6 0 0 0 12 0 M12 17v3" to "อัดเสียง")) { showTool(TOOL_IDS[it]) }
+            "M4 6h16v10H8l-4 4z M8 10h8 M8 13h5" to "คำบรรยาย", "M12 4a3 3 0 0 0-3 3v5a3 3 0 0 0 6 0V7a3 3 0 0 0-3-3z M6 11a6 6 0 0 0 12 0 M12 17v3" to "อัดเสียง")) { setCollapsed(false); showTool(TOOL_IDS[it]) }
         root.addView(toolBar, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(4), 0, dp(4), dp(8)) })
+        rootBox = root; topBar = bar; transportRow = transport
+        collapsed = state?.getBoolean("collapsed") == true
+        arrange()
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) { override fun handleOnBackPressed() = leave() })
 
         trim.duration = duration; trim.start = start; trim.end = end; trim.split = split
@@ -697,7 +706,7 @@ class VideoEditorActivity : ComponentActivity() {
         texture.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
             override fun onSurfaceTextureAvailable(s: SurfaceTexture, w: Int, h: Int) { surface = Surface(s); openPlayer() }
             override fun onSurfaceTextureSizeChanged(s: SurfaceTexture, w: Int, h: Int) {}
-            override fun onSurfaceTextureDestroyed(s: SurfaceTexture): Boolean { releasePlayer(); surface?.release(); surface = null; return true }
+            override fun onSurfaceTextureDestroyed(s: SurfaceTexture): Boolean { releasePlayer(); dropNext(); surface?.release(); surface = null; return true }
             override fun onSurfaceTextureUpdated(s: SurfaceTexture) {}
         }
         applyLook(); showTool(tool, false); showTime()
@@ -769,19 +778,67 @@ class VideoEditorActivity : ComponentActivity() {
     }.getOrDefault(emptyList())
 
     // ---------- Playback ----------
+    // ---- The next clip, opened ahead of time ----
+    // Opening a file takes a few tenths of a second; done at the moment of the cut it showed as a hitch at every join.
+    // So while one clip plays, the next one is opened and moved to its first frame without a screen; at the cut it only takes the screen over.
+    private var nextPlayer: MediaPlayer? = null; private var nextFor = -1; private var nextFrom = -1L; private var nextUri: Uri? = null; private var nextReady = false
+    private fun clipUri(k: Int): Uri = if (k == 0) source else extras.getOrNull(k - 1)?.uri ?: source
+    private fun clipFrom(k: Int): Long = if (k == 0) start else extras.getOrNull(k - 1)?.from ?: 0L
+    private fun exactSeek(mp: MediaPlayer, ms: Long) { if (android.os.Build.VERSION.SDK_INT >= 26) mp.seekTo(ms, MediaPlayer.SEEK_CLOSEST) else mp.seekTo(ms.toInt()) }
+    private fun dropNext() { nextPlayer?.runCatching { release() }; nextPlayer = null; nextFor = -1; nextReady = false }
+    private fun preloadNext() {
+        if (isDestroyed || surface == null || extras.isEmpty()) { dropNext(); return }
+        val k = nextOf(playIndex); if (k == playIndex) { dropNext(); return }
+        val uri = clipUri(k); val from = clipFrom(k)
+        if (nextPlayer != null && nextFor == k && nextFrom == from && nextUri == uri) return
+        dropNext(); nextFor = k; nextFrom = from; nextUri = uri
+        val mp = MediaPlayer(); nextPlayer = mp
+        runCatching {
+            mp.setDataSource(this, uri)
+            mp.setOnSeekCompleteListener { if (nextPlayer === it) nextReady = true }
+            mp.setOnPreparedListener { if (nextPlayer === it) { if (from > 0) exactSeek(it, from) else nextReady = true } }
+            mp.setOnErrorListener { it, _, _ -> if (nextPlayer === it) dropNext(); true }
+            mp.prepareAsync()
+        }.onFailure { dropNext() }
+    }
+    private fun startIfAsked(mp: MediaPlayer) {
+        if (!autoPlay) return
+        autoPlay = false; val sp = if (playIndex == 0) speed else extras.getOrNull(playIndex - 1)?.speed ?: 1f
+        if (sp != 1f) runCatching { mp.playbackParams = mp.playbackParams.setSpeed(sp) }; mp.start(); musicPlayer?.runCatching { start() }; playIcon.path = "M8 6v12 M16 6v12"
+    }
+    private fun onClipEnd() { if (playIndex == 0 && extras.isEmpty()) player?.seekTo(start.toInt()) else playClip(nextOf(playIndex)) }
+
     private fun openPlayer() {
         val s = surface ?: return
-        releasePlayer(); fxEq?.runCatching { release() }; fxEq = null
         if (playIndex > extras.size) playIndex = 0
+        // The clip that was opened ahead is the one wanted, at the place wanted: it takes the screen and plays at once.
+        val np = nextPlayer
+        if (np != null && nextReady && nextFor == playIndex && pendingSeek < 0 && nextUri == clipUri(playIndex) && nextFrom == clipFrom(playIndex)) {
+            nextPlayer = null; nextFor = -1; nextReady = false
+            handler.removeCallbacks(tick); fxEq?.runCatching { release() }; fxEq = null
+            val old = player; player = null; old?.runCatching { release() }
+            val ok = runCatching { np.setOnSeekCompleteListener(null); np.setOnPreparedListener(null); np.setOnErrorListener(null); np.setSurface(s); np.setOnCompletionListener { onClipEnd() } }.isSuccess
+            if (ok) {
+                player = np; prepared = true; applySound(); layoutVideo(); arrived(); startIfAsked(np)
+                handler.post(tick); handler.postDelayed({ preloadNext() }, 250)
+                return
+            }
+            np.runCatching { release() }
+        }
+        releasePlayer(); fxEq?.runCatching { release() }; fxEq = null
         val clip = if (playIndex == 0) source else extras[playIndex - 1].uri
         player = MediaPlayer().apply {
             runCatching {
                 setDataSource(this@VideoEditorActivity, clip); setSurface(s); isLooping = false
                 setOnPreparedListener { mp ->
-                    prepared = true; applySound(); if (playIndex == 0) seekTo(this@VideoEditorActivity.start.toInt()) else extras.getOrNull(playIndex - 1)?.let { if (it.from > 0) seekTo(it.from.toInt()) }; if (pendingSeek >= 0) { seekTo(pendingSeek.toInt()); pendingSeek = -1 }; applySound(); layoutVideo(); arrived()
-                    if (autoPlay) { autoPlay = false; val sp = if (playIndex == 0) speed else extras.getOrNull(playIndex - 1)?.speed ?: 1f; if (sp != 1f) runCatching { mp.playbackParams = mp.playbackParams.setSpeed(sp) }; mp.start(); musicPlayer?.runCatching { start() }; playIcon.path = "M8 6v12 M16 6v12" }
+                    prepared = true; applySound()
+                    // The exact frame where the clip starts, not the key frame before it (which showed a moment of the part that was cut off).
+                    val from = clipFrom(playIndex); if (from > 0) exactSeek(mp, from)
+                    if (pendingSeek >= 0) { seekTo(pendingSeek.toInt()); pendingSeek = -1 }; applySound(); layoutVideo(); arrived()
+                    startIfAsked(mp)
+                    handler.postDelayed({ preloadNext() }, 250)
                 }
-                setOnCompletionListener { if (playIndex == 0 && extras.isEmpty()) seekTo(this@VideoEditorActivity.start.toInt()) else playClip(nextOf(playIndex)) }
+                setOnCompletionListener { onClipEnd() }
                 prepareAsync()
             }.onFailure { notice("เล่นพรีวิวไม่ได้ · ${it.localizedMessage}") }
         }
@@ -821,6 +878,62 @@ class VideoEditorActivity : ComponentActivity() {
             texture.animate().scaleX(1f).scaleY(1f).setInterpolator(Glass.EASE).setDuration(VideoEdit.TRANSITION_MS).start()
         }
     }
+    // ---- Portrait and landscape ----
+    private lateinit var rootBox: LinearLayout; private lateinit var topBar: LinearLayout; private lateinit var transportRow: LinearLayout
+    private lateinit var collapseIcon: IconView
+    private var toolsHolder: android.widget.ScrollView? = null
+    private var collapsed = false
+    private fun landscape() = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    private fun setCollapsed(on: Boolean) {
+        collapsed = on
+        collapseIcon.path = if (on) "M6 15l6-6 6 6" else "M6 9l6 6 6-6"
+        (toolsHolder ?: tools).visibility = if (on) View.GONE else View.VISIBLE
+    }
+    /**
+     * Puts the parts of the page where the screen's shape wants them. Upright: top bar, picture, play row, timeline, tools, tabs
+     * in one column. On its side: the picture, play row and timeline on the left; the top bar, tools and tabs in a column on the
+     * right (the tools scroll there, because the screen is short).
+     */
+    private fun arrange() {
+        val parts = listOf<View>(topBar, stage, transportRow, timelineScroll, trim, tools, toolBar)
+        parts.forEach { (it.parent as? android.view.ViewGroup)?.removeView(it) }
+        rootBox.removeAllViews(); toolsHolder = null
+        val toolsH = tools.layoutParams?.height?.takeIf { it > 0 } ?: dp(124)
+        if (!landscape()) {
+            rootBox.orientation = LinearLayout.VERTICAL
+            rootBox.addView(topBar, -1, -2)
+            rootBox.addView(stage, LinearLayout.LayoutParams(-1, 0, 1f))
+            rootBox.addView(transportRow, -1, -2)
+            rootBox.addView(timelineScroll, LinearLayout.LayoutParams(-1, timelineScroll.layoutParams?.height ?: dp(68)).apply { topMargin = dp(2) })
+            rootBox.addView(trim, LinearLayout.LayoutParams(-1, 0))
+            rootBox.addView(tools, LinearLayout.LayoutParams(-1, toolsH))
+            rootBox.addView(toolBar, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(4), 0, dp(4), dp(8)) })
+        } else {
+            rootBox.orientation = LinearLayout.HORIZONTAL
+            val left = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            left.addView(stage, LinearLayout.LayoutParams(-1, 0, 1f))
+            left.addView(transportRow, -1, -2)
+            left.addView(timelineScroll, LinearLayout.LayoutParams(-1, timelineScroll.layoutParams?.height ?: dp(68)).apply { topMargin = dp(2) })
+            left.addView(trim, LinearLayout.LayoutParams(-1, 0))
+            val right = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            right.addView(topBar, -1, -2)
+            val holder = android.widget.ScrollView(this).apply { isVerticalScrollBarEnabled = false; isFillViewport = false; addView(tools, FrameLayout.LayoutParams(-1, toolsH)) }
+            toolsHolder = holder
+            right.addView(holder, LinearLayout.LayoutParams(-1, 0, 1f))
+            right.addView(toolBar, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(4), 0, dp(4), dp(4)) })
+            rootBox.addView(left, LinearLayout.LayoutParams(0, -1, 1.15f))
+            rootBox.addView(right, LinearLayout.LayoutParams(0, -1, 1f))
+        }
+        setCollapsed(collapsed)
+    }
+    override fun onConfigurationChanged(c: android.content.res.Configuration) {
+        super.onConfigurationChanged(c)
+        if (!::rootBox.isInitialized) return
+        // The picture's surface is rebuilt when it moves; the player comes back at the same moment of the same clip.
+        if (::trim.isInitialized) pendingSeek = trim.playhead
+        arrange(); rootBox.post { layoutVideo(); refreshTimeline() }
+    }
+
     private fun releasePlayer() {
         handler.removeCallbacks(tick); prepared = false
         player?.runCatching { release() }; player = null
@@ -3157,7 +3270,7 @@ class VideoEditorActivity : ComponentActivity() {
     override fun onDestroy() { (speech as? StudioSpeech)?.stop(); speech = null; TaskNotice.stop(this); if (translating) { translateStopped = true; LlamaTranslator.cancel() }; if (hearingModels) { ModelStore.unlisten(modelEvents); hearingModels = false }; fxEq?.runCatching { release() }; fxEq = null; recorder?.runCatching { stop() }; recorder?.runCatching { release() }; recorder = null; handler.removeCallbacksAndMessages(null); releasePlayer(); musicPlayer?.runCatching { release() }; releaseLayerSound(); super.onDestroy() }
     override fun onSaveInstanceState(out: Bundle) {
         super.onSaveInstanceState(out); writeState(out)
-        out.putString("projectId", projectId); out.putString("projectName", projectName); out.putBoolean("named", named); out.putBoolean("shareDone", shareDone)
+        out.putString("projectId", projectId); out.putString("projectName", projectName); out.putBoolean("named", named); out.putBoolean("shareDone", shareDone); out.putBoolean("collapsed", collapsed)
     }
     private fun state() = Bundle().also { writeState(it) }
     private fun writeState(out: Bundle) {
