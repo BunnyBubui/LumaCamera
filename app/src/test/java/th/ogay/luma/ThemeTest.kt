@@ -53,4 +53,18 @@ class ThemeTest {
         assertNull(Theme.parseHex("#12345"))
         assertNull(Theme.parseHex("zzzzzz"))
     }
+
+    @Test fun lightPresetsAreReadableAndStaySeparateFromDark() {
+        val darkBefore = Theme.darkP
+        Theme.LIGHT_PRESETS.forEach { pr ->
+            assertTrue(pr.name, Theme.isPale(pr.palette))
+            Theme.set(pr.palette)
+            assertTrue("${pr.name} text on page", Theme.luminance(pr.palette.background) - Theme.luminance(pr.palette.text) > 0.6f)
+            assertTrue("${pr.name} deep tone stays pale", Theme.luminance(Theme.bgDeep) > 0.7f)
+            assertEquals(pr.palette, Theme.lightP)
+        }
+        assertEquals(darkBefore, Theme.darkP)
+        assertTrue(Theme.PRESETS.none { Theme.isPale(it.palette) })
+        assertEquals(Theme.LIGHT_PRESETS[0].name, Theme.name(Theme.LIGHT_DEFAULT))
+    }
 }

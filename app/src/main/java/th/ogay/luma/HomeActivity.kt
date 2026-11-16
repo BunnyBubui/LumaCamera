@@ -102,50 +102,39 @@ class HomeActivity : ComponentActivity() {
         androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(host) { _, insets ->
             val bars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars() or androidx.core.view.WindowInsetsCompat.Type.displayCutout())
             host.setPadding(0, 0, 0, 0)
-            scroll.setPadding(bars.left, bars.top, bars.right, bars.bottom)
-            shade.layoutParams = (shade.layoutParams as FrameLayout.LayoutParams).apply { height = bars.top + dp(28) }
+            scroll.setPadding(bars.left, 0, bars.right, bars.bottom)
+            topInset = bars.top; heroHeader?.setPadding(dp(16), bars.top + dp(10), dp(12), 0)
+            shade.visibility = View.GONE
             insets
         }
 
-        // Header: the mark and the name on the left; theme colours and back-to-camera on the right.
-        val header = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        // "Home 2": the video editor fills the top of the page edge to edge (the latest project, a timeline and one big button),
+        // with the camera, gallery, film and photo editor as four tiles beneath.
+        col.setPadding(0, 0, 0, dp(14))
         val logo = LumoraLogoView(this).apply { progress = if (Glass.reduced(this@HomeActivity)) 1f else 0f }
-        header.addView(logo, dp(40), dp(40))
-        val title = text("Lumora", 24f, Glass.TEXT, true).apply { setPadding(dp(10), 0, 0, 0) }
-        header.addView(title, LinearLayout.LayoutParams(0, -2, 1f))
-        header.addView(roundButton(Icons.GEAR, "ธีมสี") { showThemeSettings { changed -> if (changed) recreate() } }, dp(48), dp(48))
-        header.addView(roundButton(Icons.CLOSE, "กลับไปที่กล้อง") { close() }, dp(48), dp(48))
-        col.addView(header, LinearLayout.LayoutParams(-1, dp(52)))
-
+        val title = text("Lumora", 22f, Color.WHITE, true).apply { setPadding(dp(10), 0, 0, 0) }
         fun pickFor(kind: String, ek: String) { editKind = ek; pick.launch(Intent(this, GalleryActivity::class.java).putExtra(GalleryActivity.EXTRA_PICK, kind)) }
-        fun gap(v: Int) = View(this).also { col.addView(it, LinearLayout.LayoutParams(1, dp(v))) }
 
-        // Row 1: the tall camera block, with gallery and film stacked beside it.
-        gap(14)
-        val top = LinearLayout(this)
-        top.addView(hero(), LinearLayout.LayoutParams(0, -1, 1f))
-        top.addView(View(this), dp(10), 1)
-        val side = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        side.addView(galleryBlock(), LinearLayout.LayoutParams(-1, 0, 1f))
-        side.addView(View(this), 1, dp(10))
-        side.addView(filmBlock(), LinearLayout.LayoutParams(-1, 0, 1f))
-        top.addView(side, LinearLayout.LayoutParams(0, -1, 1f))
-        top.minimumHeight = dp(210)
-        col.addView(top, LinearLayout.LayoutParams(-1, 0, 2.3f))
-
-        // Row 2: the video editor across the full width, with the saved projects as a chip.
-        gap(10)
-        col.addView(videoBlock { startActivity(Intent(this, StudioProjectsActivity::class.java)) }.also { it.minimumHeight = dp(104) }, LinearLayout.LayoutParams(-1, 0, 1.5f))
-
-        // Row 3: photo editor and AI (photo or video picked by the small switch).
-        gap(10)
-        val third = LinearLayout(this)
-        third.addView(photoBlock { pickFor("image", "image") }, LinearLayout.LayoutParams(0, -1, 1f))
-        third.addView(View(this), dp(10), 1)
-        third.addView(aiBlock { showAiChooser { video -> if (video) pickFor("video", "ai_video") else pickFor("image", "ai_image") } }, LinearLayout.LayoutParams(0, -1, 1f))
-        third.minimumHeight = dp(100)
-        col.addView(third, LinearLayout.LayoutParams(-1, 0, 1.3f))
-
+        val hero = studioHero(logo, title)
+        col.addView(hero, LinearLayout.LayoutParams(-1, 0, 2.7f))
+        projectRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(18), dp(12), dp(16), dp(4)) }
+        col.addView(projectRow, LinearLayout.LayoutParams(-1, -2))
+        showProject(null, 0)
+        val grid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(6), dp(12), 0); minimumHeight = dp(190) }
+        val rowA = LinearLayout(this); val rowB = LinearLayout(this)
+        rowA.addView(tile(Icons.PHOTO, "ถ่ายภาพ", "กล้อง · 9 โหมด", "ถ่ายภาพ กลับไปที่กล้อง", null) { returnMode(PhotoMode.PHOTO) }, LinearLayout.LayoutParams(0, -1, 1f).apply { rightMargin = dp(4) })
+        rowA.addView(tile(Icons.LIBRARY, "แกลเลอรี", "รูปและวิดีโอ", "แกลเลอรี รูปและวิดีโอทั้งหมด", null) { startActivity(Intent(this, GalleryActivity::class.java).putExtra("from", "home")) }, LinearLayout.LayoutParams(0, -1, 1f).apply { leftMargin = dp(4) })
+        rowB.addView(tile(Icons.FILM, "ฟิล์ม", "ลุคฟิล์มและเกรน", "ฟิล์ม โทนสีและเกรนฟิล์ม", null) { returnMode(PhotoMode.FILM) }, LinearLayout.LayoutParams(0, -1, 1f).apply { rightMargin = dp(4) })
+        rowB.addView(tile(EditorKit.ADJUST, "ตัดต่อภาพ", "ปรับแสงสี", "ตัดต่อภาพ สี เส้นโค้ง ครอป", "AI" to { showAiChooser { video -> if (video) pickFor("video", "ai_video") else pickFor("image", "ai_image") } }) { pickFor("image", "image") }, LinearLayout.LayoutParams(0, -1, 1f).apply { leftMargin = dp(4) })
+        grid.addView(rowA, LinearLayout.LayoutParams(-1, 0, 1f).apply { bottomMargin = dp(4) })
+        grid.addView(rowB, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = dp(4) })
+        col.addView(grid, LinearLayout.LayoutParams(-1, 0, 2f))
+        loader.execute {
+            val list = runCatching { StudioProjects.list(this) }.getOrDefault(emptyList())
+            val last = list.firstOrNull { !it.missing }
+            val bmp = last?.let { runCatching { android.graphics.BitmapFactory.decodeFile(it.thumb.path) }.getOrNull() }
+            runOnUiThread { if (!isDestroyed) { heroThumb?.let { v -> if (bmp != null) { v.setImageBitmap(bmp); v.visibility = View.VISIBLE } }; showProject(last, list.size) } }
+        }
 
         // Entrance: the mark draws, the name settles, the blocks rise one after another.
         if (!Glass.reduced(this)) {
@@ -474,6 +463,116 @@ class HomeActivity : ComponentActivity() {
     }
 
     /** Three clips (the first with a little waveform) and a playhead, in the tool colour: only a picture of the editor. */
+    private var projectRow: LinearLayout? = null
+    private var heroThumb: ImageView? = null
+    private var heroHeader: View? = null
+    private var topInset = 0
+
+    /** The icon colour: the theme colour, a little deeper on a pale page so it stays readable. */
+    private fun iconTone(): Int = if (Theme.light) Theme.mix(Glass.ACCENT, Theme.BLACK, 0.22f) else Glass.ACCENT
+
+    /** The line under the picture: which project "ต่อจากเดิม" opens, and the one big button. */
+    private fun showProject(last: StudioProjects.Info?, count: Int) {
+        val row = projectRow ?: return
+        row.removeAllViews()
+        val words = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        words.addView(text(last?.name ?: "ตัดต่อวิดีโอ", 16f, Glass.TEXT, true).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END })
+        words.addView(text(if (last != null) "แก้ไขล่าสุด ${ago(last.updated)}" + (if (count > 1) " · $count โปรเจกต์" else "") else "เลเยอร์ สโลว์ 4K ส่งออก", 12f, Glass.TEXT3).apply { maxLines = 1 })
+        row.addView(words, LinearLayout.LayoutParams(0, -2, 1f))
+        fun pill(label: String, go: () -> Unit) = text(label, 14f, Glass.ON_ACCENT, true).apply {
+            gravity = Gravity.CENTER; setPadding(dp(18), 0, dp(18), 0); isClickable = true; glassTouch(); contentDescription = label
+            background = glass(22, Glass.ACCENT); setOnClickListener { Glass.tick(it); go() }
+        }
+        row.addView(if (last != null) pill("ต่อจากเดิม") { startActivity(VideoEditorActivity.intent(this, last.source).putExtra("project", last.id)) }
+            else pill("เริ่มตัดต่อ") { startActivity(Intent(this, StudioProjectsActivity::class.java)) }, LinearLayout.LayoutParams(-2, dp(42)))
+    }
+
+    private fun ago(t: Long): String {
+        val m = ((System.currentTimeMillis() - t) / 60_000).coerceAtLeast(0)
+        return when { m < 2 -> "เมื่อครู่"; m < 60 -> "$m นาทีก่อน"; m < 60 * 24 -> "${m / 60} ชั่วโมงก่อน"; else -> "${m / (60 * 24)} วันก่อน" }
+    }
+
+    /** A button on the picture: dark glass with a white icon, whatever the theme. */
+    private fun heroButton(icon: String, desc: String, click: () -> Unit) = FrameLayout(this).apply {
+        isClickable = true; contentDescription = desc
+        val face = FrameLayout(this@HomeActivity).apply { background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0x66000000) } }
+        face.addView(IconView(this@HomeActivity, icon, 2f).apply { tint = Color.WHITE }, FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER))
+        addView(face, FrameLayout.LayoutParams(dp(42), dp(42), Gravity.CENTER))
+        glassTouch(); setOnClickListener { Glass.tick(this); click() }
+    }
+
+    /** The video editor: the latest project's picture (or a drawn scene), the title bar, a play mark and the timeline. Tapping anywhere opens the editor. */
+    private fun studioHero(logo: View, title: View): FrameLayout = FrameLayout(this).apply {
+        minimumHeight = dp(270); contentDescription = "ตัดต่อวิดีโอ เปิดตัวตัดต่อ"; isClickable = true; glassTouch()
+        clipToOutline = true
+        outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: android.graphics.Outline) = o.setRoundRect(0, -dp(30), v.width, v.height, dp(28).toFloat()) }
+        addView(HeroScene(this@HomeActivity, if (Theme.light) 0xffc9d6ea.toInt() else 0xff2a3550.toInt(), if (Theme.light) 0xff9fb2ce.toInt() else 0xff161b2a.toInt(), Glass.ACCENT), -1, -1)
+        heroThumb = ImageView(this@HomeActivity).apply { scaleType = ImageView.ScaleType.CENTER_CROP; visibility = View.GONE }
+        addView(heroThumb, -1, -1)
+        addView(View(this@HomeActivity).apply { background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0x66000000, 0x00000000, 0x99000000.toInt())) }, -1, -1)
+        val header = LinearLayout(this@HomeActivity).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), dp(10), dp(12), 0) }
+        header.addView(logo, dp(36), dp(36)); header.addView(title, LinearLayout.LayoutParams(0, -2, 1f))
+        header.addView(heroButton(Icons.GEAR, "ธีมสี") { showThemeSettings { changed -> if (changed) recreate() } }, dp(46), dp(46))
+        header.addView(heroButton(Icons.CLOSE, "กลับไปที่กล้อง") { close() }, dp(46), dp(46))
+        heroHeader = header
+        addView(header, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
+        addView(FrameLayout(this@HomeActivity).apply {
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0x40000000); setStroke(dp(2), Color.WHITE) }
+            addView(IconView(this@HomeActivity, "M9.5 6.5v11l8.5-5.5z", 2f).apply { tint = Color.WHITE }, FrameLayout.LayoutParams(dp(26), dp(26), Gravity.CENTER))
+        }, FrameLayout.LayoutParams(dp(58), dp(58), Gravity.CENTER))
+        addView(StudioStrip(this@HomeActivity, Glass.ACCENT), FrameLayout.LayoutParams(-1, dp(66), Gravity.BOTTOM).apply { setMargins(dp(14), 0, dp(14), dp(14)) })
+        setOnClickListener { Glass.tick(this); startActivity(Intent(this@HomeActivity, StudioProjectsActivity::class.java)) }
+        cards += this
+    }
+
+    /** One tile: a chip with the icon in the theme colour, the name and a short line. [badge] is a small tappable label (AI) in the corner. */
+    private fun tile(icon: String, name: String, note: String, desc: String, badge: Pair<String, () -> Unit>?, open: () -> Unit): FrameLayout = FrameLayout(this).apply {
+        background = GradientDrawable().apply { cornerRadius = dp(18).toFloat(); setColor(Glass.PANEL); setStroke(dp(1), Glass.alpha(Glass.TEXT, 0x22)) }
+        isClickable = true; contentDescription = desc; glassTouch()
+        addView(FrameLayout(this@HomeActivity).apply {
+            background = GradientDrawable().apply { cornerRadius = dp(11).toFloat(); setColor(Glass.ACCENT_SOFT) }
+            addView(IconView(this@HomeActivity, icon, 2f).apply { tint = iconTone() }, FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER))
+        }, FrameLayout.LayoutParams(dp(38), dp(38), Gravity.TOP or Gravity.START).apply { setMargins(dp(12), dp(12), 0, 0) })
+        if (badge != null) addView(text(badge.first, 12f, Glass.ON_ACCENT, true).apply {
+            gravity = Gravity.CENTER; setPadding(dp(10), 0, dp(10), 0); background = glass(11, Glass.ACCENT); isClickable = true; glassTouch(); contentDescription = "แต่งชัดด้วย AI"
+            setOnClickListener { Glass.tick(it); badge.second() } }, FrameLayout.LayoutParams(-2, dp(26), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(12), dp(12), 0) })
+        val words = LinearLayout(this@HomeActivity).apply { orientation = LinearLayout.VERTICAL }
+        words.addView(text(name, 15f, Glass.TEXT, true).apply { maxLines = 1 }); words.addView(text(note, 12f, Glass.TEXT3).apply { maxLines = 1 })
+        addView(words, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM or Gravity.START).apply { setMargins(dp(14), 0, dp(10), dp(12)) })
+        setOnClickListener { Glass.tick(this); open() }
+        cards += this
+    }
+
+    /** A drawn scene (sky, sun in the theme colour, a ridge) for a project that has no picture yet. */
+    private class HeroScene(c: Context, private val sky: Int, private val ridge: Int, private val sun: Int) : View(c) {
+        private val p = Paint(Paint.ANTI_ALIAS_FLAG); private val d = c.resources.displayMetrics.density
+        init { importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }
+        override fun onDraw(cv: Canvas) {
+            val w = width.toFloat(); val h = height.toFloat()
+            p.color = sky; cv.drawRect(0f, 0f, w, h, p)
+            p.color = sun; cv.drawCircle(w * 0.76f, h * 0.36f, 26 * d, p)
+            p.color = ridge; cv.drawOval(-w * 0.25f, h * 0.62f, w * 1.25f, h * 1.3f, p)
+        }
+    }
+
+    /** Ruler, three tracks (video blue, sound teal, text violet) and the playhead in the theme colour, on a dark glass strip. */
+    private class StudioStrip(c: Context, private val tint: Int) : View(c) {
+        private val p = Paint(Paint.ANTI_ALIAS_FLAG); private val r = RectF(); private val d = c.resources.displayMetrics.density
+        init { importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }
+        override fun onDraw(cv: Canvas) {
+            val w = width.toFloat(); val h = height.toFloat()
+            p.style = Paint.Style.FILL; p.color = 0x94000000.toInt(); r.set(0f, 0f, w, h); cv.drawRoundRect(r, 12 * d, 12 * d, p)
+            val x0 = 10 * d; val x1 = w - 10 * d; val span = x1 - x0
+            p.color = 0x88ffffff.toInt()
+            for (i in 0..16) { val x = x0 + span * i / 16f; cv.drawRect(x, 7 * d, x + d, (if (i % 4 == 0) 14 else 11) * d, p) }
+            p.color = 0xff6fa8ff.toInt(); r.set(x0, 18 * d, x0 + span * 0.86f, 24 * d); cv.drawRoundRect(r, 3 * d, 3 * d, p)
+            p.color = 0xff4fd1b2.toInt(); val a0 = x0 + span * 0.08f; val a1 = x0 + span * 0.70f; var x = a0; var i = 0
+            while (x < a1) { val bh = (3 + (i * 7) % 9) * d; cv.drawRoundRect(x, 36 * d - bh, x + 2.2f * d, 36 * d + bh, d, d, p); x += 4 * d; i++ }
+            p.color = 0xffb79cff.toInt(); r.set(x0 + span * 0.30f, 48 * d, x0 + span * 0.62f, 54 * d); cv.drawRoundRect(r, 3 * d, 3 * d, p)
+            val hx = x0 + span * 0.44f; p.color = tint; cv.drawRect(hx - d, 4 * d, hx + d, h - 4 * d, p); cv.drawCircle(hx, 5 * d, 4 * d, p)
+        }
+    }
+
     private class MiniTimeline(c: Context, private val tint: Int) : View(c) {
         private val p = Paint(Paint.ANTI_ALIAS_FLAG)
         private val r = RectF()

@@ -32,7 +32,28 @@ object Theme {
         Preset("กรมท่า (แบบเดิม)", "พื้นน้ำเงินเข้มของรุ่นก่อน",
             Palette(0xffff9f45.toInt(), 0xff0b1122.toInt(), 0xff17213a.toInt(), 0xffffffff.toInt(), 0xff64d2ff.toInt()))
     )
+    /** Light sets: pale page, white panels, dark words. The orange is a little deeper than the dark one so it still reads on white. */
+    val LIGHT_PRESETS = listOf(
+        Preset("Graphite สว่าง", "เทาอ่อนเย็น แผงขาว สีส้มเด่น",
+            Palette(0xffee7d17.toInt(), 0xfff2f3f5.toInt(), 0xffffffff.toInt(), 0xff17181c.toInt(), 0xffc25e0a.toInt())),
+        Preset("Paper", "กระดาษอุ่น ตัวอักษรดำหมึก ส้มเข้ม",
+            Palette(0xffe8590c.toInt(), 0xfff4f1ea.toInt(), 0xffffffff.toInt(), 0xff1b1a17.toInt(), 0xffb4470a.toInt())),
+        Preset("Sky", "ขาวอมฟ้า สีน้ำเงินสด",
+            Palette(0xff2f6fed.toInt(), 0xffeef3f9.toInt(), 0xffffffff.toInt(), 0xff10213a.toInt(), 0xff1d4fc0.toInt()))
+    )
     val DEFAULT: Palette get() = PRESETS[0].palette
+    val LIGHT_DEFAULT: Palette get() = LIGHT_PRESETS[0].palette
+
+    enum class Mode(val key: String) { DARK("dark"), LIGHT("light"), SYSTEM("system") }
+    /** Screens that stay dark in every mode: they sit on a live picture or judge colour, where a pale frame would spoil it. */
+    private val darkOnly = setOf("CameraActivity", "VideoActivity", "SpecialVideoActivity", "VideoEditorActivity", "VideoPlayerActivity",
+        "PhotoEditorActivity", "ClipEditorActivity", "RawLabActivity", "DocumentActivity", "CameraProbeActivity")
+    @Volatile var mode = Mode.DARK; private set
+    /** The two saved palettes: the dark and the light one (each can be edited on its own). */
+    @Volatile var darkP: Palette = PRESETS[0].palette; private set
+    @Volatile var lightP: Palette = LIGHT_PRESETS[0].palette; private set
+    /** Whether the pale set is the one in use now (by the mode, and for the system mode by the phone's setting). */
+    @Volatile var light = false; private set
 
     @Volatile var p: Palette = PRESETS[0].palette; private set
     /** Goes up on every change, so screens built with older colours know to rebuild. */
@@ -55,18 +76,50 @@ object Theme {
 
     init { derive() }
 
-    fun presetOf(palette: Palette = p): Preset? = PRESETS.firstOrNull { it.palette == palette }
+    fun presets(): List<Preset> = if (light) LIGHT_PRESETS else PRESETS
+    fun isPale(palette: Palette): Boolean = luminance(palette.background) > 0.5f
+    fun presetOf(palette: Palette = p): Preset? = (PRESETS + LIGHT_PRESETS).firstOrNull { it.palette == palette }
     fun name(palette: Palette = p): String = presetOf(palette)?.name ?: "กำหนดเอง"
 
-    fun set(next: Palette) { p = next; derive(); version++ }
+    /** Uses [next] now and remembers it as the dark or the light palette, whichever it is by its page colour. */
+    fun set(next: Palette) { if (isPale(next)) lightP = next else darkP = next; p = next; derive(); version++ }
+
+    private fun effectiveLight(c: Context?): Boolean = when (mode) {
+        Mode.DARK -> false
+        Mode.LIGHT -> true
+        Mode.SYSTEM -> c != null && (c.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) != android.content.res.Configuration.UI_MODE_NIGHT_YES
+    }
 
     fun load(c: Context) {
-        Palette.decode(c.getSharedPreferences("theme", 0).getString("palette", null))?.let { p = it; derive() }
+        val sp = c.getSharedPreferences("theme", 0)
+        mode = Mode.values().firstOrNull { it.key == sp.getString("mode", null) } ?: Mode.DARK
+        Palette.decode(sp.getString("palette", null))?.let { darkP = it }
+        Palette.decode(sp.getString("palette_light", null))?.let { lightP = it }
+        light = effectiveLight(c); p = if (light) lightP else darkP; derive()
     }
 
     fun save(c: Context, next: Palette) {
         set(next)
-        c.getSharedPreferences("theme", 0).edit().putString("palette", next.encode()).apply()
+        c.getSharedPreferences("theme", 0).edit().putString("palette", darkP.encode()).putString("palette_light", lightP.encode()).apply()
+    }
+
+    fun setMode(c: Context, m: Mode) {
+        mode = m; c.getSharedPreferences("theme", 0).edit().putString("mode", m.key).apply()
+        light = effectiveLight(c); p = if (light) lightP else darkP; derive(); version++
+    }
+
+    /** The phone switched between day and night while the system mode is on: remember it so open screens rebuild. */
+    fun sync(c: Context) { val l = effectiveLight(c); if (l != light) { light = l; p = if (l) lightP else darkP; derive(); version++ } }
+
+    /** Called as each screen starts and resumes: it gets the pale or dark palette that suits it, and the status bar icons follow. */
+    fun enter(a: android.app.Activity) {
+        val pale = light && a.javaClass.simpleName !in darkOnly
+        val want = if (pale) lightP else darkP
+        if (p != want) { p = want; derive() }
+        runCatching {
+            val ctl = androidx.core.view.WindowCompat.getInsetsController(a.window, a.window.decorView)
+            ctl.isAppearanceLightStatusBars = pale; ctl.isAppearanceLightNavigationBars = pale
+        }
     }
 
     private fun derive() {
@@ -81,9 +134,10 @@ object Theme {
         fillStrong = alpha(mix(panel, bg, 0.4f), 0xe0)
         fillPop = alpha(mix(panel, bg, 0.15f), 0xf0)
         bgTop = mix(bg, panel, 0.45f)
-        bgDeep = mix(bg, BLACK, 0.55f)
-        tintTop = mix(panel, WHITE, 0.14f)
-        tintBottom = mix(bg, BLACK, 0.5f)
+        val pale = luminance(bg) > 0.5f
+        bgDeep = mix(bg, BLACK, if (pale) 0.07f else 0.55f)
+        tintTop = if (pale) mix(panel, bg, 0.3f) else mix(panel, WHITE, 0.14f)
+        tintBottom = mix(bg, BLACK, if (pale) 0.1f else 0.5f)
     }
 
     const val WHITE = 0xffffffff.toInt()

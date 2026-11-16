@@ -194,8 +194,11 @@ class LumaApp : Application(), Configuration.Provider {
         // Screens remember the theme they were built with; one left behind after a theme change rebuilds itself when it comes back.
         registerActivityLifecycleCallbacks(object : ActivityLifecycleCallbacks {
             private val built = java.util.WeakHashMap<android.app.Activity, Int>()
-            override fun onActivityCreated(a: android.app.Activity, b: android.os.Bundle?) { built[a] = Theme.version }
+            @android.annotation.SuppressLint("NewApi")
+            override fun onActivityPreCreated(a: android.app.Activity, b: android.os.Bundle?) { Theme.sync(a); Theme.enter(a) }
+            override fun onActivityCreated(a: android.app.Activity, b: android.os.Bundle?) { Theme.sync(a); Theme.enter(a); built[a] = Theme.version }
             override fun onActivityResumed(a: android.app.Activity) {
+                Theme.enter(a)
                 val v = built[a] ?: return
                 if (v != Theme.version) { built[a] = Theme.version; a.recreate() }
             }
