@@ -70,7 +70,10 @@ class ModelCard(private val a: Activity, private val menu: GlassMenu, private va
 
     fun refresh() {
         val m = ModelStore.selected(a, models[0].group, models); val job = ModelStore.job(m); val have = ModelStore.installed(a, m)
-        name.text = m.name; badge.text = m.badge; about.text = m.short
+        name.text = m.name; badge.text = m.badge
+        // Says so up front when this phone cannot carry the model, before a long download.
+        val blocked = if (m.builtin || m.unavailable != null) null else Device.cannotRun(a, m, llm = m.files.any { it.first.endsWith(".gguf") })
+        about.text = if (blocked != null) "⚠ $blocked" else m.short
         status.text = when { m.unavailable != null -> m.unavailable; m.builtin -> "พร้อมใช้ · โหลดชุดภาษาเองเมื่อใช้ครั้งแรก"; job != null -> "กำลังดาวน์โหลด"; have -> "พร้อมใช้ · ${WhisperModels.sizeText(a, m)} ในเครื่อง"; else -> "ยังไม่ได้ดาวน์โหลด · ${WhisperModels.sizeText(a, m)}" }
         status.setTextColor(if (have && job == null) Glass.ACCENT else Glass.TEXT2)
         progress.visibility = if (job != null) VISIBLE else GONE

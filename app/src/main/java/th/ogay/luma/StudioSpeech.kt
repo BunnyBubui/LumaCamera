@@ -102,10 +102,10 @@ class StudioSpeech(private val a: Activity, private val languageArg: String, pri
         // SenseVoice is one file and knows zh, yue, en, ja and ko only; any other language is left to its own guess.
         if (model.id == "sensevoice") return OfflineRecognizerConfig(modelConfig = OfflineModelConfig(
             senseVoice = OfflineSenseVoiceModelConfig(model = f("model.int8.onnx"), language = language.takeIf { it in SENSE_LANGS } ?: "", useInverseTextNormalization = true),
-            tokens = f("tokens.txt"), numThreads = Runtime.getRuntime().availableProcessors().coerceIn(2, 4), provider = "cpu"))
+            tokens = f("tokens.txt"), numThreads = Device.threads, provider = "cpu"))
         return OfflineRecognizerConfig(modelConfig = OfflineModelConfig(
             whisper = OfflineWhisperModelConfig(encoder = f("${model.id}-encoder.int8.onnx"), decoder = f("${model.id}-decoder.int8.onnx"), language = language, task = "transcribe"),
-            tokens = f("${model.id}-tokens.txt"), numThreads = Runtime.getRuntime().availableProcessors().coerceIn(2, 4), provider = "cpu"))
+            tokens = f("${model.id}-tokens.txt"), numThreads = Device.threads, provider = "cpu"))
     }
 
     private class Heard(val text: String, val lang: String)

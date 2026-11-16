@@ -470,6 +470,8 @@ class VideoEditorActivity : ComponentActivity() {
         val whole = soundPieces()
         if (whole.isEmpty()) { notice("วิดีโอนี้ไม่มีเสียงให้แปลง"); return }
         val auto = lang == StudioSpeech.AUTO
+        // A speech model too big for this phone's memory would get the app closed by the system in the middle of the work.
+        if (!model.builtin) Device.cannotRun(this, model, llm = false)?.let { notice(it); return }
         if (model.id == "sensevoice" && !auto && StudioSpeech.whisperCode(lang) !in StudioSpeech.SENSE_LANGS) { notice("SenseVoice ไม่รู้จักภาษานี้ · เลือก Whisper สำหรับภาษาไทยหรือภาษาอื่น"); return }
         val ui = CaptionProgress(this, firstFrame, listOf("เตรียมเสียงจากคลิป", "หาช่วงที่มีเสียงพูด", if (auto) "ตรวจภาษาที่พูด" else "ใช้ภาษาที่เลือกไว้", "ถอดเสียงด้วย ${model.name}", "ใส่คำบรรยายบนไทม์ไลน์")) { stopCaptions() }
         val clock = AsrClock(this, model.id, whole.sumOf { it.to - it.from })
@@ -1220,7 +1222,8 @@ class VideoEditorActivity : ComponentActivity() {
                 val label = if (srcs.size > 1) "คลิป ${i + 1} จาก ${srcs.size}" else "คลิปนี้"
                 val pk = if (c.muted) FloatArray(0) else runCatching { AudioPeaks.range(this, c.uri, c.from, c.to) { f -> if (stop()) throw Stopped(); paint(0, 0.55f * (base + share * 0.4f * f), "$label · ฟังเสียง") } }.getOrDefault(FloatArray(0))
                 if (stop()) return@execute
-                val step = when { len > 600_000 -> 1_000L; len > 120_000 -> 500L; else -> 250L }
+                // A phone with little memory or few cores looks at half as many frames.
+                val step = when { len > 600_000 -> 1_000L; len > 120_000 -> 500L; else -> 250L } * (if (Device.low(this)) 2 else 1)
                 val diffs = frameDiffs(c.uri, c.from, c.to, step, stop) { f -> paint(0, 0.55f * (base + share * (0.4f + 0.6f * f)), "$label · ดูการเปลี่ยนภาพ") }
                 doneMs += len
                 Triple(if (pk.any { it > 0f }) pk else FloatArray(0), diffs, step)
@@ -1230,7 +1233,7 @@ class VideoEditorActivity : ComponentActivity() {
             doneMs = 0L
             val voices = srcs.mapIndexed { i, c ->
                 val len = c.to - c.from; val base = doneMs / totalMs; val share = len / totalMs; doneMs += len
-                if (c.muted || measured[i].first.isEmpty() || len > 30 * 60_000L) null
+                if (c.muted || measured[i].first.isEmpty() || len > (if (Device.low(this)) 10 else 30) * 60_000L) null
                 else VoiceFinder.find(this, c.uri, c.from, c.to, stop) { f -> paint(1, 0.55f + 0.15f * (base + share * f), if (srcs.size > 1) "คลิป ${i + 1} จาก ${srcs.size}" else "ฟังว่ามีคนพูดช่วงไหน") }
             }
             if (stop()) return@execute

@@ -33,7 +33,8 @@ object Ambient {
     /** The stored level; older settings had only an on/off switch, which becomes off or medium. */
     fun level(c: Context, key: String): Int {
         val p = c.getSharedPreferences("camera", 0)
-        val legacy = if (p.getBoolean("gallery_reflect", true)) 2 else 0
+        // Never chosen: medium, or low on a phone with little memory or few cores.
+        val legacy = if (!p.getBoolean("gallery_reflect", true)) 0 else if (Device.low(c)) 1 else 2
         return p.getInt(key, legacy).coerceIn(0, SPECS.lastIndex)
     }
     fun photo(c: Context) = level(c, KEY_PHOTO)

@@ -90,8 +90,8 @@ target_link_options(luma_jpeg PRIVATE "-Wl,-z,max-page-size=16384" "-Wl,--exclud
 target_link_libraries(luma_jpeg luma_jpeg_static)
 
 # On-device translation: llama.cpp built from a pinned release tarball (no runtime download), linked statically into
-# one small JNI library. Native CPU tuning is off (the host is not the phone); arm64 gets dot-product instructions,
-# which every phone with Android 12+ has. OpenMP and curl are off to keep dependencies out of the APK.
+# one small JNI library. Native CPU tuning is off (the host is not the phone); arm64 gets dot-product instructions.
+# Not every phone has them (Cortex-A53-only chips do not), so Device.llmSupported checks the CPU before this library is loaded. OpenMP and curl are off to keep dependencies out of the APK.
 FetchContent_Declare(luma_llama_source
     URL https://github.com/ggml-org/llama.cpp/archive/refs/tags/b12374.tar.gz)
 FetchContent_GetProperties(luma_llama_source)

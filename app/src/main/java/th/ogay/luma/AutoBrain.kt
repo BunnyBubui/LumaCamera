@@ -57,7 +57,7 @@ object AutoBrain {
         LlamaTranslator.tooBig(c, m)?.let { error(it) }
         LlamaTranslator.release() // one model in memory at a time
         val file = File(ModelStore.dir(c, m), m.files[0].first)
-        val e = LlamaEngine.load(file, Runtime.getRuntime().availableProcessors().coerceIn(2, 4), 4096) ?: error("เปิดโมเดลไม่ได้ ไฟล์อาจเสียหาย ลองดาวน์โหลดใหม่")
+        val e = LlamaEngine.load(file, Device.threads, 4096) ?: error("เปิดโมเดลไม่ได้ ไฟล์อาจเสียหาย ลองดาวน์โหลดใหม่")
         engine = e
         try {
             val thinking = m.id == "qwen3-1.7b"

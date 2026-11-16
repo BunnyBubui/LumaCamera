@@ -87,7 +87,10 @@ class HomeActivity : ComponentActivity() {
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(10), dp(16), dp(32)) }
         // The page scrolls under the status and navigation bars instead of being cut off at a hard line below them;
         // a soft shade under the status bar keeps the clock readable over the blocks.
-        val scroll = ScrollView(this).apply { isFillViewport = true; isVerticalScrollBarEnabled = false; clipToPadding = false; overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS; addView(col) }
+        val scroll = ScrollView(this).apply { isFillViewport = true; isVerticalScrollBarEnabled = false; clipToPadding = false; overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+            // On a tablet, an unfolded phone or a phone on its side the page keeps a phone's width in the middle instead of stretching.
+            val wide = resources.displayMetrics.widthPixels > dp(640)
+            addView(col, FrameLayout.LayoutParams(if (wide) dp(560) else -1, -2, Gravity.CENTER_HORIZONTAL)) }
         host.addView(scroll, -1, -1)
         if (state == null && !intent.getBooleanExtra(FROM_CAMERA, false) && !Glass.reduced(this)) {
             col.alpha = 0f
@@ -131,7 +134,7 @@ class HomeActivity : ComponentActivity() {
         col.addView(grid, LinearLayout.LayoutParams(-1, 0, 2f))
         loader.execute {
             val list = runCatching { StudioProjects.list(this) }.getOrDefault(emptyList())
-            val shown = list.filter { !it.missing }.take(6)
+            val shown = list.filter { !it.missing }.take(if (Device.low(this)) 3 else 6)
             runOnUiThread { if (!isDestroyed) { projects = shown; projectCount = list.size; showProject(shown.firstOrNull(), list.size); heroPager?.let { it.count = shown.size } } }
             // A sharp frame from the video itself (the saved thumbnail is only a timeline tile); the project on show first.
             shown.forEachIndexed { i, info ->
@@ -482,7 +485,11 @@ class HomeActivity : ComponentActivity() {
             r.setDataSource(this, info.source)
             val d = (r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L) * 1000L
             val t = (d / 5).coerceAtMost(2_000_000L)
-            if (android.os.Build.VERSION.SDK_INT >= 27) r.getScaledFrameAtTime(t, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 1080, 1440) else r.getFrameAtTime(t)
+            val w = if (Device.low(this)) 720 else 1080; val h = w * 4 / 3
+            if (android.os.Build.VERSION.SDK_INT >= 27) r.getScaledFrameAtTime(t, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC, w, h)
+            // Older Android hands back the frame at the video's own size (a 4K frame is about 33 MB), so it is made smaller here.
+            else r.getFrameAtTime(t)?.let { b -> val k = h.toFloat() / maxOf(b.width, b.height)
+                if (k < 1f) Bitmap.createScaledBitmap(b, (b.width * k).toInt().coerceAtLeast(1), (b.height * k).toInt().coerceAtLeast(1), true).also { if (it !== b) b.recycle() } else b }
         } finally { runCatching { r.release() } }
     }.getOrNull()
     private var heroHeader: View? = null

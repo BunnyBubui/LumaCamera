@@ -24,6 +24,8 @@ class LlamaEngine private constructor(private var handle: Long) {
         private var loaded = false
         @JvmStatic private external fun nativeLoad(path: String, threads: Int, nCtx: Int): Long
         fun load(path: File, threads: Int, nCtx: Int): LlamaEngine? {
+            // The library is built with instructions an older chip does not have; calling into it there would crash the app.
+            if (!Device.llmSupported) return null
             if (!loaded) { System.loadLibrary("luma_llm"); loaded = true }
             val h = nativeLoad(path.absolutePath, threads, nCtx)
             return if (h == 0L) null else LlamaEngine(h)
@@ -84,8 +86,7 @@ object LlamaTranslator {
 
     /** A short Thai message when this phone cannot hold the model, else null. */
     fun tooBig(c: Context, m: ModelSpec): String? {
-        val mi = ActivityManager.MemoryInfo(); (c.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).getMemoryInfo(mi)
-        return if (m.approxMb * 1_048_576L > mi.totalMem * 6 / 10) "เครื่องนี้มี RAM ไม่พอสำหรับโมเดลนี้ ลองโมเดลที่เล็กกว่า" else null
+        return Device.cannotRun(c, m, llm = true)
     }
 
     /** What the text is (for example a Chinese martial-arts film), so the model picks matching words and tone. Empty = none. */
@@ -137,7 +138,7 @@ object LlamaTranslator {
         try {
             if (engineId != m.id) {
                 release()
-                engine = LlamaEngine.load(file, Runtime.getRuntime().availableProcessors().coerceIn(2, 4), 1536) ?: return "เปิดโมเดลไม่ได้ ไฟล์อาจเสีย · ลองลบแล้วดาวน์โหลดใหม่"
+                engine = LlamaEngine.load(file, Device.threads, 1536) ?: return "เปิดโมเดลไม่ได้ ไฟล์อาจเสีย · ลองลบแล้วดาวน์โหลดใหม่"
                 engineId = m.id
             }
             val e = engine ?: return "เปิดโมเดลไม่ได้"
