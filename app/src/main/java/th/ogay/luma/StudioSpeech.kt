@@ -11,6 +11,7 @@ import android.net.Uri
 import com.k2fsa.sherpa.onnx.OfflineModelConfig
 import com.k2fsa.sherpa.onnx.OfflineRecognizer
 import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
+import com.k2fsa.sherpa.onnx.OfflineSenseVoiceModelConfig
 import com.k2fsa.sherpa.onnx.OfflineWhisperModelConfig
 import com.k2fsa.sherpa.onnx.SileroVadModelConfig
 import com.k2fsa.sherpa.onnx.Vad
@@ -78,6 +79,7 @@ class StudioSpeech(private val a: Activity, private val languageArg: String, pri
     companion object {
         const val AUTO = CAPTION_AUTO
         /** Whisper's own code for a language tag such as "th-TH" ("" when the language is to be found automatically). */
+        val SENSE_LANGS = setOf("zh", "yue", "en", "ja", "ko")
         fun whisperCode(tag: String): String {
             if (tag == AUTO) return ""
             val base = tag.lowercase().substringBefore('-')
@@ -97,6 +99,10 @@ class StudioSpeech(private val a: Activity, private val languageArg: String, pri
 
     private fun config(language: String): OfflineRecognizerConfig {
         fun f(n: String) = ModelStore.file(a, model, n).absolutePath
+        // SenseVoice is one file and knows zh, yue, en, ja and ko only; any other language is left to its own guess.
+        if (model.id == "sensevoice") return OfflineRecognizerConfig(modelConfig = OfflineModelConfig(
+            senseVoice = OfflineSenseVoiceModelConfig(model = f("model.int8.onnx"), language = language.takeIf { it in SENSE_LANGS } ?: "", useInverseTextNormalization = true),
+            tokens = f("tokens.txt"), numThreads = Runtime.getRuntime().availableProcessors().coerceIn(2, 4), provider = "cpu"))
         return OfflineRecognizerConfig(modelConfig = OfflineModelConfig(
             whisper = OfflineWhisperModelConfig(encoder = f("${model.id}-encoder.int8.onnx"), decoder = f("${model.id}-decoder.int8.onnx"), language = language, task = "transcribe"),
             tokens = f("${model.id}-tokens.txt"), numThreads = Runtime.getRuntime().availableProcessors().coerceIn(2, 4), provider = "cpu"))

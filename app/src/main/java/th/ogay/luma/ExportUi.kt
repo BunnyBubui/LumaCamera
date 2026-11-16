@@ -629,7 +629,7 @@ class AsrClock(private val c: android.content.Context, private val modelId: Stri
     private val t0 = android.os.SystemClock.elapsedRealtime(); private var asr0 = 0L
     private var known = false
     private var speechMs = (totalMs * 0.8).toLong(); private var doneMs = 0L; private var shown = 0f
-    private val prior = prefs.getFloat("asr_rate_$modelId", 0.6f).toDouble()
+    private val prior = prefs.getFloat("asr_rate_$modelId", when (modelId) { "sensevoice" -> 0.15f; "turbo" -> 1.5f; else -> 0.6f }).toDouble()
     private fun now() = android.os.SystemClock.elapsedRealtime()
     /** Once the speech is found, its real length replaces the first guess. */
     fun speech(ms: Long) { speechMs = ms.coerceAtLeast(1); known = true }

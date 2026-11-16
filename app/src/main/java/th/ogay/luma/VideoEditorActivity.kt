@@ -470,6 +470,7 @@ class VideoEditorActivity : ComponentActivity() {
         val whole = soundPieces()
         if (whole.isEmpty()) { notice("วิดีโอนี้ไม่มีเสียงให้แปลง"); return }
         val auto = lang == StudioSpeech.AUTO
+        if (model.id == "sensevoice" && !auto && StudioSpeech.whisperCode(lang) !in StudioSpeech.SENSE_LANGS) { notice("SenseVoice ไม่รู้จักภาษานี้ · เลือก Whisper สำหรับภาษาไทยหรือภาษาอื่น"); return }
         val ui = CaptionProgress(this, firstFrame, listOf("เตรียมเสียงจากคลิป", "หาช่วงที่มีเสียงพูด", if (auto) "ตรวจภาษาที่พูด" else "ใช้ภาษาที่เลือกไว้", "ถอดเสียงด้วย ${model.name}", "ใส่คำบรรยายบนไทม์ไลน์")) { stopCaptions() }
         val clock = AsrClock(this, model.id, whole.sumOf { it.to - it.from })
         val run = ++captionRun; scanning = true
