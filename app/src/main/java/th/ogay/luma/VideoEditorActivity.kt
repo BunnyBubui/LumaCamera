@@ -977,7 +977,7 @@ class VideoEditorActivity : ComponentActivity() {
      * How much the picture changes between frames [step] ms apart over [from, to) of [uri] (colour histograms compared;
      * 0 = the same, 1 = nothing alike). Index 0 is [from]. Call it off the main thread; [stop] ends it early.
      */
-    private fun frameDiffs(uri: Uri, from: Long, to: Long, step: Long, stop: () -> Boolean = { isDestroyed }): FloatArray = runCatching {
+    private fun frameDiffs(uri: Uri, from: Long, to: Long, step: Long, stop: () -> Boolean = { isDestroyed }, progress: (Float) -> Unit = {}): FloatArray = runCatching {
         LayerFrames(this, uri, from, 64).use { f ->
             var prev: FloatArray? = null; val diffs = ArrayList<Float>(); val px = IntArray(f.bitmap.width * f.bitmap.height); var t = 0L
             while (from + t < to && !stop()) {
@@ -986,6 +986,7 @@ class VideoEditorActivity : ComponentActivity() {
                 for (i in h.indices) h[i] /= px.size.toFloat()
                 diffs += prev?.let { a -> var d = 0f; for (i in h.indices) d += abs(h[i] - a[i]); d / 6f } ?: 0f
                 prev = h; t += step
+                if (diffs.size % 8 == 0) progress((t.toFloat() / (to - from)).coerceIn(0f, 1f))
             }
             diffs.toFloatArray()
         }
@@ -1054,6 +1055,8 @@ class VideoEditorActivity : ComponentActivity() {
                 notes = listOf("ไวรัล/Vlog/ไฮไลต์/ภาพยนตร์ได้เพลง คนพูดไม่ได้", "") + lib.map { it.note })
             toggle("เอฟเฟกต์เสียง", Icons.SOUND, "auto_sfx", true, "วูชตอนเปลี่ยนช็อต ป๊อปตอนชื่อเรื่อง (ไวรัล ไฮไลต์ ภาพยนตร์ หรือเมื่อคำสั่งขอ)")
             action("นำเข้าเพลงเข้าคลัง", Icons.PLUS, "เพลงของคุณเอง แอปวัดจังหวะให้ เลือกได้ในแถวเพลงประกอบ") { close(); importSongs.launch(arrayOf("audio/*")) }
+            val mine = SoundLibrary.imported(this@VideoEditorActivity)
+            if (mine.isNotEmpty()) action("จัดการเพลงที่นำเข้า", EditorKit.MUSIC, "${mine.size} เพลง · ลบออกจากคลังได้") { close(); librarySheet() }
             section("เริ่ม")
             action("เริ่มตัดต่ออัตโนมัติ", Icons.AI, "จัดคลิปใหม่ทั้งวิดีโอ กดย้อนกลับเพื่อคืนของเดิมได้") { close(); runAutoEdit() }
         }
@@ -1101,6 +1104,22 @@ class VideoEditorActivity : ComponentActivity() {
         }
     }
 
+    /** The user's imported songs: each can be removed from the library. */
+    private fun librarySheet() {
+        var page: SettingsPage? = null
+        val mine = SoundLibrary.imported(this)
+        page = SettingsPage(this, "เพลงที่นำเข้า") {}.apply {
+            section("ในคลัง")
+            if (mine.isEmpty()) row("ยังไม่มีเพลงที่นำเข้า", EditorKit.MUSIC)
+            mine.forEach { t -> action("ลบ ${t.name}", Icons.CLOSE, "${t.bpm.toInt()} BPM · ${clock(t.durationMs)}") {
+                GlassDialog.ask(this@VideoEditorActivity, "ลบ ${t.name}?", Icons.CLOSE, "โปรเจกต์ที่ใช้เพลงนี้อยู่จะไม่มีเพลงนี้แล้ว", danger = true, ok = "ลบ") {
+                    SoundLibrary.remove(this@VideoEditorActivity, t.id); page?.close(); window.decorView.post { librarySheet() }; true } } }
+            section("กลับ")
+            action("กลับไปหน้าตัดต่ออัตโนมัติ", Icons.CHEVRON_LEFT) { close(); autoEditSheet() }
+        }
+        page?.show()
+    }
+
     /** MCP servers for the API reader: add, test, remove. */
     private fun mcpSheet() {
         var page: SettingsPage? = null
@@ -1135,7 +1154,7 @@ class VideoEditorActivity : ComponentActivity() {
         page?.show()
     }
 
-    private fun stopAutoEdit() { autoRun++; analysing = false; AutoBrain.stop(); notice("หยุดตัดต่ออัตโนมัติแล้ว") }
+    private fun stopAutoEdit() { autoRun++; analysing = false; AutoBrain.stop(); autoUi?.remove(); autoUi = null; notice("หยุดตัดต่ออัตโนมัติแล้ว") }
 
     /** Words already captioned, per clip of [srcs], as (from, to, text) in ms of that clip's file. */
     private fun captionSpeech(srcs: List<AutoSrc>): List<List<Triple<Long, Long, String>>> {
@@ -1179,15 +1198,44 @@ class VideoEditorActivity : ComponentActivity() {
         val musicPick = p.getInt("auto_music", 0).let { when (it) { 0 -> "auto"; 1 -> "none"; else -> lib.getOrNull(it - 2)?.id ?: "auto" } }
         val sfxOn = p.getBoolean("auto_sfx", true)
         val run = ++autoRun; analysing = true
-        notice("กำลังวิเคราะห์ ${srcs.size} คลิป…")
-        luma.readIo.execute {
+        val reader = when (brain) { 1 -> model.name; 2 -> AutoBrain.provider(this).name; else -> "" }
+        val ui = CaptionProgress(this, firstFrame, listOf("วัดเสียงและภาพทุกคลิป", "หาช่วงที่มีคนพูด", if (brain == 0) "วางแผนการตัด" else "$reader อ่านคำสั่งและวางแผน", "ใส่เพลงและจัดลงไทม์ไลน์"),
+            listOf(ExportProgress.Backdrop.EDIT, ExportProgress.Backdrop.FLOW, ExportProgress.Backdrop.AI, ExportProgress.Backdrop.SAVE),
+            listOf("กำลังวัดเสียงและภาพ", "กำลังหาช่วงที่มีคนพูด", "กำลังวางแผน", "กำลังจัดวาง"), noticeTitle = "ตัดต่ออัตโนมัติ") { stopAutoEdit() }
+        autoUi = ui; ui.render(0, 0.01f, "เตรียมอ่าน ${srcs.size} คลิป")
+        val totalMs = srcs.sumOf { (it.to - it.from).coerceAtLeast(1) }.toFloat()
+        var lastPaint = 0L
+        // Progress from the worker: stage, overall fraction, note; at most about eight paints a second.
+        fun paint(stage: Int, f: Float, note: String, eta: Long = -2L, force: Boolean = false) {
+            val now = System.currentTimeMillis(); if (!force && now - lastPaint < 120) return; lastPaint = now
+            runOnUiThread { if (run == autoRun && autoUi === ui) ui.render(stage, f, note, etaMs = eta) }
+        }
+        luma.readIo.execute { try {
             val stop = { isDestroyed || run != autoRun }
-            val inputs = srcs.mapIndexed { i, c ->
-                if (srcs.size > 1) runOnUiThread { if (!stop()) notice("กำลังวิเคราะห์คลิป ${i + 1} จาก ${srcs.size}…") }
-                val pk = if (c.muted) FloatArray(0) else runCatching { AudioPeaks.range(this, c.uri, c.from, c.to) }.getOrDefault(FloatArray(0))
-                val len = c.to - c.from; val step = when { len > 600_000 -> 1_000L; len > 120_000 -> 500L; else -> 250L }
-                AutoEdit.ClipInput(i, c.from, c.to, if (pk.any { it > 0f }) pk else FloatArray(0), AudioPeaks.STEP_MS.toLong(), frameDiffs(c.uri, c.from, c.to, step, stop), step, speech[i])
+            class Stopped : RuntimeException()
+            // 1. Loudness and picture changes, clip by clip (0–55 % of the bar).
+            var doneMs = 0L
+            val measured = srcs.mapIndexed { i, c ->
+                val len = c.to - c.from; val share = len / totalMs; val base = doneMs / totalMs
+                val label = if (srcs.size > 1) "คลิป ${i + 1} จาก ${srcs.size}" else "คลิปนี้"
+                val pk = if (c.muted) FloatArray(0) else runCatching { AudioPeaks.range(this, c.uri, c.from, c.to) { f -> if (stop()) throw Stopped(); paint(0, 0.55f * (base + share * 0.4f * f), "$label · ฟังเสียง") } }.getOrDefault(FloatArray(0))
+                if (stop()) return@execute
+                val step = when { len > 600_000 -> 1_000L; len > 120_000 -> 500L; else -> 250L }
+                val diffs = frameDiffs(c.uri, c.from, c.to, step, stop) { f -> paint(0, 0.55f * (base + share * (0.4f + 0.6f * f)), "$label · ดูการเปลี่ยนภาพ") }
+                doneMs += len
+                Triple(if (pk.any { it > 0f }) pk else FloatArray(0), diffs, step)
             }
+            if (stop()) return@execute
+            // 2. Where people talk (55–70 %).
+            doneMs = 0L
+            val voices = srcs.mapIndexed { i, c ->
+                val len = c.to - c.from; val base = doneMs / totalMs; val share = len / totalMs; doneMs += len
+                if (c.muted || measured[i].first.isEmpty() || len > 30 * 60_000L) null
+                else VoiceFinder.find(this, c.uri, c.from, c.to, stop) { f -> paint(1, 0.55f + 0.15f * (base + share * f), if (srcs.size > 1) "คลิป ${i + 1} จาก ${srcs.size}" else "ฟังว่ามีคนพูดช่วงไหน") }
+            }
+            if (stop()) return@execute
+            val inputs = srcs.indices.map { i -> AutoEdit.ClipInput(i, srcs[i].from, srcs[i].to, measured[i].first, AudioPeaks.STEP_MS.toLong(), measured[i].second, measured[i].third, speech[i], voices[i]) }
+            paint(2, 0.72f, if (brain == 0) "เลือกช่วงตามแนว ${style.name}" else "ส่งรายการช็อตให้ $reader", if (brain == 0) -2L else -1L, force = true)
             val beats = song?.let { s -> runCatching {
                 val pk = AudioPeaks.range(this, s.source, s.from, s.from + s.length)
                 StudioMath.beats(pk, AudioPeaks.STEP_MS.toLong()).filter { it >= s.from && it < s.from + s.length }.map { s.at + it - s.from }
@@ -1196,12 +1244,12 @@ class VideoEditorActivity : ComponentActivity() {
             if (brain != 0 && !stop()) {
                 val shots = AutoEdit.shots(inputs)
                 val ask = AutoEdit.prompt(said, inputs, shots, style, if (song == null) lib.map { it.id to "${it.name}, ${it.bpm.toInt()} BPM, energy ${it.energy}/9. ${it.note}" } else emptyList())
-                runOnUiThread { if (!stop()) notice(if (brain == 1) "${model.name} กำลังอ่านคำสั่งและวางแผน…" else "กำลังถาม ${AutoBrain.provider(this).name}…") }
+                paint(2, 0.75f, if (brain == 1) "โมเดลในเครื่องกำลังคิด · อาจใช้เวลาหลายสิบวินาที" else "รอคำตอบจาก $reader", -1L, force = true)
                 val answer = if (brain == 1) AutoBrain.local(this, model, ask, lib.map { it.id })
-                    else AutoBrain.api(this, ask) { tool -> runOnUiThread { if (!stop()) notice("ผู้อ่านคำสั่งเรียกเครื่องมือ $tool…") } }
+                    else AutoBrain.api(this, ask) { tool -> paint(2, 0.8f, "เรียกเครื่องมือ $tool", -1L, force = true) }
                 val brief = answer.getOrNull()?.let { AutoEdit.parseBrief(it, style) }
                 if (brief != null) {
-                    val b = if (target > 0) AutoEdit.Brief(brief.style, (target / 1000).toInt(), brief.crop, brief.transition, brief.captions, brief.film, brief.order, brief.keep, brief.drop, brief.title) else brief
+                    val b = if (target > 0) AutoEdit.Brief(brief.style, (target / 1000).toInt(), brief.crop, brief.transition, brief.captions, brief.film, brief.order, brief.keep, brief.drop, brief.title, brief.music, brief.sfx) else brief
                     plan = AutoEdit.planFromBrief(inputs, shots, b, beats, if (brain == 1) model.name else AutoBrain.provider(this).name)
                 } else why = answer.exceptionOrNull()?.message ?: "ผู้อ่านคำสั่งตอบไม่เป็นรูปแบบที่ใช้ได้"
             }
@@ -1213,7 +1261,7 @@ class VideoEditorActivity : ComponentActivity() {
                 val want = if (musicPick != "auto") musicPick else final.music.takeIf { it != "auto" } ?: (SoundLibrary.forStyle(final.style.id) ?: "none")
                 track = when {
                     want == "none" -> null
-                    want.startsWith("https://") -> { runOnUiThread { if (!stop()) notice("กำลังดาวน์โหลดเพลงจากเครื่องมือ…") }; SoundLibrary.download(this, want) ?: SoundLibrary.byId(this, SoundLibrary.forStyle(final.style.id)) }
+                    want.startsWith("https://") -> { paint(3, 0.9f, "ดาวน์โหลดเพลงที่เครื่องมือแนะนำ", -1L, force = true); SoundLibrary.download(this, want) ?: SoundLibrary.byId(this, SoundLibrary.forStyle(final.style.id)) }
                     else -> SoundLibrary.byId(this, want) ?: SoundLibrary.byId(this, SoundLibrary.forStyle(final.style.id))
                 }
                 // Cuts land on the new music's beats.
@@ -1222,13 +1270,16 @@ class VideoEditorActivity : ComponentActivity() {
             }
             runOnUiThread {
                 if (stop()) return@runOnUiThread
-                analysing = false
+                analysing = false; ui.render(3, 0.96f, "จัดลงไทม์ไลน์"); ui.remove(); autoUi = null
                 if (why.isNotEmpty()) notice("$why · ใช้แนวสำเร็จรูปแทน")
                 if (final.pieces.isEmpty()) { notice("ไม่พบช่วงที่เก็บไว้ได้ จึงไม่เปลี่ยนวิดีโอ"); return@runOnUiThread }
                 applyPlan(final, srcs, cropMode, subs, track, sfxOn)
             }
-        }
+        } catch (e: Throwable) {
+            runOnUiThread { if (run != autoRun) return@runOnUiThread; analysing = false; autoUi?.remove(); autoUi = null; notice("ตัดต่ออัตโนมัติไม่สำเร็จ · ${e.message ?: e.javaClass.simpleName}") }
+        } }
     }
+    private var autoUi: CaptionProgress? = null
 
     /** Rebuilds the sequence from [plan]: the first piece becomes the main clip, the rest follow as added clips. */
     private fun applyPlan(plan: AutoEdit.Plan, srcs: List<AutoSrc>, cropMode: Int, subs: Boolean, track: SoundLibrary.Track? = null, sfxOn: Boolean = false) {

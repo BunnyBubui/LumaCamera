@@ -31,7 +31,9 @@ object AutoEdit {
     /** What was measured for one clip. [peaks] is indexed by absolute time in the file (step [stepMs]); [diffs] starts at [from]. */
     class ClipInput(val clip: Int, val from: Long, val to: Long, val peaks: FloatArray, val stepMs: Long, val diffs: FloatArray, val diffStep: Long,
                     /** Words spoken in this clip (from captions), as (from, to, text) in ms of the file. */
-                    val speech: List<Triple<Long, Long, String>> = emptyList()) {
+                    val speech: List<Triple<Long, Long, String>> = emptyList(),
+                    /** Where someone is talking (from the voice detector), ms of the file; null = not measured. */
+                    val voice: List<Pair<Long, Long>>? = null) {
         val hasAudio get() = peaks.isNotEmpty()
     }
 
@@ -72,7 +74,13 @@ object AutoEdit {
         for (c in clips) {
             if (c.to - c.from < 300) continue
             // 1. Sound: drop quiet stretches when the style asks (a clip without sound, or one that is silent through, stays whole).
-            var ranges = if (style.cutSilence && c.hasAudio) StudioMath.keepRanges(c.peaks, c.stepMs, c.from, c.to, style.quiet, style.minQuietMs, style.pad) else emptyList()
+            val v = c.voice
+            var ranges = when {
+                // Talk keeps where someone talks, so music or traffic between sentences goes too, not only silence.
+                style.id == "talk" && !v.isNullOrEmpty() -> voiceRanges(v, c.from, c.to)
+                style.cutSilence && c.hasAudio -> StudioMath.keepRanges(c.peaks, c.stepMs, c.from, c.to, style.quiet, style.minQuietMs, style.pad)
+                else -> emptyList()
+            }
             if (ranges.isEmpty()) ranges = listOf(c.from to c.to)
             // 2. Picture: split at scene changes, so a shot never starts in the middle of one.
             val cuts = StudioMath.sceneCuts(c.diffs, c.diffStep).map { c.from + it }
@@ -87,12 +95,16 @@ object AutoEdit {
             for ((a, b) in shots) {
                 val n = if (pick && b - a > style.segMax) ((b - a + style.segMax - 1) / style.segMax).toInt() else 1
                 val w = (b - a) / n
-                for (i in 0 until n) {
-                    val s = a + i * w; val e = if (i == n - 1) b else s + w
+                // Window edges move to the nearest pause between sentences (within 0.7 s), so a shot does not stop mid-word.
+                val edges = (0..n).map { i -> if (i == 0) a else if (i == n) b else gapNear(a + i * w, v, a + 300, b - 300) }.distinct().sorted()
+                for (i in 0 until edges.size - 1) {
+                    val s = edges[i]; val e = edges[i + 1]
+                    if (e - s < 200) continue
                     val loud = if (c.hasAudio) (mean(c.peaks, s / c.stepMs, e / c.stepMs) / loudRef).coerceAtMost(1.5f) else 0.5f
                     val move = (mean(c.diffs, (s - c.from) / c.diffStep, (e - c.from) / c.diffStep) / moveRef).coerceAtMost(1.5f)
                     val atCut = if (cuts.any { kotlin.math.abs(it - s) < 120 }) 0.15f else 0f
-                    all += Piece(c.clip, s, e, 0.55f * loud + 0.35f * move + atCut)
+                    val talk = if (v.isNullOrEmpty()) 0f else overlap(v, s, e).toFloat() / (e - s) * (if (style.id == "talk" || style.id == "vlog") 0.35f else 0.15f)
+                    all += Piece(c.clip, s, e, 0.55f * loud + 0.35f * move + atCut + talk)
                 }
             }
         }
@@ -106,7 +118,7 @@ object AutoEdit {
             all.filter { it.len >= minOf(style.segMin, 800L) }.sortedByDescending { it.score }.forEach { add(it) }
             if (take.isEmpty()) all.maxByOrNull { it.score }?.let { take += Piece(it.clip, it.from, minOf(it.to, it.from + target), it.score) }
             val order = clips.map { it.clip }
-            chosen = take.sortedWith(compareBy({ order.indexOf(it.clip) }, { it.from }))
+            chosen = finishSentences(take.sortedWith(compareBy({ order.indexOf(it.clip) }, { it.from })), clips, target / 12)
         }
         // Pieces that touch are one piece (except when every candidate is wanted as a separate shot); scraps under 300 ms go.
         if (pick && target > clips.sumOf { it.to - it.from }) return chosen.filter { it.len >= 300 }
@@ -168,11 +180,12 @@ object AutoEdit {
     fun describe(clips: List<ClipInput>, shots: List<Piece>): String = buildString {
         val total = clips.sumOf { it.to - it.from }
         append("Footage: ").append(clips.size).append(" clip(s), ").append(sec(total)).append(" s in all.\n")
-        append("Shots (id: clip, start-end in seconds of that clip's file, L=loudness 0-9, M=motion 0-9, speech):\n")
+        append("Shots (id: clip, start-end in seconds of that clip's file, L=loudness 0-9, M=motion 0-9, V=how much of it is someone talking 0-9, speech):\n")
         shots.forEachIndexed { i, p ->
             val c = clips.firstOrNull { it.clip == p.clip }
             val (l, m) = c?.let { levels(it, p) } ?: (0 to 0)
             append(i).append(": c").append(p.clip + 1).append(' ').append(sec(p.from)).append('-').append(sec(p.to)).append(" L").append(l).append(" M").append(m)
+            c?.voice?.let { v -> append(" V").append((overlap(v, p.from, p.to) * 9 / p.len.coerceAtLeast(1)).toInt().coerceIn(0, 9)) }
             val words = c?.speech?.filter { it.second > p.from && it.first < p.to }?.joinToString(" ") { it.third }?.replace('"', '\'')?.replace('\n', ' ')?.trim().orEmpty()
             if (words.isNotEmpty()) append(" \"").append(words.take(70)).append('"')
             append('\n')
@@ -267,6 +280,45 @@ ws ::= " "?
         val l = if (c.hasAudio) (mean(c.peaks, p.from / c.stepMs, p.to / c.stepMs) / percentile(c.peaks, 0.9f).coerceAtLeast(0.02f) * 9).toInt() else 0
         val m = (mean(c.diffs, (p.from - c.from) / c.diffStep, (p.to - c.from) / c.diffStep) / percentile(c.diffs, 0.9f).coerceAtLeast(0.01f) * 9).toInt()
         return l.coerceIn(0, 9) to m.coerceIn(0, 9)
+    }
+
+    /** Talking stretches of [from, to): a little before and after each, joining pauses under 0.6 s. */
+    fun voiceRanges(voice: List<Pair<Long, Long>>, from: Long, to: Long, pad: Long = 200, join: Long = 600): List<Pair<Long, Long>> {
+        val out = ArrayList<Pair<Long, Long>>()
+        for ((a, b) in voice.sortedBy { it.first }) {
+            val s = maxOf(from, a - pad); val e = minOf(to, b + pad); if (e - s < 250) continue
+            val last = out.lastOrNull()
+            if (last != null && s - last.second <= join) out[out.lastIndex] = last.first to maxOf(last.second, e) else out += s to e
+        }
+        return out
+    }
+
+    /** [t] moved to the nearer edge of the talking stretch it falls in, if that edge is within 0.7 s and inside (lo, hi). */
+    fun gapNear(t: Long, voice: List<Pair<Long, Long>>?, lo: Long, hi: Long): Long {
+        val span = voice?.firstOrNull { t > it.first && t < it.second } ?: return t
+        val best = listOf(span.first, span.second).filter { kotlin.math.abs(it - t) <= 700 && it > lo && it < hi }.minByOrNull { kotlin.math.abs(it - t) }
+        return best ?: t
+    }
+
+    private fun overlap(voice: List<Pair<Long, Long>>, s: Long, e: Long) = voice.sumOf { (a, b) -> (minOf(b, e) - maxOf(a, s)).coerceAtLeast(0) }
+
+    /**
+     * Picked shots that stop or start in the middle of a sentence grow (at most 0.8 s each, [budget] ms in all) to the
+     * sentence's end or start, as long as they stay inside the clip and do not run into the next or previous shot.
+     */
+    fun finishSentences(pieces: List<Piece>, clips: List<ClipInput>, budget: Long): List<Piece> {
+        var left = budget; val out = pieces.toMutableList()
+        for (i in out.indices) {
+            val p = out[i]; val c = clips.firstOrNull { it.clip == p.clip } ?: continue; val v = c.voice ?: continue
+            val prev = out.getOrNull(i - 1)?.takeIf { it.clip == p.clip }; val next = out.getOrNull(i + 1)?.takeIf { it.clip == p.clip }
+            var from = p.from; var to = p.to
+            v.firstOrNull { to > it.first && to < it.second }?.let { (_, b) -> val grow = b - to
+                if (grow in 1..minOf(800L, left) && b <= c.to && (next == null || b <= next.from)) { to = b; left -= grow } }
+            v.firstOrNull { from > it.first && from < it.second }?.let { (a, _) -> val grow = from - a
+                if (grow in 1..minOf(800L, left) && a >= c.from && (prev == null || a >= prev.to)) { from = a; left -= grow } }
+            if (from != p.from || to != p.to) out[i] = Piece(p.clip, from, to, p.score)
+        }
+        return out
     }
 
     private fun mean(a: FloatArray, from: Long, to: Long): Float {

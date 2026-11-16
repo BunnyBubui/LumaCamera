@@ -85,4 +85,22 @@ class AutoEditTest {
         assertEquals("auto", d.music); assertEquals(null, d.sfx)
         assertTrue(AutoEdit.grammar(listOf("lofi_84", "bad id!")).let { it.contains("lofi_84") && !it.contains("bad id") })
     }
+    @Test fun talkKeepsOnlyWhereSomeoneTalksEvenOverMusic() {
+        // Loud music all through; someone talks from 2 to 5 s and from 5.3 to 6 s (one stretch after joining) and at 12 to 14 s.
+        val c = AutoEdit.ClipInput(0, 0, 20_000, peaks(20_000), 50, FloatArray(80), 250, voice = listOf(2_000L to 5_000L, 5_300L to 6_000L, 12_000L to 14_000L))
+        val p = AutoEdit.plan(listOf(c), style("talk"))
+        assertEquals(listOf(1_800L to 6_200L, 11_800L to 14_200L), p.pieces.map { it.from to it.to })
+    }
+    @Test fun shotEdgesMoveToPausesBetweenSentences() {
+        assertEquals(4_500L, AutoEdit.gapNear(5_000, listOf(4_500L to 6_000L), 0, 10_000))
+        assertEquals(5_000L, AutoEdit.gapNear(5_000, listOf(3_000L to 8_000L), 0, 10_000)) // both edges too far
+        assertEquals(5_000L, AutoEdit.gapNear(5_000, null, 0, 10_000))
+    }
+    @Test fun pickedShotsFinishTheirSentence() {
+        val c = AutoEdit.ClipInput(0, 0, 20_000, FloatArray(0), 50, FloatArray(0), 250, voice = listOf(2_500L to 3_400L))
+        val out = AutoEdit.finishSentences(listOf(AutoEdit.Piece(0, 0, 3_000), AutoEdit.Piece(0, 3_200, 6_000)), listOf(c), 2_000)
+        assertEquals(3_400L, AutoEdit.finishSentences(listOf(AutoEdit.Piece(0, 0, 3_000)), listOf(c), 2_000)[0].to)
+        assertEquals(3_000L, out[0].to) // growing to 3.4 s would run into the next shot
+        assertEquals(3_200L, out[1].from) // growing back to 2.5 s would run into the shot before
+    }
 }

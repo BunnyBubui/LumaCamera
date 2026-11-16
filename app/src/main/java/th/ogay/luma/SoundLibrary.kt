@@ -219,6 +219,13 @@ object SoundLibrary {
         t
     }.getOrNull()
 
+    /** Takes a track out of the library and deletes its file. Projects that used it lose that music. */
+    fun remove(c: Context, id: String) {
+        val p = c.getSharedPreferences("camera", 0); val a = JSONArray(p.getString("sound_library", "[]")); val keep = JSONArray()
+        for (i in 0 until a.length()) { val o = a.getJSONObject(i); if (o.optString("id") == id) File(o.optString("file")).delete() else keep.put(o) }
+        p.edit().putString("sound_library", keep.toString()).apply()
+    }
+
     /** Downloads an audio file a tool pointed to (at most 40 MB) into the library. */
     fun download(c: Context, url: String): Track? = runCatching {
         if (!url.startsWith("https://")) return@runCatching null

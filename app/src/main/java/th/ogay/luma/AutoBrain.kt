@@ -34,10 +34,15 @@ object AutoBrain {
     )
     private fun prefs(c: Context) = c.getSharedPreferences("camera", 0)
     fun provider(c: Context) = PROVIDERS.getOrElse(prefs(c).getInt("auto_api_provider", 0)) { PROVIDERS[0] }
-    fun key(c: Context, p: Provider = provider(c)) = prefs(c).getString("auto_api_key_" + p.id, "").orEmpty()
+    /** The key in plain text. A key saved before encryption existed is sealed on first read. */
+    fun key(c: Context, p: Provider = provider(c)): String {
+        val stored = prefs(c).getString("auto_api_key_" + p.id, "").orEmpty()
+        if (stored.isNotEmpty() && !SecretBox.isSealed(stored)) prefs(c).edit().putString("auto_api_key_" + p.id, SecretBox.seal(stored)).apply()
+        return SecretBox.open(stored)
+    }
     fun model(c: Context, p: Provider = provider(c)) = prefs(c).getString("auto_api_model_" + p.id, null)?.takeIf { it.isNotBlank() } ?: p.model
     fun base(c: Context, p: Provider = provider(c)) = (if (p.id == "custom") prefs(c).getString("auto_api_base", "").orEmpty() else p.base).trimEnd('/')
-    fun setKey(c: Context, v: String) { prefs(c).edit().putString("auto_api_key_" + provider(c).id, v.trim()).apply() }
+    fun setKey(c: Context, v: String) { prefs(c).edit().putString("auto_api_key_" + provider(c).id, SecretBox.seal(v.trim())).apply() }
     fun setModel(c: Context, v: String) { prefs(c).edit().putString("auto_api_model_" + provider(c).id, v.trim()).apply() }
     fun setBase(c: Context, v: String) { prefs(c).edit().putString("auto_api_base", v.trim()).apply() }
 
