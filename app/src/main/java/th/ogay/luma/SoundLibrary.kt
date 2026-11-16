@@ -118,12 +118,15 @@ object SoundLibrary {
         return out
     }
 
-    /** Built-in track [id] rendered to exactly [lengthMs]: an intro without drums, then the full loop, with a soft start and end. */
+    /** Built-in track [id] rendered to exactly [lengthMs]: one bar without drums (for 8 s or more), then the full loop, with a soft start and end. */
     fun renderMusic(id: String, lengthMs: Long): FloatArray {
         val n = (lengthMs * RATE / 1000).toInt().coerceAtLeast(RATE)
-        val full = loop(id, true); val intro = if (spec(id).introBars > 0) loop(id, false) else full
+        val full = loop(id, true); val bars = if (lengthMs >= 8_000) spec(id).introBars else 0
+        val intro = if (bars > 0) loop(id, false) else full
+        // The first [bars] bars without drums, then the full loop; bars sit on the same grid, so the beat never shifts.
+        val introLen = bars * full.size / 4
         val out = FloatArray(n)
-        for (i in 0 until n) { val l = i / full.size; out[i] = if (l == 0 && spec(id).introBars > 0) intro[i % intro.size] else full[i % full.size] }
+        for (i in 0 until n) out[i] = if (i < introLen) intro[i % intro.size] else full[i % full.size]
         master(out, 0.6f, 1.8f)
         return out
     }
