@@ -308,8 +308,7 @@ class VideoEditorActivity : ComponentActivity() {
     // ---- Layers (video, picture, sound on top) ----
     private val layers = mutableListOf<VideoLayer>()
     private val layerThumbs = HashMap<Uri, Bitmap>()
-    private val layerViews = mutableListOf<ImageView>()
-    private val layerSound = HashMap<Int, MediaPlayer>()
+    private val layerViews = mutableListOf<View>()
     private var layerPick = -1
     private var lanes: LayerLanes? = null
     private lateinit var timelineScroll: LaneWindow
@@ -358,7 +357,7 @@ class VideoEditorActivity : ComponentActivity() {
                 if (pos >= e.to - 30) playClip(nextOf(playIndex)) else trim.playhead = pos.coerceIn(e.from, e.to) }
             showTime(); syncLayerSound(true); showMotion(pos)
             if (++tickCount % 30 == 0) preloadNext()
-        }
+        } else if (prepared && ++tickCount % 4 == 0) syncLayerSound(false)
         handler.postDelayed(this, 33)
     } }
 
@@ -2024,7 +2023,7 @@ class VideoEditorActivity : ComponentActivity() {
         if (l.kind == VideoLayer.VIDEO && l.volume > 0f && VideoLayers.hasAudio(this, l.source)) out += EditorKit.action(this, "M4 12h6 M14 12h6 M10 8v8 M14 8v8", "แยกเสียง") {
             val c = layers[i]; layers[i] = c.copy(volume = 0f)
             layers += VideoLayer(VideoLayer.SOUND, c.source, c.at, c.length, c.from, volume = c.volume, fadeIn = c.fadeIn, fadeOut = c.fadeOut)
-            layerPick = layers.size - 1; releaseLayerSound(); rebuildLayers(); refreshTimeline(); showTool(0, false); notice("แยกเสียงเป็นแถบสีม่วงแล้ว") }
+            layerPick = layers.size - 1; rebuildLayers(); refreshTimeline(); showTool(0, false); notice("แยกเสียงเป็นแถบสีม่วงแล้ว") }
         return out
     }
     private fun cutTools(col: LinearLayout) {
@@ -2394,9 +2393,9 @@ class VideoEditorActivity : ComponentActivity() {
         if (l != null) {
             val i = layerPick
             head.addView(text((if (l.music) "เพลง: " else "เสียง: ") + layerName(l), 13f, Glass.TEXT, true).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }, LinearLayout.LayoutParams(0, -2, 1f))
-            head.addView(muteButton(l.volume == 0f) { layers[i] = layers[i].copy(volume = if (layers[i].volume == 0f) 1f else 0f); releaseLayerSound(); showTool(9, false) })
+            head.addView(muteButton(l.volume == 0f) { layers[i] = layers[i].copy(volume = if (layers[i].volume == 0f) 1f else 0f); showTool(9, false) })
             box.addView(head, -1, -2)
-            slider("ความดัง", pct, (l.volume * 20).roundToInt()) { v -> layers[i] = layers[i].copy(volume = v / 20f); layerSound[i]?.runCatching { val x = (v / 20f).coerceAtMost(1f); setVolume(x, x) } }
+            slider("ความดัง", pct, (l.volume * 20).roundToInt()) { v -> layers[i] = layers[i].copy(volume = v / 20f); layerPlayFor(i)?.mp?.runCatching { val x = (v / 20f).coerceAtMost(1f); setVolume(x, x) } }
             val sec = (0..3000 step 100).map { if (it == 0) "ไม่มี" else String.format(Locale.US, "%.1f วิ", it / 1000f) }
             slider("ค่อย ๆ ดังขึ้น", sec, (l.fadeIn / 100).toInt()) { v -> layers[i] = layers[i].copy(fadeIn = v * 100L) }
             slider("ค่อย ๆ เบาลง", sec, (l.fadeOut / 100).toInt()) { v -> layers[i] = layers[i].copy(fadeOut = v * 100L) }
@@ -3001,7 +3000,10 @@ class VideoEditorActivity : ComponentActivity() {
     }
     /** One picture per visual layer on the preview: drag it to move, tap it to select it. */
     private fun rebuildLayers() {
-        releaseLayerSound()
+        // Players of layers that are still there carry on (no reopening, no hitch); the rest are let go.
+        val keep = layers.mapIndexed { i, l -> playKey(i, l) }.toSet()
+        layerPlay.keys.filter { it !in keep }.forEach { k -> layerPlay.remove(k)?.release() }
+        layerPlay.values.forEach { it.view = null }
         layerViews.forEach { stage.removeView(it) }; layerViews.clear()
         layers.forEachIndexed { i, l ->
             if (!l.visual) return@forEachIndexed
@@ -3028,9 +3030,25 @@ class VideoEditorActivity : ComponentActivity() {
                 }
                 true
             }
-            stage.addView(v, FrameLayout.LayoutParams(1, 1, Gravity.TOP or Gravity.START)); layerViews += v
+            // A video layer plays on the preview: its picture (shown first) with the moving video drawn over it once frames arrive.
+            val shown: View = if (l.kind == VideoLayer.VIDEO && !l.matte.active) FrameLayout(this).apply {
+                clipToOutline = true; outlineProvider = v.outlineProvider; contentDescription = v.contentDescription
+                addView(v, -1, -1)
+                val tv = TextureView(this@VideoEditorActivity).apply { alpha = 0f; isClickable = false; isFocusable = false }
+                tv.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+                    override fun onSurfaceTextureAvailable(st: SurfaceTexture, w: Int, h: Int) { val lp = layerPlay[playKey(i, l)] ?: return; lp.view = tv; lp.attach() }
+                    override fun onSurfaceTextureSizeChanged(st: SurfaceTexture, w: Int, h: Int) {}
+                    override fun onSurfaceTextureDestroyed(st: SurfaceTexture): Boolean { layerPlay[playKey(i, l)]?.detach(tv); return true }
+                    override fun onSurfaceTextureUpdated(st: SurfaceTexture) { if (tv.alpha < 1f) tv.alpha = 1f }
+                }
+                addView(tv, -1, -1)
+                // Touches go to the picture underneath (moving and picking the layer).
+                setOnTouchListener { _, e -> v.dispatchTouchEvent(e) }
+                tag = i; videoTex[i] = tv
+            } else v.also { videoTex.remove(i) }
+            stage.addView(shown, FrameLayout.LayoutParams(1, 1, Gravity.TOP or Gravity.START)); layerViews += shown
         }
-        stage.post { placeLayers() }
+        stage.post { placeLayers(); syncLayerSound(player?.isPlaying == true) }
     }
     /** Same place and size as the export; shown only during the layer's time (faint while it is being edited). */
     private fun placeLayers() {
@@ -3050,22 +3068,73 @@ class VideoEditorActivity : ComponentActivity() {
             if (l.hidden) { v.alpha = if (picked) 0.2f else 0f; v.isEnabled = false }
         }
     }
-    /** Plays layer sounds along with the preview. */
+    // ---------- Separate tracks (sound and video layers) in the preview ----------
+    // Each layer that makes sound or moving pictures gets its own player, opened in the background a few seconds before
+    // the layer starts (never at the moment it starts, which froze the preview), then kept in step with the main clip by
+    // nudging its speed a few percent instead of jumping (a jump is a click and a stall).
+    private inner class LayerPlay(val mp: MediaPlayer) {
+        var ready = false; var view: TextureView? = null; private var surf: Surface? = null; var lastSeek = -1L
+        fun attach() { val tv = view ?: return; val st = tv.surfaceTexture ?: return; if (surf != null) return
+            surf = Surface(st); runCatching { mp.setSurface(surf) } }
+        fun detach(tv: TextureView) { if (view === tv) { runCatching { mp.setSurface(null) }; surf?.release(); surf = null; view = null } }
+        fun release() { runCatching { mp.release() }; surf?.release(); surf = null; view = null }
+    }
+    private val layerPlay = HashMap<String, LayerPlay>()
+    private val videoTex = HashMap<Int, TextureView>()
+    private fun playKey(i: Int, l: VideoLayer) = "$i|${l.source}|${l.kind}"
+    private fun layerPlayFor(i: Int) = layers.getOrNull(i)?.let { layerPlay[playKey(i, it)] }
+    /** At most this many video layers decode at once (phones have a few video decoders; the main clip needs two). */
+    private val maxVideoLayers get() = if (Device.low(this)) 1 else 3
+
+    private fun openLayer(i: Int, l: VideoLayer): LayerPlay? = runCatching {
+        val mp = MediaPlayer(); val lp = LayerPlay(mp)
+        mp.setDataSource(this, l.source)
+        mp.setOnPreparedListener { if (layerPlay[playKey(i, l)] === lp) { lp.ready = true; if (l.kind == VideoLayer.VIDEO) { lp.view = videoTex[i]; lp.attach() }
+            val want = (l.from + (outNow() - l.at).coerceAtLeast(0)).toInt(); if (want > 0) mp.seekTo(want) } }
+        mp.setOnErrorListener { _, _, _ -> layerPlay.remove(playKey(i, l))?.release(); true }
+        mp.prepareAsync()
+        lp
+    }.getOrNull()
+
+    /** Plays (or, when [playing] is false, shows the right frame of) every sound and video layer around the playhead. */
     private fun syncLayerSound(playing: Boolean) {
         if (layers.none { it.audible }) return
         if (duck && music != null && recorder == null) musicPlayer?.runCatching { val m = musicVolume.coerceAtMost(1f) * duckGain(); setVolume(m, m) }
         val now = outNow()
+        // Video layers nearest in time get the decoders.
+        val videoOk = layers.withIndex().filter { (_, l) -> l.kind == VideoLayer.VIDEO && !l.hidden && now in (l.at - 2_500) until (l.end + 500) }
+            .sortedBy { (_, l) -> abs(l.at - now) }.take(maxVideoLayers).map { it.index }.toSet()
         layers.forEachIndexed { i, l ->
             if (!l.audible) return@forEachIndexed
-            val mp = layerSound[i]
-            if (playing && now in l.at until l.end && !l.hidden) {
-                val p = mp ?: runCatching { MediaPlayer().apply { setDataSource(this@VideoEditorActivity, l.source); prepare() } }.getOrNull()?.also { layerSound[i] = it } ?: return@forEachIndexed
-                if (!p.isPlaying) runCatching { p.seekTo((l.from + now - l.at).toInt()); p.start() }
-                runCatching { val v = l.volume.coerceAtMost(1f) * l.fade(now) * (if (l.music) duckGain() else 1f); p.setVolume(v, v) }
-            } else if (mp?.isPlaying == true) mp.pause()
+            val key = playKey(i, l)
+            val near = !l.hidden && now in (l.at - 2_500) until (l.end + 500) && (l.kind != VideoLayer.VIDEO || i in videoOk)
+            if (!near) { layerPlay.remove(key)?.let { it.release(); videoTex[i]?.alpha = 0f }; return@forEachIndexed }
+            val lp = layerPlay[key] ?: openLayer(i, l)?.also { layerPlay[key] = it } ?: return@forEachIndexed
+            if (!lp.ready) return@forEachIndexed
+            val mp = lp.mp
+            val inside = now in l.at until l.end
+            val want = l.from + (now - l.at).coerceIn(0, l.length)
+            runCatching { val v = if (l.kind == VideoLayer.VIDEO && l.volume <= 0f) 0f else l.volume.coerceAtMost(1f) * l.fade(now) * (if (l.music) duckGain() else 1f); mp.setVolume(v, v) }
+            if (playing && inside) {
+                if (!mp.isPlaying) { runCatching { if (abs(mp.currentPosition - want) > 40) seekExact(mp, want); mp.playbackParams = mp.playbackParams.setSpeed(1f); mp.start() } }
+                else {
+                    val drift = runCatching { mp.currentPosition - want }.getOrDefault(0L)
+                    // Small drift: play a little faster or slower until it is gone. Large drift (a stall): one jump.
+                    runCatching { when {
+                        abs(drift) > 250 -> seekExact(mp, want)
+                        abs(drift) > 40 -> mp.playbackParams = mp.playbackParams.setSpeed(if (drift > 0) 0.96f else 1.04f)
+                        else -> if (mp.playbackParams.speed != 1f) mp.playbackParams = mp.playbackParams.setSpeed(1f)
+                    } }
+                }
+            } else {
+                if (mp.isPlaying) runCatching { mp.pause() }
+                // Paused or scrubbing: a video layer shows the frame at the playhead.
+                if (l.kind == VideoLayer.VIDEO && abs(want - lp.lastSeek) > 60) { lp.lastSeek = want; runCatching { seekExact(mp, want) } }
+            }
         }
     }
-    private fun releaseLayerSound() { layerSound.values.forEach { it.runCatching { release() } }; layerSound.clear() }
+    private fun seekExact(mp: MediaPlayer, ms: Long) { if (android.os.Build.VERSION.SDK_INT >= 26) mp.seekTo(ms, MediaPlayer.SEEK_CLOSEST) else mp.seekTo(ms.toInt()) }
+    private fun releaseLayerSound() { layerPlay.values.forEach { it.release() }; layerPlay.clear(); videoTex.values.forEach { it.alpha = 0f } }
 
     /** Add video, picture and sound layers (video and pictures from Lumora's own gallery), then edit the chosen one. */
     private val gifCache = HashMap<Uri, Boolean>()
@@ -3391,9 +3460,9 @@ class VideoEditorActivity : ComponentActivity() {
     private fun cancelExport() { ExportJob.cancel() }
 
     // ---------- Lifecycle ----------
-    override fun onPause() { player?.let { if (it.isPlaying) togglePlay() }; if (prog != null) th.ogay.luma.ai.AiPace.watching = false; super.onPause(); if (::trim.isInitialized && overlay == null) saveProject() }
+    override fun onPause() { player?.let { if (it.isPlaying) togglePlay() }; layerPlay.values.forEach { lp -> lp.mp.runCatching { if (isPlaying) pause() } }; if (prog != null) th.ogay.luma.ai.AiPace.watching = false; super.onPause(); if (::trim.isInitialized && overlay == null) saveProject() }
     override fun onResume() { super.onResume(); if (prog != null) th.ogay.luma.ai.AiPace.watching = true }
-    override fun onDestroy() { (speech as? StudioSpeech)?.stop(); speech = null; TaskNotice.stop(this); if (translating) { translateStopped = true; LlamaTranslator.cancel() }; if (hearingModels) { ModelStore.unlisten(modelEvents); hearingModels = false }; fxEq?.runCatching { release() }; fxEq = null; recorder?.runCatching { stop() }; recorder?.runCatching { release() }; recorder = null; handler.removeCallbacksAndMessages(null); releasePlayer(); musicPlayer?.runCatching { release() }; releaseLayerSound(); super.onDestroy() }
+    override fun onDestroy() { releaseLayerSound(); dropNext(); (speech as? StudioSpeech)?.stop(); speech = null; TaskNotice.stop(this); if (translating) { translateStopped = true; LlamaTranslator.cancel() }; if (hearingModels) { ModelStore.unlisten(modelEvents); hearingModels = false }; fxEq?.runCatching { release() }; fxEq = null; recorder?.runCatching { stop() }; recorder?.runCatching { release() }; recorder = null; handler.removeCallbacksAndMessages(null); releasePlayer(); musicPlayer?.runCatching { release() }; releaseLayerSound(); super.onDestroy() }
     override fun onSaveInstanceState(out: Bundle) {
         super.onSaveInstanceState(out); writeState(out)
         out.putString("projectId", projectId); out.putString("projectName", projectName); out.putBoolean("named", named); out.putBoolean("shareDone", shareDone); out.putBoolean("collapsed", collapsed)
