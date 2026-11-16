@@ -996,32 +996,98 @@ class VideoEditorActivity : ComponentActivity() {
     private class AutoSrc(val uri: Uri, val from: Long, val to: Long, val muted: Boolean, val template: Extra)
     private var autoRun = 0
 
-    /** The options page: style, length, picture shape, captions, then start. */
+    /** The options page: an optional typed instruction and who reads it, then style, length, picture shape, captions, and start. */
     private fun autoEditSheet() {
-        val st = AutoEdit.STYLES
-        SettingsPage(this, "ตัดต่ออัตโนมัติ") {}.apply {
-            section("แนวการตัด")
+        val st = AutoEdit.STYLES; val p = getSharedPreferences("camera", 0)
+        // The model chosen on this page is the one the model store downloads and loads.
+        AutoBrain.MODELS.getOrNull(p.getInt("auto_model", 0))?.let { ModelStore.select(this, it) }
+        var page: SettingsPage? = null
+        fun reopen() { page?.close(); window.decorView.post { autoEditSheet() } }
+        // Any choice can change which rows belong on the page (API rows, the model's download row), so the page is rebuilt.
+        page = SettingsPage(this, "ตัดต่ออัตโนมัติ") { AutoBrain.MODELS.getOrNull(p.getInt("auto_model", 0))?.let { ModelStore.select(this, it) }; reopen() }.apply {
+            if (analysing) { section("กำลังทำงาน"); action("หยุดตัดต่ออัตโนมัติ", Icons.CLOSE, "ทิ้งงานที่กำลังวิเคราะห์") { close(); stopAutoEdit() } }
+            section("คำสั่ง")
+            val said = p.getString("auto_prompt", "").orEmpty()
+            action("พิมพ์สิ่งที่อยากได้", EditorKit.TEXT, said.ifEmpty { "ไม่บังคับ · เช่น \"คลิปสั้น 20 วิ เน้นช่วงที่หัวเราะ ใส่ชื่อเรื่องว่า ทริปทะเล\"" }) {
+                val field = GlassDialog.field(this@VideoEditorActivity, "อยากให้ตัดแบบไหน", said, false, 3)
+                GlassDialog.ask(this@VideoEditorActivity, "คำสั่งตัดต่อ", EditorKit.TEXT, "ว่างไว้ = ใช้แนวที่เลือกด้านล่างอย่างเดียว", field, focus = field) { p.edit().putString("auto_prompt", field.text.toString().trim()).apply(); reopen(); true }
+            }
+            choose("ผู้อ่านคำสั่ง", Icons.AI, "auto_brain", listOf("ไม่ใช้ (แนวสำเร็จรูป)", "โมเดลบนเครื่อง", "API ภายนอก"), listOf(0, 1, 2), 1,
+                notes = listOf("ไม่อ่านคำสั่งที่พิมพ์", "ไม่ใช้เน็ต ช้ากว่า", "ส่งเฉพาะข้อความ ไม่ส่งวิดีโอ ต้องมี key"))
+            when (p.getInt("auto_brain", 1)) {
+                1 -> {
+                    val m = AutoBrain.selected(this@VideoEditorActivity)
+                    choose("โมเดล", Icons.AI, "auto_model", AutoBrain.MODELS.map { it.name }, AutoBrain.MODELS.indices.toList(), 0, notes = AutoBrain.MODELS.map { it.short })
+                    val ok = ModelStore.installed(this@VideoEditorActivity, m)
+                    action(if (ok) "${m.name} พร้อมใช้" else "ดาวน์โหลด ${m.name}", Icons.CHECK, if (ok) "อยู่ในเครื่องแล้ว" else "ประมาณ ${m.approxMb} MB · ดาวน์โหลดครั้งเดียว") {
+                        if (!ok) { close(); downloadModel(m) } }
+                }
+                2 -> {
+                    val pr = AutoBrain.provider(this@VideoEditorActivity)
+                    choose("ผู้ให้บริการ", Icons.AI, "auto_api_provider", AutoBrain.PROVIDERS.map { it.name }, AutoBrain.PROVIDERS.indices.toList(), 0)
+                    val k = AutoBrain.key(this@VideoEditorActivity)
+                    action("API key", Icons.LOCK, if (k.isEmpty()) "ยังไม่ได้ใส่" else "ใส่แล้ว ••••" + k.takeLast(4)) {
+                        val field = GlassDialog.field(this@VideoEditorActivity, "วาง API key", "", false, 1).apply { inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD }
+                        GlassDialog.ask(this@VideoEditorActivity, "API key ของ ${pr.name}", Icons.LOCK, "เก็บไว้ในแอปบนเครื่องนี้เท่านั้น", field, focus = field) { AutoBrain.setKey(this@VideoEditorActivity, field.text.toString()); reopen(); true }
+                    }
+                    action("ชื่อโมเดล", Icons.AI, AutoBrain.model(this@VideoEditorActivity).ifEmpty { "ยังไม่ได้ใส่" }) {
+                        val field = GlassDialog.field(this@VideoEditorActivity, "เช่น ${pr.model.ifEmpty { "gpt-4.1-mini" }}", AutoBrain.model(this@VideoEditorActivity), false, 1)
+                        GlassDialog.ask(this@VideoEditorActivity, "ชื่อโมเดล", Icons.AI, "ใช้ชื่อตามที่ผู้ให้บริการกำหนด", field, focus = field) { AutoBrain.setModel(this@VideoEditorActivity, field.text.toString()); reopen(); true }
+                    }
+                    if (pr.id == "custom") action("Base URL", Icons.FILE, AutoBrain.base(this@VideoEditorActivity).ifEmpty { "ยังไม่ได้ใส่" }) {
+                        val field = GlassDialog.field(this@VideoEditorActivity, "https://…/v1", AutoBrain.base(this@VideoEditorActivity), false, 1)
+                        GlassDialog.ask(this@VideoEditorActivity, "Base URL", Icons.FILE, "ที่อยู่ที่รับ /chat/completions แบบ OpenAI", field, focus = field) { AutoBrain.setBase(this@VideoEditorActivity, field.text.toString()); reopen(); true }
+                    }
+                }
+            }
+            section("แนวและผลลัพธ์")
             choose("แนว", Icons.AI, "auto_style", st.map { it.name }, st.indices.toList(), 0, notes = st.map { it.note })
-            choose("ความยาว", Icons.TIMER, "auto_len", listOf("ตามแนว", "15 วินาที", "30 วินาที", "60 วินาที", "3 นาที"), listOf(0, 15, 30, 60, 180), 0)
-            choose("สัดส่วนภาพ", Icons.FRAME, "auto_crop", listOf("ตามแนว", "คงเดิม", "แนวตั้ง 9:16"), listOf(0, 1, 2), 0)
+            choose("ความยาว", Icons.TIMER, "auto_len", listOf("ตามแนวหรือคำสั่ง", "15 วินาที", "30 วินาที", "60 วินาที", "3 นาที"), listOf(0, 15, 30, 60, 180), 0)
+            choose("สัดส่วนภาพ", Icons.FRAME, "auto_crop", listOf("ตามแนวหรือคำสั่ง", "คงเดิม", "แนวตั้ง 9:16"), listOf(0, 1, 2), 0)
             toggle("ใส่ซับจากเสียงพูด", EditorKit.TEXT, "auto_captions", true, "ถอดเสียงหลังตัดเสร็จ ใช้เวลาเพิ่มตามความยาววิดีโอ")
             section("เริ่ม")
             action("เริ่มตัดต่ออัตโนมัติ", Icons.AI, "จัดคลิปใหม่ทั้งวิดีโอ กดย้อนกลับเพื่อคืนของเดิมได้") { close(); runAutoEdit() }
-        }.show()
+        }
+        page?.show()
+    }
+    private fun stopAutoEdit() { autoRun++; analysing = false; AutoBrain.stop(); notice("หยุดตัดต่ออัตโนมัติแล้ว") }
+
+    /** Words already captioned, per clip of [srcs], as (from, to, text) in ms of that clip's file. */
+    private fun captionSpeech(srcs: List<AutoSrc>): List<List<Triple<Long, Long, String>>> {
+        val out = srcs.map { ArrayList<Triple<Long, Long, String>>() }
+        val ks = order()
+        for (l in layers) {
+            if (!l.caption || l.hidden || l.text.isBlank()) continue
+            ks.forEachIndexed { i, k ->
+                val cs = clipStart(k); val len = lenOf(k)
+                if (l.at >= cs && l.at < cs + len) {
+                    val sp = if (k == 0) speed else extras.getOrNull(k - 1)?.speed ?: 1f
+                    val a = srcs[i].from + ((l.at - cs) * sp).toLong()
+                    out[i] += Triple(a, a + (l.length * sp).toLong(), l.text)
+                }
+            }
+        }
+        return out
     }
 
-    /** Measures every clip in the background, asks the planner for a plan, then puts the plan on the timeline. */
+    /** Measures every clip in the background, gets a plan (from the instruction's reader, or the rules), then puts it on the timeline. */
     private fun runAutoEdit() {
         if (analysing) { notice("กำลังวิเคราะห์อยู่ รอสักครู่"); return }
         val p = getSharedPreferences("camera", 0)
         val style = AutoEdit.STYLES.getOrElse(p.getInt("auto_style", 0)) { AutoEdit.STYLES[0] }
         val target = p.getInt("auto_len", 0) * 1000L; val cropMode = p.getInt("auto_crop", 0); val subs = p.getBoolean("auto_captions", true)
+        val said = p.getString("auto_prompt", "").orEmpty().trim()
+        val brain = if (said.isEmpty()) 0 else p.getInt("auto_brain", 1)
+        val model = AutoBrain.selected(this)
+        if (brain == 1 && !ModelStore.installed(this, model)) { downloadModel(model); notice("ต้องดาวน์โหลด ${model.name} ก่อน · เสร็จแล้วกดเริ่มอีกครั้ง"); return }
+        if (brain == 2 && AutoBrain.key(this).isEmpty()) { notice("ยังไม่ได้ใส่ API key"); autoEditSheet(); return }
         if (speed != 1f || cutValid() || mainCurve != null || extras.any { it.speed != 1f || it.curve != null }) notice("ความเร็วและการตัดช่วงกลางเดิมจะถูกล้าง")
         val srcs = order().map { k ->
             val e = extras.getOrNull(k - 1)
             if (e == null) AutoSrc(source, start, end, mainMuted, extraCache.getOrPut(source.toString()) { Extra(source, duration, videoW, videoH, "คลิปแรก", firstFrame) }.copy().also { it.muted = mainMuted; it.volume = volume })
             else AutoSrc(e.uri, e.from, e.to, e.muted, e.copy())
         }
+        val speech = captionSpeech(srcs)
         // Beats of the background music, on the finished timeline, so cuts can land on them.
         val song = layers.firstOrNull { it.music && !it.hidden }
         val run = ++autoRun; analysing = true
@@ -1032,18 +1098,32 @@ class VideoEditorActivity : ComponentActivity() {
                 if (srcs.size > 1) runOnUiThread { if (!stop()) notice("กำลังวิเคราะห์คลิป ${i + 1} จาก ${srcs.size}…") }
                 val pk = if (c.muted) FloatArray(0) else runCatching { AudioPeaks.range(this, c.uri, c.from, c.to) }.getOrDefault(FloatArray(0))
                 val len = c.to - c.from; val step = when { len > 600_000 -> 1_000L; len > 120_000 -> 500L; else -> 250L }
-                AutoEdit.ClipInput(i, c.from, c.to, if (pk.any { it > 0f }) pk else FloatArray(0), AudioPeaks.STEP_MS.toLong(), frameDiffs(c.uri, c.from, c.to, step, stop), step)
+                AutoEdit.ClipInput(i, c.from, c.to, if (pk.any { it > 0f }) pk else FloatArray(0), AudioPeaks.STEP_MS.toLong(), frameDiffs(c.uri, c.from, c.to, step, stop), step, speech[i])
             }
             val beats = song?.let { s -> runCatching {
                 val pk = AudioPeaks.range(this, s.source, s.from, s.from + s.length)
                 StudioMath.beats(pk, AudioPeaks.STEP_MS.toLong()).filter { it >= s.from && it < s.from + s.length }.map { s.at + it - s.from }
             }.getOrNull() }
-            val plan = AutoEdit.plan(inputs, style, target, beats)
+            var plan: AutoEdit.Plan? = null; var why = ""
+            if (brain != 0 && !stop()) {
+                val shots = AutoEdit.shots(inputs)
+                val ask = AutoEdit.prompt(said, inputs, shots, style)
+                runOnUiThread { if (!stop()) notice(if (brain == 1) "${model.name} กำลังอ่านคำสั่งและวางแผน…" else "กำลังถาม ${AutoBrain.provider(this).name}…") }
+                val answer = if (brain == 1) AutoBrain.local(this, model, ask) else AutoBrain.api(this, ask)
+                val brief = answer.getOrNull()?.let { AutoEdit.parseBrief(it, style) }
+                if (brief != null) {
+                    val b = if (target > 0) AutoEdit.Brief(brief.style, (target / 1000).toInt(), brief.crop, brief.transition, brief.captions, brief.film, brief.order, brief.keep, brief.drop, brief.title) else brief
+                    plan = AutoEdit.planFromBrief(inputs, shots, b, beats, if (brain == 1) model.name else AutoBrain.provider(this).name)
+                } else why = answer.exceptionOrNull()?.message ?: "ผู้อ่านคำสั่งตอบไม่เป็นรูปแบบที่ใช้ได้"
+            }
+            if (stop()) return@execute
+            val final = plan ?: AutoEdit.plan(inputs, style, target, beats)
             runOnUiThread {
                 if (stop()) return@runOnUiThread
                 analysing = false
-                if (plan.pieces.isEmpty()) { notice("ไม่พบช่วงที่เก็บไว้ได้ จึงไม่เปลี่ยนวิดีโอ"); return@runOnUiThread }
-                applyPlan(plan, srcs, cropMode, subs)
+                if (why.isNotEmpty()) notice("$why · ใช้แนวสำเร็จรูปแทน")
+                if (final.pieces.isEmpty()) { notice("ไม่พบช่วงที่เก็บไว้ได้ จึงไม่เปลี่ยนวิดีโอ"); return@runOnUiThread }
+                applyPlan(final, srcs, cropMode, subs)
             }
         }
     }
@@ -1058,17 +1138,21 @@ class VideoEditorActivity : ComponentActivity() {
         ps.drop(1).forEach { pc -> extras.add(srcs[pc.clip].template.copy().also { it.from = pc.from; it.to = pc.to; it.speed = 1f; it.curve = null; it.muted = srcs[pc.clip].muted }) }
         mainAt = 0; playIndex = 0
         val style = plan.style
-        transition = style.transition
-        val crop = when (cropMode) { 0 -> style.crop; 2 -> "9:16"; else -> "" }
+        transition = plan.transition
+        val crop = when (cropMode) { 0 -> plan.crop; 2 -> "9:16"; else -> "" }
         if (crop.isNotEmpty()) CROPS.indexOfFirst { it.first == crop }.takeIf { it >= 0 }?.let { cropIndex = it; layoutVideo() }
-        if (style.filmGroup != null && film == null) Films.inGroup(style.filmGroup).firstOrNull()?.let { film = it; applyLook() }
+        val group = plan.filmGroup
+        if (group != null && film == null) Films.inGroup(group).firstOrNull()?.let { film = it; applyLook() }
         // Old captions no longer match the new cuts.
         val hadCaptions = layers.any { it.caption }
         if (hadCaptions) { layers.removeAll { it.caption }; layerPick = -1; rebuildLayers() }
         if (::trim.isInitialized) { trim.split = -1; showClipOnBar(); trim.playhead = start }
-        openPlayer(); showTime(); refreshTimeline(); showTool(tool, false)
-        notice("ตัดต่อแบบ${style.name}แล้ว · จาก ${clock(plan.beforeMs)} เหลือ ${clock(plan.afterMs)} · ${ps.size} ช่วง")
-        if (subs) window.decorView.postDelayed({ if (!isDestroyed) autoCaptions() }, 600)
+        openPlayer(); showTime(); refreshTimeline()
+        if (plan.title.isNotEmpty()) addText(plan.title, 0.5f, 0L, 2_500L)
+        showTool(0, false)
+        notice("ตัดต่อแบบ${style.name}แล้ว" + (if (plan.by.isNotEmpty()) " ตามคำสั่ง (${plan.by})" else "") + " · จาก ${clock(plan.beforeMs)} เหลือ ${clock(plan.afterMs)} · ${ps.size} ช่วง")
+        val wantSubs = subs && plan.captions != false
+        if (wantSubs) window.decorView.postDelayed({ if (!isDestroyed) autoCaptions() }, 600)
         else if (hadCaptions) notice("ลบซับเดิมออกแล้ว เพราะเวลาไม่ตรงกับการตัดใหม่")
     }
 

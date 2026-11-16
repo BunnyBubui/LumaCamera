@@ -29,19 +29,24 @@ object AutoEdit {
     )
 
     /** What was measured for one clip. [peaks] is indexed by absolute time in the file (step [stepMs]); [diffs] starts at [from]. */
-    class ClipInput(val clip: Int, val from: Long, val to: Long, val peaks: FloatArray, val stepMs: Long, val diffs: FloatArray, val diffStep: Long) {
+    class ClipInput(val clip: Int, val from: Long, val to: Long, val peaks: FloatArray, val stepMs: Long, val diffs: FloatArray, val diffStep: Long,
+                    /** Words spoken in this clip (from captions), as (from, to, text) in ms of the file. */
+                    val speech: List<Triple<Long, Long, String>> = emptyList()) {
         val hasAudio get() = peaks.isNotEmpty()
     }
 
     /** A part of clip [clip] (index into the inputs) from [from] to [to] ms of its file. */
     class Piece(val clip: Int, val from: Long, val to: Long, val score: Float = 0f) { val len get() = to - from }
 
-    class Plan(val style: Style, val pieces: List<Piece>, val beforeMs: Long) {
+    class Plan(val style: Style, val pieces: List<Piece>, val beforeMs: Long,
+               val transition: Int = style.transition, val crop: String = style.crop, val filmGroup: String? = style.filmGroup,
+               /** Captions asked for by the model (null = the user's switch decides); an opening title ("" = none); who planned it. */
+               val captions: Boolean? = null, val title: String = "", val by: String = "") {
         val afterMs get() = pieces.sumOf { it.len }
         /** The plan as JSON text: the same shape a model will be asked to write. */
         fun toJson(): String = buildString {
-            append("{\"style\":\"").append(style.id).append("\",\"transition\":").append(style.transition)
-            append(",\"crop\":\"").append(style.crop).append("\",\"pieces\":[")
+            append("{\"style\":\"").append(style.id).append("\",\"transition\":").append(transition)
+            append(",\"crop\":\"").append(crop).append("\",\"pieces\":[")
             pieces.forEachIndexed { i, p -> if (i > 0) append(','); append("{\"clip\":").append(p.clip).append(",\"from\":").append(p.from).append(",\"to\":").append(p.to).append('}') }
             append("]}")
         }
@@ -54,7 +59,13 @@ object AutoEdit {
     fun plan(clips: List<ClipInput>, style: Style, targetMs: Long = 0L, beats: List<Long>? = null): Plan {
         val before = clips.sumOf { (it.to - it.from).coerceAtLeast(0) }
         val target = if (targetMs > 0) targetMs else style.targetMs
-        val pick = target in 1 until before
+        var out = planPieces(clips, style, target in 1 until before, target)
+        if (!beats.isNullOrEmpty()) out = snap(out, clips, beats)
+        return Plan(style, out, before)
+    }
+
+    /** The pieces of a plan: split, scored and, when [pick], chosen up to [target] ms. */
+    private fun planPieces(clips: List<ClipInput>, style: Style, pick: Boolean, target: Long): List<Piece> {
         val all = ArrayList<Piece>()
         for (c in clips) {
             if (c.to - c.from < 300) continue
@@ -95,13 +106,12 @@ object AutoEdit {
             val order = clips.map { it.clip }
             chosen = take.sortedWith(compareBy({ order.indexOf(it.clip) }, { it.from }))
         }
-        // Pieces that touch are one piece; scraps under 300 ms go.
+        // Pieces that touch are one piece (except when every candidate is wanted as a separate shot); scraps under 300 ms go.
+        if (pick && target > clips.sumOf { it.to - it.from }) return chosen.filter { it.len >= 300 }
         val merged = ArrayList<Piece>()
         for (p in chosen) { val last = merged.lastOrNull()
             if (last != null && last.clip == p.clip && p.from - last.to in 0..60) merged[merged.lastIndex] = Piece(p.clip, last.from, p.to, maxOf(last.score, p.score)) else merged += p }
-        var out: List<Piece> = merged.filter { it.len >= 300 }
-        if (!beats.isNullOrEmpty()) out = snap(out, clips, beats)
-        return Plan(style, out, before)
+        return merged.filter { it.len >= 300 }
     }
 
     /** Moves each shot's end (but the last) to the nearest beat within 300 ms, staying inside its clip and at least 300 ms long. */
@@ -118,6 +128,138 @@ object AutoEdit {
             out += Piece(p.clip, p.from, to, p.score); at += to - p.from
         }
         return out
+    }
+
+    // ---------- Typed instructions: a language model writes a short brief, the planner does the cutting ----------
+
+    val TRANSITION_IDS = listOf("cut", "fade", "flash", "zoom", "slide", "wipe", "blur")
+    val CROP_IDS = listOf("keep", "9:16", "1:1", "16:9", "2.39:1")
+    val ORDER_IDS = listOf("time", "reverse", "best", "keep")
+
+    /** What the model decided. [keep]/[drop] are shot numbers from [shots]; [seconds] 0 = the style's length. */
+    class Brief(val style: Style, val seconds: Int, val crop: String, val transition: Int, val captions: Boolean, val film: Boolean,
+                val order: String, val keep: List<Int>, val drop: List<Int>, val title: String)
+
+    /**
+     * Neutral shots the model can point at by number: quiet stretches out, split at scene changes and into pieces of at most
+     * a few seconds. At most [max] shots, so the list fits in a small model's memory (the pieces grow longer when there are many).
+     */
+    fun shots(clips: List<ClipInput>, max: Int = 60): List<Piece> {
+        var segMax = 6_000L; var out: List<Piece>
+        do {
+            val st = Style("shots", "", "", 1, 1_500, segMax, true, 0.05f, 700, 150, 0, "", null, false)
+            out = candidates(clips, st)
+            segMax *= 2
+        } while (out.size > max && segMax < 3_600_000L)
+        return out
+    }
+
+    /** Every candidate piece of [style] before any is picked (the same split and scores [plan] uses when it picks). */
+    private fun candidates(clips: List<ClipInput>, style: Style): List<Piece> {
+        val huge = clips.sumOf { it.to - it.from } * 2 + 10_000
+        // A target just under the total makes plan() split long shots without leaving any out: ask for everything but cut.
+        return planPieces(clips, style, pick = true, target = huge)
+    }
+
+    /** The shot list as the model reads it: number, clip, seconds, loudness and motion 0..9, and any words spoken. */
+    fun describe(clips: List<ClipInput>, shots: List<Piece>): String = buildString {
+        val total = clips.sumOf { it.to - it.from }
+        append("Footage: ").append(clips.size).append(" clip(s), ").append(sec(total)).append(" s in all.\n")
+        append("Shots (id: clip, start-end in seconds of that clip's file, L=loudness 0-9, M=motion 0-9, speech):\n")
+        shots.forEachIndexed { i, p ->
+            val c = clips.firstOrNull { it.clip == p.clip }
+            val (l, m) = c?.let { levels(it, p) } ?: (0 to 0)
+            append(i).append(": c").append(p.clip + 1).append(' ').append(sec(p.from)).append('-').append(sec(p.to)).append(" L").append(l).append(" M").append(m)
+            val words = c?.speech?.filter { it.second > p.from && it.first < p.to }?.joinToString(" ") { it.third }?.replace('"', '\'')?.replace('\n', ' ')?.trim().orEmpty()
+            if (words.isNotEmpty()) append(" \"").append(words.take(70)).append('"')
+            append('\n')
+        }
+    }
+
+    /** The whole request for the model. */
+    fun prompt(instruction: String, clips: List<ClipInput>, shots: List<Piece>, styleHint: Style): String = buildString {
+        append("You are a professional video editor working inside a phone app. Plan an edit of the user's footage.\n\n")
+        append(describe(clips, shots)).append('\n')
+        append("Styles: viral = fast cuts, at most 30 s, vertical. vlog = remove silence, keep the story. talk = keep every spoken word, captions. ")
+        append("highlight = the best moments, about 60 s. cinematic = long calm shots, wide picture, film look.\n")
+        append("The user picked \"").append(styleHint.id).append("\" as a starting point; change it if the request says otherwise.\n")
+        append("User request: \"").append(instruction.replace('"', '\'').take(600)).append("\"\n\n")
+        append("Reply with one JSON object only, no other text:\n")
+        append("{\"style\": viral|vlog|talk|highlight|cinematic, \"seconds\": target length in seconds (0 = let the style decide), ")
+        append("\"crop\": keep|9:16|1:1|16:9|2.39:1, \"transition\": cut|fade|flash|zoom|slide|wipe|blur, \"captions\": true|false, \"film\": true|false, ")
+        append("\"order\": time|reverse|best|keep, \"keep\": [shot ids to use, in order when order is keep; [] = let the app choose], ")
+        append("\"drop\": [shot ids to leave out], \"title\": a short opening title in the user's language, or \"\"}\n")
+        append("List shot ids in keep or drop only when the request is about specific content, people, words or moments.")
+    }
+
+    /** Grammar for llama.cpp, so a small model can only answer with a valid brief. */
+    fun grammar(): String {
+        fun alt(v: List<String>) = v.joinToString(" | ") { "\"\\\"" + it + "\\\"\"" }
+        return """
+root ::= "{" ws "\"style\":" ws style "," ws "\"seconds\":" ws num "," ws "\"crop\":" ws crop "," ws "\"transition\":" ws trans "," ws "\"captions\":" ws bool "," ws "\"film\":" ws bool "," ws "\"order\":" ws order "," ws "\"keep\":" ws ids "," ws "\"drop\":" ws ids "," ws "\"title\":" ws str ws "}"
+style ::= ${alt(STYLES.map { it.id })}
+crop ::= ${alt(CROP_IDS)}
+trans ::= ${alt(TRANSITION_IDS)}
+order ::= ${alt(ORDER_IDS)}
+bool ::= "true" | "false"
+num ::= [0-9] | [0-9] [0-9] | [0-9] [0-9] [0-9] | [0-9] [0-9] [0-9] [0-9]
+ids ::= "[" ws ( num ( "," ws num )* )? ws "]"
+str ::= "\"" [^"\\\n]* "\""
+ws ::= " "?
+""".trim()
+    }
+
+    /** Reads a brief out of a model's answer (extra text around the JSON is ignored). Null when there is no usable object. */
+    fun parseBrief(answer: String, fallback: Style): Brief? {
+        val a = answer.indexOf('{'); val b = answer.lastIndexOf('}')
+        if (a < 0 || b <= a) return null
+        val j = answer.substring(a, b + 1)
+        fun str(k: String) = Regex("\"" + k + "\"\\s*:\\s*\"([^\"]*)\"").find(j)?.groupValues?.get(1)
+        fun num(k: String) = Regex("\"" + k + "\"\\s*:\\s*\"?(\\d+)").find(j)?.groupValues?.get(1)?.toIntOrNull()
+        fun bool(k: String) = Regex("\"" + k + "\"\\s*:\\s*(true|false)").find(j)?.groupValues?.get(1)?.toBoolean()
+        fun ids(k: String) = Regex("\"" + k + "\"\\s*:\\s*\\[([^\\]]*)\\]").find(j)?.groupValues?.get(1)?.split(',')?.mapNotNull { it.trim().trim('"').toIntOrNull() }.orEmpty()
+        val styleId = str("style")
+        if (styleId == null && num("seconds") == null && ids("keep").isEmpty()) return null
+        val style = STYLES.firstOrNull { it.id == styleId } ?: fallback
+        val crop = str("crop")?.takeIf { it in CROP_IDS } ?: style.crop.ifEmpty { "keep" }
+        val trans = TRANSITION_IDS.indexOf(str("transition")).takeIf { it >= 0 } ?: style.transition
+        return Brief(style, (num("seconds") ?: 0).coerceIn(0, 3_600), if (crop == "keep") "" else crop, trans, bool("captions") ?: style.captions,
+            bool("film") ?: (style.filmGroup != null), str("order")?.takeIf { it in ORDER_IDS } ?: "time", ids("keep").distinct(), ids("drop").distinct(), str("title")?.trim()?.take(60).orEmpty())
+    }
+
+    /** Turns a brief into a plan. Without shot numbers it is the style's own plan with the brief's length and finish. */
+    fun planFromBrief(clips: List<ClipInput>, shots: List<Piece>, brief: Brief, beats: List<Long>? = null, by: String = ""): Plan {
+        val st = brief.style; val film = if (brief.film) (st.filmGroup ?: "ฟิล์มหนัง") else null
+        val target = brief.seconds * 1000L
+        fun finish(pieces: List<Piece>, before: Long) = Plan(st, pieces, before, brief.transition, brief.crop, film, brief.captions, brief.title, by)
+        val before = clips.sumOf { (it.to - it.from).coerceAtLeast(0) }
+        if (brief.keep.isEmpty() && brief.drop.isEmpty() && brief.order == "time") return finish(plan(clips, st, target, beats).pieces, before)
+        var pool = if (brief.keep.isNotEmpty()) brief.keep.mapNotNull { shots.getOrNull(it) } else shots.filterIndexed { i, _ -> i !in brief.drop }
+        if (pool.isEmpty()) pool = shots
+        val limit = if (target > 0) target else st.targetMs
+        if (limit > 0 && pool.sumOf { it.len } > limit) {
+            val take = HashSet<Piece>(); var sum = 0L
+            for (p in pool.sortedByDescending { it.score }) if (sum + p.len <= limit + limit / 20) { take += p; sum += p.len }
+            if (take.isEmpty()) pool.firstOrNull()?.let { take += Piece(it.clip, it.from, minOf(it.to, it.from + limit), it.score) }
+            pool = pool.filter { it in take }.ifEmpty { take.toList() }
+        }
+        val order = clips.map { it.clip }
+        val byTime = pool.sortedWith(compareBy({ order.indexOf(it.clip) }, { it.from }))
+        var out = when (brief.order) { "reverse" -> byTime.reversed(); "best" -> pool.sortedByDescending { it.score }; "keep" -> pool; else -> byTime }
+        if (brief.order == "time") {
+            val merged = ArrayList<Piece>()
+            for (p in out) { val last = merged.lastOrNull(); if (last != null && last.clip == p.clip && p.from - last.to in 0..60) merged[merged.lastIndex] = Piece(p.clip, last.from, p.to, maxOf(last.score, p.score)) else merged += p }
+            out = merged
+        }
+        if (!beats.isNullOrEmpty()) out = snap(out, clips, beats)
+        return finish(out, before)
+    }
+
+    private fun sec(ms: Long) = String.format(java.util.Locale.US, "%.1f", ms / 1000.0)
+    private fun levels(c: ClipInput, p: Piece): Pair<Int, Int> {
+        val l = if (c.hasAudio) (mean(c.peaks, p.from / c.stepMs, p.to / c.stepMs) / percentile(c.peaks, 0.9f).coerceAtLeast(0.02f) * 9).toInt() else 0
+        val m = (mean(c.diffs, (p.from - c.from) / c.diffStep, (p.to - c.from) / c.diffStep) / percentile(c.diffs, 0.9f).coerceAtLeast(0.01f) * 9).toInt()
+        return l.coerceIn(0, 9) to m.coerceIn(0, 9)
     }
 
     private fun mean(a: FloatArray, from: Long, to: Long): Float {

@@ -49,4 +49,33 @@ class AutoEditTest {
         val p = AutoEdit.Plan(style("vlog"), listOf(AutoEdit.Piece(0, 0, 1_000), AutoEdit.Piece(1, 500, 900)), 2_000)
         assertEquals("{\"style\":\"vlog\",\"transition\":1,\"crop\":\"\",\"pieces\":[{\"clip\":0,\"from\":0,\"to\":1000},{\"clip\":1,\"from\":500,\"to\":900}]}", p.toJson())
     }
+    @Test fun briefIsReadFromAChattyAnswer() {
+        val b = AutoEdit.parseBrief("Sure! {\"style\": \"viral\", \"seconds\": 20, \"crop\": \"9:16\", \"transition\": \"zoom\", \"captions\": false, \"film\": true, \"order\": \"keep\", \"keep\": [3, 1, 3], \"drop\": [], \"title\": \"ทริปทะเล\"} hope it helps", style("vlog"))!!
+        assertEquals("viral", b.style.id); assertEquals(20, b.seconds); assertEquals("9:16", b.crop); assertEquals(3, b.transition)
+        assertEquals(false, b.captions); assertEquals(true, b.film); assertEquals("keep", b.order); assertEquals(listOf(3, 1), b.keep); assertEquals("ทริปทะเล", b.title)
+    }
+    @Test fun badAnswersGiveNoBriefOrSafeDefaults() {
+        assertEquals(null, AutoEdit.parseBrief("I cannot help", style("vlog")))
+        val b = AutoEdit.parseBrief("{\"style\":\"nonsense\",\"crop\":\"3:7\",\"transition\":\"spin\"}", style("talk"))!!
+        assertEquals("talk", b.style.id); assertEquals("", b.crop); assertEquals(0, b.transition); assertEquals("time", b.order)
+    }
+    @Test fun shotsStayUnderTheLimitAndCoverTheClip() {
+        val c = AutoEdit.ClipInput(0, 0, 600_000, peaks(600_000), 50, FloatArray(2_400), 250)
+        val sh = AutoEdit.shots(listOf(c), 60)
+        assertTrue("count ${sh.size}", sh.size in 2..60)
+        assertEquals(600_000L, sh.sumOf { it.len })
+    }
+    @Test fun keptShotsPlayInTheOrderTheModelGave() {
+        val c = AutoEdit.ClipInput(0, 0, 30_000, peaks(30_000), 50, FloatArray(120), 250, listOf(Triple(12_500L, 14_000L, "สวัสดี")))
+        val sh = AutoEdit.shots(listOf(c))
+        val brief = AutoEdit.Brief(style("vlog"), 0, "", 1, false, false, "keep", listOf(2, 0), emptyList(), "")
+        val p = AutoEdit.planFromBrief(listOf(c), sh, brief)
+        assertEquals(listOf(sh[2].from, sh[0].from), p.pieces.map { it.from })
+        assertTrue(AutoEdit.describe(listOf(c), sh).contains("สวัสดี"))
+    }
+    @Test fun grammarNamesEveryStyle() {
+        val g = AutoEdit.grammar()
+        AutoEdit.STYLES.forEach { assertTrue(g.contains("\\\"" + it.id + "\\\"")) }
+        assertTrue(g.startsWith("root ::="))
+    }
 }

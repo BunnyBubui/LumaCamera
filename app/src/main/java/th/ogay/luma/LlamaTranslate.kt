@@ -10,10 +10,13 @@ class LlamaEngine private constructor(private var handle: Long) {
     private external fun nativeTemplate(h: Long, text: String): String
     private external fun nativeGenerate(h: Long, prompt: String, maxNew: Int, repeat: Float): String
     private external fun nativeStop()
+    private external fun nativeGenerateGrammar(h: Long, prompt: String, maxNew: Int, repeat: Float, grammar: String): String
 
     /** The model's own chat template wrapped around [text]; "" if the model has none. */
     fun wrap(text: String) = nativeTemplate(handle, text)
     fun generate(prompt: String, maxNew: Int, repeat: Float = 1.05f) = nativeGenerate(handle, prompt, maxNew, repeat)
+    /** Generates with a GBNF grammar (rule "root"); empty text when the grammar cannot be read. */
+    fun generate(prompt: String, maxNew: Int, grammar: String, repeat: Float = 1f) = nativeGenerateGrammar(handle, prompt, maxNew, repeat, grammar)
     fun stop() = nativeStop()
     fun close() { if (handle != 0L) nativeFree(handle); handle = 0L }
 
