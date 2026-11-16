@@ -987,9 +987,14 @@ class VideoEditorActivity : ComponentActivity() {
         showTime()
     }
     private fun clock(ms: Long) = String.format(Locale.US, "%d:%02d.%d", ms / 60000, ms / 1000 % 60, ms / 100 % 10)
+    private var lastFullTimeline = 0L
     private fun showTime() {
         fxView?.sync(visible, if (comparing) 0f else fx[0], if (comparing) 0f else fx[1])
-        refreshTimeline()
+        // While playing, rebuilding the whole timeline 30 times a second made garbage the phone had to stop and clear
+        // (a small hitch every few seconds). The playhead alone moves each frame; the rest refreshes twice a second.
+        val now = android.os.SystemClock.uptimeMillis()
+        if (player?.isPlaying == true && ::timeline.isInitialized && timeline.clips.isNotEmpty() && now - lastFullTimeline < 500) { timeline.playhead = outNow(); timeline.invalidate() }
+        else { lastFullTimeline = now; refreshTimeline() }
         val length = ((end - start) / speed).toLong()
         val more = extras.sumOf { it.len }
         timeLabel.text = (if (playIndex > 0) "คลิป ${playIndex + 1}/${extras.size + 1}  ·  ${clock(trim.playhead - trim.start)} / ${clock(trim.end - trim.start)}" else "${clock(trim.playhead - start)} / ${clock(end - start)}") +
