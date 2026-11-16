@@ -122,15 +122,17 @@ class VideoEditorActivity : ComponentActivity() {
         var muted = false
         /** Loudness of this part's own sound (0..2) and its speed curve (null = steady [speed]). */
         var volume = 1f; var curve: FloatArray? = null
+        /** Slow camera move over this part ([ClipMotion]). */
+        var motion = 0
         val len get() = StudioMath.outLen(to - from, speed, curve)
-        fun copy() = Extra(uri, duration, w, h, name, thumb).also { it.from = from; it.to = to; it.speed = speed; it.muted = muted; it.volume = volume; it.curve = curve?.copyOf() }
+        fun copy() = Extra(uri, duration, w, h, name, thumb).also { it.from = from; it.to = to; it.speed = speed; it.muted = muted; it.volume = volume; it.curve = curve?.copyOf(); it.motion = motion }
     }
     private var mainFrames: List<Bitmap> = emptyList()
     private val clipFrames = HashMap<String, List<Bitmap>>()
     private fun buildExtras(uris: List<String>, ranges: List<String>?, get: (String) -> Extra?): List<Extra> = uris.mapIndexedNotNull { i, u ->
         get(u)?.copy()?.also { e -> ranges?.getOrNull(i)?.split(",")?.takeIf { it.size >= 2 }?.let { r ->
             e.from = (r[0].toLongOrNull() ?: 0L).coerceIn(0, e.duration); e.to = (r[1].toLongOrNull() ?: e.duration).coerceIn(e.from, e.duration); e.speed = (r.getOrNull(2)?.toFloatOrNull() ?: 1f).coerceIn(0.001f, 5000f); e.muted = r.getOrNull(3) == "m"
-            e.volume = r.getOrNull(4)?.toFloatOrNull() ?: 1f; e.curve = r.getOrNull(5)?.split(';')?.mapNotNull { it.toFloatOrNull() }?.takeIf { it.size == 5 }?.toFloatArray() } } }
+            e.volume = r.getOrNull(4)?.toFloatOrNull() ?: 1f; e.curve = r.getOrNull(5)?.split(';')?.mapNotNull { it.toFloatOrNull() }?.takeIf { it.size == 5 }?.toFloatArray(); e.motion = r.getOrNull(6)?.toIntOrNull() ?: 0 } } }
     private var curveSpeedSet = 0f
     /** While a clip with a speed curve plays, the preview's speed follows the curve (the player itself goes from 0.1× to 8×). */
     private fun followCurve(p: MediaPlayer, pos: Long) {
@@ -354,7 +356,7 @@ class VideoEditorActivity : ComponentActivity() {
                 trim.playhead = pos.coerceIn(start, end)
             } else if (playIndex > 0 && !switching) extras.getOrNull(playIndex - 1)?.let { e ->
                 if (pos >= e.to - 30) playClip(nextOf(playIndex)) else trim.playhead = pos.coerceIn(e.from, e.to) }
-            showTime(); syncLayerSound(true)
+            showTime(); syncLayerSound(true); showMotion(pos)
             if (++tickCount % 30 == 0) preloadNext()
         }
         handler.postDelayed(this, 33)
@@ -867,6 +869,8 @@ class VideoEditorActivity : ComponentActivity() {
     }
     /** The new clip is ready: uncover it (fade, flash) or let it settle from a little closer (zoom). */
     private fun arrived() {
+        if (motionOf(playIndex) != 0 || texture.scaleY != 1f) clearMotion()
+        if (motionOf(playIndex) != 0) showMotion(clipFrom(playIndex))
         if (Glass.reduced(this)) { dip.alpha = 0f; return }
         if (transition == 5 && dip.alpha > 0f) { dip.pivotX = 0f; dip.animate().cancel(); dip.animate().scaleX(0f).setDuration(VideoEdit.TRANSITION_MS).withEndAction { dip.alpha = 0f; dip.scaleX = 1f }.start() }
         else if (dip.alpha > 0f) dip.animate().alpha(0f).setDuration(VideoEdit.TRANSITION_MS).start()
@@ -933,6 +937,21 @@ class VideoEditorActivity : ComponentActivity() {
         if (::trim.isInitialized) pendingSeek = trim.playhead
         arrange(); rootBox.post { layoutVideo(); refreshTimeline() }
     }
+
+    private fun motionOf(k: Int) = if (k == 0) mainMotion else extras.getOrNull(k - 1)?.motion ?: 0
+    /** Moves the preview picture like the export will: scale and sideways shift for how far the clip has played. */
+    private fun showMotion(pos: Long) {
+        val m = motionOf(playIndex)
+        val base = if (mirror) -1f else 1f
+        if (m == 0) return
+        val a = clipFrom(playIndex); val b = if (playIndex == 0) end else extras[playIndex - 1].to
+        // A zoom or slide transition is drawn over the first moments of the clip; the move joins in after it.
+        if ((transition == 3 || transition == 4) && pos - a < VideoEdit.TRANSITION_MS) return
+        val (sc, x) = ClipMotion.at(m, (pos - a).toFloat() / (b - a).coerceAtLeast(1))
+        texture.scaleX = base * sc; texture.scaleY = sc; texture.translationX = x * texture.width / 2f
+    }
+    /** Takes the move off the preview (when a clip without one starts, or the move is turned off). */
+    private fun clearMotion() { texture.scaleX = if (mirror) -1f else 1f; texture.scaleY = 1f; texture.translationX = 0f }
 
     private fun releasePlayer() {
         handler.removeCallbacks(tick); prepared = false
@@ -1042,7 +1061,7 @@ class VideoEditorActivity : ComponentActivity() {
         if (extras.isEmpty()) { notice("วิดีโอต้องมีอย่างน้อยหนึ่งคลิป"); return }
         val idx = mainPos().coerceAtMost(extras.size - 1); val e = extras.removeAt(idx)
         mainAt = idx; cutFrom = -1; cutTo = -1; split = -1
-        switchSource(e.uri); start = e.from; end = e.to; speed = e.speed; mainMuted = e.muted; firstFrame = e.thumb ?: firstFrame
+        switchSource(e.uri); start = e.from; end = e.to; speed = e.speed; mainMuted = e.muted; mainMotion = e.motion; firstFrame = e.thumb ?: firstFrame
         playIndex = 0; trim.split = -1; showClipOnBar(); trim.playhead = start; openPlayer(); showTime(); showTool(10, false)
         notice("ลบคลิปแล้ว")
     }
@@ -1345,6 +1364,89 @@ class VideoEditorActivity : ComponentActivity() {
         page?.show()
     }
 
+    // ---------- Freeze frame, reverse, slow moves ----------
+    private val toolMenu by lazy { GlassMenu(window.decorView as FrameLayout) {} }
+    private fun motionMenu(anchor: View) {
+        val k = playIndex
+        toolMenu.show(anchor, "ซูม/แพนช้า", ClipMotion.NAMES.mapIndexed { i, n -> GlassMenu.Option(n, ClipMotion.ICONS[i], "") }, motionOf(k)) { i ->
+            if (k == 0) mainMotion = i else extras.getOrNull(k - 1)?.motion = i
+            if (i == 0) clearMotion() else showMotion(trim.playhead)
+            showTool(0, false) }
+    }
+    /** Clip [k] in the sequence gets [e] right after it (or before it when [before]); the main clip's place is kept. */
+    private fun insertNear(k: Int, e: Extra, before: Boolean) {
+        val pos = order().indexOf(k).let { if (before) it else it + 1 }
+        // Extras sit around the main clip: the position in the sequence maps to an index in [extras].
+        val idx = if (pos <= mainPos()) pos else pos - 1
+        extras.add(idx.coerceIn(0, extras.size), e)
+        if (pos <= mainPos()) mainAt = mainPos() + 1
+    }
+    /** Holds the frame under the playhead for 2 seconds, splitting the clip there when the playhead is inside it. */
+    private fun freezeFrame() {
+        val k = playIndex; val uri = clipUri(k); val at = trim.playhead
+        val a = clipFrom(k); val b = if (k == 0) end else extras[k - 1].to
+        notice("กำลังสร้างภาพค้าง 2 วินาที…")
+        luma.readIo.execute {
+            val made = runCatching { ClipMaker.freeze(this, uri, at) }
+            val e = made.getOrNull()?.let { readExtra(MediaLedger.privateUri(this, it)) }
+            runOnUiThread {
+                if (isDestroyed) return@runOnUiThread
+                if (e == null) { notice("สร้างภาพค้างไม่ได้ · ${made.exceptionOrNull()?.message ?: "อ่านไฟล์ใหม่ไม่ได้"}"); return@runOnUiThread }
+                extraCache[e.uri.toString()] = e.copy()
+                when {
+                    at - a < 100 -> insertNear(k, e, before = true)
+                    b - at < 100 -> insertNear(k, e, before = false)
+                    else -> { splitAtPlayhead(); insertNear(k, e, before = false) }
+                }
+                showClipOnBar(); showTime(); refreshTimeline(); showTool(0, false); notice("ค้างเฟรม 2 วินาทีแล้ว · ลากขอบคลิปเพื่อปรับความยาว")
+            }
+        }
+    }
+    /** Replaces the clip on screen with a copy that plays backwards (up to 60 seconds; the copy has no sound of its own). */
+    private fun reverseClip() {
+        val k = playIndex; val uri = clipUri(k); val a = clipFrom(k); val b = if (k == 0) end else extras[k - 1].to
+        if (b - a > 60_000) { notice("ย้อนกลับได้ทีละไม่เกิน 60 วินาที · แยกคลิปให้สั้นลงก่อน"); return }
+        if (analysing) { notice("รองานที่กำลังทำให้เสร็จก่อน"); return }
+        var stopped = false
+        val ui = CaptionProgress(this, firstFrame, listOf("อ่านภาพจากท้ายไปต้น", "ใส่คลิปกลับด้านลงไทม์ไลน์"),
+            listOf(ExportProgress.Backdrop.FLOW, ExportProgress.Backdrop.SAVE), listOf("กำลังทำคลิปย้อนกลับ", "กำลังจัดวาง"), noticeTitle = "ย้อนกลับคลิป") { stopped = true }
+        ui.render(0, 0.01f, "${clock(b - a)} · ${(b - a) * 30 / 1000} เฟรม")
+        var last = 0L
+        luma.readIo.execute {
+            val made = runCatching { ClipMaker.reverse(this, uri, a, b) { f ->
+                val now = System.currentTimeMillis(); if (now - last > 150) { last = now; runOnUiThread { ui.render(0, 0.95f * f, "เฟรม ${(f * (b - a) * 30 / 1000).toInt()} จาก ${(b - a) * 30 / 1000}") } }
+                !stopped && !isDestroyed } }
+            val e = made.getOrNull()?.let { readExtra(MediaLedger.privateUri(this, it)) }
+            runOnUiThread {
+                ui.remove()
+                if (isDestroyed || stopped) return@runOnUiThread
+                if (e == null) { notice("ย้อนกลับไม่ได้ · ${made.exceptionOrNull()?.message ?: "อ่านไฟล์ใหม่ไม่ได้"}"); return@runOnUiThread }
+                e.motion = motionOf(k); extraCache[e.uri.toString()] = e.copy()
+                insertNear(k, e, before = false)
+                if (k == 0) deleteMain() else { extras.remove(extras[k - 1]); if (k - 1 < mainPos()) mainAt = mainPos() - 1 }
+                val at = extras.indexOf(e) + 1
+                playIndex = if (at > 0) at else 0; showClipOnBar(); playClip(playIndex, false); showTime(); refreshTimeline(); showTool(0, false)
+                notice("คลิปนี้เล่นย้อนกลับแล้ว · เสียงของคลิปเดิมไม่ได้ย้อนตาม")
+            }
+        }
+    }
+
+    /** Picture layer [i] without its background (people kept), as a new see-through picture. */
+    private fun cutoutLayer(i: Int) {
+        val l = layers.getOrNull(i) ?: return
+        notice("กำลังลบพื้นหลัง…")
+        luma.readIo.execute {
+            val r = runCatching { Cutout.make(this, l.source) }
+            runOnUiThread {
+                if (isDestroyed) return@runOnUiThread
+                val f = r.getOrNull() ?: run { notice(r.exceptionOrNull()?.message ?: "ลบพื้นหลังไม่ได้"); return@runOnUiThread }
+                val idx = layers.indexOf(l).takeIf { it >= 0 } ?: return@runOnUiThread
+                layers[idx] = l.copy(source = MediaLedger.privateUri(this, f)); rebuildLayers(); refreshTimeline(); showTool(tool, false)
+                notice("ลบพื้นหลังแล้ว · กดย้อนกลับเพื่อคืนภาพเดิม")
+            }
+        }
+    }
+
     private fun stopAutoEdit() { autoRun++; analysing = false; AutoBrain.stop(); autoUi?.remove(); autoUi = null; notice("หยุดตัดต่ออัตโนมัติแล้ว") }
 
     /** Words already captioned, per clip of [srcs], as (from, to, text) in ms of that clip's file. */
@@ -1574,6 +1676,8 @@ class VideoEditorActivity : ComponentActivity() {
     /** Bass, middle and treble of the clips' own sound in dB (-12..12). */
     private val eq = FloatArray(3)
     private var lowCut = false; private var voice = false; private var duck = true; private var mainMuted = false
+    /** Slow camera move over the first clip ([ClipMotion]). */
+    private var mainMotion = 0
     private var fxEq: android.media.audiofx.Equalizer? = null
     private fun audioSettings() = StudioAudio.Settings(eq[0], eq[1], eq[2], lowCut, voice)
     /** The equaliser on the preview: the phone's own equaliser on the player, its bands set from the three sliders. */
@@ -1891,6 +1995,7 @@ class VideoEditorActivity : ComponentActivity() {
     }
     /** Extra cut actions for bars that play a file: pick another part of the file without moving the bar, and move a video layer's sound to its own bar. */
     private fun barExtras(l: VideoLayer): List<View> {
+        if (l.kind == VideoLayer.IMAGE) return listOf(EditorKit.action(this, "M12 3l1.8 4.2L18 9l-4.2 1.8L12 15l-1.8-4.2L6 9l4.2-1.8z M5 19h14", "ลบพื้นหลัง") { cutoutLayer(layerPick) })
         if (l.still) return emptyList()
         val i = layerPick; val out = ArrayList<View>()
         fun slip(d: Long) { val c = layers[i]; val cap = layerLength.getOrPut(c.source) { VideoLayers.duration(this, c.source) }
@@ -1930,6 +2035,9 @@ class VideoEditorActivity : ComponentActivity() {
                     extras.add(mainPos(), Extra(source, duration, videoW, videoH, "คลิปแรก", firstFrame).also { it.from = start; it.to = end; it.speed = speed; it.curve = mainCurve?.copyOf(); it.volume = volume }) }
                 showTime(); showTool(0, false) },
             EditorKit.action(this, "M4 12h6 M14 12h6 M10 8v8 M14 8v8", "แยกเสียง") { detachSound(); showTool(0, false) },
+            EditorKit.action(this, "M8 5v14 M16 5v14 M4 12h2 M18 12h2", "ค้างเฟรม") { freezeFrame() },
+            EditorKit.action(this, "M7 7H4V4 M4.5 7.5A8 8 0 1 1 4 12 M12 8v4l3 2", "ย้อนกลับ") { reverseClip() },
+            run { lateinit var me: View; me = EditorKit.action(this, ClipMotion.ICONS[1], if (motionOf(playIndex) == 0) "ซูม/แพน" else ClipMotion.NAMES[motionOf(playIndex)], motionOf(playIndex) != 0) { motionMenu(me) }; me },
             EditorKit.action(this, "M3 5h18v14H3z M12 5v14", "หาฉาก") { findScenes() },
             EditorKit.action(this, "M7 4v16 M7 5h10l-2.5 3.5L17 12H7", "แยกตามมาร์กเกอร์") { splitAtMarkers() },
             EditorKit.action(this, "M3 12h3 M18 12h3 M8 8v8 M12 5v14 M16 8v8", "ตัดช่วงเงียบ") { cutSilence() })
@@ -3256,7 +3364,7 @@ class VideoEditorActivity : ComponentActivity() {
         return VideoEdit.composition(VideoEditSpec(f?.let { Uri.fromFile(it.file) } ?: source, at(from), at(to), if (turns % 2 == 1) vh else vw, if (turns % 2 == 1) vw else vh,
         speed * n, cropRatio(), caption, place, textColor, textBig, if (looked()) colour() else null, music, f == null && hasAudio && keepSound && allSpeeds().all { it in SOUND_MIN..SOUND_MAX },
         turns, mirror, volume, musicVolume, if (cut) at(cutFrom) else -1L, if (cut) at(cutTo) else -1L, textBox,
-        extras.map { VideoPart(it.uri, it.from, it.to, it.speed, it.muted, it.volume, it.curve) }, if (extras.isEmpty()) 0 else transition, stickers.toList(), clampedLayers(), shrinkShort, shrinkFps, mainPos(), fx[0], fx[1], fx[2], grade = if (grade.active()) gradeCube(33) else null, audio = audioSettings(), mainMuted = mainMuted, mainCurve = if (f == null) mainCurve else null, audioOnly = audioOnly, duck = duck, audioHz = if (audioOnly) soundHz else 0, audioMono = audioOnly && soundMono), applicationContext)
+        extras.map { VideoPart(it.uri, it.from, it.to, it.speed, it.muted, it.volume, it.curve, it.motion) }, if (extras.isEmpty()) 0 else transition, stickers.toList(), clampedLayers(), shrinkShort, shrinkFps, mainPos(), fx[0], fx[1], fx[2], mainMotion = mainMotion, grade = if (grade.active()) gradeCube(33) else null, audio = audioSettings(), mainMuted = mainMuted, mainCurve = if (f == null) mainCurve else null, audioOnly = audioOnly, duck = duck, audioHz = if (audioOnly) soundHz else 0, audioMono = audioOnly && soundMono), applicationContext)
     }
 
     /** Export problems stay on screen until dismissed, so the reason can be read (and reported). */
@@ -3281,12 +3389,13 @@ class VideoEditorActivity : ComponentActivity() {
         out.putBoolean("sound", keepSound); out.putInt("tool", tool)
         out.putFloatArray("adjust", adjust); out.putFloatArray("fx", fx); out.putFloatArray("curves", grade.curves.copyOf()); out.putFloatArray("hsl", grade.hsl.copyOf()); out.putFloatArray("wheels", grade.wheels.copyOf()); out.putString("lutPath", lutPath); out.putString("lutName", lutName); out.putFloat("lutAmount", grade.lutAmount); out.putFloatArray("eq", eq.copyOf()); out.putBoolean("lowCut", lowCut); out.putBoolean("voice", voice); out.putBoolean("duck", duck); out.putBoolean("mainMuted", mainMuted); out.putInt("turns", turns); out.putBoolean("mirror", mirror); out.putFloat("volume", volume); out.putFloat("musicVolume", musicVolume)
         out.putLong("cutFrom", cutFrom); out.putLong("cutTo", cutTo); out.putBoolean("textBox", textBox)
-        out.putStringArrayList("extras", ArrayList(extras.map { it.uri.toString() })); out.putStringArrayList("extraRanges", ArrayList(extras.map { "${it.from},${it.to},${it.speed}," + (if (it.muted) "m" else "") + ",${it.volume}," + (it.curve?.joinToString(";") ?: "") }));
+        out.putStringArrayList("extras", ArrayList(extras.map { it.uri.toString() })); out.putStringArrayList("extraRanges", ArrayList(extras.map { "${it.from},${it.to},${it.speed}," + (if (it.muted) "m" else "") + ",${it.volume}," + (it.curve?.joinToString(";") ?: "") + ",${it.motion}" })); out.putInt("mainMotion", mainMotion);
         mainCurve?.let { out.putFloatArray("mainCurve", it.copyOf()) }; out.putInt("mainAt", mainAt); out.putStringArrayList("markers", ArrayList(markers.map { it.toString() })); out.putInt("transition", transition)
         out.putStringArrayList("stickers", ArrayList(stickers.map { "${it.x}|${it.y}|${it.big}|${it.text}" }))
         out.putString("layers", VideoLayer.save(layers)); out.putInt("layerPick", layerPick); out.putBoolean("smooth", smooth)
     }
     private fun restore(s: Bundle) {
+        mainMotion = s.getInt("mainMotion", 0)
         s.getString("mainSource")?.let { Uri.parse(it) }?.takeIf { it != source }?.let { switchSource(it) }
         start = s.getLong("start").coerceIn(0, (duration - 300).coerceAtLeast(0)); end = s.getLong("end", duration).coerceIn(start, duration); customCrop = s.getFloat("customCrop", 1f); split = s.getLong("split", -1); speed = s.getFloat("speed", 1f); cropIndex = s.getInt("crop")
         caption = s.getString("caption") ?: ""; place = s.getInt("place", 2); textColor = s.getInt("textColor", Color.WHITE); textBig = s.getBoolean("big")

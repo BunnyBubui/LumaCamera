@@ -80,10 +80,12 @@ data class VideoEditSpec(
     /** Only the sound: no picture track, no picture effects. */
     val audioOnly: Boolean = false,
     /** Sound only: sample rate in Hz (0 = as recorded) and a mono mix. */
-    val audioHz: Int = 0, val audioMono: Boolean = false)
+    val audioHz: Int = 0, val audioMono: Boolean = false,
+    /** Slow camera move over the first clip ([ClipMotion]). */
+    val mainMotion: Int = 0)
 
 /** A clip appended after the main one. [from]/[to] in ms of that clip. */
-data class VideoPart(val source: Uri, val from: Long, val to: Long, val speed: Float = 1f, val muted: Boolean = false, val volume: Float = 1f, val curve: FloatArray? = null)
+data class VideoPart(val source: Uri, val from: Long, val to: Long, val speed: Float = 1f, val muted: Boolean = false, val volume: Float = 1f, val curve: FloatArray? = null, val motion: Int = 0)
 
 /** An emoji on the picture: [x], [y] are 0..1 across the visible (cropped) frame, [big] doubles its size. */
 data class VideoSticker(val text: String, val x: Float, val y: Float, val big: Boolean = false)
@@ -153,6 +155,16 @@ object VideoEdit {
         }
     }
 
+    /** A slow camera move over a whole clip. [offsetUs] is where this piece starts inside its clip; [totalUs] the clip's length. */
+    private class Drift(private val motion: Int, private val offsetUs: Long, private val totalUs: Long) : MatrixTransformation {
+        private var first = C.TIME_UNSET
+        override fun getMatrix(presentationTimeUs: Long): android.graphics.Matrix {
+            if (first == C.TIME_UNSET) first = presentationTimeUs
+            val (sc, x) = ClipMotion.at(motion, (presentationTimeUs - first + offsetUs).toFloat() / totalUs.coerceAtLeast(1))
+            return android.graphics.Matrix().apply { setScale(sc, sc); postTranslate(x, 0f) }
+        }
+    }
+
     /** [context] is needed only when the spec has picture or video layers (to decode them). */
     fun composition(s: VideoEditSpec, context: Context? = null): Composition {
         val cut = s.cutFrom in (s.from + 1) until s.cutTo && s.cutTo < s.to
@@ -184,6 +196,13 @@ object VideoEdit {
         val pieces = extraPieces.take(lead) + mainPieces + extraPieces.drop(lead)
         val items = pieces.mapIndexed { i, piece ->
             val own: MutableList<Effect> = if (piece.clip == 0) effects.toMutableList() else mutableListOf()
+            val motion = if (piece.clip == 0) s.mainMotion else s.extras[piece.clip - 1].motion
+            if (motion != ClipMotion.NONE) {
+                // Pieces of one clip follow each other; the move runs across all of them, not once per piece.
+                val run = pieces.indices.filter { pieces[it].clip == piece.clip }
+                val offset = run.takeWhile { it < i }.sumOf { pieces[it].durationUs }
+                own += Drift(motion, offset, run.sumOf { pieces[it].durationUs })
+            }
             // Fast speeds (up to thousands ×) would hand the encoder hundreds of frames per second; keep about 30 of them.
             if (piece.speed != 1f) { if (!s.keepAudio) own += SpeedChangeEffect(piece.speed); if (piece.speed > 1f) own += FrameDropEffect.createDefaultFrameDropEffect(30f) }
             if (s.transition != 0) {
