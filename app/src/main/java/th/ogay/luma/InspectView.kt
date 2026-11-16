@@ -247,8 +247,11 @@ class InspectView(context: Context) : View(context) {
     private val bgPaint=Paint().apply{color=Glass.BG_DEEP}
     // ---- Reflection: a tiny copy of the picture, stretched (which blurs it) and mirrored past each edge.
     private var glow:Bitmap?=null
-    var reflections=true
-    private val glowPaint=Paint(Paint.FILTER_BITMAP_FLAG).apply{colorFilter=ColorMatrixColorFilter(ColorMatrix().apply{setSaturation(1.15f);postConcat(ColorMatrix().apply{setScale(0.5f,0.5f,0.5f,1f)})})}
+    private var spec=Ambient.spec(2)
+    var level=2
+        set(v){field=v;spec=Ambient.spec(v);glowPaint.colorFilter=ColorMatrixColorFilter(ColorMatrix().apply{setSaturation(spec.saturation);postConcat(ColorMatrix().apply{setScale(spec.strength,spec.strength,spec.strength,1f)})});invalidate()}
+    val reflections get()=level>0
+    private val glowPaint=Paint(Paint.FILTER_BITMAP_FLAG).apply{colorFilter=ColorMatrixColorFilter(ColorMatrix().apply{setSaturation(1.3f);postConcat(ColorMatrix().apply{setScale(0.65f,0.65f,0.65f,1f)})})}
     // The reflection lights up from the picture's top and bottom edges outward when a picture opens.
     private var reveal=1f;private var revealAnim:android.animation.ValueAnimator?=null
     private fun lightUp(){revealAnim?.cancel();if(th.ogay.luma.Glass.reduced(context)){reveal=1f;return};reveal=0f
@@ -257,16 +260,7 @@ class InspectView(context: Context) : View(context) {
     private var nGlow:Bitmap?=null;private var nGlowFor:Bitmap?=null
     private fun neighbourGlow(b:Bitmap):Bitmap?{if(nGlowFor!==b){nGlow?.recycle();nGlow=makeGlow(b);nGlowFor=b};return nGlow}
     private fun glowFrom(b:Bitmap,animate:Boolean=false){val g=makeGlow(b)?:return;glow?.recycle();glow=g;if(animate)lightUp()}
-    private fun makeGlow(b:Bitmap):Bitmap?{
-        if(b.isRecycled||b.width<=0)return null
-        val w=24;val h=(24f*b.height/b.width).toInt().coerceIn(4,96)
-        val small=runCatching{Bitmap.createScaledBitmap(b,w,h,true)}.getOrNull()?:return null
-        // Scaled down twice more and back up: a cheap blur that keeps only the broad colours.
-        val tiny=runCatching{Bitmap.createScaledBitmap(small,(w/3).coerceAtLeast(2),(h/3).coerceAtLeast(2),true)}.getOrNull()
-        val soft=tiny?.let{runCatching{Bitmap.createScaledBitmap(it,w,h,true)}.getOrNull()}?:small
-        if(soft!==small)small.recycle();if(tiny!=null&&tiny!==soft)tiny.recycle()
-        return soft
-    }
+    private fun makeGlow(b:Bitmap):Bitmap?=Ambient.soften(b,spec)
     private val bandMask=Paint().apply{xfermode=android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_IN)}
     /**
      * Draws one band of reflected light in (l,t,r,b). While it is still spreading ([lit] < 1) the band is masked by a
@@ -289,7 +283,7 @@ class InspectView(context: Context) : View(context) {
     private fun reflect(c:Canvas,r:RectF,g:Bitmap?=glow,alpha:Float=1f,lit:Float=reveal){
         if(g==null||g.isRecycled||r.width()<=0f||alpha<=0f||lit<=0f)return
         glowPaint.alpha=(255*(1f-dismissShown)*alpha*(0.35f+0.65f*lit)).toInt().coerceIn(0,255)
-        val reach=maxOf(height.toFloat(),width.toFloat())
+        val reach=maxOf(height.toFloat(),width.toFloat())*spec.spread
         val w=width.toFloat();val h=height.toFloat()
         // Each band of light spreads out from the photo's edge with a soft, blurred front instead of a hard line.
         if(r.top>0.5f)band(c,0f,0f,w,r.top,0f,r.top,0f,0f,lit){c.scale(1f,-1f,0f,r.top);c.drawBitmap(g,null,RectF(r.left-reach,r.top,r.right+reach,r.bottom),glowPaint)}

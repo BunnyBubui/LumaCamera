@@ -1158,7 +1158,7 @@ class GalleryActivity : ComponentActivity() {
         inspect.shadeTop = (bars.top + dp(84)).toFloat(); inspect.shadeBottom = (bars.bottom + dp(130)).toFloat()
         inspect.onDismissDrag = { p -> val a = 1f - p * 2.2f; viewerTop?.alpha = a.coerceIn(0f, 1f); viewerBottom?.alpha = a.coerceIn(0f, 1f) }
         inspect.onDismiss = if (!prefs.getBoolean("gallery_swipe_close", true)) null else ({ if (viewerFromCamera) finish() else { selected = null; useAi = false; closingViewer = true; reload() } })
-        inspect.reflections = prefs.getBoolean("gallery_reflect", true)
+        inspect.level = Ambient.photo(this)
     }
     private var viewerTop: View? = null; private var viewerBottom: View? = null
     /** True when the grid comes back from a swipe-down, so it fades up instead of sliding. */
@@ -1389,7 +1389,7 @@ class GalleryActivity : ComponentActivity() {
         showingId = item.key; viewerKind = ""; root.removeAllViews()
         // Like the photo viewer: the clip fills the screen and the bars float over its glow.
         immersive(true)
-        val player = InlineVideo(this, item.uri, cache.get(item.key), prefs.getBoolean("gallery_reflect", true)).apply { onSwipe = { stepDir = it; step(it) } }
+        val player = InlineVideo(this, item.uri, cache.get(item.key), Ambient.video(this)).apply { onSwipe = { stepDir = it; step(it) } }
         inlineVideo = player
         val frame = FrameLayout(this).apply { addView(player, -1, -1) }
         root.addView(frame, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -1454,10 +1454,11 @@ class GalleryActivity : ComponentActivity() {
             toggle("รวมภาพ AI กับต้นฉบับ", Icons.AI, "gallery_merge_ai", true, "ภาพที่ AI ปรับแล้วรวมเป็นรายการเดียวกับต้นฉบับ")
             section("การดูภาพ")
             toggle("เปิดภาพ AI ก่อน", Icons.AI, "gallery_open_ai", true, "กดค้างปุ่มต้นฉบับเพื่อเทียบ")
-            toggle("พื้นหลังสะท้อนภาพ", Icons.PHOTO, "gallery_reflect", true, "ขอบบนล่างเป็นภาพสะท้อนนุ่ม ๆ แทนพื้นสีเรียบ")
+            choose("แสงสะท้อนรอบภาพ", Icons.PHOTO, Ambient.KEY_PHOTO, Ambient.LABELS, Ambient.LABELS.indices.toList(), Ambient.photo(this@GalleryActivity), notes = listOf("ไม่มีแสงรอบภาพ", "นุ่มมาก เบาเครื่อง", "นุ่ม สมดุล", "คมขึ้น ใกล้ขอบภาพมากขึ้น", "คมและละเอียดที่สุด ตรงกับขอบภาพ กินแรงมากสุด"))
             toggle("ปัดลงเพื่อปิดภาพ", Icons.CHEVRON_UP, "gallery_swipe_close", true)
             section("วิดีโอ")
             toggle("เล่นวิดีโออัตโนมัติ", Icons.VIDEO, "video_autoplay", false, "เริ่มเล่นทันทีที่เปิดหรือปัดมาที่วิดีโอ ปิดไว้จะเล่นเมื่อแตะปุ่มเล่น ปัดดูได้ลื่นกว่า")
+            choose("แสงสะท้อนรอบวิดีโอ", Icons.VIDEO, Ambient.KEY_VIDEO, Ambient.LABELS, Ambient.LABELS.indices.toList(), Ambient.video(this@GalleryActivity), notes = listOf("ไม่มีแสงรอบวิดีโอ", "นุ่มมาก เบาเครื่องและแบตเตอรี่", "นุ่ม สมดุล", "คมขึ้น ตามภาพที่เล่นถี่ขึ้น", "คมและละเอียดที่สุด อัปเดตถี่ที่สุด กินแบตเตอรี่มากสุด"))
             choose("เสียงเมื่อเริ่มเล่น", Icons.SOUND, "video_sound_i", listOf("เปิดเสียงทุกครั้ง", "ปิดเสียงทุกครั้ง"), listOf(1, 0), 1, notes = listOf("ได้ยินเสียงทันที", "แตะปุ่มลำโพงเพื่อเปิดเสียง"))
             section("การลบ")
             toggle("ถามก่อนลบภาพของ Lumora", TRASH, "gallery_ask_delete", true, "ภาพจากแอปอื่น ระบบจะถามเองเสมอ")

@@ -31,7 +31,7 @@ class VideoPlayerActivity : ComponentActivity() {
         setContentView(host)
         ClickFeedback.install(this)
         val still = runCatching { android.media.MediaMetadataRetriever().run { try { setDataSource(this@VideoPlayerActivity, uri); getFrameAtTime(0) } finally { release() } } }.getOrNull()
-        val p = InlineVideo(this, uri, still, getSharedPreferences("camera", 0).getBoolean("gallery_reflect", true))
+        val p = InlineVideo(this, uri, still, Ambient.video(this))
         player = p
         host.addView(p, -1, -1)
 
