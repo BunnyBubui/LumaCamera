@@ -14,6 +14,9 @@ class StudioMathTest {
         assertEquals(null, StudioMath.cleanSpeech("Thank you for watching!"))
         assertEquals(null, StudioMath.cleanSpeech("ขอบคุณที่รับชม"))
         assertEquals(null, StudioMath.cleanSpeech("哈哈哈哈哈哈哈哈哈哈"))
+        listOf("(字", "(字幕:J.F", "中文字幕:J Chong", "阿星星星星星星星").forEach { assertEquals(it, null, StudioMath.cleanSpeech(it)) }
+        assertEquals("你好", StudioMath.cleanSpeech("你好"))
+        assertEquals("55555", StudioMath.cleanSpeech("55555"))
         assertEquals(null, StudioMath.cleanSpeech("ไปไปไปไปไปไปไปไปไปไป"))
         assertEquals(null, StudioMath.cleanSpeech("abcabcabcabcabcabcabc"))
         assertEquals("ผมจะไปตลาดพรุ่งนี้", StudioMath.cleanSpeech("ผมจะไปตลาดพรุ่งนี้", 3.0))

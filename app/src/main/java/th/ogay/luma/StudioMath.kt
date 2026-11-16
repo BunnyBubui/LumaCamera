@@ -54,12 +54,15 @@ object StudioMath {
      * a phrase the recogniser invents on music, a loop of the same few letters, or far more letters than anyone can say in that time.
      */
     fun cleanSpeech(raw: String, seconds: Double = 0.0): String? {
-        var t = raw.replace(bracketed, " ").replace(soundMarks, " ").replace(Regex("""\s+"""), " ").trim()
+        // A bracket that never closes ("(字", "(字幕:J.F") is the start of a tag or credit, not words.
+        var t = raw.replace(bracketed, " ").replace(Regex("""[(（\[【{<][^)）\]】}>]*$"""), " ").replace(soundMarks, " ").replace(Regex("""\s+"""), " ").trim()
         if (t.none { it.isLetterOrDigit() }) return null
+        // Subtitle credits ("中文字幕:J Chong") are copied from videos the recogniser learned from.
+        if (Regex("""^(中文|繁體中文|简体中文)?字幕\s*[:：]""").containsMatchIn(t)) return null
         val low = t.lowercase()
         var rest = low; invented.forEach { rest = rest.replace(it, " ") }
         if (rest.none { it.isLetterOrDigit() }) return null
-        if (Regex("""(.)\1{7,}""").containsMatchIn(t)) return null
+        if (Regex("""(.)\1{7,}""").containsMatchIn(t) || Regex("""([^\d\s])\1{5,}""").containsMatchIn(t)) return null
         // A short chunk repeated again and again ("ha ha ha ha ha ha").
         val letters = t.filter { it.isLetterOrDigit() }
         if (letters.length >= 12) for (n in 2..8) {
