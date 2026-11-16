@@ -23,7 +23,7 @@ class VideoPlayerActivity : ComponentActivity() {
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
-        requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+        requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_FULL_USER
         val uri = intent.data ?: run { finish(); return }
         WindowCompat.setDecorFitsSystemWindows(window, false)
         Sounds.init(this)

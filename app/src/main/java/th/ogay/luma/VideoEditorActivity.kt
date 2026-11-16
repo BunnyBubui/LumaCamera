@@ -563,7 +563,7 @@ class VideoEditorActivity : ComponentActivity() {
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
-        requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        // No orientation lock: the editor follows the phone's own auto-rotate setting (see arrange()).
         source = state?.getString("mainSource")?.let { Uri.parse(it) } ?: intent.data ?: run { finish(); return }
         // One heavy job at a time: while a video exports the editor shows that export instead; while an AI upscale
         // runs it waits. The photo editor is not affected.

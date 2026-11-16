@@ -136,7 +136,7 @@ class GalleryActivity : ComponentActivity() {
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
-        requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        // Turns with the phone (its own auto-rotate setting decides); the page is rebuilt in place, see onConfigurationChanged.
         selected = state?.getString("id"); useAi = state?.getBoolean("ai") ?: false
         section = state?.getInt("section") ?: when (intent.getStringExtra("tab")) { "luma" -> 1; "device" -> 0; else -> prefs.getInt("gallery_section", 0) }
         albumKind = if (state != null) state.getString("albumKind") else if (intent.getStringExtra("tab") == "luma") "lumora" else null
@@ -198,6 +198,14 @@ class GalleryActivity : ComponentActivity() {
     private fun partialAccess() = Build.VERSION.SDK_INT >= 34 &&
         ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) == PackageManager.PERMISSION_GRANTED &&
         ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES) != PackageManager.PERMISSION_GRANTED
+
+    /** On its side (or on a tablet) the grid gets more columns so the pictures keep about the same size. */
+    private fun wideScreen() = resources.configuration.screenWidthDp > resources.configuration.screenHeightDp
+    override fun onConfigurationChanged(c: android.content.res.Configuration) {
+        super.onConfigurationChanged(c)
+        // The same page (grid, album or open picture) is built again for the new shape.
+        reload()
+    }
 
     private fun reload() {
         val id = selected; val version = ++readVersion
@@ -608,7 +616,7 @@ class GalleryActivity : ComponentActivity() {
         val gridTitle = gridHead.getChildAt(0) as TextView
 
         val grid = GridView(this).apply {
-            contentDescription = "รายการรูปและวิดีโอ"; numColumns = prefs.getInt("gallery_columns", 3).coerceIn(2, 5); horizontalSpacing = dp(5); verticalSpacing = dp(5); setPadding(dp(8), 0, dp(8), dp(8)); clipToPadding = false; selector = android.graphics.drawable.ColorDrawable(0)
+            contentDescription = "รายการรูปและวิดีโอ"; numColumns = prefs.getInt("gallery_columns", 3).coerceIn(2, 5).let { c -> if (wideScreen()) (c * 5 + 2) / 3 else c }; horizontalSpacing = dp(5); verticalSpacing = dp(5); setPadding(dp(8), 0, dp(8), dp(8)); clipToPadding = false; selector = android.graphics.drawable.ColorDrawable(0)
             // Longer, softer flings.
             setFriction(android.view.ViewConfiguration.getScrollFriction() * 0.75f); isVerticalScrollBarEnabled = false; overScrollMode = View.OVER_SCROLL_ALWAYS
         }

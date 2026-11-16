@@ -78,7 +78,7 @@ class HomeActivity : ComponentActivity() {
     @android.annotation.SuppressLint("NewApi")
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
-        requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        // Follows the phone's auto-rotate setting; on its side the page keeps a phone's width in the middle.
         val host = FrameLayout(this); hostRef = host
         installRoot(host)
         host.setBackgroundColor(Glass.BG)
