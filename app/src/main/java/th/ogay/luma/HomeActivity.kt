@@ -131,9 +131,13 @@ class HomeActivity : ComponentActivity() {
         col.addView(grid, LinearLayout.LayoutParams(-1, 0, 2f))
         loader.execute {
             val list = runCatching { StudioProjects.list(this) }.getOrDefault(emptyList())
-            val last = list.firstOrNull { !it.missing }
-            val bmp = last?.let { runCatching { android.graphics.BitmapFactory.decodeFile(it.thumb.path) }.getOrNull() }
-            runOnUiThread { if (!isDestroyed) { heroThumb?.let { v -> if (bmp != null) { v.setImageBitmap(bmp); v.visibility = View.VISIBLE } }; showProject(last, list.size) } }
+            val shown = list.filter { !it.missing }.take(6)
+            runOnUiThread { if (!isDestroyed) { projects = shown; projectCount = list.size; showProject(shown.firstOrNull(), list.size); heroPager?.let { it.count = shown.size } } }
+            // A sharp frame from the video itself (the saved thumbnail is only a timeline tile); the project on show first.
+            shown.forEachIndexed { i, info ->
+                val bmp = sharpFrame(info) ?: runCatching { android.graphics.BitmapFactory.decodeFile(info.thumb.path) }.getOrNull()
+                runOnUiThread { if (!isDestroyed && bmp != null) heroPager?.setPicture(i, bmp) }
+            }
         }
 
         // Entrance: the mark draws, the name settles, the blocks rise one after another.
@@ -464,7 +468,23 @@ class HomeActivity : ComponentActivity() {
 
     /** Three clips (the first with a little waveform) and a playhead, in the tool colour: only a picture of the editor. */
     private var projectRow: LinearLayout? = null
-    private var heroThumb: ImageView? = null
+    private var heroPager: HeroPager? = null
+    private var projects: List<StudioProjects.Info> = emptyList()
+    private var projectCount = 0
+
+    override fun onResume() { super.onResume(); heroPager?.running = true }
+    override fun onPause() { heroPager?.running = false; super.onPause() }
+
+    /** The first moments of a project's video at screen size. */
+    private fun sharpFrame(info: StudioProjects.Info): Bitmap? = runCatching {
+        val r = android.media.MediaMetadataRetriever()
+        try {
+            r.setDataSource(this, info.source)
+            val d = (r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L) * 1000L
+            val t = (d / 5).coerceAtMost(2_000_000L)
+            if (android.os.Build.VERSION.SDK_INT >= 27) r.getScaledFrameAtTime(t, android.media.MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 1080, 1440) else r.getFrameAtTime(t)
+        } finally { runCatching { r.release() } }
+    }.getOrNull()
     private var heroHeader: View? = null
     private var topInset = 0
 
@@ -507,8 +527,9 @@ class HomeActivity : ComponentActivity() {
         clipToOutline = true
         outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: android.graphics.Outline) = o.setRoundRect(0, -dp(30), v.width, v.height, dp(28).toFloat()) }
         addView(HeroScene(this@HomeActivity, if (Theme.light) 0xffc9d6ea.toInt() else 0xff2a3550.toInt(), if (Theme.light) 0xff9fb2ce.toInt() else 0xff161b2a.toInt(), Glass.ACCENT), -1, -1)
-        heroThumb = ImageView(this@HomeActivity).apply { scaleType = ImageView.ScaleType.CENTER_CROP; visibility = View.GONE }
-        addView(heroThumb, -1, -1)
+        val pager = HeroPager(this@HomeActivity) { i -> projects.getOrNull(i)?.let { showProject(it, projectCount) } }
+        heroPager = pager
+        addView(pager, -1, -1)
         addView(View(this@HomeActivity).apply { background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0x66000000, 0x00000000, 0x99000000.toInt())) }, -1, -1)
         val header = LinearLayout(this@HomeActivity).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), dp(10), dp(12), 0) }
         header.addView(logo, dp(36), dp(36)); header.addView(title, LinearLayout.LayoutParams(0, -2, 1f))
@@ -516,10 +537,14 @@ class HomeActivity : ComponentActivity() {
         header.addView(heroButton(Icons.CLOSE, "กลับไปที่กล้อง") { close() }, dp(46), dp(46))
         heroHeader = header
         addView(header, FrameLayout.LayoutParams(-1, -2, Gravity.TOP))
-        addView(FrameLayout(this@HomeActivity).apply {
-            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0x40000000); setStroke(dp(2), Color.WHITE) }
-            addView(IconView(this@HomeActivity, "M9.5 6.5v11l8.5-5.5z", 2f).apply { tint = Color.WHITE }, FrameLayout.LayoutParams(dp(26), dp(26), Gravity.CENTER))
-        }, FrameLayout.LayoutParams(dp(58), dp(58), Gravity.CENTER))
+        // The one label on the picture: a clear glass button above the timeline.
+        addView(LinearLayout(this@HomeActivity).apply {
+            gravity = Gravity.CENTER; orientation = LinearLayout.HORIZONTAL; setPadding(dp(20), 0, dp(22), 0); isClickable = true; glassTouch(); contentDescription = "ตัดต่อวิดีโอ"
+            background = GradientDrawable().apply { cornerRadius = dp(24).toFloat(); setColor(0x4D000000); setStroke(dp(1), 0x99ffffff.toInt()) }
+            addView(IconView(this@HomeActivity, Icons.VIDEO, 2f).apply { tint = Color.WHITE }, LinearLayout.LayoutParams(dp(20), dp(20)))
+            addView(text("ตัดต่อวิดีโอ", 15f, Color.WHITE, true).apply { setPadding(dp(8), 0, 0, 0) })
+            setOnClickListener { Glass.tick(this); startActivity(Intent(this@HomeActivity, StudioProjectsActivity::class.java)) }
+        }, FrameLayout.LayoutParams(-2, dp(48), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { bottomMargin = dp(14 + 66 + 12) })
         addView(StudioStrip(this@HomeActivity, Glass.ACCENT), FrameLayout.LayoutParams(-1, dp(66), Gravity.BOTTOM).apply { setMargins(dp(14), 0, dp(14), dp(14)) })
         setOnClickListener { Glass.tick(this); startActivity(Intent(this@HomeActivity, StudioProjectsActivity::class.java)) }
         cards += this
@@ -541,6 +566,109 @@ class HomeActivity : ComponentActivity() {
         addView(words, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM or Gravity.START).apply { setMargins(dp(14), 0, dp(10), dp(12)) })
         setOnClickListener { Glass.tick(this); open() }
         cards += this
+    }
+
+    /**
+     * The project pictures side by side: drag to slide to the next or the earlier one; on its own the picture on show zooms in slowly
+     * and, after a few seconds, slides to the next one (not at all when animations are reduced, or when there is one project).
+     */
+    private class HeroPager(c: Context, private val onPage: (Int) -> Unit) : FrameLayout(c) {
+        private val views = ArrayList<ImageView>()
+        private val zoom = ArrayList<Float>()
+        private var offset = 0f
+        private var zoomAnim: android.animation.ValueAnimator? = null
+        private var slide: android.animation.ValueAnimator? = null
+        private var downX = 0f; private var startOffset = 0f; private var dragging = false
+        private var velocity: android.view.VelocityTracker? = null
+        private val slop = android.view.ViewConfiguration.get(c).scaledTouchSlop
+        private val still = Glass.reduced(c)
+        private val tick = Runnable { if (running && count > 1 && !dragging) go(1) }
+        var running = false
+            set(v) { field = v; removeCallbacks(tick); if (v) { startZoom(); schedule() } else zoomAnim?.cancel() }
+        var count = 0
+            set(v) { field = v; views.forEach { removeView(it) }; views.clear(); zoom.clear()
+                repeat(v) { _ ->
+                    views += ImageView(context).apply { scaleType = ImageView.ScaleType.CENTER_CROP; visibility = View.INVISIBLE }.also { addView(it, -1, -1) }; zoom += 0f }
+                offset = 0f; layoutPages(); startZoom(); schedule() }
+        init { importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }
+        private val page get() = if (count == 0) 0 else Math.floorMod(Math.round(offset), count)
+
+        fun setPicture(i: Int, b: Bitmap) { views.getOrNull(i)?.let { it.setImageBitmap(b); it.visibility = View.VISIBLE; layoutPages() } }
+
+        private fun schedule() { removeCallbacks(tick); if (!still && count > 1 && running) postDelayed(tick, 6500) }
+        private fun startZoom() {
+            zoomAnim?.cancel()
+            if (still || count == 0 || !running) return
+            val i = page
+            zoomAnim = android.animation.ValueAnimator.ofFloat(zoom[i], 1f).apply {
+                duration = 7000; interpolator = android.view.animation.DecelerateInterpolator(1.4f)
+                addUpdateListener { zoom[i] = it.animatedValue as Float; layoutPages() }; start() }
+        }
+        /** Moves [step] pictures ahead (or back) with a smooth slide, then zooms the new one. */
+        private fun go(step: Int) {
+            if (count < 2) return
+            slide?.cancel(); zoomAnim?.cancel()
+            val to = Math.round(offset) + step
+            slide = android.animation.ValueAnimator.ofFloat(offset, to.toFloat()).apply {
+                duration = 700; interpolator = android.view.animation.DecelerateInterpolator(1.6f)
+                addUpdateListener { offset = it.animatedValue as Float; layoutPages() }
+                addListener(object : android.animation.AnimatorListenerAdapter() {
+                    override fun onAnimationEnd(a: android.animation.Animator) {
+                        for (k in zoom.indices) if (k != page) zoom[k] = 0f
+                        onPage(page); layoutPages(); startZoom(); schedule() } })
+                start() }
+        }
+        private fun layoutPages() {
+            val w = width.toFloat(); if (w == 0f) return
+            val n = count
+            views.forEachIndexed { i, v ->
+                var d = (((i - offset) % n) + n) % n; if (d > n / 2f) d -= n
+                val near = Math.abs(d) < 1.01f
+                v.translationX = d * w
+                val sc = 1f + 0.12f * zoom[i]
+                v.scaleX = sc; v.scaleY = sc
+                v.alpha = 1f - 0.25f * Math.min(1f, Math.abs(d))
+                v.visibility = if (near && v.drawable != null) View.VISIBLE else View.INVISIBLE
+            }
+        }
+        override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) { super.onSizeChanged(w, h, ow, oh); layoutPages() }
+        override fun onDetachedFromWindow() { removeCallbacks(tick); zoomAnim?.cancel(); slide?.cancel(); super.onDetachedFromWindow() }
+
+        override fun onTouchEvent(e: android.view.MotionEvent): Boolean {
+            if (count == 0) { if (e.action == android.view.MotionEvent.ACTION_UP) (parent as? View)?.performClick(); return true }
+            if (velocity == null) velocity = android.view.VelocityTracker.obtain()
+            velocity?.addMovement(e)
+            when (e.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> { downX = e.x; startOffset = offset; dragging = false; removeCallbacks(tick); parent?.requestDisallowInterceptTouchEvent(true); slide?.cancel() }
+                android.view.MotionEvent.ACTION_MOVE -> {
+                    if (!dragging && Math.abs(e.x - downX) > slop && count > 1) dragging = true
+                    if (dragging) { offset = startOffset - (e.x - downX) / width; layoutPages() }
+                }
+                android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                    velocity?.computeCurrentVelocity(1000); val vx = velocity?.xVelocity ?: 0f
+                    if (!dragging) { if (e.actionMasked == android.view.MotionEvent.ACTION_UP) (parent as? View)?.performClick(); startZoom(); schedule() }
+                    else {
+                        val moved = offset - startOffset
+                        val step = when { vx < -900f || moved > 0.3f -> 1; vx > 900f || moved < -0.3f -> -1; else -> 0 }
+                        dragging = false
+                        val base = Math.round(startOffset)
+                        val from = offset
+                        val target = (base + step).toFloat()
+                        slide = android.animation.ValueAnimator.ofFloat(from, target).apply {
+                            duration = 420; interpolator = android.view.animation.DecelerateInterpolator(1.6f)
+                            addUpdateListener { offset = it.animatedValue as Float; layoutPages() }
+                            addListener(object : android.animation.AnimatorListenerAdapter() {
+                                override fun onAnimationEnd(a: android.animation.Animator) {
+                                    for (k in zoom.indices) if (k != page) zoom[k] = 0f
+                                    onPage(page); layoutPages(); startZoom(); schedule() } })
+                            start() }
+                    }
+                    velocity?.recycle(); velocity = null
+                }
+            }
+            return true
+        }
+        override fun performClick(): Boolean = super.performClick()
     }
 
     /** A drawn scene (sky, sun in the theme colour, a ridge) for a project that has no picture yet. */
