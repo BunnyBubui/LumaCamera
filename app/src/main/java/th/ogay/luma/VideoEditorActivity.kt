@@ -964,19 +964,7 @@ class VideoEditorActivity : ComponentActivity() {
         analysing = true; notice("กำลังหาจุดเปลี่ยนฉาก…")
         luma.readIo.execute {
             val step = 200L
-            val cuts = runCatching {
-                LayerFrames(this, uri, from, 64).use { f ->
-                    var prev: FloatArray? = null; val diffs = ArrayList<Float>(); val px = IntArray(f.bitmap.width * f.bitmap.height); var t = 0L
-                    while (from + t < to && !isDestroyed) {
-                        f.advance(t * 1000); f.bitmap.getPixels(px, 0, f.bitmap.width, 0, 0, f.bitmap.width, f.bitmap.height)
-                        val h = FloatArray(48); for (p in px) { h[(p shr 16 and 255) shr 4]++; h[16 + ((p shr 8 and 255) shr 4)]++; h[32 + ((p and 255) shr 4)]++ }
-                        for (i in h.indices) h[i] /= px.size.toFloat()
-                        diffs += prev?.let { a -> var d = 0f; for (i in h.indices) d += abs(h[i] - a[i]); d / 6f } ?: 0f
-                        prev = h; t += step
-                    }
-                    StudioMath.sceneCuts(diffs.toFloatArray(), step)
-                }
-            }.getOrDefault(emptyList())
+            val cuts = StudioMath.sceneCuts(frameDiffs(uri, from, to, step), step)
             runOnUiThread {
                 analysing = false; if (isDestroyed) return@runOnUiThread
                 val base = clipStart(k); val added = cuts.map { base + (it / sp).toLong() }.filter { m -> markers.none { abs(it - m) < 200 } }
@@ -985,6 +973,105 @@ class VideoEditorActivity : ComponentActivity() {
             }
         }
     }
+    /**
+     * How much the picture changes between frames [step] ms apart over [from, to) of [uri] (colour histograms compared;
+     * 0 = the same, 1 = nothing alike). Index 0 is [from]. Call it off the main thread; [stop] ends it early.
+     */
+    private fun frameDiffs(uri: Uri, from: Long, to: Long, step: Long, stop: () -> Boolean = { isDestroyed }): FloatArray = runCatching {
+        LayerFrames(this, uri, from, 64).use { f ->
+            var prev: FloatArray? = null; val diffs = ArrayList<Float>(); val px = IntArray(f.bitmap.width * f.bitmap.height); var t = 0L
+            while (from + t < to && !stop()) {
+                f.advance(t * 1000); f.bitmap.getPixels(px, 0, f.bitmap.width, 0, 0, f.bitmap.width, f.bitmap.height)
+                val h = FloatArray(48); for (p in px) { h[(p shr 16 and 255) shr 4]++; h[16 + ((p shr 8 and 255) shr 4)]++; h[32 + ((p and 255) shr 4)]++ }
+                for (i in h.indices) h[i] /= px.size.toFloat()
+                diffs += prev?.let { a -> var d = 0f; for (i in h.indices) d += abs(h[i] - a[i]); d / 6f } ?: 0f
+                prev = h; t += step
+            }
+            diffs.toFloatArray()
+        }
+    }.getOrDefault(FloatArray(0))
+
+    // ---------- Automatic editing ----------
+    /** One clip of the sequence as auto edit sees it: the file, the part of it in use, and a template for new pieces of it. */
+    private class AutoSrc(val uri: Uri, val from: Long, val to: Long, val muted: Boolean, val template: Extra)
+    private var autoRun = 0
+
+    /** The options page: style, length, picture shape, captions, then start. */
+    private fun autoEditSheet() {
+        val st = AutoEdit.STYLES
+        SettingsPage(this, "ตัดต่ออัตโนมัติ") {}.apply {
+            section("แนวการตัด")
+            choose("แนว", Icons.AI, "auto_style", st.map { it.name }, st.indices.toList(), 0, notes = st.map { it.note })
+            choose("ความยาว", Icons.TIMER, "auto_len", listOf("ตามแนว", "15 วินาที", "30 วินาที", "60 วินาที", "3 นาที"), listOf(0, 15, 30, 60, 180), 0)
+            choose("สัดส่วนภาพ", Icons.FRAME, "auto_crop", listOf("ตามแนว", "คงเดิม", "แนวตั้ง 9:16"), listOf(0, 1, 2), 0)
+            toggle("ใส่ซับจากเสียงพูด", EditorKit.TEXT, "auto_captions", true, "ถอดเสียงหลังตัดเสร็จ ใช้เวลาเพิ่มตามความยาววิดีโอ")
+            section("เริ่ม")
+            action("เริ่มตัดต่ออัตโนมัติ", Icons.AI, "จัดคลิปใหม่ทั้งวิดีโอ กดย้อนกลับเพื่อคืนของเดิมได้") { close(); runAutoEdit() }
+        }.show()
+    }
+
+    /** Measures every clip in the background, asks the planner for a plan, then puts the plan on the timeline. */
+    private fun runAutoEdit() {
+        if (analysing) { notice("กำลังวิเคราะห์อยู่ รอสักครู่"); return }
+        val p = getSharedPreferences("camera", 0)
+        val style = AutoEdit.STYLES.getOrElse(p.getInt("auto_style", 0)) { AutoEdit.STYLES[0] }
+        val target = p.getInt("auto_len", 0) * 1000L; val cropMode = p.getInt("auto_crop", 0); val subs = p.getBoolean("auto_captions", true)
+        if (speed != 1f || cutValid() || mainCurve != null || extras.any { it.speed != 1f || it.curve != null }) notice("ความเร็วและการตัดช่วงกลางเดิมจะถูกล้าง")
+        val srcs = order().map { k ->
+            val e = extras.getOrNull(k - 1)
+            if (e == null) AutoSrc(source, start, end, mainMuted, extraCache.getOrPut(source.toString()) { Extra(source, duration, videoW, videoH, "คลิปแรก", firstFrame) }.copy().also { it.muted = mainMuted; it.volume = volume })
+            else AutoSrc(e.uri, e.from, e.to, e.muted, e.copy())
+        }
+        // Beats of the background music, on the finished timeline, so cuts can land on them.
+        val song = layers.firstOrNull { it.music && !it.hidden }
+        val run = ++autoRun; analysing = true
+        notice("กำลังวิเคราะห์ ${srcs.size} คลิป…")
+        luma.readIo.execute {
+            val stop = { isDestroyed || run != autoRun }
+            val inputs = srcs.mapIndexed { i, c ->
+                if (srcs.size > 1) runOnUiThread { if (!stop()) notice("กำลังวิเคราะห์คลิป ${i + 1} จาก ${srcs.size}…") }
+                val pk = if (c.muted) FloatArray(0) else runCatching { AudioPeaks.range(this, c.uri, c.from, c.to) }.getOrDefault(FloatArray(0))
+                val len = c.to - c.from; val step = when { len > 600_000 -> 1_000L; len > 120_000 -> 500L; else -> 250L }
+                AutoEdit.ClipInput(i, c.from, c.to, if (pk.any { it > 0f }) pk else FloatArray(0), AudioPeaks.STEP_MS.toLong(), frameDiffs(c.uri, c.from, c.to, step, stop), step)
+            }
+            val beats = song?.let { s -> runCatching {
+                val pk = AudioPeaks.range(this, s.source, s.from, s.from + s.length)
+                StudioMath.beats(pk, AudioPeaks.STEP_MS.toLong()).filter { it >= s.from && it < s.from + s.length }.map { s.at + it - s.from }
+            }.getOrNull() }
+            val plan = AutoEdit.plan(inputs, style, target, beats)
+            runOnUiThread {
+                if (stop()) return@runOnUiThread
+                analysing = false
+                if (plan.pieces.isEmpty()) { notice("ไม่พบช่วงที่เก็บไว้ได้ จึงไม่เปลี่ยนวิดีโอ"); return@runOnUiThread }
+                applyPlan(plan, srcs, cropMode, subs)
+            }
+        }
+    }
+
+    /** Rebuilds the sequence from [plan]: the first piece becomes the main clip, the rest follow as added clips. */
+    private fun applyPlan(plan: AutoEdit.Plan, srcs: List<AutoSrc>, cropMode: Int, subs: Boolean) {
+        val ps = plan.pieces; val first = srcs[ps[0].clip]
+        srcs.forEach { c -> extraCache.getOrPut(c.uri.toString()) { c.template.copy() } }
+        if (first.uri != source) switchSource(first.uri)
+        start = ps[0].from; end = ps[0].to; speed = 1f; mainCurve = null; cutFrom = -1; cutTo = -1; split = -1; mainMuted = first.muted
+        extras.clear()
+        ps.drop(1).forEach { pc -> extras.add(srcs[pc.clip].template.copy().also { it.from = pc.from; it.to = pc.to; it.speed = 1f; it.curve = null; it.muted = srcs[pc.clip].muted }) }
+        mainAt = 0; playIndex = 0
+        val style = plan.style
+        transition = style.transition
+        val crop = when (cropMode) { 0 -> style.crop; 2 -> "9:16"; else -> "" }
+        if (crop.isNotEmpty()) CROPS.indexOfFirst { it.first == crop }.takeIf { it >= 0 }?.let { cropIndex = it; layoutVideo() }
+        if (style.filmGroup != null && film == null) Films.inGroup(style.filmGroup).firstOrNull()?.let { film = it; applyLook() }
+        // Old captions no longer match the new cuts.
+        val hadCaptions = layers.any { it.caption }
+        if (hadCaptions) { layers.removeAll { it.caption }; layerPick = -1; rebuildLayers() }
+        if (::trim.isInitialized) { trim.split = -1; showClipOnBar(); trim.playhead = start }
+        openPlayer(); showTime(); refreshTimeline(); showTool(tool, false)
+        notice("ตัดต่อแบบ${style.name}แล้ว · จาก ${clock(plan.beforeMs)} เหลือ ${clock(plan.afterMs)} · ${ps.size} ช่วง")
+        if (subs) window.decorView.postDelayed({ if (!isDestroyed) autoCaptions() }, 600)
+        else if (hadCaptions) notice("ลบซับเดิมออกแล้ว เพราะเวลาไม่ตรงกับการตัดใหม่")
+    }
+
     /** Cuts the clip on screen at every marker inside it. */
     private fun splitAtMarkers() {
         val k = playIndex; val span = clipSpan(k) ?: run { notice("คลิปนี้ปรับความเร็วหรือตัดช่วงกลางแล้ว จึงแยกอัตโนมัติไม่ได้"); return }
@@ -1383,6 +1470,7 @@ class VideoEditorActivity : ComponentActivity() {
         }
         val e = extras.getOrNull(playIndex - 1)
         val list = mutableListOf(
+            EditorKit.action(this, Icons.AI, "ตัดต่ออัตโนมัติ") { autoEditSheet() },
             EditorKit.action(this, EditorKit.SPLIT, "แยกตรงนี้") { splitAtPlayhead() },
             EditorKit.action(this, EditorKit.START, "เริ่มที่นี่") { trimClip(true) },
             EditorKit.action(this, EditorKit.END, "จบที่นี่") { trimClip(false) },
