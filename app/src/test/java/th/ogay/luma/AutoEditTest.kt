@@ -78,4 +78,11 @@ class AutoEditTest {
         AutoEdit.STYLES.forEach { assertTrue(g.contains("\\\"" + it.id + "\\\"")) }
         assertTrue(g.startsWith("root ::="))
     }
+    @Test fun musicAndEffectsAreRead() {
+        val b = AutoEdit.parseBrief("{\"style\":\"vlog\",\"music\":\"lofi_84\",\"sfx\":false}", style("vlog"))!!
+        assertEquals("lofi_84", b.music); assertEquals(false, b.sfx)
+        val d = AutoEdit.parseBrief("{\"style\":\"vlog\"}", style("vlog"))!!
+        assertEquals("auto", d.music); assertEquals(null, d.sfx)
+        assertTrue(AutoEdit.grammar(listOf("lofi_84", "bad id!")).let { it.contains("lofi_84") && !it.contains("bad id") })
+    }
 }

@@ -1034,6 +1034,8 @@ class VideoEditorActivity : ComponentActivity() {
                         val field = GlassDialog.field(this@VideoEditorActivity, "เช่น ${pr.model.ifEmpty { "gpt-4.1-mini" }}", AutoBrain.model(this@VideoEditorActivity), false, 1)
                         GlassDialog.ask(this@VideoEditorActivity, "ชื่อโมเดล", Icons.AI, "ใช้ชื่อตามที่ผู้ให้บริการกำหนด", field, focus = field) { AutoBrain.setModel(this@VideoEditorActivity, field.text.toString()); reopen(); true }
                     }
+                    val ms = Mcp.servers(this@VideoEditorActivity)
+                    action("เครื่องมือ MCP", Icons.GRID, if (ms.isEmpty()) "ไม่บังคับ · ให้โมเดลเรียกเครื่องมือภายนอก เช่น ค้นเพลง" else "${ms.size} เซิร์ฟเวอร์ · ${ms.joinToString { it.name }}") { close(); mcpSheet() }
                     if (pr.id == "custom") action("Base URL", Icons.FILE, AutoBrain.base(this@VideoEditorActivity).ifEmpty { "ยังไม่ได้ใส่" }) {
                         val field = GlassDialog.field(this@VideoEditorActivity, "https://…/v1", AutoBrain.base(this@VideoEditorActivity), false, 1)
                         GlassDialog.ask(this@VideoEditorActivity, "Base URL", Icons.FILE, "ที่อยู่ที่รับ /chat/completions แบบ OpenAI", field, focus = field) { AutoBrain.setBase(this@VideoEditorActivity, field.text.toString()); reopen(); true }
@@ -1045,11 +1047,94 @@ class VideoEditorActivity : ComponentActivity() {
             choose("ความยาว", Icons.TIMER, "auto_len", listOf("ตามแนวหรือคำสั่ง", "15 วินาที", "30 วินาที", "60 วินาที", "3 นาที"), listOf(0, 15, 30, 60, 180), 0)
             choose("สัดส่วนภาพ", Icons.FRAME, "auto_crop", listOf("ตามแนวหรือคำสั่ง", "คงเดิม", "แนวตั้ง 9:16"), listOf(0, 1, 2), 0)
             toggle("ใส่ซับจากเสียงพูด", EditorKit.TEXT, "auto_captions", true, "ถอดเสียงหลังตัดเสร็จ ใช้เวลาเพิ่มตามความยาววิดีโอ")
+            section("เสียง")
+            val lib = SoundLibrary.all(this@VideoEditorActivity)
+            if (layers.any { it.music && !it.hidden }) row("ใช้เพลงที่มีในโปรเจกต์อยู่แล้ว", EditorKit.MUSIC, "ตัดให้ลงจังหวะเพลงนั้น ไม่เพิ่มเพลงใหม่")
+            else choose("เพลงประกอบ", EditorKit.MUSIC, "auto_music", listOf("ตามแนวหรือคำสั่ง", "ไม่ใส่เพลง") + lib.map { it.name }, (0 until lib.size + 2).toList(), 0,
+                notes = listOf("ไวรัล/Vlog/ไฮไลต์/ภาพยนตร์ได้เพลง คนพูดไม่ได้", "") + lib.map { it.note })
+            toggle("เอฟเฟกต์เสียง", Icons.SOUND, "auto_sfx", true, "วูชตอนเปลี่ยนช็อต ป๊อปตอนชื่อเรื่อง (ไวรัล ไฮไลต์ ภาพยนตร์ หรือเมื่อคำสั่งขอ)")
+            action("นำเข้าเพลงเข้าคลัง", Icons.PLUS, "เพลงของคุณเอง แอปวัดจังหวะให้ เลือกได้ในแถวเพลงประกอบ") { close(); importSongs.launch(arrayOf("audio/*")) }
             section("เริ่ม")
             action("เริ่มตัดต่ออัตโนมัติ", Icons.AI, "จัดคลิปใหม่ทั้งวิดีโอ กดย้อนกลับเพื่อคืนของเดิมได้") { close(); runAutoEdit() }
         }
         page?.show()
     }
+    /** Puts the plan's music and one track of sound effects on the timeline (rendered in the background). */
+    private fun addAutoSound(plan: AutoEdit.Plan, track: SoundLibrary.Track?, sfxOn: Boolean) {
+        val total = totalOut(); if (total <= 0) return
+        val st = plan.style.id
+        val effects = sfxOn && (plan.sfx ?: (st == "viral" || st == "highlight" || st == "cinematic"))
+        val hits = ArrayList<Pair<Long, SoundLibrary.Sfx>>()
+        if (effects) {
+            var at = 0L
+            plan.pieces.dropLast(1).forEach { at += it.len; if (at > 400) hits += (at - 260) to SoundLibrary.Sfx.WHOOSH }
+            if (plan.title.isNotEmpty()) hits += 0L to SoundLibrary.Sfx.POP
+            if (st == "cinematic") hits += 0L to SoundLibrary.Sfx.IMPACT
+        }
+        if (track == null && hits.isEmpty()) return
+        val quietUnder = st == "talk" || st == "vlog"
+        val run = autoRun
+        luma.readIo.execute {
+            val music = track?.let { t -> runCatching { if (t.builtIn) SoundLibrary.musicFile(this, t.id, total + 500) else t.file }.getOrNull() }
+            val bed = if (hits.isNotEmpty()) runCatching { SoundLibrary.sfxBedFile(this, total, hits) }.getOrNull() else null
+            runOnUiThread {
+                if (isDestroyed || run != autoRun) return@runOnUiThread
+                music?.let { f -> layers += VideoLayer(VideoLayer.SOUND, MediaLedger.privateUri(this, f), 0L, minOf(total, track?.durationMs?.takeIf { it > 0 } ?: total), 0L,
+                    volume = if (quietUnder) 0.3f else 0.65f, fadeOut = 1_500L, music = true) }
+                bed?.let { f -> layers += VideoLayer(VideoLayer.SOUND, MediaLedger.privateUri(this, f), 0L, total, 0L, volume = 0.85f) }
+                rebuildLayers(); refreshTimeline()
+                notice(listOfNotNull(track?.let { "ใส่เพลง ${it.name}" }, if (bed != null) "เอฟเฟกต์เสียง ${hits.size} จุด" else null).joinToString(" · "))
+            }
+        }
+    }
+
+    /** Imports the user's own songs into the sound library, then reopens the auto edit page. */
+    private val importSongs = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNullOrEmpty()) { autoEditSheet(); return@registerForActivityResult }
+        notice("กำลังนำเข้าและวัดจังหวะ ${uris.size} เพลง…")
+        luma.readIo.execute {
+            val got = uris.mapNotNull { u ->
+                val name = runCatching { contentResolver.query(u, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c -> if (c.moveToFirst()) c.getString(0) else null } }.getOrNull() ?: "เพลง.m4a"
+                SoundLibrary.import(this, u, name) }
+            runOnUiThread { if (isDestroyed) return@runOnUiThread
+                notice(if (got.isEmpty()) "นำเข้าเพลงไม่ได้" else "นำเข้า ${got.size} เพลง · " + got.joinToString { "${it.name} ${it.bpm.toInt()} BPM" }); autoEditSheet() }
+        }
+    }
+
+    /** MCP servers for the API reader: add, test, remove. */
+    private fun mcpSheet() {
+        var page: SettingsPage? = null
+        fun reopen() { page?.close(); window.decorView.post { mcpSheet() } }
+        val list = Mcp.servers(this)
+        page = SettingsPage(this, "เครื่องมือ MCP") {}.apply {
+            section("เซิร์ฟเวอร์")
+            if (list.isEmpty()) row("ยังไม่มีเซิร์ฟเวอร์", Icons.GRID, "ใช้ได้เฉพาะเซิร์ฟเวอร์ MCP แบบ https (Streamable HTTP) · แบบที่รันเป็นโปรแกรมบนคอมพิวเตอร์ใช้บนมือถือไม่ได้")
+            list.forEachIndexed { i, sv ->
+                action("ทดสอบ ${sv.name}", Icons.CHECK, sv.url) {
+                    notice("กำลังเชื่อมต่อ ${sv.name}…")
+                    luma.readIo.execute { val r = runCatching { Mcp.Session(sv).tools(i) }
+                        runOnUiThread { if (!isDestroyed) notice(r.fold({ t -> "เชื่อมต่อได้ · ${t.size} เครื่องมือ" + (if (t.isNotEmpty()) ": " + t.take(6).joinToString { it.name } else "") }, { e -> "เชื่อมต่อไม่ได้ · ${e.message}" })) } }
+                }
+                action("ลบ ${sv.name}", Icons.CLOSE) { Mcp.save(this@VideoEditorActivity, list.filterIndexed { j, _ -> j != i }); reopen() }
+            }
+            section("เพิ่ม")
+            action("เพิ่มเซิร์ฟเวอร์", Icons.PLUS, "ชื่อ ที่อยู่ https และ token (ถ้ามี)") {
+                val box = LinearLayout(this@VideoEditorActivity).apply { orientation = LinearLayout.VERTICAL }
+                val name = GlassDialog.field(this@VideoEditorActivity, "ชื่อ เช่น คลังเพลง"); val url = GlassDialog.field(this@VideoEditorActivity, "https://…/mcp")
+                val token = GlassDialog.field(this@VideoEditorActivity, "token (ไม่บังคับ)").apply { inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD }
+                listOf(name, url, token).forEach { box.addView(it, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(8) }) }
+                GlassDialog.ask(this@VideoEditorActivity, "เซิร์ฟเวอร์ MCP", Icons.GRID, "ข้อความที่โมเดลส่งให้เครื่องมือจะไปถึงเซิร์ฟเวอร์นี้", box, focus = name) {
+                    val u = url.text.toString().trim()
+                    if (!u.startsWith("https://")) { notice("ที่อยู่ต้องขึ้นต้นด้วย https://"); false }
+                    else { Mcp.save(this@VideoEditorActivity, list + Mcp.Server(name.text.toString().trim().ifEmpty { u.substringAfter("//").substringBefore('/') }, u, token.text.toString().trim())); reopen(); true }
+                }
+            }
+            section("กลับ")
+            action("กลับไปหน้าตัดต่ออัตโนมัติ", Icons.CHEVRON_LEFT) { close(); autoEditSheet() }
+        }
+        page?.show()
+    }
+
     private fun stopAutoEdit() { autoRun++; analysing = false; AutoBrain.stop(); notice("หยุดตัดต่ออัตโนมัติแล้ว") }
 
     /** Words already captioned, per clip of [srcs], as (from, to, text) in ms of that clip's file. */
@@ -1090,6 +1175,9 @@ class VideoEditorActivity : ComponentActivity() {
         val speech = captionSpeech(srcs)
         // Beats of the background music, on the finished timeline, so cuts can land on them.
         val song = layers.firstOrNull { it.music && !it.hidden }
+        val lib = SoundLibrary.all(this)
+        val musicPick = p.getInt("auto_music", 0).let { when (it) { 0 -> "auto"; 1 -> "none"; else -> lib.getOrNull(it - 2)?.id ?: "auto" } }
+        val sfxOn = p.getBoolean("auto_sfx", true)
         val run = ++autoRun; analysing = true
         notice("กำลังวิเคราะห์ ${srcs.size} คลิป…")
         luma.readIo.execute {
@@ -1107,9 +1195,10 @@ class VideoEditorActivity : ComponentActivity() {
             var plan: AutoEdit.Plan? = null; var why = ""
             if (brain != 0 && !stop()) {
                 val shots = AutoEdit.shots(inputs)
-                val ask = AutoEdit.prompt(said, inputs, shots, style)
+                val ask = AutoEdit.prompt(said, inputs, shots, style, if (song == null) lib.map { it.id to "${it.name}, ${it.bpm.toInt()} BPM, energy ${it.energy}/9. ${it.note}" } else emptyList())
                 runOnUiThread { if (!stop()) notice(if (brain == 1) "${model.name} กำลังอ่านคำสั่งและวางแผน…" else "กำลังถาม ${AutoBrain.provider(this).name}…") }
-                val answer = if (brain == 1) AutoBrain.local(this, model, ask) else AutoBrain.api(this, ask)
+                val answer = if (brain == 1) AutoBrain.local(this, model, ask, lib.map { it.id })
+                    else AutoBrain.api(this, ask) { tool -> runOnUiThread { if (!stop()) notice("ผู้อ่านคำสั่งเรียกเครื่องมือ $tool…") } }
                 val brief = answer.getOrNull()?.let { AutoEdit.parseBrief(it, style) }
                 if (brief != null) {
                     val b = if (target > 0) AutoEdit.Brief(brief.style, (target / 1000).toInt(), brief.crop, brief.transition, brief.captions, brief.film, brief.order, brief.keep, brief.drop, brief.title) else brief
@@ -1117,19 +1206,32 @@ class VideoEditorActivity : ComponentActivity() {
                 } else why = answer.exceptionOrNull()?.message ?: "ผู้อ่านคำสั่งตอบไม่เป็นรูปแบบที่ใช้ได้"
             }
             if (stop()) return@execute
-            val final = plan ?: AutoEdit.plan(inputs, style, target, beats)
+            var final = plan ?: AutoEdit.plan(inputs, style, target, beats)
+            // Music: the user's pick wins, then the model's, then the style's; a link from a tool is downloaded into the library.
+            var track: SoundLibrary.Track? = null
+            if (song == null) {
+                val want = if (musicPick != "auto") musicPick else final.music.takeIf { it != "auto" } ?: (SoundLibrary.forStyle(final.style.id) ?: "none")
+                track = when {
+                    want == "none" -> null
+                    want.startsWith("https://") -> { runOnUiThread { if (!stop()) notice("กำลังดาวน์โหลดเพลงจากเครื่องมือ…") }; SoundLibrary.download(this, want) ?: SoundLibrary.byId(this, SoundLibrary.forStyle(final.style.id)) }
+                    else -> SoundLibrary.byId(this, want) ?: SoundLibrary.byId(this, SoundLibrary.forStyle(final.style.id))
+                }
+                // Cuts land on the new music's beats.
+                track?.let { t -> val bt = SoundLibrary.beatsOf(this, t, final.afterMs + 2_000)
+                    if (bt.isNotEmpty()) final = AutoEdit.Plan(final.style, AutoEdit.snap(final.pieces, inputs, bt), final.beforeMs, final.transition, final.crop, final.filmGroup, final.captions, final.title, final.by, final.music, final.sfx) }
+            }
             runOnUiThread {
                 if (stop()) return@runOnUiThread
                 analysing = false
                 if (why.isNotEmpty()) notice("$why · ใช้แนวสำเร็จรูปแทน")
                 if (final.pieces.isEmpty()) { notice("ไม่พบช่วงที่เก็บไว้ได้ จึงไม่เปลี่ยนวิดีโอ"); return@runOnUiThread }
-                applyPlan(final, srcs, cropMode, subs)
+                applyPlan(final, srcs, cropMode, subs, track, sfxOn)
             }
         }
     }
 
     /** Rebuilds the sequence from [plan]: the first piece becomes the main clip, the rest follow as added clips. */
-    private fun applyPlan(plan: AutoEdit.Plan, srcs: List<AutoSrc>, cropMode: Int, subs: Boolean) {
+    private fun applyPlan(plan: AutoEdit.Plan, srcs: List<AutoSrc>, cropMode: Int, subs: Boolean, track: SoundLibrary.Track? = null, sfxOn: Boolean = false) {
         val ps = plan.pieces; val first = srcs[ps[0].clip]
         srcs.forEach { c -> extraCache.getOrPut(c.uri.toString()) { c.template.copy() } }
         if (first.uri != source) switchSource(first.uri)
@@ -1151,6 +1253,7 @@ class VideoEditorActivity : ComponentActivity() {
         if (plan.title.isNotEmpty()) addText(plan.title, 0.5f, 0L, 2_500L)
         showTool(0, false)
         notice("ตัดต่อแบบ${style.name}แล้ว" + (if (plan.by.isNotEmpty()) " ตามคำสั่ง (${plan.by})" else "") + " · จาก ${clock(plan.beforeMs)} เหลือ ${clock(plan.afterMs)} · ${ps.size} ช่วง")
+        addAutoSound(plan, track, sfxOn)
         val wantSubs = subs && plan.captions != false
         if (wantSubs) window.decorView.postDelayed({ if (!isDestroyed) autoCaptions() }, 600)
         else if (hadCaptions) notice("ลบซับเดิมออกแล้ว เพราะเวลาไม่ตรงกับการตัดใหม่")

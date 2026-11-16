@@ -41,7 +41,9 @@ object AutoEdit {
     class Plan(val style: Style, val pieces: List<Piece>, val beforeMs: Long,
                val transition: Int = style.transition, val crop: String = style.crop, val filmGroup: String? = style.filmGroup,
                /** Captions asked for by the model (null = the user's switch decides); an opening title ("" = none); who planned it. */
-               val captions: Boolean? = null, val title: String = "", val by: String = "") {
+               val captions: Boolean? = null, val title: String = "", val by: String = "",
+               /** Music: "auto" (the style's), "none", a library track id or an https link; sound effects (null = the user's switch). */
+               val music: String = "auto", val sfx: Boolean? = null) {
         val afterMs get() = pieces.sumOf { it.len }
         /** The plan as JSON text: the same shape a model will be asked to write. */
         fun toJson(): String = buildString {
@@ -138,7 +140,8 @@ object AutoEdit {
 
     /** What the model decided. [keep]/[drop] are shot numbers from [shots]; [seconds] 0 = the style's length. */
     class Brief(val style: Style, val seconds: Int, val crop: String, val transition: Int, val captions: Boolean, val film: Boolean,
-                val order: String, val keep: List<Int>, val drop: List<Int>, val title: String)
+                val order: String, val keep: List<Int>, val drop: List<Int>, val title: String,
+                val music: String = "auto", val sfx: Boolean? = null)
 
     /**
      * Neutral shots the model can point at by number: quiet stretches out, split at scene changes and into pieces of at most
@@ -177,30 +180,33 @@ object AutoEdit {
     }
 
     /** The whole request for the model. */
-    fun prompt(instruction: String, clips: List<ClipInput>, shots: List<Piece>, styleHint: Style): String = buildString {
+    fun prompt(instruction: String, clips: List<ClipInput>, shots: List<Piece>, styleHint: Style, music: List<Pair<String, String>> = emptyList()): String = buildString {
         append("You are a professional video editor working inside a phone app. Plan an edit of the user's footage.\n\n")
         append(describe(clips, shots)).append('\n')
         append("Styles: viral = fast cuts, at most 30 s, vertical. vlog = remove silence, keep the story. talk = keep every spoken word, captions. ")
         append("highlight = the best moments, about 60 s. cinematic = long calm shots, wide picture, film look.\n")
         append("The user picked \"").append(styleHint.id).append("\" as a starting point; change it if the request says otherwise.\n")
+        if (music.isNotEmpty()) { append("Music library (id: description):\n"); music.forEach { append(it.first).append(": ").append(it.second).append('\n') } }
         append("User request: \"").append(instruction.replace('"', '\'').take(600)).append("\"\n\n")
         append("Reply with one JSON object only, no other text:\n")
         append("{\"style\": viral|vlog|talk|highlight|cinematic, \"seconds\": target length in seconds (0 = let the style decide), ")
         append("\"crop\": keep|9:16|1:1|16:9|2.39:1, \"transition\": cut|fade|flash|zoom|slide|wipe|blur, \"captions\": true|false, \"film\": true|false, ")
         append("\"order\": time|reverse|best|keep, \"keep\": [shot ids to use, in order when order is keep; [] = let the app choose], ")
-        append("\"drop\": [shot ids to leave out], \"title\": a short opening title in the user's language, or \"\"}\n")
+        append("\"drop\": [shot ids to leave out], \"music\": auto|none|a music library id, \"sfx\": true|false (whooshes on cuts, a pop on the title), ")
+        append("\"title\": a short opening title in the user's language, or \"\"}\n")
         append("List shot ids in keep or drop only when the request is about specific content, people, words or moments.")
     }
 
     /** Grammar for llama.cpp, so a small model can only answer with a valid brief. */
-    fun grammar(): String {
+    fun grammar(musicIds: List<String> = emptyList()): String {
         fun alt(v: List<String>) = v.joinToString(" | ") { "\"\\\"" + it + "\\\"\"" }
         return """
-root ::= "{" ws "\"style\":" ws style "," ws "\"seconds\":" ws num "," ws "\"crop\":" ws crop "," ws "\"transition\":" ws trans "," ws "\"captions\":" ws bool "," ws "\"film\":" ws bool "," ws "\"order\":" ws order "," ws "\"keep\":" ws ids "," ws "\"drop\":" ws ids "," ws "\"title\":" ws str ws "}"
+root ::= "{" ws "\"style\":" ws style "," ws "\"seconds\":" ws num "," ws "\"crop\":" ws crop "," ws "\"transition\":" ws trans "," ws "\"captions\":" ws bool "," ws "\"film\":" ws bool "," ws "\"order\":" ws order "," ws "\"keep\":" ws ids "," ws "\"drop\":" ws ids "," ws "\"music\":" ws music "," ws "\"sfx\":" ws bool "," ws "\"title\":" ws str ws "}"
 style ::= ${alt(STYLES.map { it.id })}
 crop ::= ${alt(CROP_IDS)}
 trans ::= ${alt(TRANSITION_IDS)}
 order ::= ${alt(ORDER_IDS)}
+music ::= ${alt(listOf("auto", "none") + musicIds.filter { it.matches(Regex("[A-Za-z0-9_]+")) })}
 bool ::= "true" | "false"
 num ::= [0-9] | [0-9] [0-9] | [0-9] [0-9] [0-9] | [0-9] [0-9] [0-9] [0-9]
 ids ::= "[" ws ( num ( "," ws num )* )? ws "]"
@@ -224,14 +230,15 @@ ws ::= " "?
         val crop = str("crop")?.takeIf { it in CROP_IDS } ?: style.crop.ifEmpty { "keep" }
         val trans = TRANSITION_IDS.indexOf(str("transition")).takeIf { it >= 0 } ?: style.transition
         return Brief(style, (num("seconds") ?: 0).coerceIn(0, 3_600), if (crop == "keep") "" else crop, trans, bool("captions") ?: style.captions,
-            bool("film") ?: (style.filmGroup != null), str("order")?.takeIf { it in ORDER_IDS } ?: "time", ids("keep").distinct(), ids("drop").distinct(), str("title")?.trim()?.take(60).orEmpty())
+            bool("film") ?: (style.filmGroup != null), str("order")?.takeIf { it in ORDER_IDS } ?: "time", ids("keep").distinct(), ids("drop").distinct(), str("title")?.trim()?.take(60).orEmpty(),
+            str("music")?.trim()?.takeIf { it.isNotEmpty() } ?: "auto", bool("sfx"))
     }
 
     /** Turns a brief into a plan. Without shot numbers it is the style's own plan with the brief's length and finish. */
     fun planFromBrief(clips: List<ClipInput>, shots: List<Piece>, brief: Brief, beats: List<Long>? = null, by: String = ""): Plan {
         val st = brief.style; val film = if (brief.film) (st.filmGroup ?: "ฟิล์มหนัง") else null
         val target = brief.seconds * 1000L
-        fun finish(pieces: List<Piece>, before: Long) = Plan(st, pieces, before, brief.transition, brief.crop, film, brief.captions, brief.title, by)
+        fun finish(pieces: List<Piece>, before: Long) = Plan(st, pieces, before, brief.transition, brief.crop, film, brief.captions, brief.title, by, brief.music, brief.sfx)
         val before = clips.sumOf { (it.to - it.from).coerceAtLeast(0) }
         if (brief.keep.isEmpty() && brief.drop.isEmpty() && brief.order == "time") return finish(plan(clips, st, target, beats).pieces, before)
         var pool = if (brief.keep.isNotEmpty()) brief.keep.mapNotNull { shots.getOrNull(it) } else shots.filterIndexed { i, _ -> i !in brief.drop }
