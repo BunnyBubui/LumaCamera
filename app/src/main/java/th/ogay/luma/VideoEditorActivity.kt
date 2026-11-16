@@ -577,6 +577,8 @@ class VideoEditorActivity : ComponentActivity() {
         projectName = state?.getString("projectName") ?: intent.getStringExtra("name")?.takeIf { it.isNotBlank() } ?: ""
         if (state == null && intent.hasExtra("project")) StudioProjects.load(this, projectId)?.let { p -> projectName = p.name; reopened = p.state; restore(p.state); tool = 0; layerPick = -1 }
         named = state?.getBoolean("named") ?: (!intent.hasExtra("project") && !intent.getStringExtra("name").isNullOrBlank())
+        // Shared from another app together with more videos: they join the end of the timeline, in the order they were sent.
+        if (state == null && !intent.hasExtra("project")) intent.getStringArrayListExtra("share_more")?.takeIf { it.isNotEmpty() }?.let { more -> window.decorView.post { importShared(more) } }
         if (projectName.isEmpty()) projectName = "โปรเจกต์ " + android.text.format.DateFormat.format("d MMM HH:mm", System.currentTimeMillis())
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         installRoot(root)
@@ -702,6 +704,17 @@ class VideoEditorActivity : ComponentActivity() {
         else { applying = true; restoreExtras(saved!!) { applying = false; handler.postDelayed(watcher, 600) } }
         convertLegacyMusic()
         rebuildStickers(); loadLayerThumbs()
+    }
+    private fun importShared(more: List<String>) {
+        luma.readIo.execute {
+            val got = more.mapNotNull { u -> readExtra(Uri.parse(u))?.let { u to it } }
+            runOnUiThread {
+                if (isDestroyed) return@runOnUiThread
+                got.forEach { (u, e) -> extraCache[u] = e; extras += e.copy() }
+                if (got.isNotEmpty()) { showTime(); showTool(10, false); saveProject() }
+                notice(if (got.size == more.size) "เพิ่มอีก ${got.size} คลิปต่อท้ายแล้ว" else "เพิ่มได้ ${got.size} จาก ${more.size} คลิป · บางไฟล์เปิดไม่ได้")
+            }
+        }
     }
     private fun readExtra(uri: Uri): Extra? = runCatching {
         val r = MediaMetadataRetriever()
