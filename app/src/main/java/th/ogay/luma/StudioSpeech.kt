@@ -159,12 +159,13 @@ class StudioSpeech(private val a: Activity, private val languageArg: String, pri
                 for (p in pieces.take(8).sortedByDescending { it.to - it.from }.take(3)) {
                     if (stopped) return
                     val pcm0 = pcmOf(p); if (pcm0.size < StudioPcm.RATE / 2) continue
-                    val sp0 = speechIn(pcm0) ?: continue
-                    val h = heard(rec, pcm0.copyOfRange(sp0.from, sp0.to))
+                    // The whole piece, as before the voice detector: a trimmed or skipped piece left too little for the language guess.
+                    val h = heard(rec, pcm0)
                     if (h.lang.isNotEmpty() && worthKeeping(h.text)) votes[h.lang] = (votes[h.lang] ?: 0) + h.text.length.coerceAtMost(60)
                 }
-                language = votes.maxByOrNull { it.value }?.key ?: "en"
-                ui { onDetected(language) }
+                // No vote: leave the language empty so Whisper guesses again on every line, rather than forcing English onto the whole film.
+                language = votes.maxByOrNull { it.value }?.key ?: ""
+                if (language.isNotEmpty()) ui { onDetected(language) }
                 // Whisper can switch language on a loaded model; if this build cannot, load it again with the language set.
                 val switched = runCatching { rec.setConfig(config(language)) }.isSuccess
                 if (!switched) { rec.release(); rec = OfflineRecognizer(null, config(language)) }
