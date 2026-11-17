@@ -10,10 +10,13 @@ class LlamaEngine private constructor(private var handle: Long) {
     private external fun nativeTemplate(h: Long, text: String): String
     private external fun nativeGenerate(h: Long, prompt: String, maxNew: Int, repeat: Float): String
     private external fun nativeStop()
+    private external fun nativeGenerateGrammar(h: Long, prompt: String, maxNew: Int, repeat: Float, grammar: String): String
 
     /** The model's own chat template wrapped around [text]; "" if the model has none. */
     fun wrap(text: String) = nativeTemplate(handle, text)
     fun generate(prompt: String, maxNew: Int, repeat: Float = 1.05f) = nativeGenerate(handle, prompt, maxNew, repeat)
+    /** Generates with a GBNF grammar (rule "root"); empty text when the grammar cannot be read. */
+    fun generate(prompt: String, maxNew: Int, grammar: String, repeat: Float = 1f) = nativeGenerateGrammar(handle, prompt, maxNew, repeat, grammar)
     fun stop() = nativeStop()
     fun close() { if (handle != 0L) nativeFree(handle); handle = 0L }
 
@@ -21,6 +24,8 @@ class LlamaEngine private constructor(private var handle: Long) {
         private var loaded = false
         @JvmStatic private external fun nativeLoad(path: String, threads: Int, nCtx: Int): Long
         fun load(path: File, threads: Int, nCtx: Int): LlamaEngine? {
+            // The library is built with instructions an older chip does not have; calling into it there would crash the app.
+            if (!Device.llmSupported) return null
             if (!loaded) { System.loadLibrary("luma_llm"); loaded = true }
             val h = nativeLoad(path.absolutePath, threads, nCtx)
             return if (h == 0L) null else LlamaEngine(h)
@@ -53,13 +58,13 @@ object TranslatorModels {
     private const val HY = "https://huggingface.co/tencent/HY-MT1.5-1.8B-GGUF/resolve/main/"
     private const val WAIT = "รอตัวรันของ Tencent (ตัวรันทั่วไปยังอ่านไฟล์นี้ไม่ได้)"
     val ALL = listOf(
-        ModelSpec("mlkit", "translate", "ML Kit (Google)", "เล็กสุด", "แปลได้หลายภาษา · เร็ว · คุณภาพพอใช้", "", 30, emptyList(), builtin = true),
-        ModelSpec("hymt-125", "translate", "Hy-MT 1.8B · 1.25-bit", "ประหยัดสุด", "Tencent · ~440 MB · 33 ภาษา", "", 440, emptyList(), unavailable = WAIT),
-        ModelSpec("hymt-2bit", "translate", "Hy-MT 1.8B · 2-bit", "ประหยัด", "Tencent · ~574 MB · 33 ภาษา", "", 574, emptyList(), unavailable = WAIT),
-        ModelSpec("hymt-q4", "translate", "Hy-MT 1.8B · Q4", "สมดุล", "Tencent · แปลแม่น 33 ภาษา รวมไทย", "", 1130, listOf("HY-MT1.5-1.8B-Q4_K_M.gguf" to HY + "HY-MT1.5-1.8B-Q4_K_M.gguf")),
-        ModelSpec("chinda", "translate", "ChindaMT 0.8B", "ไทย↔อังกฤษ", "เล็ก เร็ว · เฉพาะไทยกับอังกฤษ", "", 672, listOf("ChindaMT-0.8B.i1-Q4_K_M.gguf" to "https://huggingface.co/mradermacher/ChindaMT-0.8B-i1-GGUF/resolve/main/ChindaMT-0.8B.i1-Q4_K_M.gguf")),
-        ModelSpec("typhoon", "translate", "Typhoon Translate 1.5 4B", "ไทยแม่นสุด", "SCB 10X · ไทย↔อังกฤษ · ใหญ่ ช้ากว่า", "", 2500, listOf("typhoon-translate1.5-4b-q4_k_m.gguf" to "https://huggingface.co/scb10x/typhoon-translate1.5-4b-gguf/resolve/main/typhoon-translate1.5-4b-q4_k_m.gguf")),
-        ModelSpec("tgemma", "translate", "TranslateGemma 4B", "55 ภาษา", "Google · หลายภาษา · ใหญ่ ช้ากว่า", "", 2490, listOf("translategemma-4b-it-Q4_K_M.gguf" to "https://huggingface.co/42ailab/TranslateGemma-4B-GGUF/resolve/main/translategemma-4b-it-Q4_K_M.gguf")),
+        ModelSpec("mlkit", "translate", "ML Kit (Google)", "เล็กสุด", "แปลได้หลายภาษา เร็ว คุณภาพพอใช้", "", 30, emptyList(), builtin = true),
+        ModelSpec("hymt-125", "translate", "Hy-MT 1.8B 1.25-bit", "ประหยัดสุด", "Tencent ~440 MB 33 ภาษา", "", 440, emptyList(), unavailable = WAIT),
+        ModelSpec("hymt-2bit", "translate", "Hy-MT 1.8B 2-bit", "ประหยัด", "Tencent ~574 MB 33 ภาษา", "", 574, emptyList(), unavailable = WAIT),
+        ModelSpec("hymt-q4", "translate", "Hy-MT 1.8B Q4", "สมดุล", "Tencent แปลแม่น 33 ภาษา รวมไทย", "", 1130, listOf("HY-MT1.5-1.8B-Q4_K_M.gguf" to HY + "HY-MT1.5-1.8B-Q4_K_M.gguf")),
+        ModelSpec("chinda", "translate", "ChindaMT 0.8B", "ไทย↔อังกฤษ", "เล็ก เร็ว เฉพาะไทยกับอังกฤษ", "", 672, listOf("ChindaMT-0.8B.i1-Q4_K_M.gguf" to "https://huggingface.co/mradermacher/ChindaMT-0.8B-i1-GGUF/resolve/main/ChindaMT-0.8B.i1-Q4_K_M.gguf")),
+        ModelSpec("typhoon", "translate", "Typhoon Translate 1.5 4B", "ไทยแม่นสุด", "SCB 10X ไทย↔อังกฤษ ใหญ่ ช้ากว่า", "", 2500, listOf("typhoon-translate1.5-4b-q4_k_m.gguf" to "https://huggingface.co/scb10x/typhoon-translate1.5-4b-gguf/resolve/main/typhoon-translate1.5-4b-q4_k_m.gguf")),
+        ModelSpec("tgemma", "translate", "TranslateGemma 4B", "55 ภาษา", "Google หลายภาษา ใหญ่ ช้ากว่า", "", 2490, listOf("translategemma-4b-it-Q4_K_M.gguf" to "https://huggingface.co/42ailab/TranslateGemma-4B-GGUF/resolve/main/translategemma-4b-it-Q4_K_M.gguf")),
     )
     private val info = mapOf("hymt-q4" to TransInfo(TransFamily.HUNYUAN), "chinda" to TransInfo(TransFamily.CHINDA, true),
         "typhoon" to TransInfo(TransFamily.TYPHOON, true), "tgemma" to TransInfo(TransFamily.GEMMA))
@@ -81,8 +86,7 @@ object LlamaTranslator {
 
     /** A short Thai message when this phone cannot hold the model, else null. */
     fun tooBig(c: Context, m: ModelSpec): String? {
-        val mi = ActivityManager.MemoryInfo(); (c.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager).getMemoryInfo(mi)
-        return if (m.approxMb * 1_048_576L > mi.totalMem * 6 / 10) "เครื่องนี้มี RAM ไม่พอสำหรับโมเดลนี้ ลองโมเดลที่เล็กกว่า" else null
+        return Device.cannotRun(c, m, llm = true)
     }
 
     /** What the text is (for example a Chinese martial-arts film), so the model picks matching words and tone. Empty = none. */
@@ -126,7 +130,7 @@ object LlamaTranslator {
     fun run(c: Context, m: ModelSpec, from: String, to: String, lines: List<String>, loaded: () -> Unit = {}, progress: (Int, Int, String?) -> Unit): String? {
         val info = TranslatorModels.infoOf(m) ?: return "โมเดลนี้ยังใช้ไม่ได้"
         val family = info.family ?: return "โมเดลนี้ยังใช้ไม่ได้"
-        if (!info.supports(from, to)) return "โมเดลนี้แปลคู่ภาษานี้ไม่ได้ · เลือกโมเดลอื่น"
+        if (!info.supports(from, to)) return "โมเดลนี้แปลคู่ภาษานี้ไม่ได้ เลือกโมเดลอื่น"
         tooBig(c, m)?.let { return it }
         cancelled = false
         val file = File(ModelStore.dir(c, m), m.files[0].first)
@@ -134,7 +138,7 @@ object LlamaTranslator {
         try {
             if (engineId != m.id) {
                 release()
-                engine = LlamaEngine.load(file, Runtime.getRuntime().availableProcessors().coerceIn(2, 4), 1536) ?: return "เปิดโมเดลไม่ได้ ไฟล์อาจเสีย · ลองลบแล้วดาวน์โหลดใหม่"
+                engine = LlamaEngine.load(file, Device.threads, 1536) ?: return "เปิดโมเดลไม่ได้ ไฟล์อาจเสีย ลองลบแล้วดาวน์โหลดใหม่"
                 engineId = m.id
             }
             val e = engine ?: return "เปิดโมเดลไม่ได้"
@@ -151,7 +155,7 @@ object LlamaTranslator {
                     return clean(e.generate(wrapped, (text.length * 3).coerceIn(64, 512)))
                 }
                 val ctx = context.trim().take(120)
-                var out = ask(ctx, prev) ?: return "ไฟล์โมเดลนี้ไม่มีรูปแบบแชทที่อ่านได้ ใช้แปลไม่ได้ · ลองโมเดลอื่น"
+                var out = ask(ctx, prev) ?: return "ไฟล์โมเดลนี้ไม่มีรูปแบบแชทที่อ่านได้ ใช้แปลไม่ได้ ลองโมเดลอื่น"
                 // Only the last line is this caption's; earlier lines would be the context translated by mistake.
                 if (prev.isNotEmpty() && out.contains('\n')) out = out.lines().last { it.isNotBlank() }.trim()
                 // A line that came out far longer than the original means the model translated the context too: do it again without.

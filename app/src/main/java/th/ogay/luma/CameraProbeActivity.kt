@@ -27,7 +27,7 @@ import java.util.Locale
 /** A separate Camera2 experiment; no production capture/UI method is replaced. */
 class CameraProbeActivity : ComponentActivity() {
     private data class Choice(val id:String,val size:Size,val fps:Int,val highSpeed:Boolean) {
-        fun title()="กล้อง $id · $size · $fps fps"+(if(highSpeed)" → เล่น 30 fps"else " · ชุดควบคุม")
+        fun title()="กล้อง $id $size $fps fps"+(if(highSpeed)" เล่น 30 fps"else " ชุดควบคุม")
     }
     private val manager by lazy { getSystemService(Context.CAMERA_SERVICE) as CameraManager }
     private val worker=HandlerThread("LumaCameraProbe").apply{start()}
@@ -81,7 +81,7 @@ class CameraProbeActivity : ComponentActivity() {
         body.addView(label("ลองทุกทางที่แอปทั่วไปขอได้ เช่น ภาพเต็มเซนเซอร์ เลนส์ย่อย และ 60 fps ใช้เวลาราว 1 นาที ถ้าพบทางถ่ายภาพที่ใหญ่กว่าปกติ โหมดความละเอียดสูงจะใช้ทางนั้นเอง",14f,MUTED),-1,-2)
         choiceButton=pill("เลือกชุดทดสอบ"){if(!busy)AlertDialog.Builder(this).setTitle("ชุดที่ Android รายงาน").setItems(choices.map{it.title()}.toTypedArray()){_,i->choice=choices[i];choiceButton.text=choice!!.title()}.show()}.apply{isEnabled=false};body.addView(choiceButton,-1,-2)
         startButton=pill("เริ่มทดสอบ 10 วินาที"){if(busy)handler.post{finishProbe(true)}else if(ContextCompat.checkSelfPermission(this,Manifest.permission.CAMERA)!=PackageManager.PERMISSION_GRANTED)permission.launch(Manifest.permission.CAMERA)else launchProbe()}.apply{contentDescription="เริ่มทดสอบกล้อง 10 วินาที";isEnabled=false};body.addView(startButton,-1,-2)
-        body.addView(label("ทดสอบแบบไม่มีเสียง · โหมด 120/240 บันทึกเป็นคลิปเล่น 30 fps",14f,MUTED),-1,-2)
+        body.addView(label("ทดสอบแบบไม่มีเสียง โหมด 120/240 บันทึกเป็นคลิปเล่น 30 fps",14f,MUTED),-1,-2)
         texture=TextureView(this);body.addView(texture,-1,dp(200))
         texture.surfaceTextureListener=object:TextureView.SurfaceTextureListener{
             override fun onSurfaceTextureAvailable(s:SurfaceTexture,w:Int,h:Int){textureSurface=s}
@@ -207,7 +207,7 @@ class CameraProbeActivity : ComponentActivity() {
         if(ticket!=generation||!recording)return
         val elapsed=(SystemClock.elapsedRealtimeNanos()-startedNs)/1e9
         if(elapsed>=10){finishProbe(false);return}
-        ui{status.text=String.format(Locale.US,"กำลังอัด · เหลือ %.1f วินาที",10-elapsed)}
+        ui{status.text=String.format(Locale.US,"กำลังอัด เหลือ %.1f วินาที",10-elapsed)}
         handler.postDelayed({tick(ticket)},200)
     }
     private fun finishProbe(cancelled:Boolean){
@@ -219,13 +219,13 @@ class CameraProbeActivity : ComponentActivity() {
         release();stage("inspect");ui{startButton.isEnabled=false;status.text="กำลังตรวจเฟรมและบันทึกรายงาน…"}
         try{
             check(file!=null&&file.length()>0){"ไฟล์วิดีโอว่าง"}
-            val uri=MediaLedger.rememberFile(this,file,"video/mp4","คลิปทดสอบกล้อง · ไม่มีเสียง")
+            val uri=MediaLedger.rememberFile(this,file,"video/mp4","คลิปทดสอบกล้อง ไม่มีเสียง")
             val result=ClipInspector.inspect(this,uri)
             report.put("file",result).put("captureFpsEstimateFromFile",if(elapsed>0)result.optLong("frames")*1e9/elapsed else JSONObject.NULL)
                 .put("measurementNote","File frames / capture wall time is an estimate; sensor callbacks may be batched. Not a unique-frame analysis.")
             stage("complete");report.put("stage","complete");clipUri=uri;saveReport(false)
-            ui{clipButton.isEnabled=true;status.text="ทดสอบเสร็จ · กดบันทึกและส่งรายงาน\nไฟล์เล่น %.1f fps · ค่าประมาณขณะถ่าย %.1f fps".format(Locale.US,result.optDouble("measuredFps"),report.optDouble("captureFpsEstimateFromFile"))}
-        }catch(e:Exception){if(file!=null&&file.length()>0)runCatching{MediaLedger.rememberFile(this,file,"video/mp4","ไฟล์ทดสอบที่ตรวจไม่สำเร็จ")};report.put("stage","inspect-error").put("error",e.toString());saveReport(false);ui{status.text="ตรวจคลิปไม่สำเร็จ · ส่งรายงานให้ตรวจได้"}}
+            ui{clipButton.isEnabled=true;status.text="ทดสอบเสร็จ กดบันทึกและส่งรายงาน\nไฟล์เล่น %.1f fps ค่าประมาณขณะถ่าย %.1f fps".format(Locale.US,result.optDouble("measuredFps"),report.optDouble("captureFpsEstimateFromFile"))}
+        }catch(e:Exception){if(file!=null&&file.length()>0)runCatching{MediaLedger.rememberFile(this,file,"video/mp4","ไฟล์ทดสอบที่ตรวจไม่สำเร็จ")};report.put("stage","inspect-error").put("error",e.toString());saveReport(false);ui{status.text="ตรวจคลิปไม่สำเร็จ ส่งรายงานให้ตรวจได้"}}
         ready()
     }
     private fun abort(where:String,error:Throwable?){
@@ -239,9 +239,9 @@ class CameraProbeActivity : ComponentActivity() {
     private fun saveReport(share:Boolean){
         try{
             val file=reportFile?:File(filesDir,"reports/camera-probe-${System.currentTimeMillis()}.json").also{reportFile=it}
-            file.parentFile?.mkdirs();file.writeText(report.toString(2));val uri=MediaLedger.rememberFile(this,file,"application/json","ผลทดสอบกล้องจริง · ${report.optString("stage")}")
+            file.parentFile?.mkdirs();file.writeText(report.toString(2));val uri=MediaLedger.rememberFile(this,file,"application/json","ผลทดสอบกล้องจริง ${report.optString("stage")}")
             if(share)ui{MediaLedger.share(this,uri,"application/json")}
-        }catch(e:Exception){ui{status.text="บันทึกรายงานไม่ได้ · ${e.message}"}}
+        }catch(e:Exception){ui{status.text="บันทึกรายงานไม่ได้ ${e.message}"}}
     }
     override fun onResume(){super.onResume();foreground=true;orientation.enable()}
     override fun onPause(){foreground=false;orientation.disable();handler.post{if(recording)finishProbe(true)else if(busy)abort("cancelled",null)};super.onPause()}

@@ -123,7 +123,7 @@ fun Activity.showStudioSettings(rawAvailable: Boolean, closed: () -> Unit = {}, 
                 LinearLayout.LayoutParams(dp(18), dp(18)).apply { if (i > 0) leftMargin = dp(4) })
         }
         dots.addView(IconView(this, Icons.CHEVRON_RIGHT, 2f).apply { tint = Glass.TEXT3 }, LinearLayout.LayoutParams(dp(18), dp(18)).apply { leftMargin = dp(6) })
-        row("ธีมสี", Icons.SUN, Theme.name() + " · ปรับสีเน้น พื้นหลัง แผง ตัวอักษร และกรอบโฟกัส", dots) {
+        row("ธีมสี", Icons.SUN, Theme.name() + " ปรับสีเน้น พื้นหลัง แผง ตัวอักษร และกรอบโฟกัส", dots) {
             showThemeSettings { changedTheme -> if (changedTheme) { dialog.dismiss(); recreate() } }
         }
     }
@@ -131,6 +131,9 @@ fun Activity.showStudioSettings(rawAvailable: Boolean, closed: () -> Unit = {}, 
     choose("สัดส่วนภาพ", Icons.FRAME, "aspect", Aspects.available(prefs), Aspects.available(prefs), "4:3", Aspects.available(prefs).map { Aspects.note(it) }, Aspects.available(prefs).map { aspectIconPath(it) })
     choose("ตั้งเวลาถ่าย", Icons.TIMER, "timer", SelfTimer.STEPS.map { SelfTimer.label(it) }, SelfTimer.STEPS.map { it.toString() }, "0")
     choose("คุณภาพ JPEG", Icons.FILE, "jpeg_quality", listOf("ประหยัด 85%", "มาตรฐาน 95%", "สูงสุด 100%"), listOf("85", "95", "100"), "95")
+    // Opt-in exposure blending: keeps the regular Photo UI and existing HDR EF1/EF2 engines.
+    toggle("ภาพถ่าย: Natural HDR (ทดลอง)", Icons.HISTO, "natural_hdr", false, "ถ่ายหลายค่าแสงแล้วรวมเป็น JPEG เดียว ใช้เฉพาะโหมดภาพถ่าย กล้องหลัง และปิดแฟลช")
+    choose("Natural HDR: ระยะห่างค่าแสง", Icons.SUN, "hdr_spread", listOf("±1 EV", "±2 EV (แนะนำ)", "±3 EV"), listOf("1", "2", "3"), "2", listOf("เคลื่อนไหวน้อยและแสงต่างไม่มาก", "ภาพย้อนแสงทั่วไป", "ฉากต่างแสงสูง ต้องถือกล้องให้นิ่ง"))
     choose("ครอปจากเลนส์", Icons.SEARCH, "crop_from", listOf("ปิด", "เลนส์หลัก 1×", "เลนส์ 2×", "เลนส์เทเล 3.5×"), listOf("0", "1", "2", "3.5"), if (prefs.getBoolean("software", false)) "1" else "0", listOf("สลับเลนส์ตามระยะซูม", "ซูมด้วยการครอปจากเลนส์หลัก", "ครอปจากระยะ 2×", "ครอปจากระยะ 3.5×"))
     section("หน้าจอกล้อง")
     toggle("ปุ่มซูม", Icons.SEARCH, "show_zoom", true)
@@ -143,7 +146,7 @@ fun Activity.showStudioSettings(rawAvailable: Boolean, closed: () -> Unit = {}, 
     choose("ถ่ายเร็ว: เริ่มต้นที่", Icons.FLASH, "quick_kind", listOf("แฟลชเร็ว", "แฟลชเร็วพิเศษ", "ถ่ายเร็ว (กีฬา)"), listOf("FLASH_NIGHT", "FLASH_FAST", "SPORT"), "FLASH_NIGHT", listOf("แฟลชเปิดทุกภาพ", "ไฟฉายค้างไว้ ถ่ายต่อได้ไว", "ชัตเตอร์สั้น ไม่ใช้แฟลช"), listOf(Icons.FLASH, Icons.FLASH, Icons.MOTION))
     choose("ภาพถ่าย: เฟรมเรตบนจอ", Icons.FILM, "fps_lock", listOf("ตามระบบ", "ล็อก 24 fps", "ล็อก 30 fps", "ล็อก 60 fps"), listOf("off", "24", "30", "60"), "off", listOf("ระบบลดเฟรมเองในที่มืด", "จอไม่ต่ำกว่า 24", "จอคงที่ 30", "ลื่นสุด ถ้ากล้องรองรับ"))
     toggle("ภาพถ่าย: ชัตเตอร์ตามแสงตอนกดถ่าย", Icons.TIMER, "fps_free_shot", true, "เฟรมเรตที่ล็อกใช้กับจอเท่านั้น ตอนกดถ่ายกล้องเลือกความเร็วชัตเตอร์เองตามแสง ภาพจึงไม่มืดหรือเสียรายละเอียด")
-    choose("วิดีโอ: เฟรมเรต", Icons.FPS, "video_fps_s", listOf("24 fps", "30 fps", "60 fps"), listOf("24", "30", "60"), "30", listOf("แบบภาพยนตร์", "มาตรฐาน", "ลื่น · ใช้เลนส์ 1× ขึ้นไป"))
+    choose("วิดีโอ: เฟรมเรต", Icons.FPS, "video_fps_s", listOf("24 fps", "30 fps", "60 fps"), listOf("24", "30", "60"), "30", listOf("แบบภาพยนตร์", "มาตรฐาน", "ลื่น ใช้เลนส์ 1× ขึ้นไป"))
     toggle("วิดีโอ: พรีวิวลื่นพิเศษ", Icons.MOTION, "video_fast_preview", true, "ส่งภาพตรงไปที่จอ ลื่นและหน่วงน้อยกว่า ปิดถ้าพื้นหลังเบลอหลังแผงตั้งค่าดูแปลก")
     toggle("ลดแถบดำจากแสงไฟ", Icons.FLASH, "anti_flicker", true, "ใต้หลอดไฟที่กะพริบ โหมดถ่ายเร็วจะไม่ใช้ชัตเตอร์สั้นกว่า 1/100 วินาที")
     toggle("RAW: บันทึก JPEG คู่", Icons.FILE, "raw_jpeg", true, "ปิดเพื่อเก็บเฉพาะไฟล์ DNG")

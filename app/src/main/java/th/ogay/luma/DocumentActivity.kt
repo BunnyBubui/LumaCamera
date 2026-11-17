@@ -60,13 +60,13 @@ class DocumentActivity:ComponentActivity(){
     }
     private fun load(uri:Uri){if(busy)return;busy=true;status.text="กำลังอ่านภาพ…";luma.fileIo.execute{runCatching{
         val file=File(project,"input-${System.currentTimeMillis()}.jpg");contentResolver.openInputStream(uri)!!.use{input->file.outputStream().use{input.copyTo(it)}};PhotoEffects.read(file,4_000_000)
-    }.onSuccess{b->runOnUiThread{image?.recycle();image=b;editor.bitmap=b;busy=false;status.text="ลากมุมแล้วเก็บหน้า · มี ${pages.size} หน้าในชุดนี้";detect()}}.onFailure{runOnUiThread{busy=false;status.text="อ่านภาพไม่ได้ · ${it.localizedMessage}"}}}}
+    }.onSuccess{b->runOnUiThread{image?.recycle();image=b;editor.bitmap=b;busy=false;status.text="ลากมุมแล้วเก็บหน้า มี ${pages.size} หน้าในชุดนี้";detect()}}.onFailure{runOnUiThread{busy=false;status.text="อ่านภาพไม่ได้ ${it.localizedMessage}"}}}}
     private fun detect(){val b=image?:return;if(busy)return;busy=true;status.text="กำลังตรวจขอบ…";luma.fileIo.execute{val result=runCatching{
         check(OpenCVLoader.initLocal());val m=Mat();val gray=Mat();val edge=Mat();Utils.bitmapToMat(b,m);Imgproc.cvtColor(m,gray,Imgproc.COLOR_RGBA2GRAY);Imgproc.GaussianBlur(gray,gray,Size(5.0,5.0),0.0);Imgproc.Canny(gray,edge,60.0,160.0)
         val contours=ArrayList<MatOfPoint>();val hierarchy=Mat();Imgproc.findContours(edge,contours,hierarchy,Imgproc.RETR_LIST,Imgproc.CHAIN_APPROX_SIMPLE)
         val found=contours.sortedByDescending{Imgproc.contourArea(it)}.take(12).firstNotNullOfOrNull{c->val curve=MatOfPoint2f(*c.toArray());val approx=MatOfPoint2f();Imgproc.approxPolyDP(curve,approx,Imgproc.arcLength(curve,true)*0.02,true);val arr=approx.toArray();curve.release();approx.release();if(arr.size==4&&Imgproc.contourArea(c)>b.width*b.height*0.1)arr else null}
         contours.forEach{it.release()};m.release();gray.release();edge.release();hierarchy.release();found?.let{a->val sorted=a.sortedBy{it.y};val top=sorted.take(2).sortedBy{it.x};val bottom=sorted.takeLast(2).sortedByDescending{it.x};(top+bottom).flatMap{listOf((it.x/b.width).toFloat(),(it.y/b.height).toFloat())}.toFloatArray()}
-    }.getOrNull();runOnUiThread{busy=false;if(result!=null){editor.corners=result;editor.invalidate();status.text="พบขอบแล้ว · ปรับจุดมุมก่อนเก็บหน้า"}else status.text="ไม่พบขอบชัดเจน · ลากจุดมุมด้วยตนเองได้"}}}
+    }.getOrNull();runOnUiThread{busy=false;if(result!=null){editor.corners=result;editor.invalidate();status.text="พบขอบแล้ว ปรับจุดมุมก่อนเก็บหน้า"}else status.text="ไม่พบขอบชัดเจน ลากจุดมุมด้วยตนเองได้"}}}
     private fun rectify():Bitmap{
         val b=image?:error("ยังไม่มีภาพ");val a=editor.corners;val source=FloatArray(8){i->a[i]*if(i%2==0)b.width else b.height}
         fun distance(i:Int,j:Int)=hypot(source[i*2]-source[j*2],source[i*2+1]-source[j*2+1])
@@ -78,7 +78,7 @@ class DocumentActivity:ComponentActivity(){
         canvas.drawBitmap(b,matrix,paint);return output
     }
     private fun savePage():Boolean{if(busy||image==null)return false
-        return try{val b=rectify();val file=File(project,"page-${pages.size+1}.jpg");PhotoEffects.write(b,file);b.recycle();pages+=file;runOnUiThread{pageCount.text="${pages.size} หน้า"};MediaLedger.rememberFile(this,file,"image/jpeg","เอกสารแก้ perspective หน้า ${pages.size}");status.text="เก็บ ${pages.size} หน้าแล้ว · เพิ่มภาพหรือสร้าง PDF";true}catch(e:Exception){status.text=e.localizedMessage;false}
+        return try{val b=rectify();val file=File(project,"page-${pages.size+1}.jpg");PhotoEffects.write(b,file);b.recycle();pages+=file;runOnUiThread{pageCount.text="${pages.size} หน้า"};MediaLedger.rememberFile(this,file,"image/jpeg","เอกสารแก้ perspective หน้า ${pages.size}");status.text="เก็บ ${pages.size} หน้าแล้ว เพิ่มภาพหรือสร้าง PDF";true}catch(e:Exception){status.text=e.localizedMessage;false}
     }
     /** Thai + English OCR on the device (th.ogay.luma.ocr); the rectified page never leaves the phone. */
     private fun ocr(){if(busy)return;val bitmap=runCatching{rectify()}.getOrElse{status.text=it.localizedMessage;return};busy=true;ocrCancelled=false
@@ -90,19 +90,19 @@ class DocumentActivity:ComponentActivity(){
                 busy=false
                 if(isDestroyed)return@runOnUiThread
                 result.onSuccess{text->
-                    val file=File(project,"ocr-${System.currentTimeMillis()}.txt");file.writeText(text);MediaLedger.rememberFile(this,file,"text/plain","OCR ไทย/อังกฤษบนเครื่อง · ตรวจทานข้อความก่อนใช้")
+                    val file=File(project,"ocr-${System.currentTimeMillis()}.txt");file.writeText(text);MediaLedger.rememberFile(this,file,"text/plain","OCR ไทย/อังกฤษบนเครื่อง ตรวจทานข้อความก่อนใช้")
                     val view=TextView(this).apply{setPadding(dp(18),dp(16),dp(18),dp(16));this.text=text.ifBlank{"ไม่พบข้อความในภาพ ลองถ่ายให้ใกล้ขึ้นหรือเพิ่มแสง"};setTextIsSelectable(true)}
-                    val footer=label("อ่านบนเครื่อง ไม่ส่งภาพออกไป · ตรวจทานข้อความก่อนใช้",12f,MUTED).apply{setPadding(dp(18),0,dp(18),dp(12))}
+                    val footer=label("อ่านบนเครื่อง ไม่ส่งภาพออกไป ตรวจทานข้อความก่อนใช้",12f,MUTED).apply{setPadding(dp(18),0,dp(18),dp(12))}
                     val body=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;addView(view);addView(footer)}
                     AlertDialog.Builder(this).setTitle("ข้อความที่อ่านได้").setView(ScrollView(this).apply{addView(body)}).setPositiveButton("ส่งออก"){_,_->MediaLedger.share(this,MediaLedger.privateUri(this,file),"text/plain")}.setNegativeButton("ปิด",null).show()
                     status.text=if(text.isBlank())"ไม่พบข้อความ" else "อ่านข้อความแล้ว"
-                }.onFailure{e->status.text=(e as? ThaiOcrException)?.message?:"อ่านข้อความไม่สำเร็จ · ${e.localizedMessage}"}
+                }.onFailure{e->status.text=(e as? ThaiOcrException)?.message?:"อ่านข้อความไม่สำเร็จ ${e.localizedMessage}"}
             }
         }.apply{name="luma-ocr"}.start()
     }
     private fun pdf(){if(busy)return;if(pages.isEmpty()&&!savePage())return;busy=true;status.text="กำลังสร้าง PDF ${pages.size} หน้า…";luma.fileIo.execute{runCatching{
         val document=PdfDocument();try{pages.forEachIndexed{i,file->val b=PhotoEffects.read(file,4_000_000);val page=document.startPage(PdfDocument.PageInfo.Builder(595,842,i+1).create());page.canvas.drawColor(Color.WHITE);val scale=min(555f/b.width,802f/b.height);val w=b.width*scale;val h=b.height*scale;page.canvas.drawBitmap(b,null,RectF((595-w)/2,(842-h)/2,(595+w)/2,(842+h)/2),Paint(Paint.FILTER_BITMAP_FLAG));document.finishPage(page);b.recycle()};val file=File(project,"Lumora-Document-${System.currentTimeMillis()}.pdf");file.outputStream().use{document.writeTo(it)};MediaLedger.rememberFile(this,file,"application/pdf","${pages.size} หน้า");file}finally{document.close()}
-    }.onSuccess{file->runOnUiThread{busy=false;status.text="สร้าง PDF แล้ว · ${pages.size} หน้า";MediaLedger.view(this,MediaLedger.privateUri(this,file),"application/pdf")}}.onFailure{runOnUiThread{busy=false;status.text="สร้าง PDF ไม่สำเร็จ · ${it.localizedMessage}"}}}}
+    }.onSuccess{file->runOnUiThread{busy=false;status.text="สร้าง PDF แล้ว ${pages.size} หน้า";MediaLedger.view(this,MediaLedger.privateUri(this,file),"application/pdf")}}.onFailure{runOnUiThread{busy=false;status.text="สร้าง PDF ไม่สำเร็จ ${it.localizedMessage}"}}}}
     override fun onDestroy(){ocrCancelled=true;editor.bitmap=null;image?.recycle();super.onDestroy()}
     private companion object { val thaiOcr = ThaiOcrEngine() }
 }

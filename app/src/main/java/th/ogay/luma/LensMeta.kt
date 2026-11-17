@@ -65,5 +65,5 @@ object LensMeta {
     }
 
     /** Short label for the gallery's photo info, e.g. "หลัก · 24 มม. · f/1.8". */
-    fun label(lens: Lens): String = "${lens.name} · ${lens.eq35} มม. · f/${String.format(Locale.US, "%.1f", lens.aperture)}"
+    fun label(lens: Lens): String = "${lens.name} ${lens.eq35} มม. f/${String.format(Locale.US, "%.1f", lens.aperture)}"
 }

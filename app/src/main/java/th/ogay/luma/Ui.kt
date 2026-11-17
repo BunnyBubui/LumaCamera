@@ -60,6 +60,7 @@ fun Activity.installRoot(root: View) {
     }
     setContentView(root)
     ClickFeedback.install(this)
+    bubbleIn(root)
 }
 fun zoomText(ratio: Float): String = String.format(Locale.US,
     if (kotlin.math.abs(ratio-ratio.roundToInt()) < 0.025f) "%.0f×" else "%.1f×",ratio)
@@ -198,6 +199,7 @@ object ClickFeedback {
         override fun dispatchTouchEvent(e: android.view.MotionEvent): Boolean {
             val root = (inner as? Activity)?.window?.decorView
             if (e.actionMasked == android.view.MotionEvent.ACTION_DOWN && root != null) { target = hit(root, e.rawX.toInt(), e.rawY.toInt()); downAt = android.os.SystemClock.uptimeMillis() }
+            if (e.actionMasked == android.view.MotionEvent.ACTION_UP) TapPoint.record(e)
             val handled = inner.dispatchTouchEvent(e)
             if (e.actionMasked == android.view.MotionEvent.ACTION_UP) {
                 val v = target; target = null
@@ -216,5 +218,24 @@ object ClickFeedback {
             if (v is android.view.ViewGroup) for (i in v.childCount - 1 downTo 0) hit(v.getChildAt(i), x, y)?.let { return it }
             return if (v.isClickable && v.hasOnClickListeners()) v else null
         }
+    }
+}
+
+/**
+ * A page opened by a button grows out of that button: a round reveal from the point that was pressed fills the screen,
+ * the same bubble as the sheets and the export panel. Pages opened without a tap (a share, a return) just appear.
+ */
+fun Activity.bubbleIn(root: View) {
+    if (!TapPoint.fresh(1200) || Glass.reduced(this)) return
+    @Suppress("DEPRECATION") overridePendingTransition(0, 0)
+    val x = TapPoint.x; val y = TapPoint.y
+    root.visibility = View.INVISIBLE
+    root.post {
+        if (!root.isAttachedToWindow) { root.visibility = View.VISIBLE; return@post }
+        val l = IntArray(2); root.getLocationOnScreen(l)
+        val cx = (x - l[0]).toInt().coerceIn(0, root.width); val cy = (y - l[1]).toInt().coerceIn(0, root.height)
+        val r = kotlin.math.hypot(maxOf(cx, root.width - cx).toDouble(), maxOf(cy, root.height - cy).toDouble()).toFloat()
+        runCatching { android.view.ViewAnimationUtils.createCircularReveal(root, cx, cy, 0f, r).apply { duration = 560; interpolator = Glass.EASE }.also { root.visibility = View.VISIBLE; it.start() } }
+            .onFailure { root.visibility = View.VISIBLE }
     }
 }

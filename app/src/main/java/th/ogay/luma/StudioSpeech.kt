@@ -11,6 +11,7 @@ import android.net.Uri
 import com.k2fsa.sherpa.onnx.OfflineModelConfig
 import com.k2fsa.sherpa.onnx.OfflineRecognizer
 import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
+import com.k2fsa.sherpa.onnx.OfflineSenseVoiceModelConfig
 import com.k2fsa.sherpa.onnx.OfflineWhisperModelConfig
 import com.k2fsa.sherpa.onnx.SileroVadModelConfig
 import com.k2fsa.sherpa.onnx.Vad
@@ -78,6 +79,7 @@ class StudioSpeech(private val a: Activity, private val languageArg: String, pri
     companion object {
         const val AUTO = CAPTION_AUTO
         /** Whisper's own code for a language tag such as "th-TH" ("" when the language is to be found automatically). */
+        val SENSE_LANGS = setOf("zh", "yue", "en", "ja", "ko")
         fun whisperCode(tag: String): String {
             if (tag == AUTO) return ""
             val base = tag.lowercase().substringBefore('-')
@@ -97,9 +99,13 @@ class StudioSpeech(private val a: Activity, private val languageArg: String, pri
 
     private fun config(language: String): OfflineRecognizerConfig {
         fun f(n: String) = ModelStore.file(a, model, n).absolutePath
+        // SenseVoice is one file and knows zh, yue, en, ja and ko only; any other language is left to its own guess.
+        if (model.id == "sensevoice") return OfflineRecognizerConfig(modelConfig = OfflineModelConfig(
+            senseVoice = OfflineSenseVoiceModelConfig(model = f("model.int8.onnx"), language = language.takeIf { it in SENSE_LANGS } ?: "", useInverseTextNormalization = true),
+            tokens = f("tokens.txt"), numThreads = Device.threads, provider = "cpu"))
         return OfflineRecognizerConfig(modelConfig = OfflineModelConfig(
             whisper = OfflineWhisperModelConfig(encoder = f("${model.id}-encoder.int8.onnx"), decoder = f("${model.id}-decoder.int8.onnx"), language = language, task = "transcribe"),
-            tokens = f("${model.id}-tokens.txt"), numThreads = Runtime.getRuntime().availableProcessors().coerceIn(2, 4), provider = "cpu"))
+            tokens = f("${model.id}-tokens.txt"), numThreads = Device.threads, provider = "cpu"))
     }
 
     private class Heard(val text: String, val lang: String)
@@ -153,12 +159,13 @@ class StudioSpeech(private val a: Activity, private val languageArg: String, pri
                 for (p in pieces.take(8).sortedByDescending { it.to - it.from }.take(3)) {
                     if (stopped) return
                     val pcm0 = pcmOf(p); if (pcm0.size < StudioPcm.RATE / 2) continue
-                    val sp0 = speechIn(pcm0) ?: continue
-                    val h = heard(rec, pcm0.copyOfRange(sp0.from, sp0.to))
+                    // The whole piece, as before the voice detector: a trimmed or skipped piece left too little for the language guess.
+                    val h = heard(rec, pcm0)
                     if (h.lang.isNotEmpty() && worthKeeping(h.text)) votes[h.lang] = (votes[h.lang] ?: 0) + h.text.length.coerceAtMost(60)
                 }
-                language = votes.maxByOrNull { it.value }?.key ?: "en"
-                ui { onDetected(language) }
+                // No vote: leave the language empty so Whisper guesses again on every line, rather than forcing English onto the whole film.
+                language = votes.maxByOrNull { it.value }?.key ?: ""
+                if (language.isNotEmpty()) ui { onDetected(language) }
                 // Whisper can switch language on a loaded model; if this build cannot, load it again with the language set.
                 val switched = runCatching { rec.setConfig(config(language)) }.isSuccess
                 if (!switched) { rec.release(); rec = OfflineRecognizer(null, config(language)) }

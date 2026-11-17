@@ -147,8 +147,16 @@ object WhisperModels {
             "ไฟล์เล็กที่สุดและถอดเสียงเร็วที่สุด เหมาะกับลองดูผลคร่าว ๆ หรือคลิปที่เสียงชัดมาก ภาษาไทยและจีนจะมีคำผิดมาก", 100),
         spec("base", "Whisper Base", "สมดุล", "ขนาดกลาง เร็วพอใช้ แม่นระดับพอใช้",
             "ขนาดกับความเร็วอยู่ตรงกลาง ภาษาอังกฤษดี ภาษาไทยและจีนพอใช้ ควรตรวจคำก่อนส่งออก", 160),
-        spec("small", "Whisper Small", "แม่นสุด", "แม่นที่สุดในสามตัว แต่ไฟล์ใหญ่และช้ากว่า",
-            "แม่นที่สุดในสามตัว โดยเฉพาะภาษาไทยและจีน แต่ไฟล์ใหญ่ ใช้เวลานานกว่า และกินแบตมากกว่า", 360),
+        spec("small", "Whisper Small", "แม่นสุด", "แม่นที่สุดในรุ่นเล็ก แต่ไฟล์ใหญ่และช้ากว่า",
+            "แม่นที่สุดในรุ่นเล็ก โดยเฉพาะภาษาไทยและจีน แต่ไฟล์ใหญ่ ใช้เวลานานกว่า และกินแบตมากกว่า", 360),
+        spec("turbo", "Whisper Large-v3 Turbo", "ใหญ่สุด", "แม่นกว่า Small ทุกภาษา แต่ไฟล์ราว 1 GB และช้ามาก",
+            "รุ่นใหญ่ของ Whisper รองรับภาษาไทยด้วย ไฟล์ใหญ่ราว 1 GB ใช้หน่วยความจำมาก และช้ากว่า Small หลายเท่า เหมาะกับคลิปสั้นที่ต้องการความแม่น เครื่องที่แรมน้อยอาจเปิดไม่ได้", 1040),
+        spec("large-v3", "Whisper Large-v3", "ใหญ่มาก", "รุ่นเต็มของ Whisper ไฟล์ราว 1.8 GB ช้าและกินแรมมาก",
+            "รุ่นเต็มที่แม่นที่สุดของ Whisper รองรับภาษาไทย ไฟล์ราว 1.8 GB ต้องใช้แรมมากและช้ากว่า Turbo เครื่องที่แรมน้อยอาจเปิดไม่ได้ ใช้ทดลองกับคลิปสั้นก่อน", 1850),
+        ModelSpec("sensevoice", "whisper", "SenseVoice Small", "จีนและกวางตุ้ง", "แม่นภาษาจีนและกวางตุ้งกว่า Whisper และเร็วมาก ไม่รองรับไทย",
+            "ออกแบบมาสำหรับจีน กวางตุ้ง อังกฤษ ญี่ปุ่น เกาหลี แม่นกับภาษาจีนกว่า Whisper Small และเร็วกว่ามาก แต่ไม่รู้จักภาษาไทย ใช้กับคลิปจีนหรือกวางตุ้ง", 240,
+            listOf("model.int8.onnx" to "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/model.int8.onnx",
+                "tokens.txt" to "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main/tokens.txt")),
     )
     fun selected(c: Context) = ModelStore.selected(c, "whisper", ALL)
     /** "ประมาณ 160 MB" before download, the real size after it. */
@@ -187,8 +195,8 @@ class ModelDownloadService : android.app.Service() {
     private fun notification(): android.app.Notification {
         val j = ModelStore.active().firstOrNull()
         val pc = j?.let { (it.fraction * 100).toInt() } ?: -1
-        val text = if (j == null) "กำลังเริ่ม" else "${j.spec.name} · ${j.doneBytes / 1_048_576} / ${(j.totalBytes.takeIf { it > 0 } ?: (j.spec.approxMb * 1_048_576L)) / 1_048_576} MB" + (j.etaMs(j.totalBytes.takeIf { it > 0 } ?: (j.spec.approxMb * 1_048_576L)).takeIf { it > 0 }?.let { " · " + Eta.text(it) } ?: "")
-        return LiveNotice.progress(this, "Lumora · ดาวน์โหลดโมเดล", text, pc, LiveNotice.openApp(this),
+        val text = if (j == null) "กำลังเริ่ม" else "${j.spec.name} ${j.doneBytes / 1_048_576} / ${(j.totalBytes.takeIf { it > 0 } ?: (j.spec.approxMb * 1_048_576L)) / 1_048_576} MB" + (j.etaMs(j.totalBytes.takeIf { it > 0 } ?: (j.spec.approxMb * 1_048_576L)).takeIf { it > 0 }?.let { " " + Eta.text(it) } ?: "")
+        return LiveNotice.progress(this, "Lumora ดาวน์โหลดโมเดล", text, pc, LiveNotice.openApp(this),
             android.app.PendingIntent.getService(this, 2, android.content.Intent(this, ModelDownloadService::class.java).setAction(CANCEL), android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT),
             j?.etaMs(j.totalBytes.takeIf { it > 0 } ?: (j.spec.approxMb * 1_048_576L))?.takeIf { it > 0 }?.let { Eta.chip(it) })
     }

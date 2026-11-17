@@ -80,10 +80,16 @@ data class VideoEditSpec(
     /** Only the sound: no picture track, no picture effects. */
     val audioOnly: Boolean = false,
     /** Sound only: sample rate in Hz (0 = as recorded) and a mono mix. */
-    val audioHz: Int = 0, val audioMono: Boolean = false)
+    val audioHz: Int = 0, val audioMono: Boolean = false,
+    /** Slow camera move over the first clip ([ClipMotion]). */
+    val mainMotion: Int = 0,
+    /** The same as [VideoPart.join] for the main clip when it is not the first. */
+    val mainJoin: Int = -1, val mainJoinMs: Long = 0L)
 
 /** A clip appended after the main one. [from]/[to] in ms of that clip. */
-data class VideoPart(val source: Uri, val from: Long, val to: Long, val speed: Float = 1f, val muted: Boolean = false, val volume: Float = 1f, val curve: FloatArray? = null)
+data class VideoPart(val source: Uri, val from: Long, val to: Long, val speed: Float = 1f, val muted: Boolean = false, val volume: Float = 1f, val curve: FloatArray? = null, val motion: Int = 0,
+    /** The change into this clip from the one before: -1 follows [VideoSpec.transition], otherwise 0..6 as there; [joinMs] its length (0 = the usual). */
+    val join: Int = -1, val joinMs: Long = 0L)
 
 /** An emoji on the picture: [x], [y] are 0..1 across the visible (cropped) frame, [big] doubles its size. */
 data class VideoSticker(val text: String, val x: Float, val y: Float, val big: Boolean = false)
@@ -128,9 +134,9 @@ object VideoEdit {
      * Fade or flash at the start and/or end of one clip. Times are counted from the clip's own first frame (the
      * pipeline adds the clip's place in the sequence to every timestamp), after any speed change.
      */
-    private class Dip(private val durationUs: Long, private val fadeIn: Boolean, private val fadeOut: Boolean, private val white: Boolean) : RgbMatrix {
+    private class Dip(private val durationUs: Long, private val fadeIn: Boolean, private val fadeOut: Boolean, private val white: Boolean, spanMs: Long = TRANSITION_MS) : RgbMatrix {
         private var first = C.TIME_UNSET
-        private val span = minOf(TRANSITION_MS * 1000, durationUs / 2).coerceAtLeast(1)
+        private val span = minOf(spanMs * 1000, durationUs / 2).coerceAtLeast(1)
         override fun getMatrix(presentationTimeUs: Long, useHdr: Boolean): FloatArray {
             if (first == C.TIME_UNSET) first = presentationTimeUs
             val t = presentationTimeUs - first
@@ -142,14 +148,24 @@ object VideoEdit {
         }
     }
     /** Zoom in: a clip starts 12 % closer and settles to its normal size. */
-    private class Punch(private val durationUs: Long) : MatrixTransformation {
+    private class Punch(private val durationUs: Long, spanMs: Long = TRANSITION_MS) : MatrixTransformation {
         private var first = C.TIME_UNSET
-        private val span = minOf(TRANSITION_MS * 1000, durationUs / 2).coerceAtLeast(1)
+        private val span = minOf(spanMs * 1000, durationUs / 2).coerceAtLeast(1)
         override fun getMatrix(presentationTimeUs: Long): android.graphics.Matrix {
             if (first == C.TIME_UNSET) first = presentationTimeUs
             val f = ((presentationTimeUs - first).toFloat() / span).coerceIn(0f, 1f)
             val s = 1f + 0.12f * (1 - f) * (1 - f)
             return android.graphics.Matrix().apply { setScale(s, s) }
+        }
+    }
+
+    /** A slow camera move over a whole clip. [offsetUs] is where this piece starts inside its clip; [totalUs] the clip's length. */
+    private class Drift(private val motion: Int, private val offsetUs: Long, private val totalUs: Long) : MatrixTransformation {
+        private var first = C.TIME_UNSET
+        override fun getMatrix(presentationTimeUs: Long): android.graphics.Matrix {
+            if (first == C.TIME_UNSET) first = presentationTimeUs
+            val (sc, x) = ClipMotion.at(motion, (presentationTimeUs - first + offsetUs).toFloat() / totalUs.coerceAtLeast(1))
+            return android.graphics.Matrix().apply { setScale(sc, sc); postTranslate(x, 0f) }
         }
     }
 
@@ -184,18 +200,32 @@ object VideoEdit {
         val pieces = extraPieces.take(lead) + mainPieces + extraPieces.drop(lead)
         val items = pieces.mapIndexed { i, piece ->
             val own: MutableList<Effect> = if (piece.clip == 0) effects.toMutableList() else mutableListOf()
+            val motion = if (piece.clip == 0) s.mainMotion else s.extras[piece.clip - 1].motion
+            if (motion != ClipMotion.NONE) {
+                // Pieces of one clip follow each other; the move runs across all of them, not once per piece.
+                val run = pieces.indices.filter { pieces[it].clip == piece.clip }
+                val offset = run.takeWhile { it < i }.sumOf { pieces[it].durationUs }
+                own += Drift(motion, offset, run.sumOf { pieces[it].durationUs })
+            }
             // Fast speeds (up to thousands ×) would hand the encoder hundreds of frames per second; keep about 30 of them.
             if (piece.speed != 1f) { if (!s.keepAudio) own += SpeedChangeEffect(piece.speed); if (piece.speed > 1f) own += FrameDropEffect.createDefaultFrameDropEffect(30f) }
-            if (s.transition != 0) {
-                val joinIn = i > 0 && pieces[i - 1].clip != piece.clip; val joinOut = i < pieces.size - 1 && pieces[i + 1].clip != piece.clip
-                when (s.transition) {
-                    3 -> if (joinIn) own += Punch(piece.durationUs)
-                    4 -> if (joinIn || joinOut) own += StudioSlide(piece.durationUs, joinIn, joinOut)
-                    5 -> if (joinIn || joinOut) own += StudioTransition(StudioTransition.WIPE, piece.durationUs, joinIn, joinOut)
-                    6 -> if (joinIn || joinOut) own += StudioTransition(StudioTransition.BLUR, piece.durationUs, joinIn, joinOut)
-                    else -> if (joinIn || joinOut) own += Dip(piece.durationUs, joinIn, joinOut, s.transition == 2)
+            // Every clip owns the change into it; the clip before gets the same change as its way out.
+            fun kindOf(clip: Int) = (if (clip == 0) s.mainJoin else s.extras[clip - 1].join).let { if (it < 0) s.transition else it }
+            fun msOf(clip: Int) = ((if (clip == 0) s.mainJoinMs else s.extras[clip - 1].joinMs).takeIf { it > 0 } ?: TRANSITION_MS)
+            val joinIn = i > 0 && pieces[i - 1].clip != piece.clip; val joinOut = i < pieces.size - 1 && pieces[i + 1].clip != piece.clip
+            val kIn = if (joinIn) kindOf(piece.clip) else 0; val msIn = if (joinIn) msOf(piece.clip) else TRANSITION_MS
+            val kOut = if (joinOut) kindOf(pieces[i + 1].clip) else 0; val msOut = if (joinOut) msOf(pieces[i + 1].clip) else TRANSITION_MS
+            fun draw(kind: Int, ms: Long, inn: Boolean, out: Boolean) {
+                if (kind == 0 || (!inn && !out)) return
+                when (kind) {
+                    3 -> if (inn) own += Punch(piece.durationUs, ms)
+                    4 -> own += StudioSlide(piece.durationUs, inn, out, ms)
+                    5 -> own += StudioTransition(StudioTransition.WIPE, piece.durationUs, inn, out, ms)
+                    6 -> own += StudioTransition(StudioTransition.BLUR, piece.durationUs, inn, out, ms)
+                    else -> own += Dip(piece.durationUs, inn, out, kind == 2, ms)
                 }
             }
+            if (kIn == kOut && msIn == msOut) draw(kIn, msIn, joinIn, joinOut) else { draw(kIn, msIn, joinIn, false); draw(kOut, msOut, false, joinOut) }
             val muted = if (piece.clip == 0) s.mainMuted else s.extras[piece.clip - 1].muted
             val partVolume = if (piece.clip == 0) 1f else s.extras[piece.clip - 1].volume
             val own_sound = if (muted) listOf(gain(0f)) else (if (piece.clip == 0) sound else if (partVolume != 1f) listOf(gain(partVolume)) else emptyList()) + listOfNotNull(if (s.audio.active) StudioAudio.Shape(s.audio) else null)

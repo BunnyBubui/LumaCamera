@@ -101,7 +101,7 @@ object DeepScan {
                 val normal = biggest(map.getOutputSizes(ImageFormat.JPEG))
                 val high = biggest(map.getHighResolutionOutputSizes(ImageFormat.JPEG))
                 val full = if (Build.VERSION.SDK_INT >= 31) biggest(ch.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP_MAXIMUM_RESOLUTION)?.getOutputSizes(ImageFormat.JPEG)) else null
-                lines += "กล้อง $id ($facing): ปกติ ${mp(normal)} · ความละเอียดสูง ${mp(high)} · เต็มเซนเซอร์ ${if (full == null) "ไม่ประกาศ" else mp(full)}"
+                lines += "กล้อง $id ($facing): ปกติ ${mp(normal)} ความละเอียดสูง ${mp(high)} เต็มเซนเซอร์ ${if (full == null) "ไม่ประกาศ" else mp(full)}"
 
                 // Stills bigger than the normal list, in both ways the system allows.
                 val stills = JSONArray()
@@ -148,7 +148,7 @@ object DeepScan {
             val prefs = context.getSharedPreferences("camera", 0).edit()
             best?.let { b ->
                 prefs.putString(PREF, "${b.id},${b.size.width},${b.size.height},${if (b.maxMode) 1 else 0}")
-                lines += "\nสรุป: ถ่ายได้จริงสูงสุด ${mp(b.size)} จากกล้อง ${b.id} · โหมดความละเอียดสูงจะใช้ทางนี้"
+                lines += "\nสรุป: ถ่ายได้จริงสูงสุด ${mp(b.size)} จากกล้อง ${b.id} โหมดความละเอียดสูงจะใช้ทางนี้"
             } ?: run { prefs.remove(PREF); lines += "\nสรุป: ไม่มีทางถ่ายภาพใหญ่กว่าขนาดปกติที่เครื่องยอมให้แอปนี้" }
             prefs.apply()
             out.put("bestStill", best?.let { JSONObject().put("id", it.id).put("size", it.size.toString()).put("maxMode", it.maxMode) } ?: JSONObject.NULL)
@@ -158,7 +158,7 @@ object DeepScan {
         runCatching {
             val unit = th.ogay.luma.backend.CameraCapabilityRepository.detectNow(context).cameraUnit
             out.put("cameraBackend", th.ogay.luma.backend.CameraCapabilityRepository.report())
-            lines += "OPPO CameraUnit: ${unit.status.name} · ${unit.status.reason}" + (unit.errorCode?.let { " (code $it)" } ?: "")
+            lines += "OPPO CameraUnit: ${unit.status.name} ${unit.status.reason}" + (unit.errorCode?.let { " (code $it)" } ?: "")
         }
         return Result(out, lines.joinToString("\n"))
     }

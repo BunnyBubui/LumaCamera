@@ -398,6 +398,15 @@ fun View.glassTouch(extra: ((MotionEvent) -> Boolean)? = null) {
  * One-piece liquid morph: the view itself grows from a drop at the pivot into its final shape and back.
  * Scale follows a sampled damped spring with the Y axis lagging the X axis; children fade in after a third of the way.
  */
+/** Where the last finger lifted, so a sheet, a dialog or a new page can grow out of the button that was pressed. */
+object TapPoint {
+    var x = 0f; var y = 0f; private var at = 0L
+    fun record(e: android.view.MotionEvent) { x = e.rawX; y = e.rawY; at = android.os.SystemClock.uptimeMillis() }
+    fun fresh(ms: Long = 900) = at != 0L && android.os.SystemClock.uptimeMillis() - at < ms
+    /** The tap in the coordinates of [v], or null when no tap just happened. */
+    fun inside(v: View, ms: Long = 900): Pair<Float, Float>? { if (!fresh(ms)) return null; val l = IntArray(2); v.getLocationOnScreen(l); return (x - l[0]) to (y - l[1]) }
+}
+
 object Liquid {
     // View.setTag(key) needs a resource id, so animation state is kept here instead.
     private val running = java.util.WeakHashMap<View, Animator>()
@@ -507,7 +516,8 @@ object GlassDialog {
         val pad = android.widget.FrameLayout(a).apply { setPadding(a.dp(12), a.dp(20), a.dp(12), a.dp(20)); clipChildren = false; clipToPadding = false; addView(box, -1, -2) }
         d.setContentView(pad)
         d.window?.apply { setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)); setLayout(minOf(a.resources.displayMetrics.widthPixels, (a.resources.displayMetrics.widthPixels * 0.9f).toInt() + a.dp(24)), android.view.WindowManager.LayoutParams.WRAP_CONTENT); setDimAmount(0.45f) }
-        d.setOnShowListener { if (!Glass.reduced(a)) { box.alpha = 0f; box.translationY = a.dp(22).toFloat(); box.scaleX = 0.96f; box.scaleY = 0.96f; box.animate().alpha(1f).translationY(0f).scaleX(1f).scaleY(1f).setInterpolator(Glass.SPRING).setDuration(380).start() } }
+        d.setOnShowListener { box.post { TapPoint.inside(box)?.let { box.pivotX = it.first; box.pivotY = it.second } }
+            if (!Glass.reduced(a)) { box.alpha = 0f; box.translationY = a.dp(22).toFloat(); box.scaleX = 0.96f; box.scaleY = 0.96f; box.animate().alpha(1f).translationY(0f).scaleX(1f).scaleY(1f).setInterpolator(Glass.SPRING).setDuration(380).start() } }
         return d
     }
     /** One row of equal buttons; the last one is the accent action. */

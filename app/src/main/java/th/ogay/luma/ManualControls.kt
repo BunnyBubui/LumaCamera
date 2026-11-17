@@ -159,7 +159,7 @@ class ManualControls(private val context:Context, val camera:Camera, private val
         main.postDelayed({
             if(CameraState.frames>before+3&&CameraState.awbMode!=CR.CONTROL_AWB_MODE_OFF&&wb>=KELVIN_MIN&&!kelvinRejected){
                 kelvinRejected=true;prefs.edit().putBoolean("kelvin_rejected."+info.cameraId,true).apply();apply()
-                onNotice?.invoke("กล้องนี้ไม่รับค่า K โดยตรง · ใช้พรีเซ็ตที่ใกล้ที่สุดแทน")
+                onNotice?.invoke("กล้องนี้ไม่รับค่า K โดยตรง ใช้พรีเซ็ตที่ใกล้ที่สุดแทน")
             }
         },900)
     }
@@ -191,7 +191,7 @@ class ManualControls(private val context:Context, val camera:Camera, private val
         fun focusLabel(diopters:Float):String=if(diopters<0.02f)"∞" else (1f/diopters).let{m->if(m>=1f)String.format(java.util.Locale.US,"%.1f ม.",m) else "${(m*100).toInt()} ซม."}
     }
     fun reset(){iso=null;ns=null;focus=null;wb=CR.CONTROL_AWB_MODE_AUTO;tint=0;edge=null;nr=null;contrast=0;locked=false;apply()}
-    fun show(){context.studioSheet(if(video)"PRO VIDEO" else "PRO · ควบคุมกล้อง"){box,_->
+    fun show(){context.studioSheet(if(video)"PRO VIDEO" else "PRO ควบคุมกล้อง"){box,_->
         fun options(title:String,values:List<String>,selected:Int,choose:(Int)->Unit){
             box.addView(context.label(title,15f,LIME),-1,-2)
             val row=LinearLayout(context);val scroll=android.widget.HorizontalScrollView(context).apply{isHorizontalScrollBarEnabled=false;addView(row)}
@@ -203,14 +203,14 @@ class ManualControls(private val context:Context, val camera:Camera, private val
             options("ISO",listOf("AUTO")+values.map{it.toString()},if(iso==null)0 else values.indexOf(iso)+1){i->iso=if(i==0)null else values[i-1]}
             val range=info.getCameraCharacteristic(CC.SENSOR_INFO_EXPOSURE_TIME_RANGE)!!
             val shutter=listOf("1/8000" to 125_000L,"1/1000" to 1_000_000L,"1/250" to 4_000_000L,"1/60" to 16_666_666L,"1/30" to 33_333_333L,"1/8" to 125_000_000L,"1/2" to 500_000_000L,"1s" to 1_000_000_000L).filter{it.second>=range.lower&&it.second<=minOf(range.upper,if(video)(1_000_000_000L/videoFps) else range.upper)}
-            options("ชัตเตอร์ · เลือกแล้วใช้ค่าแสงแบบ Manual",shutter.map{it.first},-1){i->ns=shutter[i].second;if(iso==null)iso=100.coerceIn(r.lower,r.upper)}
+            options("ชัตเตอร์ เลือกแล้วใช้ค่าแสงแบบ Manual",shutter.map{it.first},-1){i->ns=shutter[i].second;if(iso==null)iso=100.coerceIn(r.lower,r.upper)}
         }else box.addView(context.label("กล้องนี้ไม่เปิด Manual sensor ให้แอป",14f,MUTED),-1,-2)
         val modes=info.getCameraCharacteristic(CC.CONTROL_AWB_AVAILABLE_MODES)?:intArrayOf()
         val white=listOf("AUTO" to CR.CONTROL_AWB_MODE_AUTO,"แดด" to CR.CONTROL_AWB_MODE_DAYLIGHT,"เมฆ" to CR.CONTROL_AWB_MODE_CLOUDY_DAYLIGHT,"หลอดไฟ" to CR.CONTROL_AWB_MODE_INCANDESCENT,"ฟลูออเรสเซนต์" to CR.CONTROL_AWB_MODE_FLUORESCENT).filter{it.second in modes}
         options("White balance",white.map{it.first},white.indexOfFirst{it.second==wb}){wb=white[it].second}
         val distance=info.getCameraCharacteristic(CC.LENS_INFO_MINIMUM_FOCUS_DISTANCE)?:0f
         if(distance>0){
-            box.addView(context.label("โฟกัสมือ · ∞ → ใกล้",15f,LIME),-1,-2)
+            box.addView(context.label("โฟกัสมือ ∞ ถึง ใกล้",15f,LIME),-1,-2)
             box.addView(SeekBar(context).apply{max=1000;contentDescription="โฟกัสมือ";setOnSeekBarChangeListener(object:SeekBar.OnSeekBarChangeListener{
                 override fun onStartTrackingTouch(b:SeekBar){};override fun onStopTrackingTouch(b:SeekBar){}
                 override fun onProgressChanged(b:SeekBar,p:Int,user:Boolean){if(user){focus=distance*p/1000;apply()}}
@@ -218,7 +218,7 @@ class ManualControls(private val context:Context, val camera:Camera, private val
         }
         val exposure=camera.cameraInfo.exposureState
         if(exposure.isExposureCompensationSupported){
-            box.addView(context.label("EV · ใช้เมื่อ ISO อยู่ AUTO",15f,LIME),-1,-2)
+            box.addView(context.label("EV ใช้เมื่อ ISO อยู่ AUTO",15f,LIME),-1,-2)
             box.addView(SeekBar(context).apply{val r=exposure.exposureCompensationRange;max=r.upper-r.lower;progress=exposure.exposureCompensationIndex-r.lower;contentDescription="ชดเชยแสง EV";setOnSeekBarChangeListener(object:SeekBar.OnSeekBarChangeListener{
                 override fun onStartTrackingTouch(b:SeekBar){};override fun onStopTrackingTouch(b:SeekBar){}
                 override fun onProgressChanged(b:SeekBar,p:Int,user:Boolean){if(user&&iso==null)camera.cameraControl.setExposureCompensationIndex(p+r.lower)}

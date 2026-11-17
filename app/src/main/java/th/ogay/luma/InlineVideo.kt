@@ -32,12 +32,14 @@ import kotlin.math.abs
  * Behind the clip glows a blurred copy of its first frame, like the photo viewer's reflection. A tap shows or hides
  * the controls; a sideways fling moves to the next or previous item ([onSwipe]).
  */
-class InlineVideo(c: Context, private val uri: Uri, still: Bitmap?, private val glowOn: Boolean = true) : FrameLayout(c) {
+class InlineVideo(c: Context, private val uri: Uri, still: Bitmap?, level: Int = 2) : FrameLayout(c) {
+    private val glowOn = level > 0
+    private val spec = Ambient.spec(level)
     var onSwipe: (Int) -> Unit = {}
     /** Called when the controls appear or hide, so the gallery can fade its own bars with them. */
     var onChrome: (Boolean) -> Unit = {}
     private val prefs = c.getSharedPreferences("camera", 0)
-    private val glow = Reflection(c)
+    private val glow = Reflection(c, Ambient.spec(level))
     private val shade = Shade(c)
     private val poster = ImageView(c).apply { scaleType = ImageView.ScaleType.FIT_CENTER; importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }
     private var texture: TextureView? = null
@@ -117,40 +119,51 @@ class InlineVideo(c: Context, private val uri: Uri, still: Bitmap?, private val 
     private fun setStill(b: Bitmap?) {
         poster.setImageBitmap(b)
         if (b != null && !b.isRecycled) { glow.aspect = b.width.toFloat() / b.height
-            if (glowOn) glow.set(soft(b)) }
+            if (glowOn) glow.set(Ambient.soften(b, spec)) }
     }
-    /** A tiny, blurred copy of a frame: shrink to 24 px wide, shrink again, grow back. The source is left untouched. */
-    private fun soft(b: Bitmap): Bitmap? = runCatching {
-        val w = 32; val h = (32f * b.height / b.width).toInt().coerceIn(6, 128)
-        val small = Bitmap.createScaledBitmap(b, w, h, true); val tiny = Bitmap.createScaledBitmap(small, (w / 3).coerceAtLeast(2), (h / 3).coerceAtLeast(2), true)
-        Bitmap.createScaledBitmap(tiny, w, h, true).also { if (it !== small && small !== b) small.recycle(); if (it !== tiny) tiny.recycle() }
-    }.getOrNull()
     /**
      * Ambient light that follows the clip while it plays, like YouTube's ambient mode: about eleven times a second a
      * very small copy of the current frame (48 px wide, read back from the surface) becomes the new glow, and the
      * glow cross-fades to it, so the colours around the picture flow with the scene instead of staying on frame one.
      */
+    private var lastLuma = 0; private var skippedDark = false
+    private fun lumaOf(b: Bitmap): Int {
+        val w = b.width; val h = b.height; if (w == 0 || h == 0) return 0
+        var sum = 0L; var n = 0
+        for (y in 0 until h step 4) for (x in 0 until w step 4) { val c = b.getPixel(x, y); sum += ((c shr 16) and 255) + ((c shr 8) and 255) + (c and 255); n++ }
+        return if (n == 0) 0 else (sum / (3 * n)).toInt()
+    }
     private val ambient = object : Runnable { override fun run() {
         val tv = texture
         if (glowOn && playing && tv != null && tv.isAvailable && tv.alpha > 0.5f && videoW > 0 && videoH > 0) {
-            val gw = 48; val gh = (48f * videoH / videoW).toInt().coerceIn(8, 160)
-            runCatching { tv.getBitmap(gw, gh) }.getOrNull()?.let { grab -> soft(grab)?.let { glow.push(it) }; grab.recycle() }
+            val gw = spec.width.coerceAtLeast(16); val gh = Ambient.heightFor(spec, videoW, videoH)
+            runCatching { tv.getBitmap(gw, gh) }.getOrNull()?.let { grab ->
+                // A surface that is not ready yet hands back an all-black frame; one such frame in the middle of a bright scene is skipped.
+                val l = lumaOf(grab); val flash = l < 3 && lastLuma > 15 && !skippedDark
+                skippedDark = flash
+                if (!flash) { Ambient.soften(grab, spec)?.let { glow.push(it) }; lastLuma = l }
+                grab.recycle() }
         }
-        if (isAttachedToWindow && playing) postDelayed(this, 90)
+        if (isAttachedToWindow && playing) postDelayed(this, spec.everyMs.coerceAtLeast(66L))
     } }
 
     /** Darker bands under the floating bars, the same heights as the photo viewer's. */
     fun shades(top: Int, bottom: Int) { shade.shadeTop = top.toFloat(); shade.shadeBottom = bottom.toFloat(); shade.invalidate() }
 
     /**
-     * The photo viewer's light: the clip's blurred colours mirrored past each edge of the picture, plus soft dark
-     * bands at the top and bottom where the bars float.
+     * The light around the clip: its own picture mirrored past each edge of the frame (so the colours beside the picture are the
+     * colours of the picture's edge), repeated outward and fading with distance. The level sets how sharp and how strong it is.
      */
-    private class Reflection(c: Context) : View(c) {
+    private class Reflection(c: Context, private val spec: Ambient.Spec) : View(c) {
         var aspect = 0f
         private var g: Bitmap? = null
-        private val paint = Paint(Paint.FILTER_BITMAP_FLAG).apply { colorFilter = android.graphics.ColorMatrixColorFilter(android.graphics.ColorMatrix().apply { setSaturation(1.5f); postConcat(android.graphics.ColorMatrix().apply { setScale(0.78f, 0.78f, 0.78f, 1f) }) }) }
-        private val r = RectF()
+        private val paint = Paint(Paint.FILTER_BITMAP_FLAG).apply {
+            val m = android.graphics.ColorMatrix().apply { setSaturation(spec.saturation) }
+            m.postConcat(android.graphics.ColorMatrix().apply { setScale(spec.strength, spec.strength, spec.strength, 1f) })
+            colorFilter = android.graphics.ColorMatrixColorFilter(m)
+        }
+        private val fadePaint = Paint()
+        private val r = RectF(); private val tile = RectF()
         init { importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }
         fun set(b: Bitmap?) { mixAnim?.cancel(); old = null; mix = 1f; g = b; invalidate() }
         // The glow of the frame before, faded out under the new one. Old copies are left to the garbage collector:
@@ -158,27 +171,60 @@ class InlineVideo(c: Context, private val uri: Uri, still: Bitmap?, private val 
         private var old: Bitmap? = null; private var mix = 1f; private var mixAnim: android.animation.ValueAnimator? = null
         fun push(b: Bitmap) {
             mixAnim?.cancel(); old = g; g = b; mix = 0f
-            mixAnim = android.animation.ValueAnimator.ofFloat(0f, 1f).apply { duration = 140; addUpdateListener { mix = it.animatedValue as Float; invalidate() }; start() }
+            mixAnim = android.animation.ValueAnimator.ofFloat(0f, 1f).apply { duration = (spec.everyMs * 3 / 2).coerceIn(80L, 160L); addUpdateListener { mix = it.animatedValue as Float; invalidate() }; start() }
         }
         override fun onDetachedFromWindow() { mixAnim?.cancel(); super.onDetachedFromWindow() }
         override fun onDraw(cv: Canvas) {
-            val o = old
-            if (mix < 1f && o != null && !o.isRecycled) { paint.alpha = 255; drawGlow(cv, o) }
-            g?.let { paint.alpha = if (o != null && mix < 1f) (255 * mix).toInt() else 255; drawGlow(cv, it) }
-            paint.alpha = 255
-        }
-        private val dst = RectF()
-        /**
-         * Ambient light over the whole screen, like the Chrome extensions for YouTube: the small blurred frame is
-         * stretched across the entire view, so the top of the screen takes the colours of the top of the picture, the
-         * sides take the sides, and the glow reaches every corner (the old mirror stopped one picture-height away
-         * from the clip, which left dark bands above and below a wide video).
-         */
-        private fun drawGlow(cv: Canvas, b: Bitmap) {
             val w = width.toFloat(); val h = height.toFloat()
-            if (b.isRecycled || w <= 0f || h <= 0f) return
-            dst.set(0f, 0f, w, h)
-            cv.drawBitmap(b, null, dst, paint)
+            if (w <= 0f || h <= 0f) return
+            fit(w, h)
+            val o = old
+            if (mix < 1f && o != null && !o.isRecycled) { paint.alpha = 255; bands(cv, o, w, h) }
+            g?.let { if (!it.isRecycled) { paint.alpha = if (o != null && mix < 1f) (255 * mix).toInt() else 255; bands(cv, it, w, h) } }
+            paint.alpha = 255
+            // The fade to the page colour is drawn once, over the finished light, so a cross-fade never darkens or flashes.
+            bands(cv, null, w, h)
+        }
+        /** Where the picture sits: fitted and centred in this view. */
+        private fun fit(w: Float, h: Float) {
+            val a = if (aspect > 0f) aspect else w / h
+            var pw = w; var ph = w / a
+            if (ph > h) { ph = h; pw = h * a }
+            r.set((w - pw) / 2f, (h - ph) / 2f, (w + pw) / 2f, (h + ph) / 2f)
+        }
+        private fun bands(cv: Canvas, b: Bitmap?, w: Float, h: Float) {
+            if (r.top > 0.5f) band(cv, b, 0f, 0f, w, r.top, true, -1)
+            if (r.bottom < h - 0.5f) band(cv, b, 0f, r.bottom, w, h, true, 1)
+            if (r.left > 0.5f) band(cv, b, 0f, r.top, r.left, r.bottom, false, -1)
+            if (r.right < w - 0.5f) band(cv, b, r.right, r.top, w, r.bottom, false, 1)
+        }
+        /**
+         * One band outside the picture. With a bitmap: copies of the picture mirrored one after the other (the first one touches the
+         * picture, so the colours match at the edge). Without: a fade from clear at the picture to the page colour at the screen edge.
+         */
+        private fun band(cv: Canvas, b: Bitmap?, l: Float, t: Float, rt: Float, bt: Float, vertical: Boolean, outward: Int) {
+            if (rt - l <= 0.5f || bt - t <= 0.5f) return
+            cv.save(); cv.clipRect(l, t, rt, bt)
+            if (b != null) {
+                val size = if (vertical) r.height() else r.width()
+                var k = 1
+                while (k < 12) {
+                    if (vertical) { val y0 = if (outward < 0) r.top - k * size else r.bottom + (k - 1) * size; tile.set(r.left, y0, r.right, y0 + size) }
+                    else { val x0 = if (outward < 0) r.left - k * size else r.right + (k - 1) * size; tile.set(x0, r.top, x0 + size, r.bottom) }
+                    if (k > 1 && (if (vertical) (tile.bottom < t || tile.top > bt) else (tile.right < l || tile.left > rt))) break
+                    cv.save()
+                    if (k % 2 == 1) { if (vertical) cv.scale(1f, -1f, tile.centerX(), tile.centerY()) else cv.scale(-1f, 1f, tile.centerX(), tile.centerY()) }
+                    cv.drawBitmap(b, null, tile, paint)
+                    cv.restore(); k++
+                }
+            } else {
+                val clear = Glass.BG_DEEP and 0xffffff; val far = clear or (0xb0 shl 24)
+                val x0 = if (vertical) 0f else if (outward < 0) rt else l; val x1 = if (vertical) 0f else if (outward < 0) l else rt
+                val y0 = if (!vertical) 0f else if (outward < 0) bt else t; val y1 = if (!vertical) 0f else if (outward < 0) t else bt
+                fadePaint.shader = LinearGradient(x0, y0, x1, y1, clear, far, Shader.TileMode.CLAMP)
+                cv.drawRect(l, t, rt, bt, fadePaint)
+            }
+            cv.restore()
         }
     }
     /** Soft dark bands over the clip where the bars float, so the buttons read on any picture. */

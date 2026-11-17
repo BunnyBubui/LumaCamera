@@ -96,7 +96,6 @@ class PhotoEditorActivity : ComponentActivity() {
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
-        requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
         source = intent.data ?: run { finish(); return }
         state?.let { restore(it) }
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -121,17 +120,14 @@ class PhotoEditorActivity : ComponentActivity() {
         }, LinearLayout.LayoutParams(dp(48), dp(48)).apply { rightMargin = dp(8) })
         saveButton = EditorKit.roundAccent(this, Icons.CHECK, "บันทึก") { save() }
         bar.addView(saveButton, LinearLayout.LayoutParams(dp(48), dp(48)))
-        root.addView(bar, -1, -2)
-
         canvasView = EditCanvas(this)
-        root.addView(canvasView, LinearLayout.LayoutParams(-1, 0, 1f))
-        tools = FrameLayout(this).apply { clipChildren = false }
-        root.addView(tools, LinearLayout.LayoutParams(-1, dp(172)))
+        tools = FrameLayout(this).apply { clipChildren = false; layoutParams = LinearLayout.LayoutParams(-1, dp(172)) }
         // "ปรับด้วย AI" leads the row, beside crop, in the accent colour; it opens the AI sheet instead of a panel.
         // With seven buttons the row scrolls sideways.
         toolBar = EditorKit.ToolBar(this, listOf(Icons.AI to "ปรับด้วย AI", EditorKit.CROP to "ครอบตัด", EditorKit.ADJUST to "ปรับ", HSL_ICON to "สี", CURVE_ICON to "เส้นโค้ง", Icons.FILM to "ฟิลเตอร์", EditorKit.PEN to "วาด"), setOf(0)) { i ->
             if (i == 0) { Glass.tick(toolBar); enhance() } else showTool(i - 1) }
-        root.addView(toolBar, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(8), dp(2), dp(8), dp(8)) })
+        rootBox = root; topBar = bar
+        arrange()
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) { override fun handleOnBackPressed() = leave() })
         markHistory()
 
@@ -302,14 +298,16 @@ class PhotoEditorActivity : ComponentActivity() {
         top.addView(name.apply { setPadding(dp(10), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
         top.addView(EditorKit.chip(this, "คืนค่า", Icons.RESET) {
             // Resets the channel on screen; when it is already straight, all four channels.
-            val base = curveChannel * 5
-            val straight = (0 until 5).all { kotlin.math.abs(curve[base + it] - it * 0.25f) < 1e-4f }
-            if (straight) Develop.IDENTITY_CURVE.copyInto(curve) else for (n in 0 until 5) curve[base + n] = n * 0.25f
+            val base = curveChannel * PointCurve.SLOTS
+            if (PointCurve.isIdentity(curve, base)) Develop.IDENTITY_CURVE.copyInto(curve) else PointCurve.reset(curve, base)
             view.invalidate(); canvasView.refresh(); commit()
         }, LinearLayout.LayoutParams(-2, dp(32)))
         paint()
         col.addView(top, LinearLayout.LayoutParams(-1, dp(40)))
-        col.addView(view, LinearLayout.LayoutParams(-1, dp(220)))
+        col.addView(view, LinearLayout.LayoutParams(-1, dp(190)))
+        col.addView(LinearLayout(this).apply { gravity = Gravity.CENTER
+            addView(EditorKit.chip(this@PhotoEditorActivity, "เพิ่มจุด", Icons.PLUS) { if (!view.addPoint()) notice("ใส่จุดได้สูงสุด 9 จุด") }, LinearLayout.LayoutParams(-2, dp(32)).apply { setMargins(dp(3), 0, dp(3), 0) })
+            addView(EditorKit.chip(this@PhotoEditorActivity, "ลบจุด", "M5 12h14") { if (!view.removePoint()) notice("แตะจุดบนเส้นก่อน จุดหัวท้ายลบไม่ได้") }, LinearLayout.LayoutParams(-2, dp(32)).apply { setMargins(dp(3), 0, dp(3), 0) }) }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
     }
 
     private fun filmTools(col: LinearLayout) {
@@ -430,13 +428,41 @@ class PhotoEditorActivity : ComponentActivity() {
             file.delete()
             runOnUiThread {
                 saving = false; saveButton.alpha = 1f
-                result.onSuccess { if (then != null) { notice("บันทึกการแก้ไขแล้ว"); then(it) } else { notice("บันทึกเป็นภาพใหม่แล้ว · ต้นฉบับยังอยู่"); setResult(RESULT_OK, Intent().putExtra(RESULT_ID, it)); finish() } }
-                    .onFailure { notice("บันทึกไม่สำเร็จ · ${it.localizedMessage}") }
+                result.onSuccess { if (then != null) { notice("บันทึกการแก้ไขแล้ว"); then(it) } else { notice("บันทึกเป็นภาพใหม่แล้ว ต้นฉบับยังอยู่"); setResult(RESULT_OK, Intent().putExtra(RESULT_ID, it)); finish() } }
+                    .onFailure { notice("บันทึกไม่สำเร็จ ${it.localizedMessage}") }
             }
         }
     }
 
     // ---------- State across recreation ----------
+    // ---- Portrait and landscape: the same parts, re-arranged in place when the phone turns (no restart, the edit stays) ----
+    private lateinit var rootBox: LinearLayout; private lateinit var topBar: LinearLayout
+    private fun arrange() {
+        listOf<View>(topBar, canvasView, tools, toolBar).forEach { (it.parent as? android.view.ViewGroup)?.removeView(it) }
+        rootBox.removeAllViews()
+        val toolsH = tools.layoutParams?.height?.takeIf { it > 0 } ?: dp(172)
+        if (resources.configuration.orientation != android.content.res.Configuration.ORIENTATION_LANDSCAPE) {
+            rootBox.orientation = LinearLayout.VERTICAL
+            rootBox.addView(topBar, -1, -2)
+            rootBox.addView(canvasView, LinearLayout.LayoutParams(-1, 0, 1f))
+            rootBox.addView(tools, LinearLayout.LayoutParams(-1, toolsH))
+            rootBox.addView(toolBar, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(8), dp(2), dp(8), dp(8)) })
+        } else {
+            // On its side: the picture on the left, the bar, the tools (scrolling, the screen is short) and the tabs on the right.
+            rootBox.orientation = LinearLayout.HORIZONTAL
+            val right = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            right.addView(topBar, -1, -2)
+            right.addView(android.widget.ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(tools, FrameLayout.LayoutParams(-1, toolsH)) }, LinearLayout.LayoutParams(-1, 0, 1f))
+            right.addView(toolBar, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(8), dp(2), dp(8), dp(4)) })
+            rootBox.addView(canvasView, LinearLayout.LayoutParams(0, -1, 1.2f))
+            rootBox.addView(right, LinearLayout.LayoutParams(0, -1, 1f))
+        }
+    }
+    override fun onConfigurationChanged(c: android.content.res.Configuration) {
+        super.onConfigurationChanged(c)
+        if (::rootBox.isInitialized) arrange()
+    }
+
     override fun onSaveInstanceState(out: Bundle) {
         super.onSaveInstanceState(out)
         out.putInt("turns", turns); out.putBoolean("flipped", flipped); out.putFloatArray("crop", floatArrayOf(crop.left, crop.top, crop.right, crop.bottom))

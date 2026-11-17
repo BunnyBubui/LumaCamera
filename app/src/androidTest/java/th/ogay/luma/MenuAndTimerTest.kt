@@ -33,7 +33,7 @@ class MenuAndTimerTest {
     private fun until(ms: Long, what: String, check: () -> Boolean) {
         val end = SystemClock.elapsedRealtime() + ms
         while (SystemClock.elapsedRealtime() < end) { if (check()) return; SystemClock.sleep(150) }
-        assertTrue("$what (timed out after $ms ms) · ${GlassNav.dump(device)}", check())
+        assertTrue("$what (timed out after $ms ms) ${GlassNav.dump(device)}", check())
     }
     private fun ready() = until(35000, "shutter never became ready") { device.findObject(GlassNav.SHUTTER)?.isEnabled == true }
     private fun launch() = ActivityScenario.launch<CameraActivity>(Intent(context, CameraActivity::class.java))

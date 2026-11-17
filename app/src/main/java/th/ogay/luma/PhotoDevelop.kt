@@ -40,29 +40,20 @@ class Develop(private val values: FloatArray, private val hsl: FloatArray, priva
         val HSL_NAMES = listOf("แดง", "ส้ม", "เหลือง", "เขียว", "ฟ้าน้ำทะเล", "น้ำเงิน", "ม่วง", "ชมพูบานเย็น")
         val HSL_COLORS = intArrayOf(0xffff453a.toInt(), 0xffff9f0a.toInt(), 0xffffd60a.toInt(), 0xff30d158.toInt(), 0xff64d2ff.toInt(), 0xff0a84ff.toInt(), 0xffbf5af2.toInt(), 0xffff375f.toInt())
         private val HUES = floatArrayOf(0f, 30f, 60f, 120f, 180f, 225f, 270f, 315f)
-        val IDENTITY_CURVE get() = FloatArray(CURVE_SIZE) { (it % 5) * 0.25f }
-        const val CURVE_SIZE = 20
+        val IDENTITY_CURVE get() = PointCurve.identitySets(4)
+        const val CURVE_SIZE = 4 * PointCurve.SLOTS
         val CURVE_NAMES = listOf("RGB", "แดง", "เขียว", "น้ำเงิน")
         val CURVE_COLORS = intArrayOf(0xffffffff.toInt(), 0xffff453a.toInt(), 0xff30d158.toInt(), 0xff0a84ff.toInt())
         /** Accepts the old single 5-point curve too (saved edits from before the colour channels). */
-        fun loadCurve(saved: FloatArray?, into: FloatArray) { when (saved?.size) { CURVE_SIZE -> saved.copyInto(into); 5 -> { IDENTITY_CURVE.copyInto(into); saved.copyInto(into) } } }
+        fun loadCurve(saved: FloatArray?, into: FloatArray) {
+            // Saved edits come in three layouts: one 5-point curve (before colour channels), four of them, or four of nine slots.
+            if (saved?.size == 5) { IDENTITY_CURVE.copyInto(into); PointCurve.fromFive(saved).copyInto(into, 0); return }
+            PointCurve.upgrade(saved, 4)?.copyInto(into)
+        }
         private val pool = Executors.newFixedThreadPool(max(1, min(4, Runtime.getRuntime().availableProcessors())))
 
-        /** Monotone cubic through the five curve points, sampled at [n] steps (no overshoot, so tones never reverse). */
-        fun curvePoints(y: FloatArray, n: Int): FloatArray {
-            val x = floatArrayOf(0f, 0.25f, 0.5f, 0.75f, 1f); val k = y.size
-            val d = FloatArray(k - 1) { (y[it + 1] - y[it]) / (x[it + 1] - x[it]) }
-            val m = FloatArray(k) { i -> when (i) { 0 -> d[0]; k - 1 -> d[k - 2]; else -> if (d[i - 1] * d[i] <= 0f) 0f else (d[i - 1] + d[i]) / 2f } }
-            for (i in 0 until k - 1) if (d[i] == 0f) { m[i] = 0f; m[i + 1] = 0f } else {
-                val a = m[i] / d[i]; val b = m[i + 1] / d[i]; val s = a * a + b * b
-                if (s > 9f) { val t = 3f / kotlin.math.sqrt(s); m[i] = t * a * d[i]; m[i + 1] = t * b * d[i] }
-            }
-            return FloatArray(n) { j ->
-                val t0 = j / (n - 1f); val i = min(k - 2, (t0 * 4f).toInt()); val h = x[i + 1] - x[i]; val t = (t0 - x[i]) / h
-                val h00 = 2 * t * t * t - 3 * t * t + 1; val h10 = t * t * t - 2 * t * t + t; val h01 = -2 * t * t * t + 3 * t * t; val h11 = t * t * t - t * t
-                (h00 * y[i] + h10 * h * m[i] + h01 * y[i + 1] + h11 * h * m[i + 1]).coerceIn(0f, 1f)
-            }
-        }
+        /** The curve at [at] in [y] sampled at [n] steps (smooth and never overshooting, so tones never reverse). */
+        fun curvePoints(y: FloatArray, at: Int, n: Int): FloatArray = PointCurve.sample(y, at, n)
     }
 
     private val m = FloatArray(20)
@@ -76,8 +67,8 @@ class Develop(private val values: FloatArray, private val hsl: FloatArray, priva
         // White balance after the film look, as one matrix.
         val wb = ColorMatrix(floatArrayOf(1f + values[6] * 0.15f, 0f, 0f, 0f, 0f, 0f, 1f - values[7] * 0.10f, 0f, 0f, 0f, 0f, 0f, 1f - values[6] * 0.15f, 0f, 0f, 0f, 0f, 0f, 1f, 0f))
         val all = ColorMatrix(film); all.postConcat(wb); all.array.copyInto(m)
-        val c = curvePoints(curve.copyOfRange(0, 5), 256)
-        val cr = curvePoints(curve.copyOfRange(5, 10), 256); val cg = curvePoints(curve.copyOfRange(10, 15), 256); val cb = curvePoints(curve.copyOfRange(15, 20), 256)
+        val c = curvePoints(curve, 0, 256)
+        val cr = curvePoints(curve, PointCurve.SLOTS, 256); val cg = curvePoints(curve, 2 * PointCurve.SLOTS, 256); val cb = curvePoints(curve, 3 * PointCurve.SLOTS, 256)
         val gain = 2f.pow(values[0] * 1.3f)
         for (i in 0 until 256) {
             var x = i / 255f * gain
@@ -96,7 +87,7 @@ class Develop(private val values: FloatArray, private val hsl: FloatArray, priva
             lutB[i] = (cb[master] * 255f + 0.5f).toInt().coerceIn(0, 255)
         }
         val identity = ColorMatrix().array
-        neutral = (0 until VIGNETTE).all { values[it] == 0f } && !anyHsl && curve.contentEquals(IDENTITY_CURVE) && (0 until 20).all { abs(m[it] - identity[it]) < 1e-4f }
+        neutral = (0 until VIGNETTE).all { values[it] == 0f } && !anyHsl && (0 until 4).all { PointCurve.isIdentity(curve, it * PointCurve.SLOTS) } && (0 until 20).all { abs(m[it] - identity[it]) < 1e-4f }
     }
     private fun smooth(a: Float, b: Float, x: Float): Float { val t = ((x - a) / (b - a)).coerceIn(0f, 1f); return t * t * (3f - 2f * t) }
 
@@ -243,19 +234,23 @@ class CurveView(context: android.content.Context, private val curve: FloatArray)
     private val ring = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { style = android.graphics.Paint.Style.STROKE; strokeWidth = 2f * d }
     private val label = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = 0xccffffff.toInt(); textSize = 11f * d; isFakeBoldText = true }
     private var held = -1
+    /** The point last touched, for the remove button. */
+    var selected = -1; private set
     init { contentDescription = "เส้นโค้งโทน ลากจุดขึ้นลงเพื่อปรับ"; isClickable = true }
+    fun addPoint(): Boolean { val s = PointCurve.add(curve, channel * PointCurve.SLOTS, PointCurve.widestGap(curve, channel * PointCurve.SLOTS)); if (s < 0) return false; selected = s; invalidate(); onChange(); onRelease(); return true }
+    fun removePoint(): Boolean { if (!PointCurve.remove(curve, channel * PointCurve.SLOTS, selected)) return false; selected = -1; invalidate(); onChange(); onRelease(); return true }
     private fun box(): android.graphics.RectF {
         // Square graph in the middle of the view, like Lightroom's curve panel.
         val side = minOf(width - 24 * d, height - 16 * d); val l = (width - side) / 2f; val t = (height - side) / 2f
         return android.graphics.RectF(l, t, l + side, t + side)
     }
-    private fun at(ch: Int, i: Int) = curve[ch * 5 + i]
+    private fun at(ch: Int, i: Int) = curve[ch * PointCurve.SLOTS + i]
     private fun path(r: android.graphics.RectF, ch: Int): android.graphics.Path {
-        val pts = Develop.curvePoints(curve.copyOfRange(ch * 5, ch * 5 + 5), 96); val p = android.graphics.Path()
+        val pts = Develop.curvePoints(curve, ch * PointCurve.SLOTS, 96); val p = android.graphics.Path()
         pts.forEachIndexed { i, v -> val x = r.left + r.width() * i / 95f; val y = r.bottom - r.height() * v; if (i == 0) p.moveTo(x, y) else p.lineTo(x, y) }
         return p
     }
-    private fun changed(ch: Int) = (0 until 5).any { kotlin.math.abs(at(ch, it) - it * 0.25f) > 1e-4f }
+    private fun changed(ch: Int) = !PointCurve.isIdentity(curve, ch * PointCurve.SLOTS)
     override fun onDraw(c: android.graphics.Canvas) {
         val r = box(); val color = Develop.CURVE_COLORS[channel]
         c.drawRoundRect(r, 12 * d, 12 * d, panel)
@@ -273,15 +268,15 @@ class CurveView(context: android.content.Context, private val curve: FloatArray)
         line.color = color; line.setShadowLayer(6 * d, 0f, 0f, (color and 0x00ffffff) or 0x99000000.toInt())
         c.drawPath(path(r, channel), line)
         c.restore()
-        for (i in 0 until 5) {
-            val x = r.left + r.width() * i / 4f; val y = r.bottom - r.height() * at(channel, i)
-            val big = i == held
+        for (i in PointCurve.slotsOf(curve, channel * PointCurve.SLOTS)) {
+            val x = r.left + r.width() * i / 8f; val y = r.bottom - r.height() * at(channel, i)
+            val big = i == held || i == selected
             dot.color = 0xff0a0a0b.toInt(); c.drawCircle(x, y, (if (big) 9f else 6.5f) * d, dot)
             ring.color = color; c.drawCircle(x, y, (if (big) 9f else 6.5f) * d, ring)
             if (big) { dot.color = color; c.drawCircle(x, y, 3.5f * d, dot) }
         }
         if (held >= 0) {
-            val t = "${(held * 25)} → ${(at(channel, held) * 100).toInt()}"
+            val t = "${(held * 125 / 10)}  ${(at(channel, held) * 100).toInt()}"
             c.drawText(t, r.left + 8 * d, r.top + 16 * d, label)
         }
     }
@@ -290,10 +285,10 @@ class CurveView(context: android.content.Context, private val curve: FloatArray)
         when (e.actionMasked) {
             android.view.MotionEvent.ACTION_DOWN -> {
                 if (!r.contains(e.x, e.y) && (e.x < r.left - 16 * d || e.x > r.right + 16 * d)) return false
-                held = ((e.x - r.left) / r.width() * 4f).let { kotlin.math.round(it).toInt() }.coerceIn(0, 4)
+                held = PointCurve.slotsOf(curve, channel * PointCurve.SLOTS).minByOrNull { kotlin.math.abs(r.left + r.width() * it / 8f - e.x) } ?: -1; selected = held
                 parent?.requestDisallowInterceptTouchEvent(true); Glass.tick(this); invalidate()
             }
-            android.view.MotionEvent.ACTION_MOVE -> if (held >= 0) { curve[channel * 5 + held] = ((r.bottom - e.y) / r.height()).coerceIn(0f, 1f); invalidate(); onChange() }
+            android.view.MotionEvent.ACTION_MOVE -> if (held >= 0) { curve[channel * PointCurve.SLOTS + held] = ((r.bottom - e.y) / r.height()).coerceIn(0f, 1f); invalidate(); onChange() }
             android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> { if (held >= 0) onRelease(); held = -1; invalidate() }
         }
         return true

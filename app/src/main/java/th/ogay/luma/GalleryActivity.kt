@@ -136,7 +136,7 @@ class GalleryActivity : ComponentActivity() {
 
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
-        requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        // Turns with the phone (its own auto-rotate setting decides); the page is rebuilt in place, see onConfigurationChanged.
         selected = state?.getString("id"); useAi = state?.getBoolean("ai") ?: false
         section = state?.getInt("section") ?: when (intent.getStringExtra("tab")) { "luma" -> 1; "device" -> 0; else -> prefs.getInt("gallery_section", 0) }
         albumKind = if (state != null) state.getString("albumKind") else if (intent.getStringExtra("tab") == "luma") "lumora" else null
@@ -198,6 +198,14 @@ class GalleryActivity : ComponentActivity() {
     private fun partialAccess() = Build.VERSION.SDK_INT >= 34 &&
         ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) == PackageManager.PERMISSION_GRANTED &&
         ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_IMAGES) != PackageManager.PERMISSION_GRANTED
+
+    /** On its side (or on a tablet) the grid gets more columns so the pictures keep about the same size. */
+    private fun wideScreen() = resources.configuration.screenWidthDp > resources.configuration.screenHeightDp
+    override fun onConfigurationChanged(c: android.content.res.Configuration) {
+        super.onConfigurationChanged(c)
+        // The same page (grid, album or open picture) is built again for the new shape.
+        reload()
+    }
 
     private fun reload() {
         val id = selected; val version = ++readVersion
@@ -339,7 +347,7 @@ class GalleryActivity : ComponentActivity() {
             if (items.size > 3) col.addView(text("และอีก ${items.size - 3} รายการ", 12.5f, Glass.TEXT3).apply { gravity = Gravity.CENTER })
             val note = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; background = glass(16, 0x14ffffff); setPadding(dp(12), dp(10), dp(12), dp(10)) }
             note.addView(IconView(this, TRASH, 1.8f).apply { tint = RED }, dp(20), dp(20))
-            note.addView(text("ย้ายไปถังขยะของเครื่อง กู้คืนได้จากแอปรูปภาพของเครื่องภายใน 30 วัน" + if (items.any { it.shot?.ai != null }) " · ภาพ AI ของรูปนี้จะถูกลบด้วย" else "", 12.5f, Glass.TEXT2).apply { maxLines = 4; ellipsize = null; setPadding(dp(10), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
+            note.addView(text("ย้ายไปถังขยะของเครื่อง กู้คืนได้จากแอปรูปภาพของเครื่องภายใน 30 วัน" + if (items.any { it.shot?.ai != null }) " ภาพ AI ของรูปนี้จะถูกลบด้วย" else "", 12.5f, Glass.TEXT2).apply { maxLines = 4; ellipsize = null; setPadding(dp(10), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
             col.addView(note, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
             val buttons = LinearLayout(this)
             buttons.addView(text("ยกเลิก", 14f, Glass.TEXT, true).apply { gravity = Gravity.CENTER; background = glass(22, 0x1affffff); isClickable = true; glassTouch(); setOnClickListener { d.dismiss() } }, LinearLayout.LayoutParams(0, dp(48), 1f))
@@ -415,8 +423,8 @@ class GalleryActivity : ComponentActivity() {
                     val frames = if (android.os.Build.VERSION.SDK_INT >= 28) k(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_FRAME_COUNT)?.toLongOrNull() else null
                     val fps = if (frames != null && ms > 0) frames * 1000.0 / ms else null
                     val sw = if (turn % 180 == 90) h else w; val sh = if (turn % 180 == 90) w else h
-                    rows += Triple(Icons.VIDEO, "$sw × $sh", listOfNotNull(fps?.let { String.format(Locale.US, "%.1f fps", it) }, String.format(Locale.US, "%d:%02d", ms / 60000, ms / 1000 % 60)).joinToString(" · "))
-                    rows += Triple(Icons.FILE, name.ifBlank { "วิดีโอ" }, listOfNotNull(if (size > 0) String.format(Locale.US, "%.1f MB", size / 1_048_576.0) else null, k(android.media.MediaMetadataRetriever.METADATA_KEY_BITRATE)?.toLongOrNull()?.let { "${it / 1_000_000} Mbps" }).joinToString(" · "))
+                    rows += Triple(Icons.VIDEO, "$sw × $sh", listOfNotNull(fps?.let { String.format(Locale.US, "%.1f fps", it) }, String.format(Locale.US, "%d:%02d", ms / 60000, ms / 1000 % 60)).joinToString(" "))
+                    rows += Triple(Icons.FILE, name.ifBlank { "วิดีโอ" }, listOfNotNull(if (size > 0) String.format(Locale.US, "%.1f MB", size / 1_048_576.0) else null, k(android.media.MediaMetadataRetriever.METADATA_KEY_BITRATE)?.toLongOrNull()?.let { "${it / 1_000_000} Mbps" }).joinToString(" "))
                     rows += Triple(Icons.SOUND, if (k(android.media.MediaMetadataRetriever.METADATA_KEY_HAS_AUDIO) == "yes") "มีเสียง" else "ไม่มีเสียง", "")
                     frames?.let { tech += Icons.STACK to "$it เฟรม" }
                     k(android.media.MediaMetadataRetriever.METADATA_KEY_MIMETYPE)?.let { tech += Icons.INFO to it }
@@ -425,7 +433,7 @@ class GalleryActivity : ComponentActivity() {
                 // What Lumora checked after recording, if this is its own clip.
                 runCatching { JSONObject(File(filesDir, "reports/${item.name}.json").readText()) }.getOrNull()?.let { j ->
                     j.optString("codec").takeIf { it.isNotEmpty() }?.let { tech += Icons.INFO to "Codec $it" }
-                    j.optJSONObject("capture")?.optJSONObject("lens")?.let { l -> tech += Icons.SEARCH to String.format(Locale.US, "เลนส์ %s · %.1f มม. · f/%.1f", l.optString("lens"), l.optDouble("focalLengthMm"), l.optDouble("aperture")) }
+                    j.optJSONObject("capture")?.optJSONObject("lens")?.let { l -> tech += Icons.SEARCH to String.format(Locale.US, "เลนส์ %s %.1f มม. f/%.1f", l.optString("lens"), l.optDouble("focalLengthMm"), l.optDouble("aperture")) }
                 }
             } else {
                 val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -439,8 +447,8 @@ class GalleryActivity : ComponentActivity() {
                 val fn = exif?.getAttributeDouble(androidx.exifinterface.media.ExifInterface.TAG_F_NUMBER, 0.0)?.takeIf { it > 0 }?.let { String.format(Locale.US, "f/%.1f", it) }
                 val iso = e(androidx.exifinterface.media.ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY)?.let { "ISO $it" }
                 val focal = e(androidx.exifinterface.media.ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM)?.let { "$it มม." }
-                if (camera.isNotBlank() || shutter != null) rows += Triple(Icons.FLIP, camera.ifBlank { "กล้อง" }, listOfNotNull(focal, fn, shutter, iso).joinToString(" · "))
-                rows += Triple(Icons.FILE, name.ifBlank { "รูปภาพ" }, listOfNotNull(if (size > 0) String.format(Locale.US, "%.1f MB", size / 1_048_576.0) else null, item.album.takeIf { it.isNotBlank() }).joinToString(" · "))
+                if (camera.isNotBlank() || shutter != null) rows += Triple(Icons.FLIP, camera.ifBlank { "กล้อง" }, listOfNotNull(focal, fn, shutter, iso).joinToString(" "))
+                rows += Triple(Icons.FILE, name.ifBlank { "รูปภาพ" }, listOfNotNull(if (size > 0) String.format(Locale.US, "%.1f MB", size / 1_048_576.0) else null, item.album.takeIf { it.isNotBlank() }).joinToString(" "))
                 e(androidx.exifinterface.media.ExifInterface.TAG_LENS_MODEL)?.let { tech += Icons.SEARCH to it }
                 e(androidx.exifinterface.media.ExifInterface.TAG_SOFTWARE)?.let { tech += Icons.INFO to "ซอฟต์แวร์ $it" }
                 e(androidx.exifinterface.media.ExifInterface.TAG_WHITE_BALANCE)?.let { tech += Icons.INFO to "สมดุลแสงขาว ${if (it == "0") "อัตโนมัติ" else "กำหนดเอง"}" }
@@ -492,7 +500,7 @@ class GalleryActivity : ComponentActivity() {
         addView(text(end, 12.5f, Glass.TEXT2))
     }
     /** Sort orders, as in the phone's own gallery: by date taken, date added, size and name; then video or AI first. */
-    private val SORTS = listOf("วันที่ถ่าย · ใหม่ก่อน", "วันที่ถ่าย · เก่าก่อน", "วันที่เพิ่ม · ใหม่ก่อน", "ขนาดไฟล์ · ใหญ่ก่อน", "ชื่อไฟล์ · ก–ฮ", "วิดีโอก่อน", "AI ก่อน")
+    private val SORTS = listOf("วันที่ถ่าย ใหม่ก่อน", "วันที่ถ่าย เก่าก่อน", "วันที่เพิ่ม ใหม่ก่อน", "ขนาดไฟล์ ใหญ่ก่อน", "ชื่อไฟล์ ก–ฮ", "วิดีโอก่อน", "AI ก่อน")
     private val SORT_ICONS = listOf(Icons.CHEVRON_UP, Icons.UPDOWN, Icons.PLUS, Icons.FILE, "M5 18L9 6l4 12 M6.4 14h5.2 M15 6h5l-5 12h5", Icons.VIDEO, Icons.AI)
     private val SORT_SHORT = listOf("ใหม่ก่อน", "เก่าก่อน", "เพิ่มล่าสุด", "ใหญ่ก่อน", "ชื่อ", "วิดีโอก่อน", "AI ก่อน")
     private val sortMenu by lazy { GlassMenu(host) }
@@ -608,7 +616,7 @@ class GalleryActivity : ComponentActivity() {
         val gridTitle = gridHead.getChildAt(0) as TextView
 
         val grid = GridView(this).apply {
-            contentDescription = "รายการรูปและวิดีโอ"; numColumns = prefs.getInt("gallery_columns", 3).coerceIn(2, 5); horizontalSpacing = dp(5); verticalSpacing = dp(5); setPadding(dp(8), 0, dp(8), dp(8)); clipToPadding = false; selector = android.graphics.drawable.ColorDrawable(0)
+            contentDescription = "รายการรูปและวิดีโอ"; numColumns = prefs.getInt("gallery_columns", 3).coerceIn(2, 5).let { c -> if (wideScreen()) (c * 5 + 2) / 3 else c }; horizontalSpacing = dp(5); verticalSpacing = dp(5); setPadding(dp(8), 0, dp(8), dp(8)); clipToPadding = false; selector = android.graphics.drawable.ColorDrawable(0)
             // Longer, softer flings.
             setFriction(android.view.ViewConfiguration.getScrollFriction() * 0.75f); isVerticalScrollBarEnabled = false; overScrollMode = View.OVER_SCROLL_ALWAYS
         }
@@ -677,7 +685,7 @@ class GalleryActivity : ComponentActivity() {
             navKeys = shown.filter { !it.file }.map { itemKey(it) }
             adapter.notifyDataSetChanged()
             gridTitle.text = if (albumKind != null) "" else if (device) "รูปและวิดีโอทั้งหมด" else "ถ่ายด้วย Lumora"
-            (gridHead.getChildAt(1) as TextView).text = "${shown.size} รายการ · ${SORT_SHORT[sortOrder]} ▾"
+            (gridHead.getChildAt(1) as TextView).text = "${shown.size} รายการ ${SORT_SHORT[sortOrder]} ▾"
             empty.text = if (all.isEmpty()) (if (device) "ไม่พบรูปหรือวิดีโอในเครื่อง" else "รูปและวิดีโอที่ถ่ายด้วย Lumora จะปรากฏที่นี่") else "ไม่พบรายการที่ตรงกัน"
             empty.visibility = if (shown.isEmpty()) View.VISIBLE else View.GONE
             if (!Glass.reduced(this)) { grid.alpha = 0.4f; grid.scaleX = 0.97f; grid.scaleY = 0.97f; grid.animate().alpha(1f).scaleX(1f).scaleY(1f).setInterpolator(Glass.SPRING).setDuration(360).start() }
@@ -901,7 +909,13 @@ class GalleryActivity : ComponentActivity() {
     private fun showAlbums(items: List<Item>, lumora: List<Item>, favourites: Int) {
         showingId = null; viewerKind = ""; immersive(false); root.removeAllViews()
         val bar = topBar("อัลบั้ม") { finish() }
-        if (device) bar.addView(EditorKit.chip(this, if (managing) "เสร็จ" else "จัดการ", if (managing) Icons.CHECK else Icons.GEAR, managing) { managing = !managing; reload() }, LinearLayout.LayoutParams(-2, dp(48)))
+        if (device) {
+            lateinit var dots: View
+            fun menu(anchor: View) = sortMenu.show(anchor, "อัลบั้ม", listOf(GlassMenu.Option("ตั้งค่าแกลเลอรี", Icons.GEAR), GlassMenu.Option(if (managing) "เสร็จการจัดการ" else "จัดการอัลบั้ม", if (managing) Icons.CHECK else PENCIL)), -1) { i ->
+                if (i == 0) gallerySettings() else { managing = !managing; reload() } }
+            dots = roundButton("M12 5.2v.1 M12 12v.1 M12 18.8v.1", "ตัวเลือกเพิ่มเติม") { menu(dots) }
+            bar.addView(dots, LinearLayout.LayoutParams(dp(48), dp(48)))
+        }
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, 0, 0, dp(16)) }
         val scroll = ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(col) }
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -910,7 +924,7 @@ class GalleryActivity : ComponentActivity() {
         val buckets = if (device) ordered(albums(items)) else emptyList()
         val hidden = prefList("album_hidden"); val pinned = prefList("album_pinned")
         if (managing) {
-            col.addView(text("ลาก ≡ หรือกดค้างแถวเพื่อเรียง · ปักหมุดให้อยู่บนสุด · ซ่อนเพื่อเอาออกจากแท็บรูปภาพ", 12.5f, Glass.TEXT2).apply { maxLines = 3; setPadding(dp(16), dp(4), dp(16), dp(10)) }, -1, -2)
+            col.addView(text("ลาก ≡ หรือกดค้างแถวเพื่อเรียง ปักหมุดให้อยู่บนสุด ซ่อนเพื่อเอาออกจากแท็บรูปภาพ", 12.5f, Glass.TEXT2).apply { maxLines = 3; setPadding(dp(16), dp(4), dp(16), dp(10)) }, -1, -2)
             val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
             col.addView(list, -1, -2)
             manageList(list, buckets.toMutableList(), scroll)
@@ -934,7 +948,7 @@ class GalleryActivity : ComponentActivity() {
                     col.addView(LinearLayout(this).apply {
                         gravity = Gravity.CENTER_VERTICAL; isClickable = true; minimumHeight = dp(52); setPadding(dp(16), 0, dp(16), 0); contentDescription = "อัลบั้มที่ซ่อน ${gone.size} อัลบั้ม"
                         addView(IconView(this@GalleryActivity, EYE_OFF, 2f).apply { tint = Glass.TEXT2 }, dp(20), dp(20))
-                        addView(text("อัลบั้มที่ซ่อน · ${gone.size}", 14f, Glass.TEXT2, true).apply { setPadding(dp(10), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
+                        addView(text("อัลบั้มที่ซ่อน ${gone.size}", 14f, Glass.TEXT2, true).apply { setPadding(dp(10), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
                         addView(IconView(this@GalleryActivity, if (showHidden) Icons.CHEVRON_UP else Icons.CHEVRON_RIGHT, 2f).apply { tint = Glass.TEXT2 }, dp(18), dp(18))
                         glassTouch(); setOnClickListener { showHidden = !showHidden; reload() }
                     }, -1, -2)
@@ -997,7 +1011,7 @@ class GalleryActivity : ComponentActivity() {
             rounded(img, 12); row.addView(img, dp(48), dp(48))
             img.tag = a.cover.key; thumbs.execute { val b = thumbnail(a.cover, 160); runOnUiThread { if (!isDestroyed && img.tag == a.cover.key && b != null) img.setImageBitmap(b) } }
             row.addView(LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, dp(8), 0)
-                addView(text(a.name, 14.5f, if (a.name in hidden) Glass.TEXT3 else Color.WHITE, true)); addView(text("${a.count} รายการ${if (a.name in hidden) " · ซ่อนอยู่" else ""}", 12f, Glass.TEXT2)) }, LinearLayout.LayoutParams(0, -2, 1f))
+                addView(text(a.name, 14.5f, if (a.name in hidden) Glass.TEXT3 else Color.WHITE, true)); addView(text("${a.count} รายการ${if (a.name in hidden) " ซ่อนอยู่" else ""}", 12f, Glass.TEXT2)) }, LinearLayout.LayoutParams(0, -2, 1f))
             val isPinned = a.name in pinned; val isHidden = a.name in hidden
             row.addView(FrameLayout(this).apply { isClickable = true; contentDescription = if (isPinned) "เลิกปักหมุด ${a.name}" else "ปักหมุด ${a.name}"; isSelected = isPinned; glassTouch()
                 addView(IconView(this@GalleryActivity, Icons.PIN, 2f).apply { tint = if (isPinned) Glass.ACCENT else Glass.TEXT2 }, FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER))
@@ -1158,7 +1172,7 @@ class GalleryActivity : ComponentActivity() {
         inspect.shadeTop = (bars.top + dp(84)).toFloat(); inspect.shadeBottom = (bars.bottom + dp(130)).toFloat()
         inspect.onDismissDrag = { p -> val a = 1f - p * 2.2f; viewerTop?.alpha = a.coerceIn(0f, 1f); viewerBottom?.alpha = a.coerceIn(0f, 1f) }
         inspect.onDismiss = if (!prefs.getBoolean("gallery_swipe_close", true)) null else ({ if (viewerFromCamera) finish() else { selected = null; useAi = false; closingViewer = true; reload() } })
-        inspect.reflections = prefs.getBoolean("gallery_reflect", true)
+        inspect.level = Ambient.photo(this)
     }
     private var viewerTop: View? = null; private var viewerBottom: View? = null
     /** True when the grid comes back from a swipe-down, so it fades up instead of sliding. */
@@ -1201,7 +1215,7 @@ class GalleryActivity : ComponentActivity() {
         fun tag(t: String, accent: Boolean = false) = tags.addView(text(t, 11.5f, if (accent) Glass.ACCENT else Glass.TEXT2, accent).apply { gravity = Gravity.CENTER; maxLines = 1; background = glass(11, if (accent) Glass.ACCENT_SOFT else 0x14ffffff); setPadding(dp(9), 0, dp(9), 0) }, ViewGroup.LayoutParams(-2, dp(24)))
         item.album.takeIf { it.isNotBlank() }?.let { tag(it) }
         item.shot?.let { tag(pixelsText(it.size.pixels)) }
-        item.shot?.takeIf { it.ai != null }?.let { tag("AI ×${it.aiScale.coerceAtLeast(1)} · ${pixelsText(it.aiSize.pixels)}", true) }
+        item.shot?.takeIf { it.ai != null }?.let { tag("AI ×${it.aiScale.coerceAtLeast(1)} ${pixelsText(it.aiSize.pixels)}", true) }
         if (tags.childCount > 0) left.addView(tags, -1, -2)
         val label = text("เลื่อนนิ้วไปที่ปุ่มแล้วปล่อย", 12f, Glass.TEXT3).apply { setPadding(dp(4), dp(8), dp(4), 0); maxLines = 1 }
         left.addView(label, -1, -2); peekLabel = label
@@ -1379,7 +1393,7 @@ class GalleryActivity : ComponentActivity() {
         if (!::ring.isInitialized || ring.visibility != View.VISIBLE || showingId != id || isDestroyed) return
         val p = th.ogay.luma.ai.AiProgress
         if (p.shotId == id) {
-            if (p.total > 0) ring.update(p.fraction() * 99f, ring.caption, listOf("${String.format(Locale.US, "%,d", p.done)} / ${String.format(Locale.US, "%,d", p.total)} ไทล์", p.model).filter { it.isNotEmpty() }.joinToString(" · "), p.etaText().ifEmpty { "กำลังคำนวณเวลา…" })
+            if (p.total > 0) ring.update(p.fraction() * 99f, ring.caption, listOf("${String.format(Locale.US, "%,d", p.done)} / ${String.format(Locale.US, "%,d", p.total)} ไทล์", p.model).filter { it.isNotEmpty() }.joinToString(" "), p.etaText().ifEmpty { "กำลังคำนวณเวลา…" })
             else ring.update(null, ring.caption, p.step)
         }
         host.postDelayed(this, 330)
@@ -1389,12 +1403,11 @@ class GalleryActivity : ComponentActivity() {
         showingId = item.key; viewerKind = ""; root.removeAllViews()
         // Like the photo viewer: the clip fills the screen and the bars float over its glow.
         immersive(true)
-        val player = InlineVideo(this, item.uri, cache.get(item.key), prefs.getBoolean("gallery_reflect", true)).apply { onSwipe = { stepDir = it; step(it) } }
+        val player = InlineVideo(this, item.uri, cache.get(item.key), Ambient.video(this)).apply { onSwipe = { stepDir = it; step(it) } }
         inlineVideo = player
         val frame = FrameLayout(this).apply { addView(player, -1, -1) }
         root.addView(frame, LinearLayout.LayoutParams(-1, 0, 1f))
         val top = viewerBar("วิดีโอ").also { root.removeView(it) }
-        top.addView(roundButton(Icons.INFO, "รายละเอียด") { itemInfo(item) }, dp(48), dp(48))
         toggle = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(dp(6), dp(2), dp(6), dp(10)) }
         val bottom = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, 0, 0, bars.bottom) }
         player.shades(bars.top + dp(84), bars.bottom + dp(150))
@@ -1423,11 +1436,11 @@ class GalleryActivity : ComponentActivity() {
             add("${j.optInt("displayWidth", j.optInt("width"))} × ${j.optInt("displayHeight", j.optInt("height"))}")
             add(String.format(Locale.US, "fps ที่วัดได้ %.2f", j.optDouble("measuredFps")))
             if (j.has("requestedCaptureFps")) add("fps ที่ขอ ${j.optInt("requestedCaptureFps")}")
-            add("${j.optLong("frames")} เฟรม · ${if (j.optBoolean("audio")) "มีเสียง" else "ไม่มีเสียง"}")
+            add("${j.optLong("frames")} เฟรม ${if (j.optBoolean("audio")) "มีเสียง" else "ไม่มีเสียง"}")
             j.optString("codec").takeIf { it.isNotEmpty() }?.let { add("Codec $it") }
             j.optJSONObject("capture")?.optString("profile")?.takeIf { it.isNotEmpty() }?.let { add("โปรไฟล์ $it") }
             j.optJSONObject("capture")?.optString("fpsPath")?.takeIf { it.isNotEmpty() }?.let { add("60 fps ผ่าน Camera2") }
-            if (lens != null) add(String.format(Locale.US, "เลนส์ %s · %.1f มม. · เทียบ %d มม. · f/%.1f", lens.optString("lens"), lens.optDouble("focalLengthMm"), lens.optInt("equivalent35mm"), lens.optDouble("aperture")))
+            if (lens != null) add(String.format(Locale.US, "เลนส์ %s %.1f มม. เทียบ %d มม. f/%.1f", lens.optString("lens"), lens.optDouble("focalLengthMm"), lens.optInt("equivalent35mm"), lens.optDouble("aperture")))
         }
         AlertDialog.Builder(this).setTitle("ผลตรวจไฟล์วิดีโอ").setMessage(lines.joinToString("\n")).setPositiveButton("ปิด", null)
             .setNeutralButton("ส่งออก JSON") { _, _ -> MediaLedger.share(this, MediaLedger.privateUri(this, file), "application/json") }.show()
@@ -1454,10 +1467,11 @@ class GalleryActivity : ComponentActivity() {
             toggle("รวมภาพ AI กับต้นฉบับ", Icons.AI, "gallery_merge_ai", true, "ภาพที่ AI ปรับแล้วรวมเป็นรายการเดียวกับต้นฉบับ")
             section("การดูภาพ")
             toggle("เปิดภาพ AI ก่อน", Icons.AI, "gallery_open_ai", true, "กดค้างปุ่มต้นฉบับเพื่อเทียบ")
-            toggle("พื้นหลังสะท้อนภาพ", Icons.PHOTO, "gallery_reflect", true, "ขอบบนล่างเป็นภาพสะท้อนนุ่ม ๆ แทนพื้นสีเรียบ")
+            choose("แสงสะท้อนรอบภาพ", Icons.PHOTO, Ambient.KEY_PHOTO, Ambient.LABELS, Ambient.LABELS.indices.toList(), Ambient.photo(this@GalleryActivity), notes = listOf("ไม่มีแสงรอบภาพ", "นุ่มมาก เบาเครื่อง", "นุ่ม สมดุล", "คมขึ้น ใกล้ขอบภาพมากขึ้น", "คมและละเอียดที่สุด ตรงกับขอบภาพ กินแรงมากสุด"))
             toggle("ปัดลงเพื่อปิดภาพ", Icons.CHEVRON_UP, "gallery_swipe_close", true)
             section("วิดีโอ")
             toggle("เล่นวิดีโออัตโนมัติ", Icons.VIDEO, "video_autoplay", false, "เริ่มเล่นทันทีที่เปิดหรือปัดมาที่วิดีโอ ปิดไว้จะเล่นเมื่อแตะปุ่มเล่น ปัดดูได้ลื่นกว่า")
+            choose("แสงสะท้อนรอบวิดีโอ", Icons.VIDEO, Ambient.KEY_VIDEO, Ambient.LABELS, Ambient.LABELS.indices.toList(), Ambient.video(this@GalleryActivity), notes = listOf("ไม่มีแสงรอบวิดีโอ", "นุ่มมาก เบาเครื่องและแบตเตอรี่", "นุ่ม สมดุล", "คมขึ้น ตามภาพที่เล่นถี่ขึ้น", "คมและละเอียดที่สุด อัปเดตถี่ที่สุด กินแบตเตอรี่มากสุด"))
             choose("เสียงเมื่อเริ่มเล่น", Icons.SOUND, "video_sound_i", listOf("เปิดเสียงทุกครั้ง", "ปิดเสียงทุกครั้ง"), listOf(1, 0), 1, notes = listOf("ได้ยินเสียงทันที", "แตะปุ่มลำโพงเพื่อเปิดเสียง"))
             section("การลบ")
             toggle("ถามก่อนลบภาพของ Lumora", TRASH, "gallery_ask_delete", true, "ภาพจากแอปอื่น ระบบจะถามเองเสมอ")
@@ -1490,9 +1504,9 @@ class GalleryActivity : ComponentActivity() {
         status.text = when (s.stage) {
             Stage.CAPTURING -> "กำลังถ่าย ${s.frames}/${s.requestedFrames} เฟรม"
             Stage.QUEUED, Stage.RUNNING -> ""
-            Stage.FAILED -> "AI ยังไม่สำเร็จ · ${s.error}"
+            Stage.FAILED -> "AI ยังไม่สำเร็จ ${s.error}"
             Stage.DONE -> ""
-            Stage.ORIGINAL -> if (s.output.rawOnly) "ภาพตัวอย่าง RAW · DNG เก็บแยก" else ""
+            Stage.ORIGINAL -> if (s.output.rawOnly) "ภาพตัวอย่าง RAW DNG เก็บแยก" else ""
         }
         status.visibility = if (status.text.isEmpty()) View.GONE else View.VISIBLE
         // The AI works at full speed only while its progress is on screen.
@@ -1532,14 +1546,17 @@ class GalleryActivity : ComponentActivity() {
         chip("ลบ", false, TRASH) { confirmDelete(listOf(Item(s.id, s.uri, s.time, false, "", "Lumora", s))) }
     }
     private fun infoPanel(preview: () -> Bitmap?, time: String, rows: List<Triple<String, String, String>>, tech: List<Pair<String, String>>) {
-        GlassDialog.panel(this, time) { col, d ->
+        val sheet = screenSheet()
+        sheet.open { col, sh ->
+            col.addView(text(time, 18f, Glass.TEXT, true).apply { setPadding(0, dp(4), 0, dp(8)) }, -1, -2)
             // A small preview on top, then one row per fact: icon, value, quiet detail.
-            val pic = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP; setBackgroundColor(0x14ffffff); outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: android.graphics.Outline) { o.setRoundRect(0, 0, v.width, v.height, dp(18).toFloat()) } }; clipToOutline = true }
+            val pic = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP; setBackgroundColor(0x14ffffff); clipToOutline = true
+                outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: Outline) { o.setRoundRect(0, 0, v.width, v.height, dp(16).toFloat()) } } }
             col.addView(pic, LinearLayout.LayoutParams(-1, dp(150)).apply { topMargin = dp(4); bottomMargin = dp(10) })
             thumbs.execute { val b = runCatching { preview() }.getOrNull(); runOnUiThread { if (b != null) pic.setImageBitmap(b) } }
             rows.forEach { (icon, value, note) ->
                 val r = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(7), 0, dp(7)) }
-                r.addView(FrameLayout(this).apply { background = glass(14, 0x1affffff); addView(IconView(this@GalleryActivity, icon).apply { tint = Glass.ACCENT }, FrameLayout.LayoutParams(dp(18), dp(18), Gravity.CENTER)) }, dp(36), dp(36))
+                r.addView(FrameLayout(this).apply { background = glass(14, 0x1affffff); addView(IconView(this@GalleryActivity, icon).apply { tint = Glass.ACCENT }, FrameLayout.LayoutParams(dp(18), dp(18), Gravity.CENTER)) }, dp(38), dp(38))
                 val t = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, 0, 0) }
                 t.addView(text(value, 14.5f, Glass.TEXT, true).apply { maxLines = 2; ellipsize = null })
                 if (note.isNotEmpty()) t.addView(text(note, 12f, Glass.TEXT3).apply { maxLines = 2; ellipsize = null })
@@ -1557,8 +1574,8 @@ class GalleryActivity : ComponentActivity() {
                     setOnClickListener { more.visibility = if (more.visibility == View.VISIBLE) View.GONE else View.VISIBLE; text = if (more.visibility == View.VISIBLE) "รายละเอียดทางเทคนิค ▴" else "รายละเอียดทางเทคนิค ▾" } }
                 col.addView(toggle, -1, -2); col.addView(more, -1, -2)
             }
-            col.addView(GlassDialog.actions(this, "ปิด" to { d.dismiss() }), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
-        }.show()
+            col.addView(GlassDialog.actions(this, "ปิด" to { sh.close() }), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
+        }
     }
     private fun details(s: Shot) {
         val ai = s.aiSize
@@ -1573,18 +1590,18 @@ class GalleryActivity : ComponentActivity() {
             // Icon rows instead of a wall of text: the essentials first, technical details folded at the bottom.
             val rows = buildList<Triple<String, String, String>> {
                 add(Triple(Icons.PHOTO, "${s.size.w} × ${s.size.h}", pixelsText(s.size.pixels)))
-                add(Triple(Icons.FLIP, if (s.rear) "กล้องหลัง" else "กล้องหน้า", listOfNotNull(zoomText(s.zoom), eq?.let { "$it มม." }, fnText).joinToString(" · ")))
+                add(Triple(Icons.FLIP, if (s.rear) "กล้องหลัง" else "กล้องหน้า", listOfNotNull(zoomText(s.zoom), eq?.let { "$it มม." }, fnText).joinToString(" ")))
                 add(Triple(Icons.FILE, s.output.label, if (s.softwareCrop) "ครอปในแอป" else "ซูมระบบ"))
                 if (s.output.enhance) add(Triple(Icons.STACK, "${s.fusedFrames}/${s.requestedFrames} เฟรม", "รวมหลายเฟรม"))
                 s.captureNote?.let { add(Triple(Icons.INFO, it, "")) }
-                if (s.ai != null) add(Triple(Icons.AI, "AI ×${s.aiScale.coerceAtLeast(1)} · ${ai.w} × ${ai.h}", listOfNotNull(pixelsText(ai.pixels), report?.optString("backend")?.takeIf { it.isNotEmpty() }, "${s.elapsed / 1000.0} วิ".takeIf { s.elapsed > 0 }).joinToString(" · ")))
+                if (s.ai != null) add(Triple(Icons.AI, "AI ×${s.aiScale.coerceAtLeast(1)} ${ai.w} × ${ai.h}", listOfNotNull(pixelsText(ai.pixels), report?.optString("backend")?.takeIf { it.isNotEmpty() }, "${s.elapsed / 1000.0} วิ".takeIf { s.elapsed > 0 }).joinToString(" ")))
             }
             val tech = buildList<Pair<String, String>> {
                 lens?.let { add(Icons.SEARCH to it) }
-                add(Icons.FRAME to "กล้องตัวที่ ${s.lens ?: "-"} · ครอป ${s.cropped?.let(::pixelsText) ?: "ไม่มี"}")
+                add(Icons.FRAME to "กล้องตัวที่ ${s.lens ?: "-"} ครอป ${s.cropped?.let(::pixelsText) ?: "ไม่มี"}")
                 if (s.reason != Decision.OFF) add(Icons.INFO to s.reason.description)
                 if (s.output.needsRaw) add(Icons.RAW to "DNG เก็บข้อมูลเซนเซอร์เต็มตามที่กล้องส่ง")
-                report?.takeIf { it.has("totalMs") }?.let { j -> add(Icons.TIMER to "เวลา AI ${j.optLong("inferenceMs")} · อ่าน ${j.optLong("decodeMs")} · ผสาน ${j.optLong("renderMs")} · บันทึก ${j.optLong("encodeMs")} · รวม ${j.optLong("totalMs")} ms") }
+                report?.takeIf { it.has("totalMs") }?.let { j -> add(Icons.TIMER to "เวลา AI ${j.optLong("inferenceMs")} อ่าน ${j.optLong("decodeMs")} ผสาน ${j.optLong("renderMs")} บันทึก ${j.optLong("encodeMs")} รวม ${j.optLong("totalMs")} ms") }
                 if (s.ai != null) add(Icons.AI to "รายละเอียดบางส่วนเป็นการคาดเดาของ AI")
             }
             runOnUiThread { if (!isDestroyed) infoPanel({ PhotoMedia.thumbnail(this, s.ai ?: s.uri, 540) }, formatTime(s.time), rows, tech) }

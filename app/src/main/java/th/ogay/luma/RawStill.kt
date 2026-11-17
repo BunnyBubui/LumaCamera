@@ -98,7 +98,7 @@ object RawStill {
                                             }
                                             session.capture(still.build(), object : CameraCaptureSession.CaptureCallback() {
                                                 override fun onCaptureCompleted(s: CameraCaptureSession, r: CaptureRequest, total: TotalCaptureResult) { result = total; tryWriteDng() }
-                                                override fun onCaptureFailed(s: CameraCaptureSession, r: CaptureRequest, f: CaptureFailure) { finish(IllegalStateException("กล้องปฏิเสธการถ่าย RAW · รหัส ${f.reason}")) }
+                                                override fun onCaptureFailed(s: CameraCaptureSession, r: CaptureRequest, f: CaptureFailure) { finish(IllegalStateException("กล้องปฏิเสธการถ่าย RAW รหัส ${f.reason}")) }
                                             }, handler)
                                         } catch (e: Exception) { finish(e) }
                                     }, 800)
@@ -109,7 +109,7 @@ object RawStill {
                     } catch (e: Exception) { finish(e) }
                 }
                 override fun onDisconnected(camera: CameraDevice) { device = camera; finish(IllegalStateException("กล้องถูกตัดการเชื่อมต่อ")) }
-                override fun onError(camera: CameraDevice, error: Int) { device = camera; finish(IllegalStateException("เปิดกล้องไม่ได้ · รหัส $error")) }
+                override fun onError(camera: CameraDevice, error: Int) { device = camera; finish(IllegalStateException("เปิดกล้องไม่ได้ รหัส $error")) }
             }, handler)
         } catch (e: Exception) { finish(e) }
     }

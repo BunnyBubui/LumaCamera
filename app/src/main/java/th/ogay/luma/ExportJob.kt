@@ -133,7 +133,7 @@ object ExportJob {
             }
             override fun onError(composition: Composition, result: ExportResult, e: ExportException) {
                 transformer = null; h.removeCallbacks(poll); file.delete()
-                fail(s, if (cancel.get()) null else "${e.errorCodeName} · ${e.cause?.message ?: e.localizedMessage}")
+                fail(s, if (cancel.get()) null else "${e.errorCodeName} ${e.cause?.message ?: e.localizedMessage}")
             }
         }, h.looper, s.plan.audioKbps)
         transformer = t; t.start(composition, file.path); h.post(poll)
@@ -145,7 +145,7 @@ object ExportJob {
             var last = 0L
             val r = runCatching { VideoEnhancer.run(app, edited, out, plan, cancel) { p ->
                 s.fraction = p.fraction; s.etaMs = p.etaMs; s.frames = p.frames; s.totalFrames = p.total; p.frame?.let { s.frame = it }
-                s.detail = if (p.backend.isNotEmpty()) "AI · ${if (plan.profile == th.ogay.luma.ai.EnhanceProfile.NATURAL) "Natural SR3" else "Classic SR2"}" else ""
+                s.detail = if (p.backend.isNotEmpty()) "AI ${if (plan.profile == th.ogay.luma.ai.EnhanceProfile.NATURAL) "Natural SR3" else "Classic SR2"}" else ""
                 val now = SystemClock.elapsedRealtime(); if (now - last > 300) { last = now; changed() }
             } }
             edited.delete()
@@ -170,7 +170,7 @@ object ExportJob {
         s.stage = s.plan.stageSave; s.fraction = 0.3f; s.detail = "กำลังบันทึกไฟล์"; changed()
         runCatching { files.map { f -> if (f.extension == "m4a" || f.extension == "wav") MediaLedger.publishAudio(app, f, f.name, s.plan.note) else MediaLedger.publishVideo(app, f, f.name, s.plan.note) } }
             .onSuccess { u -> s.uris = u; s.outputs = files; s.stage = s.plan.steps.size; s.fraction = 0f; s.finished = true; s.detail = "เสร็จแล้ว"; end() }
-            .onFailure { fail(s, "บันทึกไฟล์ไม่ได้ · ${it.localizedMessage}") }
+            .onFailure { fail(s, "บันทึกไฟล์ไม่ได้ ${it.localizedMessage}") }
     }
 
     private fun fail(s: State, message: String?) {
@@ -208,7 +208,7 @@ class ExportService : Service() {
     private fun refresh() {
         val s = ExportJob.state ?: return stop()
         if (!s.active) {
-            if (s.finished && !ExportJob.appVisible()) LiveNotice.done(this, 47002, "ส่งออกวิดีโอเสร็จแล้ว", "บันทึกลงแกลเลอรีแล้ว · แตะเพื่อดู", openGallery())
+            if (s.finished && !ExportJob.appVisible()) LiveNotice.done(this, 47002, "ส่งออกวิดีโอเสร็จแล้ว", "บันทึกลงแกลเลอรีแล้ว แตะเพื่อดู", openGallery())
             if (s.error != null && !ExportJob.appVisible()) LiveNotice.done(this, 47002, "ส่งออกวิดีโอไม่สำเร็จ", s.error ?: "", openGallery())
             return stop()
         }
@@ -220,8 +220,8 @@ class ExportService : Service() {
         val s = ExportJob.state
         val pc = s?.percent() ?: -1
         val left = s?.leftMs()?.takeIf { it > 0 }
-        val eta = left?.let { " · " + Eta.text(it) } ?: ""
-        return LiveNotice.progress(this, "Lumora · ส่งออกวิดีโอ", (s?.stepName() ?: "กำลังเริ่ม") + eta, pc, openProcess(),
+        val eta = left?.let { " " + Eta.text(it) } ?: ""
+        return LiveNotice.progress(this, "Lumora ส่งออกวิดีโอ", (s?.stepName() ?: "กำลังเริ่ม") + eta, pc, openProcess(),
             PendingIntent.getService(this, 1, Intent(this, ExportService::class.java).setAction(CANCEL), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT),
             left?.let { Eta.chip(it) })
     }

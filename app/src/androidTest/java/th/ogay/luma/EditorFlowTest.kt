@@ -39,12 +39,12 @@ class EditorFlowTest {
     private fun until(ms: Long, what: String, check: () -> Boolean) {
         val end = SystemClock.elapsedRealtime() + ms
         while (SystemClock.elapsedRealtime() < end) { if (check()) return; SystemClock.sleep(200) }
-        assertTrue("$what · ${GlassNav.dump(device)}", check())
+        assertTrue("$what ${GlassNav.dump(device)}", check())
     }
     /** Waits for a control to appear, then taps it; the editor animates between tools, so an immediate lookup can miss. */
     private fun tap(sel: androidx.test.uiautomator.BySelector, what: String, ms: Long = 10000) {
         val o = device.wait(Until.findObject(sel), ms)
-        assertNotNull("$what is missing · ${GlassNav.dump(device)}", o)
+        assertNotNull("$what is missing ${GlassNav.dump(device)}", o)
         o!!.click()
     }
     private fun picture(w: Int, h: Int): File {
@@ -58,7 +58,7 @@ class EditorFlowTest {
         val src = picture(400, 300)
         ActivityScenario.launch<PhotoEditorActivity>(PhotoEditorActivity.intent(context, Uri.fromFile(src))).use {
             val turn = device.wait(Until.findObject(By.desc("หมุน 90°")), 10000)
-            assertNotNull("Rotate chip is missing · ${GlassNav.dump(device)}", turn)
+            assertNotNull("Rotate chip is missing ${GlassNav.dump(device)}", turn)
             turn!!.click()
             device.findObject(By.desc("ปรับ")).click()
             assertNotNull(device.wait(Until.findObject(By.desc("ความสว่าง")), 5000))
@@ -75,14 +75,14 @@ class EditorFlowTest {
         val clip = TestMedia.clip(inst)
         val before = MediaLedger.all(context).map { it.uri.toString() }.toSet()
         ActivityScenario.launch<VideoEditorActivity>(VideoEditorActivity.intent(context, Uri.fromFile(clip))).use {
-            assertNotNull("Speed tab is missing · ${GlassNav.dump(device)}", device.wait(Until.findObject(By.desc("ความเร็ว")), 10000))
+            assertNotNull("Speed tab is missing ${GlassNav.dump(device)}", device.wait(Until.findObject(By.desc("ความเร็ว")), 10000))
             device.findObject(By.desc("ความเร็ว")).click()
             // The speed tool now uses a slider plus an explicit numeric entry, not a "2×" chip.
-            assertNotNull("Numeric speed control missing · ${GlassNav.dump(device)}",
+            assertNotNull("Numeric speed control missing ${GlassNav.dump(device)}",
                 device.wait(Until.findObject(By.desc("ใส่ตัวเลขความเร็ว")), 10000))
             device.findObject(By.desc("ใส่ตัวเลขความเร็ว")).click()
             val speedInput = device.wait(Until.findObject(By.clazz("android.widget.EditText")), 5000)
-            assertNotNull("Speed input missing · ${GlassNav.dump(device)}", speedInput)
+            assertNotNull("Speed input missing ${GlassNav.dump(device)}", speedInput)
             speedInput!!.text = "2"
             tap(By.text("ตกลง"), "OK button")
             tap(By.desc("ฟิลเตอร์"), "Filter tab")
@@ -102,7 +102,7 @@ class EditorFlowTest {
             tap(By.desc("เริ่มส่งออก"), "Start export button")
             // A short clip can finish (and the editor close) before the progress card is ever seen, so only the result is checked.
             until(150000, "No edited clip was published") { device.findObject(By.text("ส่งออกไม่ได้")) != null || MediaLedger.all(context).any { it.uri.toString() !in before && it.title.startsWith("Lumora_EDIT_") } }
-            assertTrue("Export failed · ${device.findObject(By.textContains("วิดีโอต้นฉบับยังอยู่ครบ"))?.text}", device.findObject(By.text("ส่งออกไม่ได้")) == null)
+            assertTrue("Export failed ${device.findObject(By.textContains("วิดีโอต้นฉบับยังอยู่ครบ"))?.text}", device.findObject(By.text("ส่งออกไม่ได้")) == null)
         }
         clip.delete()
     }

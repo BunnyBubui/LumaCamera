@@ -65,8 +65,8 @@ class CameraActivity : ComponentActivity() {
         const val FRONT_ZOOM = 20f
         /** Fast-shot types: shutter time in nanoseconds and the ISO that keeps the picture usable. */
         val SPORT_KINDS = listOf(
-            Triple("เดิน · เด็กเล่น", 1_000_000_000L / 500, 400), Triple("วิ่ง · กีฬาทั่วไป", 1_000_000_000L / 1000, 800),
-            Triple("รถ · มอเตอร์สปอร์ต", 1_000_000_000L / 2000, 1600), Triple("นกบิน · ลูกบอลเร็ว", 1_000_000_000L / 4000, 3200))
+            Triple("เดิน เด็กเล่น", 1_000_000_000L / 500, 400), Triple("วิ่ง กีฬาทั่วไป", 1_000_000_000L / 1000, 800),
+            Triple("รถ มอเตอร์สปอร์ต", 1_000_000_000L / 2000, 1600), Triple("นกบิน ลูกบอลเร็ว", 1_000_000_000L / 4000, 3200))
         /** Walking figure, runner, car, bird in flight: one for each fast-shot type. */
         val SPORT_ICONS = listOf(
             "M13 3.5a1.6 1.6 0 1 0 0 .1 M12 7.5l-1.5 6 2.5 3v4.5 M10.5 13.5L8 21 M12 7.5l3 3.5 2.5.5 M12 7.5L9 9.5l-1 3",
@@ -78,7 +78,7 @@ class CameraActivity : ComponentActivity() {
         val APERTURES = listOf(1.2f, 1.4f, 1.8f, 2f, 2.8f, 4f, 5.6f, 8f, 11f, 16f)
         val ALL = listOf(
             BarMode("PORTRAIT", "บุคคล", Icons.PORTRAIT), BarMode("PHOTO", "ภาพถ่าย", Icons.PHOTO),
-            BarMode("VIDEO", "วิดีโอ", Icons.VIDEO), BarMode("PRO", "โปร", Icons.PRO),
+            BarMode("HDR", "Natural HDR", Icons.HDR), BarMode("VIDEO", "วิดีโอ", Icons.VIDEO), BarMode("PRO", "โปร", Icons.PRO),
             BarMode("HIRES", "ความละเอียดสูง", Icons.HIRES),
             BarMode("QUICK", "ถ่ายเร็ว", Icons.FLASH), BarMode("FILM", "ฟิล์ม", Icons.FILM),
             BarMode("NIGHT", "กลางคืน", Icons.NIGHT), BarMode("PANORAMA", "พาโนรามา", Icons.PANO), BarMode("DOCUMENT", "เอกสาร", Icons.DOC))
@@ -92,7 +92,7 @@ class CameraActivity : ComponentActivity() {
         val QUICK_MODES = listOf(PhotoMode.FLASH_NIGHT, PhotoMode.FLASH_FAST, PhotoMode.SPORT)
         val QUICK_NAMES = listOf("แฟลชเร็ว", "แฟลชเร็วพิเศษ", "ถ่ายเร็ว")
         fun barKey(m: PhotoMode) = if (m in QUICK_MODES) "QUICK" else m.name
-        const val DEFAULT_BAR = "PORTRAIT,PHOTO,VIDEO"
+        const val DEFAULT_BAR = "PORTRAIT,PHOTO,HDR,VIDEO"
         val LOOKS = listOf("มาตรฐาน", "สดใส", "อบอุ่น", "เย็น", "ฟิล์ม", "ขาวดำ")
         val NIGHT_FRAMES = listOf(6, 9, 12)
     }
@@ -250,14 +250,19 @@ class CameraActivity : ComponentActivity() {
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
         th.ogay.luma.backend.CameraCapabilityRepository.refreshAsync(this)   // background; the camera opens on CameraX without waiting
+        if (state == null && intent.getBooleanExtra(HomeActivity.FROM_HOME, false) && !Glass.reduced(this)) Cine.enterReveal(this) { cineReveal() }
         requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT   // the screen stays upright; only the picture and the icons turn
         output = runCatching { CaptureOutput.valueOf(prefs.getString("output", CaptureOutput.JPEG.name)!!) }.getOrDefault(CaptureOutput.JPEG)
         // RAW Log is no longer offered: anyone who had it keeps plain RAW.
         if (output == CaptureOutput.RAW_LOG) { output = CaptureOutput.RAW; prefs.edit().putString("output", output.name).apply() }
         if (output.enhance) output = CaptureOutput.JPEG
         if (prefs.getInt("night_frames", 6) > 12 || prefs.getInt("night_frames", 6) < 6) prefs.edit().putInt("night_frames", 6).apply()
-        // HDR is no longer a mode; a phone that was left on it opens in Photo.
-        mode = runCatching { PhotoMode.valueOf(prefs.getString("photo_mode", "PHOTO")!!) }.getOrDefault(PhotoMode.PHOTO).let { if (it == PhotoMode.HDR) PhotoMode.PHOTO else it }
+        // Add Natural HDR to existing custom mode bars once; future user removals stay respected.
+        if (!prefs.getBoolean("natural_hdr_bar_migrated", false)) {
+            val oldBar = prefs.getString("mode_bar", DEFAULT_BAR) ?: DEFAULT_BAR
+            prefs.edit().putString("mode_bar", addNaturalHdrMode(oldBar)).putBoolean("natural_hdr_bar_migrated", true).apply()
+        }
+        mode = runCatching { PhotoMode.valueOf(prefs.getString("photo_mode", "PHOTO")!!) }.getOrDefault(PhotoMode.PHOTO)
         if (ALL.none { it.key == barKey(mode) }) mode = PhotoMode.PHOTO   // a mode that no longer exists (night, pro video) falls back to photo
         if(ALL.none { it.key == barKey(mode) })mode=PhotoMode.PHOTO
         shutterSound.load(MediaActionSound.SHUTTER_CLICK)
@@ -294,7 +299,7 @@ class CameraActivity : ComponentActivity() {
                     val ex=ExtensionsManager.getInstanceAsync(this,provider!!)
                     ex.addListener({runCatching{extensions=ex.get();if(!isDestroyed&&!busy&&granted()&&mode in listOf(PhotoMode.NIGHT,PhotoMode.HDR,PhotoMode.PORTRAIT))bind()}},main)
                 }
-                catch (e: Exception) { cameraError("เปิดระบบกล้องไม่ได้ · ${e.cause?.localizedMessage ?: e.localizedMessage}") }
+                catch (e: Exception) { cameraError("เปิดระบบกล้องไม่ได้ ${e.cause?.localizedMessage ?: e.localizedMessage}") }
             }
         }, main)
     }
@@ -552,6 +557,17 @@ class CameraActivity : ComponentActivity() {
         return (host.height - (loc[1] - h[1]).toFloat()).coerceAtLeast(0f)
     }
     private var dockView: View? = null
+
+    /** Film-style entrance: the picture pushes in from slightly large and dim while the controls rise. */
+    private fun cineReveal() {
+        if (::preview.isInitialized) {
+            val sx = preview.scaleX; val sy = preview.scaleY
+            preview.scaleX = sx * 1.1f; preview.scaleY = sy * 1.1f; preview.alpha = 0.35f
+            preview.animate().scaleX(sx).scaleY(sy).alpha(1f).setDuration(650).setInterpolator(android.view.animation.DecelerateInterpolator(2f)).start()
+        }
+        dockView?.let { Cine.rise(it, 240, dp(24).toFloat()) }
+        Glass.tick(window.decorView, android.view.HapticFeedbackConstants.CLOCK_TICK)
+    }
     private lateinit var apertureButton: TextView
     private lateinit var portraitView: ImageView
     private var portraitLive: PortraitPreview? = null
@@ -618,7 +634,7 @@ class CameraActivity : ComponentActivity() {
         nightCard.addView(IconView(this, "M12 4v16 M4 12h16 M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8z", 1.6f).apply { tint = Glass.ACCENT }, dp(56), dp(56))
         nightCard.addView(nightCount, -2, -2)
         nightCard.addView(text("ถือกล้องให้นิ่ง", 13f, Glass.TEXT, true), -2, -2)
-        nightCard.addView(text("กำลังรวมแสงกลางคืน · แตะชัตเตอร์เพื่อหยุด", 11.5f, Glass.TEXT2).apply { maxLines = 3; ellipsize = null; gravity = Gravity.CENTER }, -2, -2)
+        nightCard.addView(text("กำลังรวมแสงกลางคืน แตะชัตเตอร์เพื่อหยุด", 11.5f, Glass.TEXT2).apply { maxLines = 3; ellipsize = null; gravity = Gravity.CENTER }, -2, -2)
         stage.addView(nightCard, FrameLayout.LayoutParams(dp(230), -2, Gravity.CENTER))
     }
     private fun buildMiniMap() {
@@ -700,7 +716,7 @@ class CameraActivity : ComponentActivity() {
         if (output != CaptureOutput.JPEG && mode in listOf(PhotoMode.PHOTO, PhotoMode.PRO)) statusIcon(Icons.FILE, after = output.label.replace(" + ", "+"), name = "รูปแบบไฟล์ ${output.label}")
         if (aeLock || pressLock) statusIcon(Icons.LOCK, after = "AE", name = "ล็อกความสว่าง")
         if (macro) statusIcon(Icons.FLOWER, name = "มาโคร เปิด")
-        if (nightActive() && !longActive()) statusIcon(Icons.NIGHT, after = listOf("2s", "3s", "5s")[nightIndex()], name = "กลางคืน · " + if (activeExtension) "ระบบกล้อง" else "AI รวมเฟรม")
+        if (nightActive() && !longActive()) statusIcon(Icons.NIGHT, after = listOf("2s", "3s", "5s")[nightIndex()], name = "กลางคืน " + if (activeExtension) "ระบบกล้อง" else "AI รวมเฟรม")
         statusRow.contentDescription = "สิ่งที่เปิดอยู่: " + (0 until statusRow.childCount).joinToString(", ") { statusRow.getChildAt(it).contentDescription }
     }
     private fun nightIndex() = NIGHT_FRAMES.indexOf(prefs.getInt("night_frames", 6)).coerceAtLeast(0)
@@ -710,10 +726,10 @@ class CameraActivity : ComponentActivity() {
     private fun longAllowed() = mode in LONG_MODES && !activeExtension
     private fun longActive() = longSeconds() > 0 && longAllowed()
     private fun chooseLong(v: View) {
-        val opts = listOf(GlassMenu.Option("ปิด", Icons.CLOSE, "ถ่ายปกติ")) + (1..3).map { GlassMenu.Option("$it วินาที", Icons.NIGHT, "รวมแสง ${it * LONG_FRAMES} เฟรมเป็นภาพเดียว · ถือนิ่ง") }
+        val opts = listOf(GlassMenu.Option("ปิด", Icons.CLOSE, "ถ่ายปกติ")) + (1..3).map { GlassMenu.Option("$it วินาที", Icons.NIGHT, "รวมแสง ${it * LONG_FRAMES} เฟรมเป็นภาพเดียว ถือนิ่ง") }
         menu.show(v, "ถ่ายนานขึ้น", opts, longSeconds()) { i ->
             prefs.edit().putInt("long_exposure", i).apply(); refresh(); refreshStatus()
-            hint(if (i == 0) "ปิดถ่ายนานขึ้น" else "ถ่ายนานขึ้น $i วินาที · กดชัตเตอร์แล้วถือนิ่ง", 1500)
+            hint(if (i == 0) "ปิดถ่ายนานขึ้น" else "ถ่ายนานขึ้น $i วินาที กดชัตเตอร์แล้วถือนิ่ง", 1500)
         }
     }
     private fun styleLong() {
@@ -725,7 +741,7 @@ class CameraActivity : ComponentActivity() {
     }
 
     private fun setEv(v: Float, fromGesture: Boolean) {
-        ev = v.coerceIn(-2f, 2f); expRail.value = ev / 2; expRail.label = (if (ev > 0) "+" else if (ev < 0) "" else "±") + String.format(Locale.US, "%.1f", ev) + if (aeLock) " · ล็อก" else ""
+        ev = v.coerceIn(-2f, 2f); expRail.value = ev / 2; expRail.label = (if (ev > 0) "+" else if (ev < 0) "" else "±") + String.format(Locale.US, "%.1f", ev) + if (aeLock) " ล็อก" else ""
         val cam = camera ?: return; val st = cam.cameraInfo.exposureState
         if (!st.isExposureCompensationSupported) { if (fromGesture) hint("กล้องนี้ไม่เปิดการชดเชยแสงให้แอป", 1500); return }
         val step = st.exposureCompensationStep.toFloat(); val r = st.exposureCompensationRange
@@ -987,7 +1003,7 @@ class CameraActivity : ComponentActivity() {
         dialTitle.text = chipTitle(k); val values = chipValues(k)
         slider.lo = if (chipSep(k)) 1 else 0; slider.values = values; slider.grad = chipGrad(k); slider.index = chipIndex(k)
         dialReset.visibility = if (k == "KIND") View.GONE else View.VISIBLE
-        dialReset.text = if (k == "EV" || k == "TINT" || k == "CON") "±0" else if (k == "F") "f/2.8" else if (k == "TIMER") "ปิด" else "AUTO"; if (k == "F") dialTitle.text = "เบลอพื้นหลัง · " + blurWord(F_STEPS[chipIndex("F")]); updateDialValue(k)
+        dialReset.text = if (k == "EV" || k == "TINT" || k == "CON") "±0" else if (k == "F") "f/2.8" else if (k == "TIMER") "ปิด" else "AUTO"; if (k == "F") dialTitle.text = "เบลอพื้นหลัง " + blurWord(F_STEPS[chipIndex("F")]); updateDialValue(k)
         if (first || dial.visibility != View.VISIBLE) { dial.visibility = View.VISIBLE; Liquid.show(dial, dial.width / 2f, dial.height.toFloat(), false) }
         else Liquid.show(dial, dial.width / 2f, dial.height.toFloat(), false)
         zooms.animate().alpha(0f).setDuration(160).start()
@@ -1003,7 +1019,7 @@ class CameraActivity : ComponentActivity() {
             preview.removeCallbacks(quickSwitch); quickTarget = pm; preview.postDelayed(quickSwitch, 320); return
         }
         if (k == "TIMER") { prefs.edit().putString("timer", SelfTimer.STEPS[i.coerceIn(0, SelfTimer.STEPS.size - 1)].toString()).apply(); updateDialValue(k); refreshStatus(); return }
-        if (k == "F") { prefs.edit().putFloat("portrait_f", F_STEPS[i.coerceIn(0, F_STEPS.size - 1)]).apply(); updateDialValue(k); dialTitle.text = "เบลอพื้นหลัง · " + blurWord(F_STEPS[i.coerceIn(0, F_STEPS.size - 1)]); refresh(); return }
+        if (k == "F") { prefs.edit().putFloat("portrait_f", F_STEPS[i.coerceIn(0, F_STEPS.size - 1)]).apply(); updateDialValue(k); dialTitle.text = "เบลอพื้นหลัง " + blurWord(F_STEPS[i.coerceIn(0, F_STEPS.size - 1)]); refresh(); return }
         val m = manual ?: return
         when (k) {
             "ISO" -> m.setIso(if (i <= 0) null else m.isoValues.getOrNull(i - 1))
@@ -1030,12 +1046,12 @@ class CameraActivity : ComponentActivity() {
         // Close focus lives on the lens that focuses nearest (often the ultra-wide): move there, then focus at its limit.
         if (macro) { macroReturn = ratio; if (abs(lens.first - ratio) > 0.05f) animateZoom(lens.first.coerceIn(range().first, range().second)) } else macroReturn?.let { animateZoom(it) }
         m.setFocus(if (macro) m.minFocus else null)
-        hint(if (macro) "มาโคร · ใกล้สุดราว ${(100f / lens.second).roundToInt()} ซม. ที่ ${zoomText(lens.first)}" else "ปิดมาโคร", 1600); refresh()
+        hint(if (macro) "มาโคร ใกล้สุดราว ${(100f / lens.second).roundToInt()} ซม. ที่ ${zoomText(lens.first)}" else "ปิดมาโคร", 1600); refresh()
     }
     private fun toggleNight() {
-        if (mode == PhotoMode.NIGHT) { hint("โหมดกลางคืนเปิดอยู่แล้ว · กดค้างเพื่อเลือกเวลา", 1500); return }
+        if (mode == PhotoMode.NIGHT) { hint("โหมดกลางคืนเปิดอยู่แล้ว กดค้างเพื่อเลือกเวลา", 1500); return }
         nightOn = !nightOn; prefs.edit().putBoolean("night_toggle", nightOn).apply()
-        hint(if (nightOn) "ถ่ายกลางคืน · กดชัตเตอร์แล้วถือนิ่ง" else "ปิดถ่ายกลางคืน", 1500); refresh()
+        hint(if (nightOn) "ถ่ายกลางคืน กดชัตเตอร์แล้วถือนิ่ง" else "ปิดถ่ายกลางคืน", 1500); refresh()
     }
     private fun fText(f: Float) = if (f % 1f == 0f) f.toInt().toString() else String.format(Locale.US, "%.1f", f)
     /** Portrait background blur as an f-number. Phone lenses have a fixed aperture: this sets the strength of the simulated blur. */
@@ -1043,7 +1059,7 @@ class CameraActivity : ComponentActivity() {
         val current = prefs.getFloat("portrait_f", 2.8f)
         menu.show(anchor, "เบลอพื้นหลัง (จำลอง)", APERTURES.map { GlassMenu.Option("f/${fText(it)}", Icons.PORTRAIT, when { it <= 1.4f -> "เบลอมากที่สุด"; it <= 2.8f -> "เบลอชัด"; it <= 5.6f -> "เบลอพอดี"; else -> "เบลอน้อย" }) }, APERTURES.indexOfFirst { abs(it - current) < 0.01f }) { i ->
             prefs.edit().putFloat("portrait_f", APERTURES[i]).apply(); refresh()
-            hint("f/${fText(APERTURES[i])} · เบลอจำลองตอนบันทึก ไม่ใช่รูรับแสงจริง", 1800)
+            hint("f/${fText(APERTURES[i])} เบลอจำลองตอนบันทึก ไม่ใช่รูรับแสงจริง", 1800)
         }
     }
     private fun chooseNightLength(anchor: View) {
@@ -1093,7 +1109,10 @@ class CameraActivity : ComponentActivity() {
                 grid.removeAllViews()
                 val flashNames = listOf("ปิด", "อัตโนมัติ", "เปิด"); val flashModes = listOf(ImageCapture.FLASH_MODE_OFF, ImageCapture.FLASH_MODE_AUTO, ImageCapture.FLASH_MODE_ON)
                 tile("แฟลช", if (flash == ImageCapture.FLASH_MODE_OFF) Icons.FLASH_OFF else Icons.FLASH, flashNames[flashModes.indexOf(flash).coerceAtLeast(0)], flash != ImageCapture.FLASH_MODE_OFF, isMenu = true) { v ->
-                    menu.show(v, "แฟลช", listOf(GlassMenu.Option("ปิด", Icons.FLASH_OFF), GlassMenu.Option("อัตโนมัติ", Icons.FLASH, "เปิดเมื่อแสงน้อย"), GlassMenu.Option("เปิด", Icons.FLASH)), flashModes.indexOf(flash)) { i -> flash = flashModes[i]; capture?.flashMode = flash; refresh(); reopen() }
+                    menu.show(v, "แฟลช", listOf(GlassMenu.Option("ปิด", Icons.FLASH_OFF), GlassMenu.Option("อัตโนมัติ", Icons.FLASH, "เปิดเมื่อแสงน้อย"), GlassMenu.Option("เปิด", Icons.FLASH)), flashModes.indexOf(flash)) { i ->
+                        if (mode == PhotoMode.HDR && i != 0) hint("Natural HDR ไม่รองรับแฟลช ปิดแฟลชไว้เพื่อถ่ายหลายค่าแสง", 2300)
+                        else { flash = flashModes[i]; capture?.flashMode = flash; refresh(); reopen() }
+                    }
                 }
                 val timer = prefs.getString("timer", "0")?.toIntOrNull() ?: 0
                 // Like the other adjusters: the sheet closes and a slider with every step opens above the shutter.
@@ -1106,7 +1125,7 @@ class CameraActivity : ComponentActivity() {
                 }
                 val outs = CaptureOutput.entries.filter { !it.enhance && it != CaptureOutput.RAW_LOG && (!it.needsRaw || rawAvailable) }
                 tile("รูปแบบไฟล์", Icons.FILE, output.label, output != CaptureOutput.JPEG, isMenu = true) { v ->
-                    menu.show(v, "รูปแบบไฟล์", outs.map { GlassMenu.Option(it.label, if (it.needsRaw) Icons.RAW else Icons.FILE, when (it) { CaptureOutput.JPEG -> "ไฟล์เล็ก เปิดได้ทุกที่"; CaptureOutput.PNG -> "ไม่สูญเสียคุณภาพ ไฟล์ใหญ่"; CaptureOutput.WEBP -> "เล็กกว่า JPEG คุณภาพใกล้เคียง"; CaptureOutput.RAW -> "DNG จากเซนเซอร์"; else -> "DNG · ดูภาพแบบ Log แบนขณะถ่าย" }) }, outs.indexOf(output)) { i -> setOutput(outs[i]); reopen() }
+                    menu.show(v, "รูปแบบไฟล์", outs.map { GlassMenu.Option(it.label, if (it.needsRaw) Icons.RAW else Icons.FILE, when (it) { CaptureOutput.JPEG -> "ไฟล์เล็ก เปิดได้ทุกที่"; CaptureOutput.PNG -> "ไม่สูญเสียคุณภาพ ไฟล์ใหญ่"; CaptureOutput.WEBP -> "เล็กกว่า JPEG คุณภาพใกล้เคียง"; CaptureOutput.RAW -> "DNG จากเซนเซอร์"; else -> "DNG ดูภาพแบบ Log แบนขณะถ่าย" }) }, outs.indexOf(output)) { i -> setOutput(outs[i]); reopen() }
                 }
                 val crops = listOf("0", "1", "2", "3.5"); val cropNow = prefs.getString("crop_from", null) ?: if (prefs.getBoolean("software", false)) "1" else "0"
                 tile("ครอปเลนส์", Icons.SEARCH, if (cropNow == "0") "ปิด" else "${cropNow}×", cropNow != "0", isMenu = true) { v ->
@@ -1335,9 +1354,9 @@ class CameraActivity : ComponentActivity() {
         fun fillFilms(scrollToCurrent: Boolean = true) {
             strip.removeAllViews(); cards.clear(); lookImages.clear()
             val list = films()
-            sectionName.text = when { query.isNotBlank() -> "ผลการค้นหา · ${list.size}"; savedOnly -> "ฟิล์มที่บันทึกไว้"; else -> "โทนฟิล์มยอดนิยม" }
+            sectionName.text = when { query.isNotBlank() -> "ผลการค้นหา ${list.size}"; savedOnly -> "ฟิล์มที่บันทึกไว้"; else -> "โทนฟิล์มยอดนิยม" }
             tabScroll.animate().alpha(if (query.isNotBlank() || savedOnly) 0.35f else 1f).setDuration(200).start()
-            if (list.isEmpty()) strip.addView(text(if (query.isNotBlank()) "ไม่พบฟิล์มที่ตรงกับคำค้น" else "ยังไม่มีฟิล์มที่บันทึก · แตะรูปหัวใจที่ฟิล์มที่ชอบ", 13f, Glass.TEXT2).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(dp(300), dp(146)))
+            if (list.isEmpty()) strip.addView(text(if (query.isNotBlank()) "ไม่พบฟิล์มที่ตรงกับคำค้น" else "ยังไม่มีฟิล์มที่บันทึก แตะรูปหัวใจที่ฟิล์มที่ชอบ", 13f, Glass.TEXT2).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(dp(300), dp(146)))
             list.forEach { f -> val c = card(f); cards += f to c; strip.addView(c, LinearLayout.LayoutParams(dp(108), dp(146)).apply { setMargins(dp(4), 0, dp(4), 0) }) }
             mark(false)
             val at = cards.indexOfFirst { it.first.id == current().id }
@@ -1499,7 +1518,7 @@ class CameraActivity : ComponentActivity() {
         output = choice
         prefs.edit().putString("output", choice.name).putString("photo_mode", mode.name).apply()
         applyLogView()
-        if (choice == CaptureOutput.RAW_LOG && android.os.Build.VERSION.SDK_INT < 33) notice("ภาพพรีวิวแบบ Log ต้องใช้ Android 13 ขึ้นไป · ไฟล์ DNG ยังบันทึกตามปกติ")
+        if (choice == CaptureOutput.RAW_LOG && android.os.Build.VERSION.SDK_INT < 33) notice("ภาพพรีวิวแบบ Log ต้องใช้ Android 13 ขึ้นไป ไฟล์ DNG ยังบันทึกตามปกติ")
         freezeFrame(); bind(); syncModeStrip(true)
     }
 
@@ -1513,7 +1532,7 @@ class CameraActivity : ComponentActivity() {
             val done = text("เสร็จ", 14f, Glass.ON_ACCENT, true).apply { gravity = Gravity.CENTER; background = glass(18, Glass.ACCENT); setPadding(dp(16), 0, dp(16), 0) }
             head.addView(FrameLayout(this).apply { isClickable = true; contentDescription = "เสร็จ"; glassTouch(); setOnClickListener { sheet.close() }; addView(done, FrameLayout.LayoutParams(-2, dp(36), Gravity.CENTER)) }, -2, dp(48))
             box.addView(head, -1, dp(48))
-            box.addView(text("ลากเพื่อเรียงลำดับ · กด x เพื่อเอาออกจากแถบ", 12f, Glass.TEXT2).apply { setPadding(dp(2), dp(2), 0, dp(6)) }, -1, -2)
+            box.addView(text("ลากเพื่อเรียงลำดับ กด x เพื่อเอาออกจากแถบ", 12f, Glass.TEXT2).apply { setPadding(dp(2), dp(2), 0, dp(6)) }, -1, -2)
             val inBar = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; clipChildren = false }
             val more = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
             val moreTitle = text("โหมดอื่น ๆ", 13f, Glass.TEXT2).apply { setPadding(dp(2), dp(14), 0, dp(4)) }
@@ -1585,7 +1604,7 @@ class CameraActivity : ComponentActivity() {
     private fun useTemporary(key: String) {
         val m = ALL.first { it.key == key }
         val pm = runCatching { PhotoMode.valueOf(key) }.getOrNull()
-        if (pm != null) { selectMode(pm); hint("ใช้โหมด${m.title} · กด + เพื่อเพิ่มลงแถบถาวร", 1800) }
+        if (pm != null) { selectMode(pm); hint("ใช้โหมด${m.title} กด + เพื่อเพิ่มลงแถบถาวร", 1800) }
         else { barKeys = barList() + key; pickBar(barKeys.size - 1) }
     }
 
@@ -1683,7 +1702,8 @@ class CameraActivity : ComponentActivity() {
             fun selector() = if(rear) CameraSelector.DEFAULT_BACK_CAMERA else CameraSelector.DEFAULT_FRONT_CAMERA
             if(!provider.hasCamera(selector())) rear=!rear
             val baseSelector=selector()
-            val extension=when(mode){PhotoMode.HDR->ExtensionMode.HDR;PhotoMode.NIGHT->ExtensionMode.NIGHT;PhotoMode.PORTRAIT->ExtensionMode.BOKEH;else->ExtensionMode.NONE}
+            // Natural HDR is Lumora exposure fusion, not the vendor HDR extension.
+            val extension=when(mode){PhotoMode.NIGHT->ExtensionMode.NIGHT;PhotoMode.PORTRAIT->ExtensionMode.BOKEH;else->ExtensionMode.NONE}
             // Maker portrait/night extensions open slowly (or not at all) on some phones and hide the f-number control,
             // so Lumora's own portrait blur and AI night are the default; the maker versions are an opt-in setting.
             val oemAllowed=extension==ExtensionMode.HDR||extension==ExtensionMode.NIGHT||prefs.getBoolean("oem_extensions",false)
@@ -1694,7 +1714,7 @@ class CameraActivity : ComponentActivity() {
             runCatching{Camera2CameraInfo.from(info).getCameraCharacteristic(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)?.getOutputSizes(ImageFormat.JPEG)?.let{ val f=Aspects.detect(it); if(f.isNotEmpty()) prefs.edit().putString("native_aspects",f.joinToString(",")).apply() }}
             val formats=captureCaps.getOrPut(info){ImageCapture.getImageCaptureCapabilities(info).supportedOutputFormats.toSet()}
             rawAvailable = formats.contains(ImageCapture.OUTPUT_FORMAT_RAW_JPEG)
-            if(output.needsRaw&&!rawAvailable){output=CaptureOutput.JPEG;prefs.edit().putString("output",output.name).apply();notice("กล้องนี้ไม่รองรับ RAW · เปลี่ยนเป็น JPEG แล้ว")}
+            if(output.needsRaw&&!rawAvailable){output=CaptureOutput.JPEG;prefs.edit().putString("output",output.name).apply();notice("กล้องนี้ไม่รองรับ RAW เปลี่ยนเป็น JPEG แล้ว")}
                         val key=listOf(rear,activeExtension,if(activeExtension)extension else ExtensionMode.NONE,output.needsRaw,
                 // The three quick kinds share one stream set; their exposure and flash are per-request settings,
                 // so switching between them keeps the session instead of closing and reopening the camera.
@@ -1764,7 +1784,7 @@ class CameraActivity : ComponentActivity() {
         if(mode==PhotoMode.HIRES&&!hiResHintShown){hiResHintShown=true
             val current=camera?.let{runCatching{Camera2CameraInfo.from(it.cameraInfo).cameraId}.getOrNull()}
             val full=HiResShot.find(this,current,rear)
-            hint(if(full!=null)"เครื่องเปิดโหมดเต็มเซนเซอร์ ${pixelsText(full.second.width.toLong()*full.second.height)} ให้แอป" else "เครื่องนี้ไม่เปิดเซนเซอร์เต็มให้แอปอื่น · ถ่ายขนาดสูงสุดที่เปิดให้ แล้วใช้ AI ขยาย ×2 เป็นราว 50 MP · ให้",3200)}
+            hint(if(full!=null)"เครื่องเปิดโหมดเต็มเซนเซอร์ ${pixelsText(full.second.width.toLong()*full.second.height)} ให้แอป" else "เครื่องนี้ไม่เปิดเซนเซอร์เต็มให้แอปอื่น ถ่ายขนาดสูงสุดที่เปิดให้ แล้วใช้ AI ขยาย ×2 เป็นราว 50 MP ให้",3200)}
         preview.post{applyLook()}
         applyLogView()
         camera?.let { cam -> configureFaces(faces, cam, mask); if (rear) findMacroLens(cam) else macroLens = null }
@@ -1786,7 +1806,7 @@ class CameraActivity : ComponentActivity() {
         val ns = if (safe > 0 && k.second < safe) safe else k.second
         val iso = m.isoValues.minBy { kotlin.math.abs(it - (k.third * (k.second.toDouble() / ns)).toInt().coerceAtLeast(50)) }
         m.setIso(iso); m.setShutter(ns)
-        if (ns != k.second && !flickerTold) { flickerTold = true; hint("พบแสงไฟกะพริบ · ใช้ชัตเตอร์ 1/${1_000_000_000L / ns} เพื่อไม่ให้มีแถบดำ", 2600) }
+        if (ns != k.second && !flickerTold) { flickerTold = true; hint("พบแสงไฟกะพริบ ใช้ชัตเตอร์ 1/${1_000_000_000L / ns} เพื่อไม่ให้มีแถบดำ", 2600) }
     }
     private lateinit var faces: FaceOverlay
     /** RAW Log shows the flat Log look on the live preview only; the DNG stays untouched sensor data. */
@@ -1841,7 +1861,7 @@ class CameraActivity : ComponentActivity() {
             }
         },main)
         if(light) refreshZoomUi() else refresh()
-        if(extra>1.01f&&!superHint){superHint=true;hint("เกินซูมของกล้อง · ภาพที่บันทึกจะขยายด้วย AI SR1",2200)}
+        if(extra>1.01f&&!superHint){superHint=true;hint("เกินซูมของกล้อง ภาพที่บันทึกจะขยายด้วย AI SR1",2200)}
     }
     private var superHint=false
     private var lastHardwareZoom=-1f
@@ -1920,7 +1940,7 @@ class CameraActivity : ComponentActivity() {
                 if (!isDestroyed && night) nightProgress(done, total)
                 else if (!isDestroyed) {
                     viewfinderNotice.accessibilityLiveRegion=View.ACCESSIBILITY_LIVE_REGION_NONE
-                    viewfinderNotice.text = "ถ่าย $done/$total เฟรม · แตะเพื่อหยุด"
+                    viewfinderNotice.text = "ถ่าย $done/$total เฟรม แตะเพื่อหยุด"
                     viewfinderNotice.visibility = View.VISIBLE
                 }
             },
@@ -2025,9 +2045,29 @@ class CameraActivity : ComponentActivity() {
     private fun captureNow() {
         if(filesDir.usableSpace<32L*1024*1024){hint("พื้นที่ว่างไม่พอสำหรับถ่ายภาพ กรุณาคืนพื้นที่แล้วลองใหม่",5000);return}
         val useCase=capture ?: return
-        if(mode==PhotoMode.HDR&&!activeExtension){takeHdr(useCase);return}
         if((mode==PhotoMode.FLASH_NIGHT||mode==PhotoMode.FLASH_FAST)&&camera?.cameraInfo?.hasFlashUnit()!=true){hint("กล้องนี้ไม่มีแฟลช",1600);return}
         if(busy || zoomSettling) return
+        // Dedicated Natural HDR mode shares the EF1/EF2 bracket pipeline with the Photo pilot.
+        // Unsupported lenses/flash settings fall through to an ordinary JPEG shot, never an unusable bracket.
+        if (mode == PhotoMode.HDR) {
+            if (rear && flash == ImageCapture.FLASH_MODE_OFF && !torchLit &&
+                camera?.cameraInfo?.exposureState?.isExposureCompensationSupported == true) {
+                takeHdr(useCase)
+                return
+            }
+            hint("Natural HDR ต้องใช้กล้องหลัง ปิดแฟลช และรองรับการชดเชยแสง ถ่ายภาพปกติแทน", 3000)
+        }
+        // Natural HDR pilot is opt-in: route standard JPEG Photo through the existing EF1 fusion.
+        // All other modes, RAW, front camera, flash and night-assisted captures keep their original path.
+        if (mode == PhotoMode.PHOTO && output == CaptureOutput.JPEG && rear &&
+            flash == ImageCapture.FLASH_MODE_OFF && !nightOn && !torchLit &&
+            prefs.getBoolean("natural_hdr", false)) {
+            if (camera?.cameraInfo?.exposureState?.isExposureCompensationSupported == true) {
+                takeHdr(useCase)
+                return
+            }
+            hint("กล้องนี้ไม่รองรับการชดเชยแสง ใช้การถ่ายภาพปกติ", 2500)
+        }
         // Fast flash: the torch comes on for a blink so exposure settles on the lit scene, the picture is taken at once
         // (no pre-flash sequence), and the light goes off again.
         if(mode==PhotoMode.FLASH_FAST&&!torchLit){
@@ -2084,7 +2124,7 @@ class CameraActivity : ComponentActivity() {
                     val size=PhotoMedia.dimensions(original)
                     th.ogay.luma.backend.CameraCapabilityRepository.noteCapture(camId,size.w,size.h,System.currentTimeMillis()-time)
                     if(camId!=null)LensMeta.stamp(original,LensMeta.describe(this@CameraActivity,camId,frame?.lens,zoom,hwZoom,isRear))
-                    if(photoMode==PhotoMode.HIRES)runOnUiThread{hint("บันทึก ${size.w}×${size.h} · ${pixelsText(size.pixels)}${if(size.pixels<20_000_000L)" · เครื่องเปิดให้แอปได้เท่านี้" else ""}",2600)}
+                    if(photoMode==PhotoMode.HIRES)runOnUiThread{hint("บันทึก ${size.w}×${size.h} ${pixelsText(size.pixels)}${if(size.pixels<20_000_000L)" เครื่องเปิดให้แอปได้เท่านี้" else ""}",2600)}
                     val crop=if(useSoftware && cropBy>1f) size.pixels else frame?.crop
                     val actualZoom=if(!useSoftware && frame?.ratio!=null && frame.ratio!=1f) frame.ratio else zoom
                     val reason=decide(allowAuto,isRear,actualZoom,size.pixels,crop)
@@ -2104,16 +2144,16 @@ class CameraActivity : ComponentActivity() {
                     }
                     if(hiAi)EnhanceWorker.enqueue(applicationContext,id,true) else if(reason.startsAi) EnhanceWorker.enqueue(applicationContext,id)
                     if(photoMode==PhotoMode.DOCUMENT)runOnUiThread{startActivity(Intent(this@CameraActivity,DocumentActivity::class.java).setData(uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))}
-                    complete(if(hiAi) "บันทึกต้นฉบับแล้ว · กำลังขยายเป็นราว 50 MP ด้วย AI ดูความคืบหน้าในแกลเลอรี" else if(reason.startsAi) "บันทึกต้นฉบับแล้ว · เข้าคิว AI" else "บันทึกรูปแล้ว")
+                    complete(if(hiAi) "บันทึกต้นฉบับแล้ว กำลังขยายเป็นราว 50 MP ด้วย AI ดูความคืบหน้าในแกลเลอรี" else if(reason.startsAi) "บันทึกต้นฉบับแล้ว เข้าคิว AI" else "บันทึกรูปแล้ว")
                 } catch(_:OutOfMemoryError) {complete("หน่วยความจำไม่พอ ลองใช้โหมดซูมด้วยระบบกล้อง")}
-                catch(e:Exception) {complete("บันทึกรูปไม่สำเร็จ · ${e.localizedMessage}")}
+                catch(e:Exception) {complete("บันทึกรูปไม่สำเร็จ ${e.localizedMessage}")}
                 finally {full.delete();cut.delete()}
             }
-            override fun onError(exception:ImageCaptureException) {th.ogay.luma.backend.CameraCapabilityRepository.noteCaptureError(camId,exception.imageCaptureError,System.currentTimeMillis()-time);runOnUiThread { manual?.longExposure(false) };complete("ถ่ายภาพไม่สำเร็จ · ${exception.localizedMessage}")}
+            override fun onError(exception:ImageCaptureException) {th.ogay.luma.backend.CameraCapabilityRepository.noteCaptureError(camId,exception.imageCaptureError,System.currentTimeMillis()-time);runOnUiThread { manual?.longExposure(false) };complete("ถ่ายภาพไม่สำเร็จ ${exception.localizedMessage}")}
         }
         // Shutter slower than the live view allows: switch the sensor to the real time just for this picture.
         val m=manual
-        if(m!=null&&m.longExposure(true)){hint("เปิดชัตเตอร์ ${m.shutterLabel} · ถือนิ่ง",1500);shutter.postDelayed({if(!isDestroyed)useCase.takePicture(luma.fileIo,callback)},m.settleMs)}
+        if(m!=null&&m.longExposure(true)){hint("เปิดชัตเตอร์ ${m.shutterLabel} ถือนิ่ง",1500);shutter.postDelayed({if(!isDestroyed)useCase.takePicture(luma.fileIo,callback)},m.settleMs)}
         else useCase.takePicture(luma.fileIo,callback)
     }
     private var torchLit=false
@@ -2122,7 +2162,7 @@ class CameraActivity : ComponentActivity() {
     /** One full-sensor JPEG through Camera2 (see [HiResShot]); CameraX is released for the shot and bound again afterwards. */
     private fun takeHiRes(cameraId:String,size:android.util.Size){
         busy=true;refresh();captureFeedback()
-        hint("กำลังถ่ายเต็มเซนเซอร์ ${pixelsText(size.width.toLong()*size.height)} · ถือนิ่ง",4000)
+        hint("กำลังถ่ายเต็มเซนเซอร์ ${pixelsText(size.width.toLong()*size.height)} ถือนิ่ง",4000)
         val time=System.currentTimeMillis();val id=UUID.randomUUID().toString();val isRear=rear;val zoom=ratio;val rotation=targetRotation
         val file=File(cacheDir,"hires-$id.jpg")
         freezeFrame();provider?.unbindAll();capture=null;boundKey=null
@@ -2134,8 +2174,8 @@ class CameraActivity : ComponentActivity() {
                     val dims=PhotoMedia.dimensions(file)
                     val uri=PhotoMedia.publish(this,file,"Lumora_${time}_${id}.jpg",time)
                     luma.shots.insert(Shot(id,time,uri,dims,zoom,isRear,null,null,decide(false,isRear,zoom,dims.pixels,null),Stage.ORIGINAL,null,0,null,false))
-                    message="บันทึกเต็มเซนเซอร์ ${dims.w}×${dims.h} · ${pixelsText(dims.pixels)}"
-                }catch(e:Throwable){hiResFailed=true;message="ถ่ายเต็มเซนเซอร์ไม่สำเร็จ · ${e.localizedMessage} · ครั้งต่อไปใช้ขนาดปกติ"}
+                    message="บันทึกเต็มเซนเซอร์ ${dims.w}×${dims.h} ${pixelsText(dims.pixels)}"
+                }catch(e:Throwable){hiResFailed=true;message="ถ่ายเต็มเซนเซอร์ไม่สำเร็จ ${e.localizedMessage} ครั้งต่อไปใช้ขนาดปกติ"}
                 finally{file.delete()}
                 runOnUiThread{pendingBind=true};complete(message)
             }
@@ -2159,7 +2199,7 @@ class CameraActivity : ComponentActivity() {
                     // RAW only: the DNG itself is the shot; the JPEG was only taken to finish the capture and is dropped.
                     val uri=if(withJpeg)PhotoMedia.publish(this,jpg,"Lumora_${time}_${id}.jpg",time) else dngUri
                     luma.shots.insert(Shot(id,time,uri,dims,zoom,isRear,cameraId,null,Decision.OFF,Stage.ORIGINAL,null,0,null,false,raw=dngUri,output=outFormat))
-                }catch(e:Throwable){message="ถ่าย RAW ไม่สำเร็จ · ${e.localizedMessage}"}
+                }catch(e:Throwable){message="ถ่าย RAW ไม่สำเร็จ ${e.localizedMessage}"}
                 finally{dng.delete();jpg.delete()}
                 runOnUiThread{pendingBind=true};complete(message)
             }
@@ -2181,6 +2221,11 @@ class CameraActivity : ComponentActivity() {
         if(next==PhotoMode.VIDEO){openVideo("VIDEO");return}
         if(panoFiles.isNotEmpty()&&next!=PhotoMode.PANORAMA){notice("ต่อภาพพาโนรามาหรือกลับมาถ่ายต่อได้ในโหมดพาโนรามา")}
         val quickSwap=mode in QUICK_MODES&&next in QUICK_MODES
+        if (next == PhotoMode.HDR) {
+            // Exposure brackets must be taken without flash to avoid inconsistent illumination.
+            flash = ImageCapture.FLASH_MODE_OFF
+            if (torchLit) { camera?.cameraControl?.enableTorch(false); torchLit = false }
+        }
         mode=next
         if(next!=PhotoMode.PHOTO&&next!=PhotoMode.PRO){output=CaptureOutput.JPEG;prefs.edit().putString("output",output.name).apply()}
         prefs.edit().putString("photo_mode",next.name).apply()
@@ -2224,11 +2269,11 @@ class CameraActivity : ComponentActivity() {
     }}
     private val locationRequest=registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()){if(it.values.none{v->v}){prefs.edit().putBoolean("gps",false).apply();notice("ปิด GPS เพราะยังไม่ได้อนุญาตตำแหน่ง")}}
     private fun takeHdr(useCase:ImageCapture){val cam=camera?:return;busy=true;hintVersion++;refresh();captureFeedback()
-        hdr=HdrCapture(this,cam,useCase,{_->hint("HDR · ถือนิ่ง กำลังรวมหลายช็อตเป็นภาพเดียว",32000)},{file,error->val used=hdr?.usedFrames?:1;val requested=hdr?.requestedFrames?:3;val label=hdr?.label?:"HDR EF1 · Exposure fusion SDR";hdr=null;if(file!=null)luma.fileIo.execute{runCatching{PhotoEffects.decorate(this,file,rear);publishSpecial(file,"$label · ใช้ $used/$requested เฟรม",used,requested)}.onSuccess{complete("บันทึก HDR แล้ว")}.onFailure{complete(it.localizedMessage?:"HDR ไม่สำเร็จ")}}else complete(error?:"HDR ไม่สำเร็จ")});hdr!!.start()
+        hdr=HdrCapture(this,cam,useCase,{_->hint("HDR ถือนิ่ง กำลังรวมหลายช็อตเป็นภาพเดียว",32000)},{file,error->val used=hdr?.usedFrames?:1;val requested=hdr?.requestedFrames?:3;val label=hdr?.label?:"HDR EF1 Exposure fusion SDR";hdr=null;if(file!=null)luma.fileIo.execute{runCatching{PhotoEffects.decorate(this,file,rear);publishSpecial(file,"$label ใช้ $used/$requested เฟรม",used,requested)}.onSuccess{complete("บันทึก HDR แล้ว")}.onFailure{complete(it.localizedMessage?:"HDR ไม่สำเร็จ")}}else complete(error?:"HDR ไม่สำเร็จ")});hdr!!.start()
     }
     private fun takeUltra(useCase:ImageCapture){busy=true;refresh();val file=File(cacheDir,"ultra-${System.currentTimeMillis()}.jpg");useCase.takePicture(ImageCapture.OutputFileOptions.Builder(file).build(),luma.fileIo,object:ImageCapture.OnImageSavedCallback{
         override fun onCaptureStarted(){runOnUiThread{captureFeedback()}}
-        override fun onImageSaved(result:ImageCapture.OutputFileResults){try{publishSpecial(file,"Ultra HDR · gain map จากกล้อง");complete("บันทึก Ultra HDR แล้ว")}catch(e:Exception){complete(e.localizedMessage?:"บันทึกไม่ได้")}finally{file.delete()}}
+        override fun onImageSaved(result:ImageCapture.OutputFileResults){try{publishSpecial(file,"Ultra HDR gain map จากกล้อง");complete("บันทึก Ultra HDR แล้ว")}catch(e:Exception){complete(e.localizedMessage?:"บันทึกไม่ได้")}finally{file.delete()}}
         override fun onError(e:ImageCaptureException){complete(e.localizedMessage?:"ถ่ายไม่ได้");file.delete()}
     })}
     private fun publishSpecial(file:File,note:String,used:Int=1,requested:Int=used){val id=UUID.randomUUID().toString();val time=System.currentTimeMillis();val uri=PhotoMedia.publish(this,file,"Lumora_${time}_${id}.jpg",time);luma.shots.insert(Shot(id,time,uri,PhotoMedia.dimensions(file),ratio,rear,null,null,Decision.OFF,Stage.ORIGINAL,null,0,null,false,frames=used,requestedFrames=requested,fusedFrames=used,captureNote=note))}
@@ -2240,7 +2285,7 @@ class CameraActivity : ComponentActivity() {
         panoFiles.forEach { it.delete() }; panoFiles.clear()
         val guide = PanoGuide(this); panoGuide = guide
         stage.addView(guide, FrameLayout.LayoutParams(-1, dp(80), Gravity.CENTER))
-        hint("หมุนกล้องช้า ๆ ไปทางขวา · แตะชัตเตอร์อีกครั้งเพื่อจบ", 4000)
+        hint("หมุนกล้องช้า ๆ ไปทางขวา แตะชัตเตอร์อีกครั้งเพื่อจบ", 4000)
         shutter.contentDescription = "หยุดและต่อภาพพาโนรามา"
         pano = PanoramaSweep(this, { n ->
             val frame = runCatching { preview.bitmap }.getOrNull() ?: return@PanoramaSweep
@@ -2257,7 +2302,7 @@ class CameraActivity : ComponentActivity() {
         if (stitch) shutter.postDelayed({ finishPanorama() }, 350) else { panoFiles.forEach { it.delete() }; panoFiles.clear() }
     }
     private fun finishPanorama(){if(busy)return;if(panoFiles.size<2){notice("ถ่ายอย่างน้อย 2 ภาพ โดยแต่ละภาพซ้อนทับกันประมาณครึ่งหนึ่ง");return};busy=true;refresh();hint("กำลังจับคู่และต่อภาพ…",120000)
-        val input=panoFiles.toList();luma.fileIo.execute{runCatching{val result=PanoramaEngine.stitch(this,input);publishSpecial(result,"Panorama · ORB / homography");result.delete()}.onSuccess{input.forEach{it.delete()};runOnUiThread{panoFiles.clear();complete("บันทึกพาโนรามาแล้ว")}}.onFailure{complete("ต่อภาพไม่ได้ · ${it.localizedMessage} · เฟรมต้นฉบับยังอยู่")}}
+        val input=panoFiles.toList();luma.fileIo.execute{runCatching{val result=PanoramaEngine.stitch(this,input);publishSpecial(result,"Panorama ORB / homography");result.delete()}.onSuccess{input.forEach{it.delete()};runOnUiThread{panoFiles.clear();complete("บันทึกพาโนรามาแล้ว")}}.onFailure{complete("ต่อภาพไม่ได้ ${it.localizedMessage} เฟรมต้นฉบับยังอยู่")}}
     }
     override fun onKeyDown(code:Int,event:KeyEvent):Boolean{if(code==KeyEvent.KEYCODE_VOLUME_UP||code==KeyEvent.KEYCODE_VOLUME_DOWN){when(prefs.getString("volume_action","shutter")){"system"->return super.onKeyDown(code,event);"zoom"->{if(!busy&&!zoomLocked())applyZoom(ratio*if(code==KeyEvent.KEYCODE_VOLUME_UP)1.1f else 0.9f)};else->if(event.repeatCount==0)takePhoto()};return true};return super.onKeyDown(code,event)}
     private var lastCaptureAt = 0L

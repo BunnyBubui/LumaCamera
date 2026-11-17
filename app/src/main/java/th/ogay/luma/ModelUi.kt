@@ -50,7 +50,7 @@ class ModelCard(private val a: Activity, private val menu: GlassMenu, private va
         info.addView(status)
         head.addView(info, LayoutParams(0, -2, 1f))
         head.addView(actionHost, LayoutParams(-2, a.dp(36)))
-        head.setOnClickListener { v -> menu.show(v, title, models.map { m -> GlassMenu.Option(m.name + " · " + m.badge, icon, m.short + (if (m.builtin || m.unavailable != null) "" else " · " + WhisperModels.sizeText(a, m)) + if (m.unavailable != null) " · ยังใช้ไม่ได้" else if (!m.builtin && ModelStore.installed(a, m)) " · ติดตั้งแล้ว" else "") }, models.indexOf(ModelStore.selected(a, models[0].group, models))) { k ->
+        head.setOnClickListener { v -> menu.show(v, title, models.map { m -> GlassMenu.Option(m.name + " " + m.badge, icon, (if (m.unavailable != null) "ยังใช้ไม่ได้" else if (m.builtin) "" else if (ModelStore.installed(a, m)) "ติดตั้งแล้ว" else WhisperModels.sizeText(a, m)))}, models.indexOf(ModelStore.selected(a, models[0].group, models))) { k ->
             ModelStore.select(a, models[k]); refresh() } }
         addView(head, -1, -2)
         addView(about, LayoutParams(-1, -2).apply { topMargin = a.dp(6) })
@@ -70,17 +70,20 @@ class ModelCard(private val a: Activity, private val menu: GlassMenu, private va
 
     fun refresh() {
         val m = ModelStore.selected(a, models[0].group, models); val job = ModelStore.job(m); val have = ModelStore.installed(a, m)
-        name.text = m.name; badge.text = m.badge; about.text = m.short
-        status.text = when { m.unavailable != null -> m.unavailable; m.builtin -> "พร้อมใช้ · โหลดชุดภาษาเองเมื่อใช้ครั้งแรก"; job != null -> "กำลังดาวน์โหลด"; have -> "พร้อมใช้ · ${WhisperModels.sizeText(a, m)} ในเครื่อง"; else -> "ยังไม่ได้ดาวน์โหลด · ${WhisperModels.sizeText(a, m)}" }
+        name.text = m.name; badge.text = m.badge
+        // Says so up front when this phone cannot carry the model, before a long download.
+        val blocked = if (m.builtin || m.unavailable != null) null else Device.cannotRun(a, m, llm = m.files.any { it.first.endsWith(".gguf") })
+        about.text = if (blocked != null) "⚠ $blocked" else ""; about.visibility = if (blocked != null) View.VISIBLE else View.GONE
+        status.text = when { m.unavailable != null -> m.unavailable; m.builtin -> "พร้อมใช้"; job != null -> "กำลังดาวน์โหลด"; have -> "พร้อมใช้ ${WhisperModels.sizeText(a, m)} ในเครื่อง"; else -> "ยังไม่ได้ดาวน์โหลด ${WhisperModels.sizeText(a, m)}" }
         status.setTextColor(if (have && job == null) Glass.ACCENT else Glass.TEXT2)
         progress.visibility = if (job != null) VISIBLE else GONE
         if (job != null) {
             bar.fraction = job.fraction
             val total = (job.totalBytes.takeIf { it > 0 } ?: (m.approxMb * 1_048_576L)) / 1_048_576
             val left = job.etaMs(job.totalBytes.takeIf { it > 0 } ?: (m.approxMb * 1_048_576L))
-            val head = "${(job.fraction * 100).toInt()}% · ${job.doneBytes / 1_048_576} / $total MB · "
+            val head = "${(job.fraction * 100).toInt()}% ${job.doneBytes / 1_048_576} / $total MB "
             val etaWords = if (left < 0) "กำลังคำนวณเวลา…" else Eta.text(left)
-            detail.text = android.text.SpannableString(head + etaWords + " · ดาวน์โหลดต่อเบื้องหลังได้").apply {
+            detail.text = android.text.SpannableString(head + etaWords + " ดาวน์โหลดต่อเบื้องหลังได้").apply {
                 setSpan(android.text.style.ForegroundColorSpan(Glass.ACCENT), head.length, head.length + etaWords.length, android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE) }
         }
         actionHost.removeAllViews()

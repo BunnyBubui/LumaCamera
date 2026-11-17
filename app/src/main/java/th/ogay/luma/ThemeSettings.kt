@@ -54,7 +54,7 @@ private fun contrast(a: Int, b: Int): Float {
  * caller can rebuild its screen.
  */
 fun Activity.showThemeSettings(closed: (Boolean) -> Unit) {
-    val start = Theme.p
+    val start = Theme.p; val startVersion = Theme.version
     val dialog = Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
     val host = FrameLayout(this)
     val column = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -103,7 +103,7 @@ fun Activity.showThemeSettings(closed: (Boolean) -> Unit) {
                 addView(FrameLayout(context).apply { background = glass(12, Glass.ACCENT_SOFT); addView(IconView(context, Icons.AI, 1.8f).apply { tint = Glass.ACCENT }, FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER)) }, dp(38), dp(38))
                 addView(LinearLayout(context).apply {
                     orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, 0, 0)
-                    addView(text("ตัวอย่างธีม · ${Theme.name()}", 15f, Glass.TEXT, true))
+                    addView(text("ตัวอย่างธีม ${Theme.name()}", 15f, Glass.TEXT, true))
                     addView(text("ข้อความรอง และคำอธิบายสั้น ๆ", 12f, Glass.TEXT3))
                 }, LinearLayout.LayoutParams(0, -2, 1f))
                 addView(View(context).apply { background = GradientDrawable().apply { setStroke(dp(2), Glass.FOCUS); cornerRadius = dp(5).toFloat() }; contentDescription = "กรอบโฟกัส" }, dp(34), dp(34))
@@ -120,10 +120,24 @@ fun Activity.showThemeSettings(closed: (Boolean) -> Unit) {
             }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) })
         }, -1, -2)
 
+        // Dark, light, or whatever the phone is set to. Each mode keeps its own colours, so editing one never changes the other.
+        header("โหมด")
+        val modes = LinearLayout(this).apply { background = glass(22); setPadding(dp(4), dp(4), dp(4), dp(4)) }
+        listOf(Theme.Mode.DARK to "มืด", Theme.Mode.LIGHT to "สว่าง", Theme.Mode.SYSTEM to "ตามระบบ").forEach { (m, label) ->
+            val on = Theme.mode == m
+            modes.addView(text(label, 14f, if (on) Glass.ON_ACCENT else Glass.TEXT, on).apply {
+                gravity = Gravity.CENTER; isClickable = true; contentDescription = "โหมด$label${if (on) " เลือกอยู่" else ""}"; glassTouch()
+                background = if (on) glass(18, Glass.ACCENT) else null
+                setOnClickListener { Glass.tick(it); if (!on) { Theme.setMode(this@showThemeSettings, m); Theme.enter(this@showThemeSettings); render() } }
+            }, LinearLayout.LayoutParams(0, dp(40), 1f))
+        }
+        body.addView(modes, -1, -2)
+        body.addView(text(if (Theme.light) "กำลังแก้ชุดสีของโหมดสว่าง หน้ากล้อง ตัดต่อวิดีโอและตัดต่อภาพยังเป็นพื้นมืดเสมอ" else "กำลังแก้ชุดสีของโหมดมืด สลับไปโหมดสว่างเพื่อแก้ชุดสีสว่างแยกกัน", 12f, Glass.TEXT3).apply { setPadding(dp(16), dp(8), dp(16), 0); maxLines = 3; ellipsize = null }, -1, -2)
+
         // Ready-made sets.
-        header("ชุดสี")
+        header(if (Theme.light) "ชุดสี สว่าง" else "ชุดสี มืด")
         val presets = LinearLayout(this).apply { setPadding(0, 0, dp(4), 0) }
-        Theme.PRESETS.forEach { pr ->
+        Theme.presets().forEach { pr ->
             val on = pr.palette == Theme.p
             val pp = pr.palette
             presets.addView(LinearLayout(this).apply {
@@ -184,9 +198,9 @@ fun Activity.showThemeSettings(closed: (Boolean) -> Unit) {
         body.addView(LinearLayout(this).apply {
             gravity = Gravity.CENTER_VERTICAL; background = glass(22); setPadding(dp(14), dp(8), dp(12), dp(8)); minimumHeight = dp(54)
             isClickable = true; isFocusable = true; contentDescription = "คืนค่าเป็น Graphite"; glassTouch()
-            setOnClickListener { applyTheme(Theme.DEFAULT) }
+            setOnClickListener { applyTheme(if (Theme.light) Theme.LIGHT_DEFAULT else Theme.DEFAULT) }
             addView(FrameLayout(context).apply { background = glass(9, Glass.alpha(Glass.TEXT, 0x24)); addView(IconView(context, Icons.RESET, 1.8f), FrameLayout.LayoutParams(dp(18), dp(18), Gravity.CENTER)) }, dp(32), dp(32))
-            addView(text("คืนค่าเป็น Graphite", 15f).apply { setPadding(dp(12), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
+            addView(text(if (Theme.light) "คืนค่าเป็น Graphite สว่าง" else "คืนค่าเป็น Graphite", 15f).apply { setPadding(dp(12), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
         }, -1, -2)
         body.addView(text("หน้าที่เปิดค้างไว้จะเปลี่ยนสีเมื่อกลับไปที่หน้านั้น", 12f, Glass.TEXT3).apply { setPadding(dp(16), dp(10), dp(16), 0); maxLines = 3; ellipsize = null }, -1, -2)
 
@@ -196,7 +210,7 @@ fun Activity.showThemeSettings(closed: (Boolean) -> Unit) {
 
     dialog.setContentView(host)
     dialog.window?.apply { setLayout(-1, -1); setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)) }
-    dialog.setOnDismissListener { closed(Theme.p != start) }
+    dialog.setOnDismissListener { closed(Theme.p != start || Theme.version != startVersion) }
     dialog.show()
     if (!Glass.reduced(this)) { column.alpha = 0f; column.translationY = dp(30).toFloat(); column.animate().alpha(1f).translationY(0f).setInterpolator(Glass.EASE).setDuration(320).start() }
 }

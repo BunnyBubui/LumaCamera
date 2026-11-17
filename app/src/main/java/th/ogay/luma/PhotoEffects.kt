@@ -68,7 +68,7 @@ object PhotoEffects {
             val time=Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply{color=Color.WHITE;typeface=Typeface.create("sans-serif-thin",Typeface.NORMAL);textSize=unit*3.3f;letterSpacing=0.04f;textAlign=align;setShadowLayer(unit*0.45f,0f,unit*0.12f,shade)}
             val date=Paint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply{color=0xebffffff.toInt();typeface=Typeface.create("sans-serif-condensed",Typeface.NORMAL);textSize=unit*1.25f;letterSpacing=0.32f;textAlign=align;setShadowLayer(unit*0.35f,0f,unit*0.1f,shade)}
             val x=if(logoLeft)w-margin else margin
-            val dateText=java.text.SimpleDateFormat("EEE  ·  dd MMM yyyy",java.util.Locale.US).format(now).uppercase(java.util.Locale.US)
+            val dateText=java.text.SimpleDateFormat("EEE   dd MMM yyyy",java.util.Locale.US).format(now).uppercase(java.util.Locale.US)
             val dateBase=rowTop+rowH-unit*0.1f
             // Letter spacing adds room after the last letter too; shift by it so the right edges line up.
             canvas.drawText(dateText,if(logoLeft)x+date.letterSpacing*date.textSize else x,dateBase,date)
@@ -138,7 +138,7 @@ object PhotoEffects {
             // Same subject mask as the live view: a feathered person, or a focus falloff when nobody is in the picture.
             PortraitMask.subject(weights,mask.width,mask.height,focus)
             for(y in 0 until image.height)for(x in 0 until image.width){val i=y*image.width+x;val f=weights[(y*mask.height/image.height)*mask.width+x*mask.width/image.width];var color=0xff000000.toInt();for(shift in intArrayOf(16,8,0)){val v=(((a[i] ushr shift)and 255)*f+((b[i] ushr shift)and 255)*(1-f)).toInt();color=color or(v shl shift)};a[i]=color}
-            image.setPixels(a,0,image.width,0,0,image.width,image.height);rewrite(image,file);PhotoMedia.tag(file,0);ExifInterface(file).apply{setAttribute(ExifInterface.TAG_SOFTWARE,"Lumora Portrait · simulated f/$aperture · ML Kit selfie segmentation beta");saveAttributes()};background.recycle()
+            image.setPixels(a,0,image.width,0,0,image.width,image.height);rewrite(image,file);PhotoMedia.tag(file,0);ExifInterface(file).apply{setAttribute(ExifInterface.TAG_SOFTWARE,"Lumora Portrait simulated f/$aperture ML Kit selfie segmentation beta");saveAttributes()};background.recycle()
         }finally{processor.close();image.recycle()}
     }
 }

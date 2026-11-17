@@ -42,7 +42,7 @@ class VideoDiagnostics : CameraCaptureSession.CaptureCallback() {
                 runCatching {
                     val file = File(context.filesDir, "reports/video-session-${System.currentTimeMillis()}.json")
                     file.parentFile?.mkdirs(); file.writeText(report.toString(2))
-                    MediaLedger.rememberFile(context, file, "application/json", "วินิจฉัยวิดีโอ · $stage")
+                    MediaLedger.rememberFile(context, file, "application/json", "วินิจฉัยวิดีโอ $stage")
                 }
             }
         }

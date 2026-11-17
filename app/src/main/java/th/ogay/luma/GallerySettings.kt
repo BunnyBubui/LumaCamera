@@ -84,6 +84,8 @@ class SettingsPage(private val a: Activity, title: String, private val changed: 
     fun action(title: String, icon: String, note: String = "", run: () -> Unit) {
         row(title, icon, note, IconView(a, Icons.CHEVRON_RIGHT, 2f).apply { tint = Glass.TEXT3; layoutParams = LinearLayout.LayoutParams(a.dp(18), a.dp(18)) }) { run() }
     }
+    /** False once the page has been closed (also inside the callback that a close triggers). */
+    val showing get() = dialog.isShowing
     fun close() = dialog.dismiss()
     fun show() {
         dialog.setContentView(host)

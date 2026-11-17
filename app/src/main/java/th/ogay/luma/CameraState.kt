@@ -44,7 +44,7 @@ object CameraState {
      */
     fun report(c: Context): String = buildString {
         val m = c.getSystemService(Context.CAMERA_SERVICE) as CameraManager
-        appendLine("${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
+        appendLine("${Build.MANUFACTURER} ${Build.MODEL} Android ${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})")
         appendLine("เฟรมล่าสุด: AWB=${awbMode} gains=${gains?.joinToString { "%.2f".format(it) }} fps=$fps ISO=$iso shutter=${exposureNs / 1000}µs")
         val ids = runCatching { m.cameraIdList.toList() }.getOrDefault(emptyList())
         val all = ids + ids.flatMap { id -> runCatching { if (Build.VERSION.SDK_INT >= 28) m.getCameraCharacteristics(id).physicalCameraIds.toList() else emptyList() }.getOrDefault(emptyList()) }.filter { it !in ids }
@@ -58,7 +58,7 @@ object CameraState {
             val names = mapOf(1 to "MANUAL_SENSOR", 2 to "MANUAL_POST", 3 to "RAW", 9 to "CONSTRAINED_HIGH_SPEED", 11 to "LOGICAL_MULTI", 16 to "ULTRA_HIGH_RES", 18 to "DYNAMIC_RANGE_10BIT")
             appendLine("  ความสามารถ ${caps.joinToString { names[it] ?: it.toString() }}")
             appendLine("  AE fps ${ch.get(CC.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES)?.joinToString()}")
-            appendLine("  AWB ${ch.get(CC.CONTROL_AWB_AVAILABLE_MODES)?.joinToString()} · หน้า ${ch.get(CC.STATISTICS_INFO_AVAILABLE_FACE_DETECT_MODES)?.joinToString()} · โฟกัสใกล้สุด ${ch.get(CC.LENS_INFO_MINIMUM_FOCUS_DISTANCE)}")
+            appendLine("  AWB ${ch.get(CC.CONTROL_AWB_AVAILABLE_MODES)?.joinToString()} หน้า ${ch.get(CC.STATISTICS_INFO_AVAILABLE_FACE_DETECT_MODES)?.joinToString()} โฟกัสใกล้สุด ${ch.get(CC.LENS_INFO_MINIMUM_FOCUS_DISTANCE)}")
             val map = ch.get(CC.SCALER_STREAM_CONFIGURATION_MAP)
             if (map != null) {
                 listOf(1920 to 1080, 3840 to 2160, 1280 to 720).forEach { (w, h) ->
@@ -66,7 +66,7 @@ object CameraState {
                     if (s != null) appendLine("  ${w}x$h อ่านเร็วสุด ${"%.1f".format(1e9 / map.getOutputMinFrameDuration(MediaRecorder::class.java, s).coerceAtLeast(1))} fps")
                 }
                 runCatching { map.highSpeedVideoSizes.forEach { s -> appendLine("  high-speed $s ${map.getHighSpeedVideoFpsRangesFor(s).joinToString()}") } }
-                appendLine("  JPEG ใหญ่สุด ${map.getOutputSizes(android.graphics.ImageFormat.JPEG)?.maxByOrNull { it.width.toLong() * it.height }}${runCatching { " · high-res ${map.getHighResolutionOutputSizes(android.graphics.ImageFormat.JPEG)?.maxByOrNull { it.width.toLong() * it.height }}" }.getOrDefault("")}")
+                appendLine("  JPEG ใหญ่สุด ${map.getOutputSizes(android.graphics.ImageFormat.JPEG)?.maxByOrNull { it.width.toLong() * it.height }}${runCatching { " high-res ${map.getHighResolutionOutputSizes(android.graphics.ImageFormat.JPEG)?.maxByOrNull { it.width.toLong() * it.height }}" }.getOrDefault("")}")
             }
         }
     }

@@ -38,7 +38,7 @@ object LiveNotice {
     fun progress(c: Context, title: String, text: String, percent: Int, open: PendingIntent?, cancel: PendingIntent?, etaChip: String? = null): Notification {
         channels(c)
         val p = percent.coerceIn(-1, 100)
-        val chip = if (p < 0) "…" else if (etaChip.isNullOrEmpty()) "$p%" else "$p%·$etaChip"
+        val chip = if (p < 0) "…" else if (etaChip.isNullOrEmpty()) "$p%" else "$p%$etaChip"
         if (Build.VERSION.SDK_INT >= 36) {
             val style = Notification.ProgressStyle()
                 // Five orange segments with small gaps: it reads as a bar made of steps, and the unfilled part stays dim.

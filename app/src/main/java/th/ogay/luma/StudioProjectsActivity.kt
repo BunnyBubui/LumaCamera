@@ -29,7 +29,7 @@ import java.util.Locale
  * of each project. The editor saves by itself, so everything listed here is where its work was left.
  */
 class StudioProjectsActivity : ComponentActivity() {
-    private val coral = 0xffff6f91.toInt()
+    private val coral get() = Glass.ACCENT
     private lateinit var col: LinearLayout
     private lateinit var count: android.widget.TextView
     private var relinking = ""
@@ -44,12 +44,16 @@ class StudioProjectsActivity : ComponentActivity() {
 
     /** New project: choose a video in Lumora's gallery, then the editor opens on it (the project file appears with the first edit). */
     private val pickNew = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
-        @Suppress("DEPRECATION") val uri = r.data?.getParcelableArrayListExtra<Uri>(GalleryActivity.RESULT_URIS)?.firstOrNull() ?: return@registerForActivityResult
-        startActivity(VideoEditorActivity.intent(this, uri).putExtra("name", newName))
+        @Suppress("DEPRECATION") val uris = r.data?.getParcelableArrayListExtra<Uri>(GalleryActivity.RESULT_URIS)?.takeIf { it.isNotEmpty() } ?: return@registerForActivityResult
+        // Every chosen clip comes along: the first opens the project and the others are added behind it, in the order picked.
+        startActivity(VideoEditorActivity.intent(this, uris[0]).putExtra("name", newName)
+            .putStringArrayListExtra("share_more", ArrayList(uris.drop(1).map { it.toString() })))
     }
     private var newName = ""
     /** Step 1 names the project, step 2 picks its video, then the editor opens already carrying that name. */
     private fun create() {
+        // A new project needs the phone's encoder and memory, so wait until the video being saved is finished.
+        if (ExportJob.state?.active == true) { notice("กำลังส่งออกวิดีโออยู่ รอให้เรนเดอร์เสร็จก่อน จึงสร้างโปรเจกต์ใหม่ได้"); return }
         val field = GlassDialog.field(this, "ชื่อโปรเจกต์", "โปรเจกต์ ${StudioProjects.list(this).size + 1}"); field.selectAll()
         GlassDialog.ask(this, "โปรเจกต์ใหม่", Icons.PLUS, "ตั้งชื่อก่อน แล้วเลือกวิดีโอที่จะตัดต่อ", field, "เลือกวิดีโอ", focus = field) {
             newName = field.text.toString().trim().ifEmpty { "โปรเจกต์ใหม่" }; pick()
@@ -57,9 +61,13 @@ class StudioProjectsActivity : ComponentActivity() {
     }
     private fun pick() = pickNew.launch(Intent(this, GalleryActivity::class.java).putExtra(GalleryActivity.EXTRA_PICK, "video"))
 
+    private var root: FrameLayout? = null
+    private val dropdown by lazy { GlassMenu(root!!) }
+
     override fun onCreate(state: Bundle?) {
         super.onCreate(state)
         val host = FrameLayout(this)
+        root = host
         installRoot(host)
         host.setBackgroundColor(Glass.BG)
         host.addView(Glow(this, coral), -1, -1)
@@ -90,7 +98,7 @@ class StudioProjectsActivity : ComponentActivity() {
         FrameLayout(this).apply {
             isClickable = true; contentDescription = "สร้างโปรเจกต์ใหม่"; glassTouch(); elevation = dp(8).toFloat()
             background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(Theme.mix(coral, 0xffffffff.toInt(), 0.25f), coral)).apply { shape = GradientDrawable.OVAL }
-            addView(IconView(this@StudioProjectsActivity, Icons.PLUS, 2.6f).apply { tint = 0xff2a0f18.toInt() }, FrameLayout.LayoutParams(dp(28), dp(28), Gravity.CENTER))
+            addView(IconView(this@StudioProjectsActivity, Icons.PLUS, 2.6f).apply { tint = Glass.ON_ACCENT }, FrameLayout.LayoutParams(dp(28), dp(28), Gravity.CENTER))
             setOnClickListener { Glass.tick(this); create() }
         }
     }
@@ -106,12 +114,10 @@ class StudioProjectsActivity : ComponentActivity() {
                 count.visibility = if (list.isEmpty()) View.GONE else View.VISIBLE
                 count.text = "${list.size} งาน"
                 if (list.isEmpty()) { col.addView(emptyState(), LinearLayout.LayoutParams(-1, -2)); return@runOnUiThread }
-                col.addView(row("✓  บันทึกอัตโนมัติทุกครั้งที่แก้ · กลับมาตัดต่อต่อได้เสมอ"), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(12); leftMargin = dp(4) })
                 list.forEachIndexed { i, p -> col.addView(card(p, i == 0), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) }) }
             }
         }
     }
-    private fun row(s: String) = text(s, 12.5f, Glass.TEXT3)
 
     // ---------- Empty ----------
     private fun emptyState(): View = LinearLayout(this).apply {
@@ -123,8 +129,8 @@ class StudioProjectsActivity : ComponentActivity() {
         val btn = LinearLayout(this@StudioProjectsActivity).apply {
             gravity = Gravity.CENTER; setPadding(dp(22), 0, dp(26), 0); isClickable = true; contentDescription = "สร้างโปรเจกต์ใหม่"; glassTouch()
             background = GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(Theme.mix(coral, 0xffffffff.toInt(), 0.25f), coral)).apply { cornerRadius = dp(26).toFloat() }
-            addView(IconView(this@StudioProjectsActivity, Icons.PLUS, 2.6f).apply { tint = 0xff2a0f18.toInt() }, dp(20), dp(20))
-            addView(text("สร้างโปรเจกต์ใหม่", 16f, 0xff2a0f18.toInt(), true).apply { setPadding(dp(8), 0, 0, 0) })
+            addView(IconView(this@StudioProjectsActivity, Icons.PLUS, 2.6f).apply { tint = Glass.ON_ACCENT }, dp(20), dp(20))
+            addView(text("สร้างโปรเจกต์ใหม่", 16f, Glass.ON_ACCENT, true).apply { setPadding(dp(8), 0, 0, 0) })
             setOnClickListener { Glass.tick(this); create() }
         }
         addView(btn, LinearLayout.LayoutParams(-2, dp(52)).apply { topMargin = dp(26) })
@@ -163,7 +169,7 @@ class StudioProjectsActivity : ComponentActivity() {
         addView(pic, dp(76), dp(76))
         val words = LinearLayout(this@StudioProjectsActivity).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, dp(4), 0) }
         words.addView(text(p.name, 15.5f, Glass.TEXT, true).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END })
-        if (p.missing) words.addView(text("ไม่พบวิดีโอต้นฉบับ · แตะเพื่อเลือกไฟล์แทน", 12f, 0xffffb27a.toInt()).apply { setPadding(0, dp(3), 0, 0) })
+        if (p.missing) words.addView(text("ไม่พบวิดีโอต้นฉบับ แตะเพื่อเลือกไฟล์แทน", 12f, 0xffffb27a.toInt()).apply { setPadding(0, dp(3), 0, 0) })
         else {
             words.addView(text(whenText(p.updated), 12f, Glass.TEXT3).apply { setPadding(0, dp(3), 0, 0); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END })
             val tags = LinearLayout(this@StudioProjectsActivity)
@@ -173,35 +179,24 @@ class StudioProjectsActivity : ComponentActivity() {
         }
         addView(words, LinearLayout.LayoutParams(0, -2, 1f))
         addView(FrameLayout(this@StudioProjectsActivity).apply { isClickable = true; contentDescription = "เมนูของ ${p.name}"; glassTouch()
-            addView(Dots(this@StudioProjectsActivity), FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER)); setOnClickListener { Glass.tick(this); menu(p) } }, dp(44), dp(52))
+            addView(Dots(this@StudioProjectsActivity), FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER)); setOnClickListener { Glass.tick(this); menu(p, this) } }, dp(44), dp(52))
         setOnClickListener { open(p) }
     }
 
     private fun open(p: StudioProjects.Info) {
-        if (p.missing) { relinking = p.id; notice("ไม่พบวิดีโอต้นฉบับ · เลือกไฟล์วิดีโอที่จะใช้แทน"); pickReplacement.launch(arrayOf("video/*")) }
+        if (p.missing) { relinking = p.id; notice("ไม่พบวิดีโอต้นฉบับ เลือกไฟล์วิดีโอที่จะใช้แทน"); pickReplacement.launch(arrayOf("video/*")) }
         else startActivity(VideoEditorActivity.intent(this, p.source).putExtra("project", p.id))
     }
 
     // ---------- The sheet of actions for one project ----------
-    private fun menu(p: StudioProjects.Info) {
-        GlassDialog.panel(this, p.name) { box, dlg ->
-            box.addView(text(whenText(p.updated), 12f, Glass.TEXT3).apply { setPadding(0, 0, 0, dp(6)) }, -1, -2)
-            fun item(icon: String, label: String, sub: String?, tint: Int, last: Boolean, go: () -> Unit) {
-                val r = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(4), 0, dp(4), 0); isClickable = true; glassTouch(); contentDescription = label
-                    addView(IconView(this@StudioProjectsActivity, icon, 1.9f).apply { this.tint = tint }, dp(22), dp(22))
-                    val w = LinearLayout(this@StudioProjectsActivity).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), 0, 0, 0) }
-                    w.addView(text(label, 15.5f, tint)); if (sub != null) w.addView(text(sub, 11.5f, Glass.TEXT3))
-                    addView(w, LinearLayout.LayoutParams(0, -2, 1f))
-                    setOnClickListener { Glass.tick(this); dlg.dismiss(); go() } }
-                box.addView(r, LinearLayout.LayoutParams(-1, dp(54)))
-                if (!last) box.addView(View(this).apply { setBackgroundColor(0x12ffffff) }, LinearLayout.LayoutParams(-1, dp(1)).apply { leftMargin = dp(40) })
-            }
-            if (!p.missing) item(EditorKit.SCISSORS, "เปิดแก้ไข", null, Glass.TEXT, false) { open(p) }
-            item(EditorKit.PEN, "เปลี่ยนชื่อ", null, Glass.TEXT, false) { rename(p) }
-            item(Icons.STACK, "ทำสำเนา", null, Glass.TEXT, false) { StudioProjects.duplicate(this, p.id); fill() }
-            item(Icons.FILE, "เปลี่ยนไฟล์วิดีโอต้นฉบับ", "ใช้เมื่อย้ายหรือลบวิดีโอเดิม", Glass.TEXT, false) { relinking = p.id; pickReplacement.launch(arrayOf("video/*")) }
-            item(Icons.CLOSE, "ลบโปรเจกต์", "ลบเฉพาะการตัดต่อ วิดีโอต้นฉบับไม่หาย", 0xffff7a7a.toInt(), true) { confirmDelete(p) }
-        }.show()
+    private fun menu(p: StudioProjects.Info, anchor: View) {
+        val acts = ArrayList<Pair<GlassMenu.Option, () -> Unit>>()
+        if (!p.missing) acts += GlassMenu.Option("เปิดแก้ไข", EditorKit.SCISSORS) to { open(p) }
+        acts += GlassMenu.Option("เปลี่ยนชื่อ", EditorKit.PEN) to { rename(p) }
+        acts += GlassMenu.Option("ทำสำเนา", Icons.STACK) to { StudioProjects.duplicate(this, p.id); fill() }
+        acts += GlassMenu.Option("เปลี่ยนไฟล์วิดีโอต้นฉบับ", Icons.FILE, "ใช้เมื่อย้ายหรือลบวิดีโอเดิม") to { relinking = p.id; pickReplacement.launch(arrayOf("video/*")) }
+        acts += GlassMenu.Option("ลบโปรเจกต์", Icons.CLOSE, "ลบเฉพาะการตัดต่อ วิดีโอต้นฉบับไม่หาย") to { confirmDelete(p) }
+        dropdown.show(anchor, p.name, acts.map { it.first }, -1) { i -> acts[i].second() }
     }
     private fun rename(p: StudioProjects.Info) {
         val field = GlassDialog.field(this, "ชื่อโปรเจกต์", p.name)

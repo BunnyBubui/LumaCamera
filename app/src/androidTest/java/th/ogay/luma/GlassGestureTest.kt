@@ -155,7 +155,7 @@ class GlassGestureTest {
             val stop = device.wait(Until.findObject(By.desc("หยุดรวมแสงและบันทึก")), 5000)
             assertNotNull("Night capture did not turn the shutter into a stop button", stop)
             // The stop button must work from the first moment, before any frame arrives.
-            assertTrue("Stop button is disabled while gathering light · " + GlassNav.dump(device), stop.isEnabled)
+            assertTrue("Stop button is disabled while gathering light " + GlassNav.dump(device), stop.isEnabled)
             stop.click()
             until(60000) { device.findObject(GlassNav.SHUTTER)?.isEnabled == true }
             val shot = context.luma.shots.all().firstOrNull { it.id !in before }

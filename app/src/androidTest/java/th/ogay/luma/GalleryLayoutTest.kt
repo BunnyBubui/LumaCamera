@@ -33,9 +33,9 @@ class GalleryLayoutTest {
 
             device.findObject(By.desc("อัลบั้ม")).click()
             val lumora = device.wait(Until.findObject(By.descStartsWith("อัลบั้ม ถ่ายด้วย Lumora")), 8000)
-            assertNotNull("Lumora album card is missing · ${GlassNav.dump(device)}", lumora)
+            assertNotNull("Lumora album card is missing ${GlassNav.dump(device)}", lumora)
             lumora!!.click()
-            assertNotNull("Lumora album page did not open · ${GlassNav.dump(device)}", device.wait(Until.findObject(By.text("ถ่ายด้วย Lumora")), 8000))
+            assertNotNull("Lumora album page did not open ${GlassNav.dump(device)}", device.wait(Until.findObject(By.text("ถ่ายด้วย Lumora")), 8000))
             assertNotNull(device.findObject(By.desc("รายการรูปและวิดีโอ")))
             device.findObject(By.desc("ย้อนกลับ")).click()
             assertNotNull("Back did not return to the albums tab", device.wait(Until.findObject(By.descStartsWith("อัลบั้ม ถ่ายด้วย Lumora")), 8000))

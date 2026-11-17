@@ -29,7 +29,7 @@ class HdrCapture(private val c:Context,private val camera:Camera,private val cap
     private val decoded=java.util.concurrent.ConcurrentHashMap<Int,java.util.concurrent.Future<Bitmap>>()
     private val target:Long by lazy{val r=Runtime.getRuntime();val available=r.maxMemory()-(r.totalMemory()-r.freeMemory());(available/40).coerceIn(1_000_000L,8_000_000L)}
     /** Gallery label of the engine that actually produced the file. */
-    var label="HDR EF1 · Exposure fusion SDR";private set
+    var label="HDR EF1 Exposure fusion SDR";private set
     val requestedFrames get()=levels.size
     private val spread=(c.getSharedPreferences("camera",0).getString("hdr_spread","2")?.toFloatOrNull()?:2f).coerceIn(1f,3f)
     private val levels=listOf(initial,if(step>0)(initial+(-spread/step).toInt()).coerceIn(range.lower,range.upper) else 0,if(step>0)(initial+(spread/step).toInt()).coerceIn(range.lower,range.upper) else 0).distinct()
@@ -83,11 +83,11 @@ class HdrCapture(private val c:Context,private val camera:Camera,private val cap
                 val r=HdrNative.fuse(pixels,width,height,dx.toIntArray(),dy.toIntArray(),cancel=cancellation)
                 engine="EF2";note=", fuse ${r.fuseMs.roundToInt()} ms, tone ${r.toneMs.roundToInt()} ms";r.bitmap
             }catch(e:java.util.concurrent.CancellationException){throw e}catch(e:Throwable){note=", EF2 failed: ${e.javaClass.simpleName}";ef1()}
-            label=if(engine=="EF2")"HDR EF2 · OpenCV fusion + local tone SDR" else "HDR EF1 · Exposure fusion SDR"
+            label=if(engine=="EF2")"HDR EF2 OpenCV fusion + local tone SDR" else "HDR EF1 Exposure fusion SDR"
             val file=File(folder,"hdr-result.jpg");try{PhotoEffects.write(result,file)}finally{result.recycle()}
             ExifCarry.copy(files.first(),file)
             PhotoMedia.tag(file,0,ExifInterface(files.first()).getAttribute(ExifInterface.TAG_DATETIME_ORIGINAL))
-            val software=if(engine=="EF2")"Lumora HDR EF2 · OpenCV Mertens + L* detail SDR" else "Lumora HDR EF1 · exposure fusion SDR"
+            val software=if(engine=="EF2")"Lumora HDR EF2 OpenCV Mertens + L* detail SDR" else "Lumora HDR EF1 exposure fusion SDR"
             ExifInterface(file).apply{setAttribute(ExifInterface.TAG_SOFTWARE,software);setAttribute(ExifInterface.TAG_IMAGE_DESCRIPTION,"HDR $engine: captured ${files.size}/${levels.size}, aligned $usedFrames, EV ${if(measured)"EXIF exposure×ISO" else "requested compensation"}$note");saveAttributes()}
             return file
         }finally{bitmaps.forEach{if(!it.isRecycled)it.recycle()};files.forEach{it.delete()};decoder.shutdown()}

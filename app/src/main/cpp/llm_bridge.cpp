@@ -43,6 +43,9 @@ std::string piece(const llama_vocab *vocab, llama_token t) {
 }
 }  // namespace
 
+// Shared by plain and grammar-constrained generation. An empty grammar means no constraint.
+static jstring generate(JNIEnv *env, Engine *e, jstring prompt, jint maxNew, jfloat repeatPenalty, const std::string &grammar);
+
 extern "C" {
 
 JNIEXPORT jlong JNICALL Java_th_ogay_luma_LlamaEngine_nativeLoad(JNIEnv *env, jobject, jstring path, jint threads, jint nCtx) {
@@ -93,7 +96,17 @@ JNIEXPORT jstring JNICALL Java_th_ogay_luma_LlamaEngine_nativeTemplate(JNIEnv *e
 
 /** Reads [prompt] (special tokens allowed) and writes at most [maxNew] tokens, stopping at the end-of-turn token. */
 JNIEXPORT jstring JNICALL Java_th_ogay_luma_LlamaEngine_nativeGenerate(JNIEnv *env, jobject, jlong handle, jstring prompt, jint maxNew, jfloat repeatPenalty) {
-    auto *e = reinterpret_cast<Engine *>(handle);
+    return generate(env, reinterpret_cast<Engine *>(handle), prompt, maxNew, repeatPenalty, std::string());
+}
+
+// The same, but every token must keep the answer inside [grammar] (GBNF, rule "root"), so the reply is always well formed.
+JNIEXPORT jstring JNICALL Java_th_ogay_luma_LlamaEngine_nativeGenerateGrammar(JNIEnv *env, jobject, jlong handle, jstring prompt, jint maxNew, jfloat repeatPenalty, jstring grammar) {
+    return generate(env, reinterpret_cast<Engine *>(handle), prompt, maxNew, repeatPenalty, jstr(env, grammar));
+}
+
+}  // extern "C"
+
+static jstring generate(JNIEnv *env, Engine *e, jstring prompt, jint maxNew, jfloat repeatPenalty, const std::string &grammar) {
     if (!e) return env->NewStringUTF("");
     g_stop = false;
     const llama_vocab *vocab = llama_model_get_vocab(e->model);
@@ -121,7 +134,12 @@ JNIEXPORT jstring JNICALL Java_th_ogay_luma_LlamaEngine_nativeGenerate(JNIEnv *e
 
     llama_memory_clear(llama_get_memory(e->ctx), true);
     llama_sampler *smpl = llama_sampler_chain_init(llama_sampler_chain_default_params());
-    llama_sampler_chain_add(smpl, llama_sampler_init_penalties(llama_vocab_n_tokens(vocab), 256, repeatPenalty, 0.0f, 0.0f));
+    if (!grammar.empty()) {
+        llama_sampler *g = llama_sampler_init_grammar(vocab, grammar.c_str(), "root");
+        if (!g) { llama_sampler_free(smpl); return env->NewStringUTF(""); }
+        llama_sampler_chain_add(smpl, g);
+    }
+    if (repeatPenalty > 1.0f) llama_sampler_chain_add(smpl, llama_sampler_init_penalties(llama_vocab_n_tokens(vocab), 256, repeatPenalty, 0.0f, 0.0f));
     llama_sampler_chain_add(smpl, llama_sampler_init_greedy());
 
     std::string out;
@@ -147,4 +165,4 @@ JNIEXPORT jstring JNICALL Java_th_ogay_luma_LlamaEngine_nativeGenerate(JNIEnv *e
     return env->NewStringUTF(out.c_str());
 }
 
-}  // extern "C"
+

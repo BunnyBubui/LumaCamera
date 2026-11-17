@@ -74,7 +74,7 @@ class VideoActivity:ComponentActivity(){
     private lateinit var orientation:OrientationEventListener
     private var rateLabel="30 fps"
     private var selectedCameraId:String?=null
-    private fun capabilities(info:CameraInfo)=if(slow)sessions.highSpeed(info)?:error("กล้องนี้ไม่เปิด high-speed ให้แอป · ดูรายงานความสามารถ")else sessions.caps(info)
+    private fun capabilities(info:CameraInfo)=if(slow)sessions.highSpeed(info)?:error("กล้องนี้ไม่เปิด high-speed ให้แอป ดูรายงานความสามารถ")else sessions.caps(info)
     private val permission=registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()){if(ContextCompat.checkSelfPermission(this,Manifest.permission.CAMERA)==PackageManager.PERMISSION_GRANTED)bind()else status.text="อนุญาตกล้องเพื่อเริ่มวิดีโอ"}
     private val audioPermission=registerForActivityResult(ActivityResultContracts.RequestPermission()){allowed->if(!allowed){mic=false;notice("ปิดไมค์สำหรับคลิปนี้ เพราะยังไม่ได้อนุญาตเสียง")};startRecording()}
     override fun onCreate(state:Bundle?){
@@ -136,17 +136,17 @@ class VideoActivity:ComponentActivity(){
             val info=info()?:error("ไม่พบกล้อง")
             boundConfig=JSONObject().put("cameraId",Camera2CameraInfo.from(info).cameraId).put("quality",qualityName(quality)).put("requestedFps",fps).put("slowMotion",slow)
             val caps=capabilities(info)
-            if(dynamic !in caps.supportedDynamicRanges){dynamic=DynamicRange.SDR;notice("กล้องนี้ไม่รองรับ HDR · ใช้ SDR แทน")}
+            if(dynamic !in caps.supportedDynamicRanges){dynamic=DynamicRange.SDR;notice("กล้องนี้ไม่รองรับ HDR ใช้ SDR แทน")}
             val supported=allQualities(info)
-            if(quality !in supported){val previous=qualityName(quality);quality=supported.firstOrNull{it==Quality.FHD}?:supported.firstOrNull()?:error("ไม่พบโปรไฟล์วิดีโอ");notice("ชุดนี้ไม่มี $previous · เปลี่ยนเป็น ${qualityName(quality)} แล้ว")}
+            if(quality !in supported){val previous=qualityName(quality);quality=supported.firstOrNull{it==Quality.FHD}?:supported.firstOrNull()?:error("ไม่พบโปรไฟล์วิดีโอ");notice("ชุดนี้ไม่มี $previous เปลี่ยนเป็น ${qualityName(quality)} แล้ว")}
             val modes=offered(info)
             boundConfig.put("sessionQuery",sessions.report(info,quality,dynamic,stabilization,slow))
-            if(slow&&modes.isNotEmpty()&&modes.none{it.upper==fps}){val before=fps;fps=modes.minBy{it.upper}.upper;notice("ชุด $before fps ไม่รองรับ · เลือก $fps fps แล้ว")}
-            var mode=modes.firstOrNull{it.upper==fps}?:modes.takeIf{!rear}?.minByOrNull{abs(it.upper-fps)}?.also{val before=fps;fps=it.upper;notice("กล้องนี้ไม่รองรับ $before fps · ใช้ $fps fps แทน")}?:error("${qualityName(quality)} ไม่รองรับ $fps fps ร่วมกับ HDR/กันสั่นที่เลือก · เลือกชุดใหม่")
+            if(slow&&modes.isNotEmpty()&&modes.none{it.upper==fps}){val before=fps;fps=modes.minBy{it.upper}.upper;notice("ชุด $before fps ไม่รองรับ เลือก $fps fps แล้ว")}
+            var mode=modes.firstOrNull{it.upper==fps}?:modes.takeIf{!rear}?.minByOrNull{abs(it.upper-fps)}?.also{val before=fps;fps=it.upper;notice("กล้องนี้ไม่รองรับ $before fps ใช้ $fps fps แทน")}?:error("${qualityName(quality)} ไม่รองรับ $fps fps ร่วมกับ HDR/กันสั่นที่เลือก เลือกชุดใหม่")
             forced60=false
-            if(mode.source==NEEDS_SDR){dynamic=DynamicRange.SDR;stabilization=false;prefs.edit().putBoolean("video_eis",false).apply();notice("60 fps ใช้ได้เมื่อปิด HDR และกันสั่น · ปิดให้แล้ว");mode=sessions.rates(info,quality,dynamic,false,false).first{it.upper==60}}
+            if(mode.source==NEEDS_SDR){dynamic=DynamicRange.SDR;stabilization=false;prefs.edit().putBoolean("video_eis",false).apply();notice("60 fps ใช้ได้เมื่อปิด HDR และกันสั่น ปิดให้แล้ว");mode=sessions.rates(info,quality,dynamic,false,false).first{it.upper==60}}
             half60=mode.source==HALF_HS
-            if(half60){mode=VideoSessions.Mode(sessions.rates(info,quality,DynamicRange.SDR,false,true).first{it.upper==120}.range,HIGH_SPEED);notice("60 fps: อัดที่ 120 แล้วแปลงเป็น 60 หลังหยุด · ใช้เวลาครู่หนึ่ง")}
+            if(half60){mode=VideoSessions.Mode(sessions.rates(info,quality,DynamicRange.SDR,false,true).first{it.upper==120}.range,HIGH_SPEED);notice("60 fps: อัดที่ 120 แล้วแปลงเป็น 60 หลังหยุด ใช้เวลาครู่หนึ่ง")}
             highRt=mode.source==HIGH_SPEED
             if(highRt){dynamic=DynamicRange.SDR;stabilization=false;mode=VideoSessions.Mode(mode.range,Recorder.VIDEO_CAPABILITIES_SOURCE_CAMCORDER_PROFILE);boundConfig.put("fpsPath","high-speed-realtime")}
             if(mode.source==FORCED){forced60=true;mode=VideoSessions.Mode(mode.range,Recorder.VIDEO_CAPABILITIES_SOURCE_CAMCORDER_PROFILE)}
@@ -191,10 +191,10 @@ class VideoActivity:ComponentActivity(){
             faces.streamAspect=videoRatio()?:if(quality==Quality.SD)4f/3f else 16f/9f;configureFaces(faces,camera!!,null)
             applyStageShape();fitPreview()
             saveSettings()
-            config.text="${qualityName(quality)} · ${if(mode.lower<mode.upper)"≤"else ""}$fps${if(dynamic!=DynamicRange.SDR)" HDR" else ""}"
-            status.text=if(dual)"หน้า + หลัง · ตรวจไฟล์หลังอัด" else "${if(mic)"ไมค์เปิด" else "ไมค์ปิด"} · ${if(stabilization)"กันสั่นเปิด" else "พร้อมบันทึก"}"
+            config.text="${qualityName(quality)} ${if(mode.lower<mode.upper)"≤"else ""}$fps${if(dynamic!=DynamicRange.SDR)" HDR" else ""}"
+            status.text=if(dual)"หน้า + หลัง ตรวจไฟล์หลังอัด" else "${if(mic)"ไมค์เปิด" else "ไมค์ปิด"} ${if(stabilization)"กันสั่นเปิด" else "พร้อมบันทึก"}"
             shutter.isEnabled=true;shutter.alpha=1f;refreshChips()
-        }catch(e:Exception){VideoDiagnostics.save(this,if(slow)"high-speed-bind"else "normal-bind",boundConfig,e);recorder=null;useCase=null;status.text="ชุดนี้ใช้ไม่ได้ · ${e.localizedMessage}\nแตะค่าด้านบนเพื่อเปลี่ยน"}
+        }catch(e:Exception){VideoDiagnostics.save(this,if(slow)"high-speed-bind"else "normal-bind",boundConfig,e);recorder=null;useCase=null;status.text="ชุดนี้ใช้ไม่ได้ ${e.localizedMessage}\nแตะค่าด้านบนเพื่อเปลี่ยน"}
     }
     /** Frame shape chosen for the clip; null keeps the sensor's own shape. Movie mode defaults to cinema 2.39. */
     private val V_ASPECTS get()=listOf("auto")+Aspects.available(prefs)
@@ -292,7 +292,7 @@ class VideoActivity:ComponentActivity(){
                     addView(IconView(this@VideoActivity,Icons.CHEVRON_RIGHT,2f).apply{tint=0x80ffffff.toInt()},dp(16),dp(16))},-1,dp(52))
             }
             fun line()=links.addView(View(this).apply{setBackgroundColor(0x1affffff)},LinearLayout.LayoutParams(-1,1).apply{leftMargin=dp(48)})
-            if(!slow){link("คืนค่า 1080p · 30 · SDR",Icons.RESET){dynamic=DynamicRange.SDR;fps=30;quality=Quality.FHD;hevc=false;stabilization=false;rebindSoon{fill();turnNow()}};line()}
+            if(!slow){link("คืนค่า 1080p 30 SDR",Icons.RESET){dynamic=DynamicRange.SDR;fps=30;quality=Quality.FHD;hevc=false;stabilization=false;rebindSoon{fill();turnNow()}};line()}
             link("ปรับแต่งแถบโหมด",Icons.BAR){sheet.close{prefs.edit().putBoolean("pending_editor",true).putString("pending_mode","PHOTO").apply();finish();noAnimation()}};line()
             link("ตั้งค่าทั้งหมด",Icons.GEAR){sheet.close{showStudioSettings(false){loadSettings();vOverlay?.gridKind=Grids.kind(prefs);handler.removeCallbacks(rebind);handler.postDelayed(rebind,420)}}}
             box.addView(links,LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(6)})
@@ -317,7 +317,7 @@ class VideoActivity:ComponentActivity(){
                 if(mic&&ContextCompat.checkSelfPermission(this,Manifest.permission.RECORD_AUDIO)==PackageManager.PERMISSION_GRANTED)pending=pending.withAudioEnabled()
                 recording=pending.start(main){event->when(event){
                     is VideoRecordEvent.Start->{Glass.quiet=true;wideUsed=(camera?.cameraInfo?.zoomState?.value?.zoomRatio?:1f)<0.95f;focusRecording(true);diagnostics.active(true);status.announceForAccessibility("เริ่มบันทึกวิดีโอ");starting=false;shutter.isEnabled=true;shutter.recording=true;shutter.contentDescription="หยุดบันทึกวิดีโอ";pause.isEnabled=true;recordingUi(true)}
-                    is VideoRecordEvent.Status->{val seconds=event.recordingStats.recordedDurationNanos/1_000_000_000;status.text=String.format(Locale.US,"%02d:%02d  ·  %.1f MB%s",seconds/60,seconds%60,event.recordingStats.numBytesRecorded/1e6,if(paused)" · พัก" else "")}
+                    is VideoRecordEvent.Status->{val seconds=event.recordingStats.recordedDurationNanos/1_000_000_000;status.text=String.format(Locale.US,"%02d:%02d   %.1f MB%s",seconds/60,seconds%60,event.recordingStats.numBytesRecorded/1e6,if(paused)" พัก" else "")}
                     is VideoRecordEvent.Pause->{diagnostics.active(false);paused=true;pauseIcon.path=Icons.VIDEO;pause.contentDescription="ต่อการบันทึก"}
                     is VideoRecordEvent.Resume->{diagnostics.active(true);paused=false;pauseIcon.path=PAUSE;pause.contentDescription="พักการบันทึก"}
                     is VideoRecordEvent.Finalize->{Glass.quiet=false;focusRecording(false);if(event.hasError())VideoDiagnostics.save(this,if(slow)"high-speed-finalize"else "normal-finalize",boundConfig,event.cause?:IllegalStateException("Recorder finalize code ${event.error}"));diagnostics.active(false);val sensor=diagnostics.snapshot();val requested=fps;val playback=if(slow)30 else fps;requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;recording=null;starting=false;finalizing=false;paused=false;shutter.recording=false;shutter.contentDescription="เริ่มบันทึกวิดีโอ";pause.isEnabled=false;pauseIcon.path=PAUSE;pause.contentDescription="พักการบันทึก";shutter.isEnabled=true;config.isEnabled=true;recordingUi(false)
@@ -326,22 +326,22 @@ class VideoActivity:ComponentActivity(){
                         if(uri!=Uri.EMPTY&&event.recordingStats.numBytesRecorded>0){
                             if(half60&&!event.hasError()){
                                 status.text="กำลังแปลงเป็น 60 fps…"
-                                FrameRateConvert.run(this,uri,name,60f,"${qualityName(quality)} · 60 fps (แปลงจาก 120)"){converted->
-                                    if(converted==null)MediaLedger.add(this,uri,name,"video/mp4","${qualityName(quality)} · 120 fps (แปลง 60 ไม่สำเร็จ)")
-                                    if(!isDestroyed){status.text=if(converted!=null)"บันทึกวิดีโอ 60 fps แล้ว" else "แปลงเป็น 60 fps ไม่สำเร็จ · เก็บคลิป 120 fps ไว้แทน";status.announceForAccessibility(status.text)}
+                                FrameRateConvert.run(this,uri,name,60f,"${qualityName(quality)} 60 fps (แปลงจาก 120)"){converted->
+                                    if(converted==null)MediaLedger.add(this,uri,name,"video/mp4","${qualityName(quality)} 120 fps (แปลง 60 ไม่สำเร็จ)")
+                                    if(!isDestroyed){status.text=if(converted!=null)"บันทึกวิดีโอ 60 fps แล้ว" else "แปลงเป็น 60 fps ไม่สำเร็จ เก็บคลิป 120 fps ไว้แทน";status.announceForAccessibility(status.text)}
                                 }
-                            }else MediaLedger.add(this,uri,name,"video/mp4",if(event.hasError())"คลิปจบบางส่วน · รหัส ${event.error}" else "${qualityName(quality)} · เป้าหมาย $fps fps · ${if(dynamic==DynamicRange.SDR)"SDR" else "HDR"}")
-                            if(!(half60&&!event.hasError()))status.text=if(event.hasError())"เก็บคลิปที่ได้รับแล้ว · ${event.error}" else "บันทึกวิดีโอแล้ว"
+                            }else MediaLedger.add(this,uri,name,"video/mp4",if(event.hasError())"คลิปจบบางส่วน รหัส ${event.error}" else "${qualityName(quality)} เป้าหมาย $fps fps ${if(dynamic==DynamicRange.SDR)"SDR" else "HDR"}")
+                            if(!(half60&&!event.hasError()))status.text=if(event.hasError())"เก็บคลิปที่ได้รับแล้ว ${event.error}" else "บันทึกวิดีโอแล้ว"
                             val capture=JSONObject(boundConfig.toString());val wasForced=forced60;val camKey=camera?.cameraInfo?.let{sessions.cameraKey(it)}?:"?";luma.fileIo.execute{ClipInspector.record(this,uri,name,requested,sensor,playback,capture)
                                 if(wasForced&&!event.hasError())runCatching{val j=ClipInspector.inspect(this,uri);val m=j.optDouble("measuredFps");val longEnough=j.optLong("lastSampleUs")-j.optLong("firstSampleUs")>4_000_000L
                                     // The ultra-wide lens only gives 30 fps, and dim light slows any lens: neither says the camera cannot do 60, so the option stays.
-                                    if(m<50.0)runOnUiThread{if(!isDestroyed)notice(if(wideUsed)"เลนส์กว้าง 0.6× ได้ ${"%.0f".format(m)} fps · ใช้ 1× ขึ้นไปเพื่อให้ได้ 60" else "คลิปนี้ได้ ${"%.0f".format(m)} fps · แสงน้อยทำให้เฟรมลดลง")}
+                                    if(m<50.0)runOnUiThread{if(!isDestroyed)notice(if(wideUsed)"เลนส์กว้าง 0.6× ได้ ${"%.0f".format(m)} fps ใช้ 1× ขึ้นไปเพื่อให้ได้ 60" else "คลิปนี้ได้ ${"%.0f".format(m)} fps แสงน้อยทำให้เฟรมลดลง")}
                                     if(m<40.0&&!wideUsed&&longEnough&&++low60>=3){sessions.failed60.add(camKey);prefs.edit().putStringSet("force60_failed_v2",HashSet(sessions.failed60)).apply()} else if(m>=50.0)low60=0}}
-                        }else status.text="บันทึกไม่สำเร็จ · ${event.cause?.localizedMessage?:event.error}"
+                        }else status.text="บันทึกไม่สำเร็จ ${event.cause?.localizedMessage?:event.error}"
                         status.announceForAccessibility(status.text)
                     }
                 }}
-            }catch(e:Exception){VideoDiagnostics.save(this,if(slow)"high-speed-start"else "normal-start",boundConfig,e);requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;starting=false;recording=null;shutter.isEnabled=true;config.isEnabled=true;status.text="เริ่มบันทึกไม่ได้ · ${e.localizedMessage}"}
+            }catch(e:Exception){VideoDiagnostics.save(this,if(slow)"high-speed-start"else "normal-start",boundConfig,e);requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;starting=false;recording=null;shutter.isEnabled=true;config.isEnabled=true;status.text="เริ่มบันทึกไม่ได้ ${e.localizedMessage}"}
         },if(sound)300 else 0)
     }
     // ---------- Mode strip (same items and order as the camera's) ----------
@@ -418,11 +418,11 @@ class VideoActivity:ComponentActivity(){
         stage.addView(status,FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply{topMargin=dp(62);leftMargin=dp(16);rightMargin=dp(16)})
         // No title bar: video uses the camera's own layout, so moving between photo and video modes reads as one screen.
         // The format pill sits where the camera shows its status icons.
-        config=text(if(slow)"SLOW · ตัวเลือก" else "1080p · 30",13f,WHITE,true).apply{gravity=Gravity.CENTER;maxWidth=dp(170);maxLines=2;ellipsize=null;minHeight=dp(48);background=glass(22);setPadding(dp(14),0,dp(14),0);isClickable=true;contentDescription="รายละเอียดวิดีโอทั้งหมด";glassTouch();setOnClickListener{settings()}}
+        config=text(if(slow)"SLOW ตัวเลือก" else "1080p 30",13f,WHITE,true).apply{gravity=Gravity.CENTER;maxWidth=dp(170);maxLines=2;ellipsize=null;minHeight=dp(48);background=glass(22);setPadding(dp(14),0,dp(14),0);isClickable=true;contentDescription="รายละเอียดวิดีโอทั้งหมด";glassTouch();setOnClickListener{settings()}}
         stage.addView(config,FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.END).apply{setMargins(0,dp(6),dp(12),0)})
         config.visibility=android.view.View.GONE // settings open by swiping up the dock, as in photo mode
         // Slow-motion records no sound; say so where it stays visible, since the status line changes.
-        if(slow)stage.addView(text("Slow-motion · ไม่มีเสียง",12.5f,Glass.TEXT2,true).apply{gravity=Gravity.CENTER;maxLines=3;ellipsize=null;maxWidth=dp(170);minHeight=dp(48);background=glass(22);setPadding(dp(14),0,dp(14),0)},FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.START).apply{setMargins(dp(12),dp(6),0,0)})
+        if(slow)stage.addView(text("Slow-motion ไม่มีเสียง",12.5f,Glass.TEXT2,true).apply{gravity=Gravity.CENTER;maxLines=3;ellipsize=null;maxWidth=dp(170);minHeight=dp(48);background=glass(22);setPadding(dp(14),0,dp(14),0)},FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.START).apply{setMargins(dp(12),dp(6),0,0)})
         // The same small wide-view map as photo mode, shown past 10×.
         zoomMap=ZoomMap(this).also{m->m.busy={false};stage.addView(m,FrameLayout.LayoutParams(dp(98),dp(130),Gravity.TOP or Gravity.END).apply{setMargins(0,dp(64),dp(12),0)})}
         wheel=ZoomWheel(this).apply{alpha=0f;visibility=android.view.View.VISIBLE;shiftDp=44f};stage.addView(wheel,FrameLayout.LayoutParams(-1,dp(150),Gravity.BOTTOM).apply{bottomMargin=dp(4)})
@@ -591,7 +591,7 @@ class VideoActivity:ComponentActivity(){
         val b=trackBox?:TrackMarker(this).apply{(preview.parent as? android.view.ViewGroup)?.addView(this,FrameLayout.LayoutParams(dp(80),dp(80)));trackBox=this}
         b.visibility=android.view.View.VISIBLE;b.translationX=preview.left+x-dp(40);b.translationY=preview.top+y-dp(40);b.scaleX=1.3f;b.scaleY=1.3f;b.animate().scaleX(1f).scaleY(1f).setDuration(220).start()
         if((manual?.minFocus?:0f)>0f&&focusRail.value>0f)setVideoFocus(null)
-        focusAt(tracker.x,tracker.y);Glass.tick(preview,android.view.HapticFeedbackConstants.LONG_PRESS);notice("กำลังติดตาม · แตะเพื่อยกเลิก")
+        focusAt(tracker.x,tracker.y);Glass.tick(preview,android.view.HapticFeedbackConstants.LONG_PRESS);notice("กำลังติดตาม แตะเพื่อยกเลิก")
         handler.removeCallbacks(trackStep);handler.postDelayed(trackStep,130)
     }
     private fun stopTracking(){if(!tracker.active&&trackBox?.visibility!=android.view.View.VISIBLE)return;tracker.stop();handler.removeCallbacks(trackStep);trackBox?.visibility=android.view.View.GONE;camera?.cameraControl?.cancelFocusAndMetering()}
@@ -657,7 +657,7 @@ class VideoActivity:ComponentActivity(){
         val half=if(extra==null&&fast!=null&&fast.upper==120)VideoSessions.Mode(Range(60,60),HALF_HS) else null
         return (base+listOfNotNull(extra,half,fast)).sortedBy{it.upper}
     }
-    private fun rateName(m:VideoSessions.Mode)=when(m.source){NEEDS_SDR->"60 fps · ปิด HDR/กันสั่นให้";HALF_HS->"60 fps · แปลงจาก 120 หลังอัด";FORCED->"60 fps";HIGH_SPEED->"${m.upper} fps · ความเร็วปกติ (high-speed)";else->sessions.label(m)}
+    private fun rateName(m:VideoSessions.Mode)=when(m.source){NEEDS_SDR->"60 fps ปิด HDR/กันสั่นให้";HALF_HS->"60 fps แปลงจาก 120 หลังอัด";FORCED->"60 fps";HIGH_SPEED->"${m.upper} fps ความเร็วปกติ (high-speed)";else->sessions.label(m)}
     private fun frameRates()=rateModes().map{it.upper}.ifEmpty{listOf(fps)}
     private fun ranges()=listOf(DynamicRange.SDR,DynamicRange.HLG_10_BIT,DynamicRange.HDR10_10_BIT).filter{caps()?.supportedDynamicRanges?.contains(it)?:(it==DynamicRange.SDR)}
     private fun evValues():List<Float>{val st=camera?.cameraInfo?.exposureState?:return listOf(0f);if(!st.isExposureCompensationSupported)return listOf(0f);val step=st.exposureCompensationStep.toFloat();val r=st.exposureCompensationRange;return(r.lower..r.upper).map{it*step}.filter{abs(it)<=4.01f}}

@@ -44,11 +44,11 @@ class VideoSessionDeviceTest {
                 fun settled() = device.findObject(By.desc("เริ่มบันทึกวิดีโอ"))?.isEnabled == true || device.findObject(By.textContains("ชุดนี้ใช้ไม่ได้")) != null
                 waitFor { settled() }
                 assertEquals("60", prefs.getString("video_fps_s", null))
-                assertTrue("60 is not in the video screen · ${GlassNav.dump(device)}", shows60(activity))
+                assertTrue("60 is not in the video screen ${GlassNav.dump(device)}", shows60(activity))
                 activity.recreate()
                 waitFor { settled() }
                 assertEquals("60", prefs.getString("video_fps_s", null))
-                assertTrue("60 is not in the video screen · ${GlassNav.dump(device)}", shows60(activity))
+                assertTrue("60 is not in the video screen ${GlassNav.dump(device)}", shows60(activity))
             }
         } finally { prefs.edit().apply { if (before == null) remove("video_fps_s") else putString("video_fps_s", before) }.commit() }
     }
@@ -59,7 +59,7 @@ class VideoSessionDeviceTest {
             assertNotNull(device.findObject(By.textContains("ไม่มีเสียง")))
             val ready = device.findObject(By.desc("เริ่มบันทึกวิดีโอ"))!!.isEnabled
             if (!ready) assertNotNull(device.findObject(By.textContains("high-speed")))
-            device.findObject(By.textContains("SLOW · ตัวเลือก"))?.click()
+            device.findObject(By.textContains("SLOW ตัวเลือก"))?.click()
             // Unsupported high-speed still exposes the diagnostic dialog, never a microphone prompt.
             assertNull(device.findObject(By.textContains("Allow Lumora")))
         }
@@ -82,9 +82,9 @@ class VideoSessionDeviceTest {
             var settled = false
             waitFor {
                 scenario.onActivity { activity ->
-                    // Glass UI: the status row shows a night icon described as "กลางคืน · <path>".
+                    // Glass UI: the status row shows a night icon described as "กลางคืน <path>".
                     val labels = ArrayList<android.view.View>()
-                    activity.window.decorView.findViewsWithText(labels, "กลางคืน ·", android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION)
+                    activity.window.decorView.findViewsWithText(labels, "กลางคืน ", android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION)
                     val shutter = ArrayList<android.view.View>()
                     activity.window.decorView.findViewsWithText(shutter, "ถ่ายภาพ", android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION)
                     settled = labels.isNotEmpty() && shutter.any { it.contentDescription == "ถ่ายภาพ" && it.isEnabled }
@@ -93,7 +93,7 @@ class VideoSessionDeviceTest {
             }
             if (!nativeNight) scenario.onActivity { activity ->
                 val night = ArrayList<android.view.View>()
-                activity.window.decorView.findViewsWithText(night, "กลางคืน · AI รวมเฟรม", android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION)
+                activity.window.decorView.findViewsWithText(night, "กลางคืน AI รวมเฟรม", android.view.View.FIND_VIEWS_WITH_CONTENT_DESCRIPTION)
                 assertTrue("Software Night must route through AI after a compatible HDR bind", night.isNotEmpty())
             }
         }

@@ -14,6 +14,9 @@ class StudioMathTest {
         assertEquals(null, StudioMath.cleanSpeech("Thank you for watching!"))
         assertEquals(null, StudioMath.cleanSpeech("ขอบคุณที่รับชม"))
         assertEquals(null, StudioMath.cleanSpeech("哈哈哈哈哈哈哈哈哈哈"))
+        listOf("(字", "(字幕:J.F", "中文字幕:J Chong", "阿星星星星星星星").forEach { assertEquals(it, null, StudioMath.cleanSpeech(it)) }
+        assertEquals("你好", StudioMath.cleanSpeech("你好"))
+        assertEquals("55555", StudioMath.cleanSpeech("55555"))
         assertEquals(null, StudioMath.cleanSpeech("ไปไปไปไปไปไปไปไปไปไป"))
         assertEquals(null, StudioMath.cleanSpeech("abcabcabcabcabcabcabc"))
         assertEquals("ผมจะไปตลาดพรุ่งนี้", StudioMath.cleanSpeech("ผมจะไปตลาดพรุ่งนี้", 3.0))
@@ -151,5 +154,24 @@ class StudioAnalysisTest {
     @Test fun beatsFollowLoudRises() {
         val p = FloatArray(80) { if (it % 10 == 0) 0.9f else 0.1f }
         assertEquals(listOf(500L, 1000L, 1500L, 2000L, 2500L, 3000L, 3500L), StudioMath.beats(p, 50))
+    }
+
+    @Test fun loudnessIgnoresQuietGapsAndGainsMatchTheMiddle() {
+        val loud = FloatArray(100) { if (it % 2 == 0) 0.4f else 0f }
+        assertEquals(0.4f, StudioMath.loudness(loud), 1e-4f)
+        assertEquals(0f, StudioMath.loudness(FloatArray(5) { 0.5f }), 0f)
+        val g = StudioMath.matchGains(listOf(0.2f, 0.4f, 0.8f, 0f))
+        assertEquals(2f, g[0]!!, 1e-4f); assertEquals(1f, g[1]!!, 1e-4f); assertEquals(0.5f, g[2]!!, 1e-4f); assertEquals(null, g[3])
+    }
+    @Test fun quickLayoutsStayOnThePicture() {
+        for (n in 0..7) {
+            val (x, y, s) = StudioMath.layerPlace(n, 16f / 9f, 9f / 16f)
+            assertTrue("x $n", x in 0f..1f); assertTrue("y $n", y in 0f..1f); assertTrue("size $n", s > 0f)
+        }
+        // A wide layer on a tall picture covers it fully when "full screen".
+        assertTrue(StudioMath.layerPlace(0, 16f / 9f, 9f / 16f).third >= 3f)
+        // Corners: the top-right one sits right and up, the bottom-left one left and down.
+        val tr = StudioMath.layerPlace(1, 1f, 9f / 16f); val bl = StudioMath.layerPlace(4, 1f, 9f / 16f)
+        assertTrue(tr.first > 0.5f && tr.second < 0.5f && bl.first < 0.5f && bl.second > 0.5f)
     }
 }

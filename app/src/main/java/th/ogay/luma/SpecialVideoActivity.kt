@@ -46,9 +46,9 @@ class SpecialVideoActivity:ComponentActivity(){
         texture.surfaceTextureListener=object:TextureView.SurfaceTextureListener{override fun onSurfaceTextureAvailable(s:SurfaceTexture,w:Int,h:Int){if(visible)open()};override fun onSurfaceTextureSizeChanged(s:SurfaceTexture,w:Int,h:Int){};override fun onSurfaceTextureUpdated(s:SurfaceTexture){};override fun onSurfaceTextureDestroyed(s:SurfaceTexture):Boolean{handler.post{close()};return true}}
         status=text("กำลังตรวจกล้อง…",13f).apply{gravity=Gravity.CENTER;background=glass(18);setPadding(dp(14),dp(7),dp(14),dp(7));maxLines=4}
         stage.addView(status,FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply{topMargin=dp(62);leftMargin=dp(16);rightMargin=dp(16)})
-        config=text("ทุก 1 วิ · 30 fps",13f,Glass.TEXT,true).apply{gravity=Gravity.CENTER;minHeight=dp(48);background=glass(22);setPadding(dp(14),0,dp(14),0);isClickable=true;contentDescription="ช่วงห่างเฟรม";glassTouch();setOnClickListener{settings()}}
+        config=text("ทุก 1 วิ 30 fps",13f,Glass.TEXT,true).apply{gravity=Gravity.CENTER;minHeight=dp(48);background=glass(22);setPadding(dp(14),0,dp(14),0);isClickable=true;contentDescription="ช่วงห่างเฟรม";glassTouch();setOnClickListener{settings()}}
         stage.addView(config,FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.END).apply{setMargins(0,dp(6),dp(12),0)})
-        stage.addView(text("Time-lapse · ไม่มีเสียง",12.5f,Glass.TEXT2,true).apply{gravity=Gravity.CENTER;minHeight=dp(48);background=glass(22);setPadding(dp(14),0,dp(14),0)},FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.START).apply{setMargins(dp(12),dp(6),0,0)})
+        stage.addView(text("Time-lapse ไม่มีเสียง",12.5f,Glass.TEXT2,true).apply{gravity=Gravity.CENTER;minHeight=dp(48);background=glass(22);setPadding(dp(14),0,dp(14),0)},FrameLayout.LayoutParams(-2,-2,Gravity.TOP or Gravity.START).apply{setMargins(dp(12),dp(6),0,0)})
         val dock=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setBackgroundColor(BG)}
         val strip=CenterStrip(this).apply{contentDescription="แถบโหมด"}
         ModeBar.fill(this,strip,"TIMELAPSE"){key->if(recording||working){notice("หยุดคลิปก่อนเปลี่ยนโหมด");false}else{ModeBar.go(this,key);true}}
@@ -69,8 +69,8 @@ class SpecialVideoActivity:ComponentActivity(){
         if(slow){
             val choices=manager.cameraIdList.flatMap{id->Capabilities.highSpeed(this,id).map{Triple(id,it.first,it.second)}}.filter{(_,s,f)->MediaCodecList(MediaCodecList.REGULAR_CODECS).codecInfos.any{codec->codec.isEncoder&&codec.supportedTypes.contains("video/avc")&&runCatching{codec.getCapabilitiesForType("video/avc").videoCapabilities?.areSizeAndRateSupported(s.width,s.height,f.toDouble())==true}.getOrDefault(false)}}
             if(choices.isEmpty()){notice("Android ไม่เปิดชุด high-speed ที่ encoder รองรับบนเครื่องนี้");return}
-            AlertDialog.Builder(this).setTitle("Slow-motion ที่ Android รายงาน").setItems(choices.map{"กล้อง ${it.first} · ${it.second} · ${it.third} fps"}.toTypedArray()){_,i->val x=choices[i];cameraId=x.first;size=x.second;fps=x.third;open()}.show()
-        }else AlertDialog.Builder(this).setTitle("ช่วงห่างเฟรม").setItems(arrayOf("0.5 วินาที","1 วินาที","2 วินาที","5 วินาที","10 วินาที")){_,i->interval=listOf(.5,1.0,2.0,5.0,10.0)[i];status.text="ทุก $interval วินาที · 30 เฟรมต่อ 1 วินาทีของคลิป";config.text="ทุก ${if(interval%1.0==0.0)interval.toInt().toString() else interval.toString()} วิ · 30 fps"}.show()
+            AlertDialog.Builder(this).setTitle("Slow-motion ที่ Android รายงาน").setItems(choices.map{"กล้อง ${it.first} ${it.second} ${it.third} fps"}.toTypedArray()){_,i->val x=choices[i];cameraId=x.first;size=x.second;fps=x.third;open()}.show()
+        }else AlertDialog.Builder(this).setTitle("ช่วงห่างเฟรม").setItems(arrayOf("0.5 วินาที","1 วินาที","2 วินาที","5 วินาที","10 วินาที")){_,i->interval=listOf(.5,1.0,2.0,5.0,10.0)[i];status.text="ทุก $interval วินาที 30 เฟรมต่อ 1 วินาทีของคลิป";config.text="ทุก ${if(interval%1.0==0.0)interval.toInt().toString() else interval.toString()} วิ 30 fps"}.show()
     }
     @SuppressLint("MissingPermission")
     private fun open(){
@@ -79,14 +79,14 @@ class SpecialVideoActivity:ComponentActivity(){
         working=true;shutter.isEnabled=false
         handler.post{try{
             close()
-            if(slow){val options=Capabilities.highSpeed(this,cameraId);check(options.isNotEmpty()){ "กล้องนี้ไม่เปิด High-speed video ให้แอป · ลองเลือกกล้องอื่น" };if(options.none{it.first==size&&it.second==fps}){size=options.first().first;fps=options.first().second}}
+            if(slow){val options=Capabilities.highSpeed(this,cameraId);check(options.isNotEmpty()){ "กล้องนี้ไม่เปิด High-speed video ให้แอป ลองเลือกกล้องอื่น" };if(options.none{it.first==size&&it.second==fps}){size=options.first().first;fps=options.first().second}}
             else{val sizes=manager.getCameraCharacteristics(cameraId).get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)!!.getOutputSizes(MediaRecorder::class.java);size=sizes.firstOrNull{it.width==1920&&it.height==1080}?:sizes.firstOrNull{it.width==1280&&it.height==720}?:sizes.minBy{abs(it.width*it.height-1280*720)}}
             manager.openCamera(cameraId,object:CameraDevice.StateCallback(){override fun onOpened(d:CameraDevice){camera=d;if(!visible){close();return};preview()};override fun onDisconnected(d:CameraDevice){d.close();camera=null;showError("กล้องถูกตัดการเชื่อมต่อ")};override fun onError(d:CameraDevice,e:Int){d.close();camera=null;showError("กล้องผิดพลาด $e")}},handler)
         }catch(e:Exception){showError(e.localizedMessage?:"เปิดกล้องไม่ได้")}}
     }
     private fun surface():Surface{previewSurface?.release();val st=texture.surfaceTexture?:kotlin.error("พรีวิวยังไม่พร้อม");st.setDefaultBufferSize(size.width,size.height);return Surface(st).also{previewSurface=it}}
     @Suppress("DEPRECATION")
-    private fun preview(){try{val d=camera?:return;val target=surface();d.createCaptureSession(listOf(target),object:CameraCaptureSession.StateCallback(){override fun onConfigured(s:CameraCaptureSession){session=s;try{val req=d.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply{addTarget(target);set(CaptureRequest.CONTROL_MODE,CaptureRequest.CONTROL_MODE_AUTO)};s.setRepeatingRequest(req.build(),null,handler);runOnUiThread{working=false;shutter.isEnabled=true;status.text="${size} · "+if(slow)"${fps} fps → 30 fps" else "ทุก $interval วินาที"}}catch(e:Exception){showError(e.localizedMessage?:"เปิดพรีวิวไม่ได้")}};override fun onConfigureFailed(s:CameraCaptureSession){s.close();showError("ชุดพรีวิวนี้ไม่รองรับ")}},handler)}catch(e:Exception){showError(e.localizedMessage?:"เปิดพรีวิวไม่ได้")}}
+    private fun preview(){try{val d=camera?:return;val target=surface();d.createCaptureSession(listOf(target),object:CameraCaptureSession.StateCallback(){override fun onConfigured(s:CameraCaptureSession){session=s;try{val req=d.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply{addTarget(target);set(CaptureRequest.CONTROL_MODE,CaptureRequest.CONTROL_MODE_AUTO)};s.setRepeatingRequest(req.build(),null,handler);runOnUiThread{working=false;shutter.isEnabled=true;status.text="${size} "+if(slow)"${fps} fps → 30 fps" else "ทุก $interval วินาที"}}catch(e:Exception){showError(e.localizedMessage?:"เปิดพรีวิวไม่ได้")}};override fun onConfigureFailed(s:CameraCaptureSession){s.close();showError("ชุดพรีวิวนี้ไม่รองรับ")}},handler)}catch(e:Exception){showError(e.localizedMessage?:"เปิดพรีวิวไม่ได้")}}
     @Suppress("DEPRECATION")
     private fun start(){if(camera==null||working)return;if(filesDir.usableSpace<96L*1024*1024){notice("พื้นที่ไม่พอ");return};requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LOCKED;working=true;shutter.isEnabled=false;status.text="กำลังเตรียมไฟล์…"
         handler.post{try{
@@ -101,7 +101,7 @@ class SpecialVideoActivity:ComponentActivity(){
             val d=camera?:kotlin.error("กล้องปิดแล้ว");val target=surface();val surfaces=listOf(target,r.surface)
             val callback=object:CameraCaptureSession.StateCallback(){override fun onConfigured(s:CameraCaptureSession){if(!visible){s.close();close();return};session=s;try{val req=d.createCaptureRequest(CameraDevice.TEMPLATE_RECORD).apply{surfaces.forEach{addTarget(it)};set(CaptureRequest.CONTROL_MODE,CaptureRequest.CONTROL_MODE_AUTO);if(slow)set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE,Range(fps,fps))}
                     if(slow){val high=s as CameraConstrainedHighSpeedCaptureSession;high.setRepeatingBurst(high.createHighSpeedRequestList(req.build()),null,handler)}else s.setRepeatingRequest(req.build(),null,handler)
-                    r.start();recording=true;started=SystemClock.elapsedRealtime();runOnUiThread{working=false;shutter.recording=true;shutter.isEnabled=true;status.text=if(slow)"กำลังบันทึก $fps fps · ไม่มีเสียง"else "กำลังเก็บเฟรมทุก $interval วินาที"}
+                    r.start();recording=true;started=SystemClock.elapsedRealtime();runOnUiThread{working=false;shutter.recording=true;shutter.isEnabled=true;status.text=if(slow)"กำลังบันทึก $fps fps ไม่มีเสียง"else "กำลังเก็บเฟรมทุก $interval วินาที"}
                 }catch(e:Exception){showError(e.localizedMessage?:"เริ่มอัดไม่ได้");close()}}
                 override fun onConfigureFailed(s:CameraCaptureSession){s.close();showError("กล้องและ encoder ไม่รองรับชุดที่เลือก");close()}}
             if(slow)d.createConstrainedHighSpeedCaptureSession(surfaces,callback,handler)else d.createCaptureSession(surfaces,callback,handler)
@@ -111,7 +111,7 @@ class SpecialVideoActivity:ComponentActivity(){
         val output=file;val wall=SystemClock.elapsedRealtime()-started
         val success=runCatching{session?.stopRepeating();recorder?.stop()}.isSuccess
         recording=false;recorder?.release();recorder=null;session?.close();session=null
-        if(output!=null&&success&&output.length()>0)luma.fileIo.execute{runCatching{val uri=MediaLedger.publishVideo(this,output,output.name,"${if(slow)"Slow-motion $fps → 30 fps" else "Time-lapse ทุก $interval วินาที"} · เวลาถ่าย ${wall/1000}s");ClipInspector.record(this,uri,output.name);output.delete()}.onSuccess{runOnUiThread{status.text="บันทึกคลิปแล้ว"}}.onFailure{runOnUiThread{status.text="ไฟล์ยังอยู่ในแอป · ${it.localizedMessage}"};MediaLedger.rememberFile(this,output,"video/mp4")}}
+        if(output!=null&&success&&output.length()>0)luma.fileIo.execute{runCatching{val uri=MediaLedger.publishVideo(this,output,output.name,"${if(slow)"Slow-motion $fps → 30 fps" else "Time-lapse ทุก $interval วินาที"} เวลาถ่าย ${wall/1000}s");ClipInspector.record(this,uri,output.name);output.delete()}.onSuccess{runOnUiThread{status.text="บันทึกคลิปแล้ว"}}.onFailure{runOnUiThread{status.text="ไฟล์ยังอยู่ในแอป ${it.localizedMessage}"};MediaLedger.rememberFile(this,output,"video/mp4")}}
         else{output?.delete();runOnUiThread{status.text="คลิปสั้นเกินไปหรือ recorder ไม่ส่งไฟล์ที่สมบูรณ์"}}
         runOnUiThread{working=false;shutter.recording=false;requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT};if(visible)preview()else close()
     }}

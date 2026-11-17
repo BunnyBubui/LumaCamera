@@ -7,6 +7,19 @@ import android.widget.LinearLayout
 import kotlin.math.roundToInt
 
 /**
+ * Adds Natural HDR next to Photo exactly once during the mode-bar preference migration.
+ * Later user edits (including removing HDR) must not be overwritten on subsequent launches.
+ */
+internal fun addNaturalHdrMode(saved: String): String {
+    val modes = saved.split(',').map { it.trim() }.filter { it.isNotEmpty() }.distinct().toMutableList()
+    if ("HDR" !in modes) {
+        val photoIndex = modes.indexOf("PHOTO")
+        modes.add(if (photoIndex >= 0) photoIndex + 1 else 0, "HDR")
+    }
+    return modes.joinToString(",")
+}
+
+/**
  * The camera's mode strip for screens outside the camera (video, time-lapse): same items, same order, and a
  * switch that moves to the right screen without a page transition.
  */
