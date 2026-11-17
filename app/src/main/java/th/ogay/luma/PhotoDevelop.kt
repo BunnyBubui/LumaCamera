@@ -56,6 +56,13 @@ class Develop(private val values: FloatArray, private val hsl: FloatArray, priva
         fun curvePoints(y: FloatArray, at: Int, n: Int): FloatArray = PointCurve.sample(y, at, n)
     }
 
+    private val m = FloatArray(20)
+    private val lutR = IntArray(256); private val lutG = IntArray(256); private val lutB = IntArray(256)
+    private val sat = values[9]; private val vib = values[8]; private val haze = values[11]
+    private val clarity = values[10]; private val sharp = values[12]; private val grain = values[13].coerceAtLeast(0f)
+    private val anyHsl = hsl.any { it != 0f }
+    val neutral: Boolean
+
     init {
         // White balance after the film look, as one matrix.
         val wb = ColorMatrix(floatArrayOf(1f + values[6] * 0.15f, 0f, 0f, 0f, 0f, 0f, 1f - values[7] * 0.10f, 0f, 0f, 0f, 0f, 0f, 1f - values[6] * 0.15f, 0f, 0f, 0f, 0f, 0f, 1f, 0f))
