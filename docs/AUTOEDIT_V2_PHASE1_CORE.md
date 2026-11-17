@@ -8,6 +8,7 @@
 - Disabled-by-default feature flag: `AutoEditFeatureFlags.ENABLED = false`.
 - Typed source assets, analysis evidence/events, motion keyframes, SFX cues and an editable decision list (EDL).
 - Deterministic piecewise source-to-output time mapper; all plan/source timestamps in microseconds.
+- Deterministic `AutoEditPlanner.draftFromReviewedSpans()` turns **reviewed inputs** into ordered, gap-free, editable ClipDecisions with stable plan IDs and source audio retained. It does not perform scene/kill detection.
 - EDL validation: referenced source exists, no out-of-range trim, no output gaps, audio retention, motion bounds, evidence before declaring confirmed kills.
 - Versioned JSON codec and an **optional** `Bundle` attachment for existing `StudioProjects` persistence. Existing schema-1 project files remain untouched and readable; the adapter is not wired into UI yet.
 - JVM unit tests for preset defaults, invalid EDLs, time mapping, confidence/evidence and JSON roundtrip.
