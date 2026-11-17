@@ -8,6 +8,7 @@ Stacked PR for early quality tooling. Phase 7 cannot complete without Claude Pha
 - Standard-library Python evaluation tool: `scripts/autoedit/evaluate_highlights.py`
 - Synthetic regression tests: `scripts/autoedit/test_evaluate_highlights.py`
 - Automated evaluator-tests workflow: `.github/workflows/autoedit-quality.yml`
+- JVM synthetic cross-module contract fixtures: `app/src/test/java/th/ogay/luma/autoedit/AutoEditEndToEndContractTest.kt` (Gaming Director → EDL → Sound Director; not a real media pipeline).
 - Quality-gate policy described below.
 
 ### Honest quality measurements
