@@ -48,7 +48,7 @@ object GamingHighlightDirector {
     private val corroborating = setOf("hud", "game_metadata")
     private val visual = setOf("hud", "game_metadata", "ocr", "visual")
     private data class Seed(val event: AnalysisEvent, val confirmed: Boolean)
-    private data class Window(val assetId: String, val startUs: Long,
+    private data class Window(val assetId: String, val profileId: String?, val startUs: Long,
                               val endUs: Long, val seeds: List<Seed>)
 
     private fun hasEvidence(e: AnalysisEvent, kinds: Set<String>, threshold: Double) =
@@ -159,7 +159,7 @@ object GamingHighlightDirector {
             val a = requireNotNull(assets[group.first().event.assetId])
             val first = group.minOf { it.event.sourceStartUs }
             val last = group.maxOf { it.event.sourceEndUs }
-            Window(a.id, (first - preUs).coerceAtLeast(0L),
+            Window(a.id, group.first().event.gameProfileId, (first - preUs).coerceAtLeast(0L),
                 if (postUs >= a.durationUs - last) a.durationUs else last + postUs,
                 group)
         }
@@ -167,9 +167,9 @@ object GamingHighlightDirector {
 
     private fun mergeWindows(windows: List<Window>): List<Window> {
         val out = mutableListOf<Window>()
-        for (w in windows.sortedWith(compareBy({ it.assetId }, { it.startUs }, { it.endUs }))) {
+        for (w in windows.sortedWith(compareBy({ it.assetId }, { it.profileId ?: "" }, { it.startUs }, { it.endUs }))) {
             val prev = out.lastOrNull()
-            if (prev != null && prev.assetId == w.assetId && w.startUs <= prev.endUs) {
+            if (prev != null && prev.assetId == w.assetId && prev.profileId == w.profileId && w.startUs <= prev.endUs) {
                 out[out.lastIndex] = prev.copy(
                     endUs = max(prev.endUs, w.endUs),
                     seeds = (prev.seeds + w.seeds).distinctBy { it.event.id })
@@ -212,6 +212,8 @@ object GamingHighlightDirector {
         var totalUs = 0L
         for (c in candidates) {
             if (selected.size == maxHighlights) break
+            // Do not repeat overlapping time ranges from incompatible detector profiles.
+            if (selected.any { it.assetId == c.assetId && c.startUs < it.endUs && c.endUs > it.startUs }) continue
             // An over-budget *first* streak is retained whole, never cut mid-event.
             if (selected.isNotEmpty() && c.durationUs > budgetUs - totalUs) continue
             selected += c
