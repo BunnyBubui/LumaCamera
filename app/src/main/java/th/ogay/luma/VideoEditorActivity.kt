@@ -661,7 +661,7 @@ class VideoEditorActivity : ComponentActivity() {
             Glass.tick(timeline); refreshTimeline() }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { rightMargin = dp(6) })
         // Folds the tool panel away so the picture and the timeline get its room; any tool tab opens it again.
         collapseIcon = IconView(this, "M6 9l6 6 6-6", 2f)
-        transport.addView(FrameLayout(this).apply { background = glass(22, 0x40ffffff); isClickable = true; contentDescription = "ย่อหรือขยายแถบเครื่องมือ"; glassTouch(); setOnClickListener { Glass.tick(it); setCollapsed(!collapsed) }
+        transport.addView(FrameLayout(this).apply { background = glass(22, 0x40ffffff); isClickable = true; contentDescription = "ย่อหรือขยายแถบเครื่องมือ"; glassTouch(); setOnClickListener { if (landscape()) { Glass.tick(it); setCollapsed(!collapsed) } else toggleTools() }
             addView(collapseIcon, FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER)) }, LinearLayout.LayoutParams(dp(44), dp(44)))
         root.addView(transport, -1, -2)
         timeline = StudioTimeline(this).apply { contentDescription = "ไทม์ไลน์ ลากเพื่อเลื่อนเวลา แตะคลิปเพื่อเลือก ลากขอบคลิปที่เลือกเพื่อตัด กดค้างแล้วลากเพื่อสลับลำดับ" }
@@ -712,11 +712,14 @@ class VideoEditorActivity : ComponentActivity() {
         // The old film strip still keeps the playhead and the picked clip's ends, but the timeline above is what is shown.
         trim.visibility = View.GONE
         root.addView(trim, LinearLayout.LayoutParams(-1, 0))
-        tools = FrameLayout(this).apply { clipChildren = false }
+        tools = SwipePanel(this).apply { clipChildren = false }
+        grabber = FrameLayout(this).apply { contentDescription = "ลากขึ้นลงเพื่อเปิดหรือพับแถบเครื่องมือ"; isClickable = true
+            addView(View(this@VideoEditorActivity).apply { background = glass(2, 0x66ffffff) }, FrameLayout.LayoutParams(dp(40), dp(4), Gravity.CENTER)) }
+        grabber.setOnTouchListener(GrabberTouch())
         root.addView(tools, LinearLayout.LayoutParams(-1, dp(124)))
         toolBar = EditorKit.ToolBar(this, listOf(EditorKit.SCISSORS to "ตัด", EditorKit.SPEED to "ความเร็ว", EditorKit.CROP to "ครอป", EditorKit.ROTATE to "หมุน",
             EditorKit.ADJUST to "ปรับแต่งภาพ", Icons.FILM to "ฟิลเตอร์", EditorKit.TEXT to "ข้อความ", "M4 6h16v10H8l-4 4z M8 10h8 M8 13h5" to "คำบรรยาย",
-            STICKER to "สติกเกอร์", LAYERS to "เลเยอร์", JOIN to "ทรานซิชัน", Icons.SOUND to "เสียง", "M12 4a3 3 0 0 0-3 3v5a3 3 0 0 0 6 0V7a3 3 0 0 0-3-3z M6 11a6 6 0 0 0 12 0 M12 17v3" to "อัดเสียง")) { setCollapsed(false); showTool(TOOL_IDS[it]) }
+            STICKER to "สติกเกอร์", LAYERS to "เลเยอร์", JOIN to "ทรานซิชัน", Icons.SOUND to "เสียง", "M12 4a3 3 0 0 0-3 3v5a3 3 0 0 0 6 0V7a3 3 0 0 0-3-3z M6 11a6 6 0 0 0 12 0 M12 17v3" to "อัดเสียง")) { val folded = collapsed; if (landscape()) setCollapsed(false); showTool(TOOL_IDS[it]); if (folded && !landscape() && collapsed) springTools(fullH()) }
         root.addView(toolBar, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(4), 0, dp(4), dp(8)) })
         rootBox = root; topBar = bar; transportRow = transport
         collapsed = state?.getBoolean("collapsed") == true
@@ -1047,12 +1050,101 @@ class VideoEditorActivity : ComponentActivity() {
     private lateinit var rootBox: LinearLayout; private lateinit var topBar: LinearLayout; private lateinit var transportRow: LinearLayout
     private lateinit var collapseIcon: IconView
     private var toolsHolder: android.widget.ScrollView? = null
+    private lateinit var grabber: FrameLayout
+    private var toolsFull = 0
+    private var toolsAnim: android.animation.ValueAnimator? = null
+    private fun fullH() = toolsFull.takeIf { it > 0 } ?: dp(124)
+    private fun setToolsHeight(h: Int) {
+        val lp = tools.layoutParams ?: return
+        if (lp.height != h) { lp.height = h; tools.requestLayout() }
+        tools.visibility = if (h <= 0) View.GONE else View.VISIBLE
+    }
+    /** Moves the tool panel to [target] px high with a springy settle (it overshoots a little when it opens, like the sheets). */
+    private fun springTools(target: Int) {
+        toolsAnim?.cancel()
+        val from = tools.layoutParams.height
+        collapsed = target <= 0; collapseIcon.path = if (collapsed) "M6 15l6-6 6 6" else "M6 9l6 6 6-6"
+        if (Glass.reduced(this) || from == target) { setToolsHeight(target); return }
+        tools.visibility = View.VISIBLE
+        toolsAnim = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 560; interpolator = android.animation.TimeInterpolator { Glass.spring(it * 0.56f, 0.55f, 22f) }
+            addUpdateListener { setToolsHeight((from + (target - from) * (it.animatedValue as Float)).toInt().coerceAtLeast(0)) }
+            addListener(object : android.animation.AnimatorListenerAdapter() {
+                var cancelled = false
+                override fun onAnimationCancel(a: android.animation.Animator) { cancelled = true }
+                override fun onAnimationEnd(a: android.animation.Animator) { if (!cancelled) setToolsHeight(target) }
+            })
+            start()
+        }
+    }
+    // Dragging the panel: it follows the finger, then springs open or shut by where it was let go and how fast.
+    private var dragStartY = 0f; private var dragStartH = 0; private val dragTrail = ArrayList<Pair<Long, Float>>()
+    private fun dragBegin(rawY: Float) { toolsAnim?.cancel(); dragStartY = rawY; dragStartH = tools.layoutParams.height.coerceAtLeast(0); dragTrail.clear(); dragTrail += android.os.SystemClock.uptimeMillis() to rawY; tools.visibility = View.VISIBLE }
+    private fun dragMove(rawY: Float) {
+        dragTrail += android.os.SystemClock.uptimeMillis() to rawY; if (dragTrail.size > 8) dragTrail.removeAt(0)
+        setToolsHeight((dragStartH - (rawY - dragStartY)).toInt().coerceIn(0, fullH()))
+    }
+    private fun dragEnd() {
+        val full = fullH(); val h = tools.layoutParams.height
+        val a = dragTrail.firstOrNull(); val b = dragTrail.lastOrNull()
+        val vy = if (a != null && b != null && b.first > a.first) (b.second - a.second) / (b.first - a.first) * 1000f else 0f   // px/s, down is positive
+        val open = when { vy > dp(500) -> false; vy < -dp(500) -> true; else -> h > full / 2 }
+        Glass.tick(tools); springTools(if (open) full else 0)
+    }
+    private fun toggleTools() { Glass.tick(tools); springTools(if (collapsed) fullH() else 0) }
+    /** The grip above the tabs: drag it up or down, or tap it. */
+    private inner class GrabberTouch : View.OnTouchListener {
+        private var downY = 0f; private var moved = false
+        override fun onTouch(v: View, e: MotionEvent): Boolean {
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> { downY = e.rawY; moved = false; dragBegin(e.rawY); v.parent?.requestDisallowInterceptTouchEvent(true) }
+                MotionEvent.ACTION_MOVE -> { if (!moved && abs(e.rawY - downY) > dp(6)) moved = true; if (moved) dragMove(e.rawY) }
+                MotionEvent.ACTION_UP -> if (moved) dragEnd() else { v.performClick(); toggleTools() }
+                MotionEvent.ACTION_CANCEL -> if (moved) dragEnd() else springTools(if (collapsed) 0 else fullH())
+            }
+            return true
+        }
+    }
+    /** The tool panel: a swipe up or down on it (not on something that scrolls up and down itself) drags the whole panel. */
+    private inner class SwipePanel(c: Context) : FrameLayout(c) {
+        private var downX = 0f; private var downY = 0f; private var dragging = false; private var blocked = false
+        private val slop = android.view.ViewConfiguration.get(c).scaledTouchSlop
+        private fun scrollsUpDown(v: View, x: Float, y: Float): Boolean {
+            if (v.canScrollVertically(-1) || v.canScrollVertically(1)) return true
+            if (v is android.view.ViewGroup) for (i in 0 until v.childCount) {
+                val ch = v.getChildAt(i); if (ch.visibility != View.VISIBLE) continue
+                val cx = x + v.scrollX - ch.left; val cy = y + v.scrollY - ch.top
+                if (cx >= 0 && cy >= 0 && cx < ch.width && cy < ch.height && scrollsUpDown(ch, cx, cy)) return true
+            }
+            return false
+        }
+        override fun onInterceptTouchEvent(e: MotionEvent): Boolean {
+            if (landscape()) return false
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> { downX = e.x; downY = e.y; dragging = false; blocked = scrollsUpDown(this, e.x, e.y) }
+                MotionEvent.ACTION_MOVE -> if (!dragging && !blocked) {
+                    val dx = e.x - downX; val dy = e.y - downY
+                    if (abs(dy) > slop && abs(dy) > abs(dx) * 1.4f) { dragging = true; dragBegin(e.rawY - dy); parent?.requestDisallowInterceptTouchEvent(true); return true }
+                }
+            }
+            return false
+        }
+        override fun onTouchEvent(e: MotionEvent): Boolean {
+            if (!dragging) return super.onTouchEvent(e)
+            when (e.actionMasked) {
+                MotionEvent.ACTION_MOVE -> dragMove(e.rawY)
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { dragging = false; dragEnd() }
+            }
+            return true
+        }
+    }
     private var collapsed = false
     private fun landscape() = resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
     private fun setCollapsed(on: Boolean) {
         collapsed = on
         collapseIcon.path = if (on) "M6 15l6-6 6 6" else "M6 9l6 6 6-6"
-        (toolsHolder ?: tools).visibility = if (on) View.GONE else View.VISIBLE
+        if (landscape()) { tools.layoutParams.height = fullH(); (toolsHolder ?: tools).visibility = if (on) View.GONE else View.VISIBLE; tools.visibility = View.VISIBLE }
+        else setToolsHeight(if (on) 0 else fullH())
     }
     /**
      * Puts the parts of the page where the screen's shape wants them. Upright: top bar, picture, play row, timeline, tools, tabs
@@ -1060,10 +1152,10 @@ class VideoEditorActivity : ComponentActivity() {
      * right (the tools scroll there, because the screen is short).
      */
     private fun arrange() {
-        val parts = listOf<View>(topBar, stage, transportRow, timelineScroll, trim, tools, toolBar)
+        val parts = listOf<View>(topBar, stage, transportRow, timelineScroll, trim, grabber, tools, toolBar)
         parts.forEach { (it.parent as? android.view.ViewGroup)?.removeView(it) }
         rootBox.removeAllViews(); toolsHolder = null
-        val toolsH = tools.layoutParams?.height?.takeIf { it > 0 } ?: dp(124)
+        val toolsH = fullH()
         if (!landscape()) {
             rootBox.orientation = LinearLayout.VERTICAL
             rootBox.addView(topBar, -1, -2)
@@ -1071,7 +1163,8 @@ class VideoEditorActivity : ComponentActivity() {
             rootBox.addView(transportRow, -1, -2)
             rootBox.addView(timelineScroll, LinearLayout.LayoutParams(-1, timelineScroll.layoutParams?.height ?: dp(68)).apply { topMargin = dp(2) })
             rootBox.addView(trim, LinearLayout.LayoutParams(-1, 0))
-            rootBox.addView(tools, LinearLayout.LayoutParams(-1, toolsH))
+            rootBox.addView(grabber, LinearLayout.LayoutParams(-1, dp(20)))
+            rootBox.addView(tools, LinearLayout.LayoutParams(-1, if (collapsed) 0 else toolsH))
             rootBox.addView(toolBar, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(4), 0, dp(4), dp(8)) })
         } else {
             rootBox.orientation = LinearLayout.HORIZONTAL
@@ -2397,7 +2490,11 @@ class VideoEditorActivity : ComponentActivity() {
         // The layer lanes need room; the preview gives way smoothly.
         if (i != COLOR_TOOL) { handler.removeCallbacks(histTick); hist = null }
         val want = dp(when (i) { LAYER_TOOL -> 312; COLOR_TOOL -> 286; 9 -> 260; 2 -> if (speedTab == 1) 276 else 178; 4 -> 236; 3 -> 150; 5 -> 196; 12, 15, 16 -> 220; else -> 124 })
-        if (tools.layoutParams.height != want) {
+        toolsFull = want
+        // Choosing another tool opens a folded panel (with the spring); the same tool refreshing keeps it as it is.
+        if (collapsed && !landscape()) { if (animate && dir != 0) springTools(want) }
+        else if (tools.layoutParams.height != want) {
+            toolsAnim?.cancel()
             if (!animate || Glass.reduced(this)) { tools.layoutParams.height = want; tools.requestLayout() }
             else android.animation.ValueAnimator.ofInt(tools.layoutParams.height, want).apply { duration = 260; interpolator = Glass.EASE
                 addUpdateListener { tools.layoutParams.height = it.animatedValue as Int; tools.requestLayout() } }.start()
