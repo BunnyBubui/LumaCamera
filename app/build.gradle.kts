@@ -122,6 +122,8 @@ dependencies {
         implementation("com.oplus.ocs:camera:1.0.7")
     }
     testImplementation("junit:junit:4.13.2")
+    // Android org.json is a stub in local JVM tests; use a real implementation for EDL roundtrip tests.
+    testImplementation("org.json:json:20240303")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.test:rules:1.6.1")
     androidTestImplementation("androidx.test.uiautomator:uiautomator:2.3.0")
