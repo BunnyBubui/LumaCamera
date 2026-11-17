@@ -85,7 +85,7 @@ class VideoEditorActivity : ComponentActivity() {
         private const val LAYER_TOOL = 13
         private const val COLOR_TOOL = 14
         /** Internal menu numbers in the order the tool bar shows them. */
-        private val TOOL_IDS = listOf(0, 2, 3, 4, 5, 14, 8, 9, 11, 12, 13, 15, 16)
+        private val TOOL_IDS = listOf(0, 2, 3, 8, 14, 5, 4, 15, 12, 13, 11, 9, 16)
         private val EASES = listOf("นุ่ม", "คงที่", "ค่อย ๆ เร่ง", "ค่อย ๆ หยุด", "หยุดนิ่ง")
         private const val GREEN_KEY = 0xff00b140.toInt()
         private const val BLUE_KEY = 0xff0047bb.toInt()
@@ -690,9 +690,9 @@ class VideoEditorActivity : ComponentActivity() {
         root.addView(trim, LinearLayout.LayoutParams(-1, 0))
         tools = FrameLayout(this).apply { clipChildren = false }
         root.addView(tools, LinearLayout.LayoutParams(-1, dp(124)))
-        toolBar = EditorKit.ToolBar(this, listOf(EditorKit.SCISSORS to "ตัด", EditorKit.SPEED to "ความเร็ว", EditorKit.CROP to "ครอป", EditorKit.TEXT to "ข้อความ", Icons.FILM to "ฟิลเตอร์",
-            EditorKit.ADJUST to "ปรับแต่งภาพ", EditorKit.ROTATE to "หมุน", Icons.SOUND to "เสียง", JOIN to "ทรานซิชัน", STICKER to "สติกเกอร์", LAYERS to "เลเยอร์",
-            "M4 6h16v10H8l-4 4z M8 10h8 M8 13h5" to "คำบรรยาย", "M12 4a3 3 0 0 0-3 3v5a3 3 0 0 0 6 0V7a3 3 0 0 0-3-3z M6 11a6 6 0 0 0 12 0 M12 17v3" to "อัดเสียง")) { setCollapsed(false); showTool(TOOL_IDS[it]) }
+        toolBar = EditorKit.ToolBar(this, listOf(EditorKit.SCISSORS to "ตัด", EditorKit.SPEED to "ความเร็ว", EditorKit.CROP to "ครอป", EditorKit.ROTATE to "หมุน",
+            EditorKit.ADJUST to "ปรับแต่งภาพ", Icons.FILM to "ฟิลเตอร์", EditorKit.TEXT to "ข้อความ", "M4 6h16v10H8l-4 4z M8 10h8 M8 13h5" to "คำบรรยาย",
+            STICKER to "สติกเกอร์", LAYERS to "เลเยอร์", JOIN to "ทรานซิชัน", Icons.SOUND to "เสียง", "M12 4a3 3 0 0 0-3 3v5a3 3 0 0 0 6 0V7a3 3 0 0 0-3-3z M6 11a6 6 0 0 0 12 0 M12 17v3" to "อัดเสียง")) { setCollapsed(false); showTool(TOOL_IDS[it]) }
         root.addView(toolBar, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(4), 0, dp(4), dp(8)) })
         rootBox = root; topBar = bar; transportRow = transport
         collapsed = state?.getBoolean("collapsed") == true
@@ -1169,9 +1169,9 @@ class VideoEditorActivity : ComponentActivity() {
             t.addView(IconView(this, Icons.CHEVRON_RIGHT, 2f).apply { tint = Glass.TEXT3 }, dp(18), dp(18))
             card.addView(t, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
         }
-        fun switchRow(title: String, note: String, key: String, default: Boolean) {
+        fun switchRow(title: String, note: String, key: String, default: Boolean, rebuild: Boolean = false) {
             val sw = GlassSwitch(this); sw.set(p.getBoolean(key, default), false); sw.contentDescription = title
-            sw.onToggle = { v -> p.edit().putBoolean(key, v).apply() }
+            sw.onToggle = { v -> p.edit().putBoolean(key, v).apply(); if (rebuild) build() }
             val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(16), 0, 0); isClickable = true; setOnClickListener { sw.performClick() } }
             row.addView(LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, 0, dp(12), 0); addView(text(title, 14f, Glass.TEXT2, true)); addView(text(note, 12f, Glass.TEXT3).apply { setPadding(0, dp(4), 0, 0) }) }, LinearLayout.LayoutParams(0, -2, 1f))
             row.addView(sw, LinearLayout.LayoutParams(dp(51), dp(31)))
@@ -1252,7 +1252,19 @@ class VideoEditorActivity : ComponentActivity() {
                 onChange = { k -> p.edit().putInt("auto_len", lens[k]).apply(); paintLen(k) } }, LinearLayout.LayoutParams(-1, dp(46)))
             card.addView(lenNote, -1, -2); paintLen(li)
             pick("สัดส่วนภาพ", "auto_crop", listOf("ตามแนว", "คงเดิม", "แนวตั้ง 9:16"), listOf("ไวรัลเป็นแนวตั้ง ภาพยนตร์เป็นจอกว้าง แนวอื่นคงเดิม", "ไม่ครอปภาพ", "ครอปเป็นแนวตั้งสำหรับคลิปสั้น"), listOf(0, 1, 2), 0, Icons.FRAME)
-            switchRow("ใส่ซับจากเสียงพูด", "ถอดเสียงหลังตัดเสร็จ ใช้เวลาเพิ่มตามความยาววิดีโอ", "auto_captions", true)
+            switchRow("ใส่ซับจากเสียงพูด", "ถอดเสียงหลังตัดเสร็จ ใช้เวลาเพิ่มตามความยาววิดีโอ", "auto_captions", true, true)
+            if (p.getBoolean("auto_captions", true)) {
+                // The same language and speech model as the caption tool: what is chosen here is used by both.
+                val spoken = listOf("ตรวจจับอัตโนมัติ" to CAPTION_AUTO) + LANGS
+                val cur = spoken.indexOfFirst { it.second == captionLang() }.coerceAtLeast(0)
+                val lt = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(16), 0, 0) }
+                lt.addView(text("ภาษาที่พูด", 14f, Glass.TEXT2, true), LinearLayout.LayoutParams(0, -2, 1f))
+                lt.addView(LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; background = glass(16, 0x26ffffff); setPadding(dp(14), 0, dp(10), 0); isClickable = true; glassTouch(); contentDescription = "ภาษาที่พูด ${spoken[cur].first}"
+                    addView(text(spoken[cur].first, 14f, Glass.TEXT, true).apply { maxLines = 1 }); addView(IconView(this@VideoEditorActivity, "M7 10l5 5 5-5", 2f).apply { tint = Glass.TEXT2 }, LinearLayout.LayoutParams(dp(16), dp(16)).apply { leftMargin = dp(6) })
+                    setOnClickListener { v -> menu.show(v, "ภาษาที่พูดในวิดีโอ", spoken.map { GlassMenu.Option(it.first, Icons.AI) }, cur) { k -> p.edit().putString("caption_lang", spoken[k].second).apply(); build() } } }, LinearLayout.LayoutParams(-2, dp(38)))
+                card.addView(lt, -1, -2)
+                card.addView(ModelCard(this, menu, WhisperModels.ALL, Icons.MIC, "เลือกโมเดลถอดเสียง") { m -> downloadModel(m) }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
+            }
 
             heading("เสียง")
             val lib = SoundLibrary.all(this)
@@ -2096,20 +2108,20 @@ class VideoEditorActivity : ComponentActivity() {
             EditorKit.action(this, EditorKit.SPLIT, "แยกตรงนี้") { splitAtPlayhead() },
             EditorKit.action(this, EditorKit.START, "เริ่มที่นี่") { trimClip(true) },
             EditorKit.action(this, EditorKit.END, "จบที่นี่") { trimClip(false) },
-            EditorKit.action(this, Icons.RESET, "ความยาวเดิม") { if (e != null) { e.from = 0; e.to = e.duration; showClipOnBar() } else { setRange(0, duration); cutFrom = -1; cutTo = -1 }; showTime(); showTool(0, false) },
+            EditorKit.action(this, "M3 12h3 M18 12h3 M8 8v8 M12 5v14 M16 8v8", "ตัดช่วงเงียบ") { cutSilence() },
+            EditorKit.action(this, "M3 5h18v14H3z M12 5v14", "หาฉาก") { findScenes() },
+            EditorKit.action(this, "M7 4v16 M7 5h10l-2.5 3.5L17 12H7", "แยกตามมาร์กเกอร์") { splitAtMarkers() },
             EditorKit.action(this, "M8 8h11v11H8z M5 16V5h11", "ทำสำเนา") {
                 if (e != null) { extras.add(playIndex, e.copy()); if (playIndex - 1 < mainPos()) mainAt = mainPos() + 1 }
                 else { extraCache.getOrPut(source.toString()) { Extra(source, duration, videoW, videoH, "คลิปแรก", firstFrame) }
                     extras.add(mainPos(), Extra(source, duration, videoW, videoH, "คลิปแรก", firstFrame).also { it.from = start; it.to = end; it.speed = speed; it.curve = mainCurve?.copyOf(); it.volume = volume }) }
                 showTime(); showTool(0, false) },
-            EditorKit.action(this, "M4 12h6 M14 12h6 M10 8v8 M14 8v8", "แยกเสียง") { detachSound(); showTool(0, false) },
             EditorKit.action(this, "M8 5v14 M16 5v14 M4 12h2 M18 12h2", "ค้างเฟรม") { freezeFrame() },
             EditorKit.action(this, "M7 7H4V4 M4.5 7.5A8 8 0 1 1 4 12 M12 8v4l3 2", "ย้อนกลับ") { reverseClip() },
-            EditorKit.action(this, "M4 7h3l2-2h6l2 2h3v12H4z M12 10a3 3 0 1 0 0 6 3 3 0 0 0 0-6", "บันทึกภาพ") { saveFrame() },
             run { lateinit var me: View; me = EditorKit.action(this, ClipMotion.ICONS[1], if (motionOf(playIndex) == 0) "ซูม/แพน" else ClipMotion.NAMES[motionOf(playIndex)], motionOf(playIndex) != 0) { motionMenu(me) }; me },
-            EditorKit.action(this, "M3 5h18v14H3z M12 5v14", "หาฉาก") { findScenes() },
-            EditorKit.action(this, "M7 4v16 M7 5h10l-2.5 3.5L17 12H7", "แยกตามมาร์กเกอร์") { splitAtMarkers() },
-            EditorKit.action(this, "M3 12h3 M18 12h3 M8 8v8 M12 5v14 M16 8v8", "ตัดช่วงเงียบ") { cutSilence() })
+            EditorKit.action(this, "M4 12h6 M14 12h6 M10 8v8 M14 8v8", "แยกเสียง") { detachSound(); showTool(0, false) },
+            EditorKit.action(this, "M4 7h3l2-2h6l2 2h3v12H4z M12 10a3 3 0 1 0 0 6 3 3 0 0 0 0-6", "บันทึกภาพ") { saveFrame() },
+            EditorKit.action(this, Icons.RESET, "ความยาวเดิม") { if (e != null) { e.from = 0; e.to = e.duration; showClipOnBar() } else { setRange(0, duration); cutFrom = -1; cutTo = -1 }; showTime(); showTool(0, false) })
         if (e != null) {
             // Slip: the clip keeps its length and place, and shows an earlier or later part of its file.
             list += EditorKit.action(this, "M9 7l-5 5 5 5 M4 12h12 M20 5v14", "เนื้อหา −0.5 วิ") { val d = minOf(500L, e.from); if (d <= 0) notice("อยู่ที่ต้นไฟล์แล้ว") else { e.from -= d; e.to -= d; showClipOnBar(); jumpTo(playIndex, (trim.playhead - d).coerceIn(e.from, e.to)); showTime() } }
@@ -2347,7 +2359,6 @@ class VideoEditorActivity : ComponentActivity() {
         }
         col.addView(EditorKit.strip(this, items.map { it to 64 }, CROP_ORDER.indexOf(cropIndex).coerceAtLeast(0), 60, { j -> items.forEachIndexed { q, v -> v.lit(q == j) } }, tapAgain = { j -> if (CROPS[CROP_ORDER[j]].second < 0f) askCustom() }) { j ->
             val k = CROP_ORDER[j]; if (CROPS[k].second < 0f && cropIndex != k) askCustom() else { cropIndex = k; layoutVideo() } }, LinearLayout.LayoutParams(-1, dp(76)))
-        col.addView(text(if (CROPS[cropIndex].second < 0f) "สัดส่วน ${cropName(customCrop)} · แตะ \"กำหนดเอง\" อีกครั้งเพื่อแก้" else "แตะ \"กำหนดเอง\" เพื่อใส่สัดส่วนเอง", 11.5f, Glass.TEXT3).apply { gravity = Gravity.CENTER; setPadding(0, dp(4), 0, 0) }, -1, -2)
     }
     private fun cropParts(r: Float): Pair<String, String> { for (b in 1..20) { val a = r * b; if (abs(a - a.roundToInt()) < 0.02f) return a.roundToInt().toString() to b.toString() }; return String.format(Locale.US, "%.2f", r) to "1" }
     private fun cropName(r: Float) = cropParts(r).let { "${it.first}:${it.second}" }

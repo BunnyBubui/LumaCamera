@@ -117,6 +117,7 @@ class HomeActivity : ComponentActivity() {
         val logo = LumoraLogoView(this).apply { progress = if (Glass.reduced(this@HomeActivity)) 1f else 0f }
         val title = text("Lumora", 22f, Color.WHITE, true).apply { setPadding(dp(10), 0, 0, 0) }
         fun pickFor(kind: String, ek: String) { editKind = ek; pick.launch(Intent(this, GalleryActivity::class.java).putExtra(GalleryActivity.EXTRA_PICK, kind)) }
+        fun chooseAi() = showAiChooser { video -> if (video) pickFor("video", "ai_video") else pickFor("image", "ai_image") }
 
         val hero = studioHero(logo, title)
         col.addView(hero, LinearLayout.LayoutParams(-1, 0, 2.7f))
@@ -128,7 +129,7 @@ class HomeActivity : ComponentActivity() {
         rowA.addView(tile(Icons.PHOTO, "ถ่ายภาพ", "กล้อง · 9 โหมด", "ถ่ายภาพ กลับไปที่กล้อง", null) { returnMode(PhotoMode.PHOTO) }, LinearLayout.LayoutParams(0, -1, 1f).apply { rightMargin = dp(4) })
         rowA.addView(tile(Icons.LIBRARY, "แกลเลอรี", "รูปและวิดีโอ", "แกลเลอรี รูปและวิดีโอทั้งหมด", null) { startActivity(Intent(this, GalleryActivity::class.java).putExtra("from", "home")) }, LinearLayout.LayoutParams(0, -1, 1f).apply { leftMargin = dp(4) })
         rowB.addView(tile(Icons.FILM, "ฟิล์ม", "ลุคฟิล์มและเกรน", "ฟิล์ม โทนสีและเกรนฟิล์ม", null) { returnMode(PhotoMode.FILM) }, LinearLayout.LayoutParams(0, -1, 1f).apply { rightMargin = dp(4) })
-        rowB.addView(tile(EditorKit.ADJUST, "ตัดต่อภาพ", "ปรับแสงสี", "ตัดต่อภาพ สี เส้นโค้ง ครอป", "AI" to { showAiChooser { video -> if (video) pickFor("video", "ai_video") else pickFor("image", "ai_image") } }) { pickFor("image", "image") }, LinearLayout.LayoutParams(0, -1, 1f).apply { leftMargin = dp(4) })
+        rowB.addView(tile(EditorKit.ADJUST, "ปรับแต่งด้วย AI", "ภาพหรือวิดีโอ", "ปรับแต่งภาพหรือวิดีโอด้วย AI", "AI" to { chooseAi() }) { chooseAi() }, LinearLayout.LayoutParams(0, -1, 1f).apply { leftMargin = dp(4) })
         grid.addView(rowA, LinearLayout.LayoutParams(-1, 0, 1f).apply { bottomMargin = dp(4) })
         grid.addView(rowB, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = dp(4) })
         col.addView(grid, LinearLayout.LayoutParams(-1, 0, 2f))
