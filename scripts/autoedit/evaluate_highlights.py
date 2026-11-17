@@ -48,25 +48,39 @@ def event_metrics(
     for i, x in enumerate(guesses):
         _validate_timestamp(x, f"prediction {i}")
 
-    pairs: list[tuple[int, int, int]] = []
-    for i, pred in enumerate(guesses):
+    # Maximum-cardinality bipartite matching. Nearest-first greedy pairing
+    # can steal the only valid truth match from another prediction.
+    edges: list[list[int]] = []
+    for pred in guesses:
+        at = _event_time(pred)
+        eligible: list[tuple[int, int]] = []
         for j, actual in enumerate(reference):
             if pred["asset_id"] != actual["asset_id"]:
                 continue
-            # An annotation may describe the whole kill interval, not just the
-            # timestamp. Within the interval, distance is exactly zero.
-            at = _event_time(pred)
             lo = _event_time(actual)
             hi = int(actual.get("end_us", lo))
             distance = max(lo - at, at - hi, 0)
             if distance <= tolerance_us:
-                pairs.append((distance, i, j))
-    matched_pred: set[int] = set()
-    matched_truth: set[int] = set()
-    for _, i, j in sorted(pairs):
-        if i not in matched_pred and j not in matched_truth:
-            matched_pred.add(i)
-            matched_truth.add(j)
+                eligible.append((distance, j))
+        edges.append([j for _, j in sorted(eligible)])
+
+    truth_to_pred: dict[int, int] = {}
+
+    def augment(pred_index: int, seen_truth: set[int]) -> bool:
+        for truth_index in edges[pred_index]:
+            if truth_index in seen_truth:
+                continue
+            seen_truth.add(truth_index)
+            incumbent = truth_to_pred.get(truth_index)
+            if incumbent is None or augment(incumbent, seen_truth):
+                truth_to_pred[truth_index] = pred_index
+                return True
+        return False
+
+    for prediction_index in range(len(guesses)):
+        augment(prediction_index, set())
+    matched_pred = set(truth_to_pred.values())
+    matched_truth = set(truth_to_pred)
 
     tp = len(matched_pred)
     fp = len(guesses) - tp
