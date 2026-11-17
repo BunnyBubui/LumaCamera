@@ -13,8 +13,8 @@ import kotlin.math.min
  * so what is seen is what is saved. Nothing here needs Android, so it can be unit tested.
  */
 class StudioGrade {
-    /** 4 curves × 5 points; the points sit at input 0, ¼, ½, ¾, 1 and hold the output (0..1). Index 0 = all channels, 1 R, 2 G, 3 B. */
-    val curves = FloatArray(20) { (it % 5) / 4f }
+    /** 4 curves of [PointCurve.SLOTS] slots (see [PointCurve]); a used slot holds the output (0..1) at its input. Index 0 = all channels, 1 R, 2 G, 3 B. */
+    val curves = PointCurve.identitySets(4)
     /** 8 colour ranges × (hue shift, saturation, lightness), each -1..1. */
     val hsl = FloatArray(24)
     /** 3 tone ranges (shadows, midtones, highlights) × (tint hue 0..1, tint strength 0..1, brightness -1..1). */
@@ -22,9 +22,9 @@ class StudioGrade {
     var lut: Array<Array<IntArray>>? = null
     var lutAmount = 1f
 
-    fun curvesActive() = curves.indices.any { abs(curves[it] - (it % 5) / 4f) > 0.001f }
+    fun curvesActive() = (0 until 4).any { !PointCurve.isIdentity(curves, it * PointCurve.SLOTS) }
     fun active() = curvesActive() || hsl.any { it != 0f } || (0 until 3).any { wheels[it * 3 + 1] != 0f || wheels[it * 3 + 2] != 0f } || (lut != null && lutAmount > 0f)
-    fun reset() { for (i in curves.indices) curves[i] = (i % 5) / 4f; hsl.fill(0f); wheels.fill(0f); lut = null; lutAmount = 1f }
+    fun reset() { PointCurve.identitySets(4).copyInto(curves); hsl.fill(0f); wheels.fill(0f); lut = null; lutAmount = 1f }
     fun copyFrom(o: StudioGrade) { o.curves.copyInto(curves); o.hsl.copyInto(hsl); o.wheels.copyInto(wheels); lut = o.lut; lutAmount = o.lutAmount }
 
     /** One colour (0..1 each, changed in place) through [matrix] (a 4×5 colour matrix in 0..255 units, or null) and the grade. */
@@ -50,7 +50,7 @@ class StudioGrade {
     }
     private fun curves(c: FloatArray) {
         if (!curvesActive()) return
-        for (i in 0 until 3) c[i] = curve(curves, 5 * (i + 1), curve(curves, 0, c[i]))
+        for (i in 0 until 3) c[i] = curve(curves, PointCurve.SLOTS * (i + 1), curve(curves, 0, c[i]))
     }
     private fun hsl(c: FloatArray) {
         if (hsl.all { it == 0f }) return
@@ -90,17 +90,7 @@ class StudioGrade {
             return 0.5f + 0.5f * kotlin.math.cos(Math.PI.toFloat() * x)
         }
         /** Output of one curve (5 points at x = 0, ¼, ½, ¾, 1, starting at [at] in [p]) for input [x], smooth and never overshooting between points. */
-        fun curve(p: FloatArray, at: Int, x: Float): Float {
-            val v = x.coerceIn(0f, 1f) * 4f; val i = min(floor(v).toInt(), 3); val t = v - i
-            val y = FloatArray(5) { p[at + it] }
-            val d = FloatArray(4) { y[it + 1] - y[it] }
-            val m = FloatArray(5)
-            m[0] = d[0]; m[4] = d[3]
-            for (k in 1..3) m[k] = if (d[k - 1] * d[k] <= 0f) 0f else 2f / (1f / d[k - 1] + 1f / d[k])
-            val t2 = t * t; val t3 = t2 * t
-            val out = (2 * t3 - 3 * t2 + 1) * y[i] + (t3 - 2 * t2 + t) * m[i] + (-2 * t3 + 3 * t2) * y[i + 1] + (t3 - t2) * m[i + 1]
-            return out.coerceIn(0f, 1f)
-        }
+        fun curve(p: FloatArray, at: Int, x: Float): Float = PointCurve.eval(p, at, x)
         fun hueColour(h: Float): FloatArray { val c = floatArrayOf(0f, 1f, 0.5f); c[0] = h; val out = FloatArray(3); hslToRgb(c, out); return out }
         private fun smooth(a: Float, b: Float, x: Float): Float { val t = ((x - a) / (b - a)).coerceIn(0f, 1f); return t * t * (3 - 2 * t) }
         fun rgbToHsl(c: FloatArray): FloatArray {

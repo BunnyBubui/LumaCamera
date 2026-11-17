@@ -44,8 +44,10 @@ class StudioProjectsActivity : ComponentActivity() {
 
     /** New project: choose a video in Lumora's gallery, then the editor opens on it (the project file appears with the first edit). */
     private val pickNew = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { r ->
-        @Suppress("DEPRECATION") val uri = r.data?.getParcelableArrayListExtra<Uri>(GalleryActivity.RESULT_URIS)?.firstOrNull() ?: return@registerForActivityResult
-        startActivity(VideoEditorActivity.intent(this, uri).putExtra("name", newName))
+        @Suppress("DEPRECATION") val uris = r.data?.getParcelableArrayListExtra<Uri>(GalleryActivity.RESULT_URIS)?.takeIf { it.isNotEmpty() } ?: return@registerForActivityResult
+        // Every chosen clip comes along: the first opens the project and the others are added behind it, in the order picked.
+        startActivity(VideoEditorActivity.intent(this, uris[0]).putExtra("name", newName)
+            .putStringArrayListExtra("share_more", ArrayList(uris.drop(1).map { it.toString() })))
     }
     private var newName = ""
     /** Step 1 names the project, step 2 picks its video, then the editor opens already carrying that name. */

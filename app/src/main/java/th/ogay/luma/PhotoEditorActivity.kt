@@ -298,14 +298,16 @@ class PhotoEditorActivity : ComponentActivity() {
         top.addView(name.apply { setPadding(dp(10), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
         top.addView(EditorKit.chip(this, "คืนค่า", Icons.RESET) {
             // Resets the channel on screen; when it is already straight, all four channels.
-            val base = curveChannel * 5
-            val straight = (0 until 5).all { kotlin.math.abs(curve[base + it] - it * 0.25f) < 1e-4f }
-            if (straight) Develop.IDENTITY_CURVE.copyInto(curve) else for (n in 0 until 5) curve[base + n] = n * 0.25f
+            val base = curveChannel * PointCurve.SLOTS
+            if (PointCurve.isIdentity(curve, base)) Develop.IDENTITY_CURVE.copyInto(curve) else PointCurve.reset(curve, base)
             view.invalidate(); canvasView.refresh(); commit()
         }, LinearLayout.LayoutParams(-2, dp(32)))
         paint()
         col.addView(top, LinearLayout.LayoutParams(-1, dp(40)))
-        col.addView(view, LinearLayout.LayoutParams(-1, dp(220)))
+        col.addView(view, LinearLayout.LayoutParams(-1, dp(190)))
+        col.addView(LinearLayout(this).apply { gravity = Gravity.CENTER
+            addView(EditorKit.chip(this@PhotoEditorActivity, "เพิ่มจุด", Icons.PLUS) { if (!view.addPoint()) notice("ใส่จุดได้สูงสุด 9 จุด") }, LinearLayout.LayoutParams(-2, dp(32)).apply { setMargins(dp(3), 0, dp(3), 0) })
+            addView(EditorKit.chip(this@PhotoEditorActivity, "ลบจุด", "M5 12h14") { if (!view.removePoint()) notice("แตะจุดบนเส้นก่อน จุดหัวท้ายลบไม่ได้") }, LinearLayout.LayoutParams(-2, dp(32)).apply { setMargins(dp(3), 0, dp(3), 0) }) }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
     }
 
     private fun filmTools(col: LinearLayout) {

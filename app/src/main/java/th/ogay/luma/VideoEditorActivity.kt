@@ -132,7 +132,7 @@ class VideoEditorActivity : ComponentActivity() {
     private fun buildExtras(uris: List<String>, ranges: List<String>?, get: (String) -> Extra?): List<Extra> = uris.mapIndexedNotNull { i, u ->
         get(u)?.copy()?.also { e -> ranges?.getOrNull(i)?.split(",")?.takeIf { it.size >= 2 }?.let { r ->
             e.from = (r[0].toLongOrNull() ?: 0L).coerceIn(0, e.duration); e.to = (r[1].toLongOrNull() ?: e.duration).coerceIn(e.from, e.duration); e.speed = (r.getOrNull(2)?.toFloatOrNull() ?: 1f).coerceIn(0.001f, 5000f); e.muted = r.getOrNull(3) == "m"
-            e.volume = r.getOrNull(4)?.toFloatOrNull() ?: 1f; e.curve = r.getOrNull(5)?.split(';')?.mapNotNull { it.toFloatOrNull() }?.takeIf { it.size == 5 }?.toFloatArray(); e.motion = r.getOrNull(6)?.toIntOrNull() ?: 0 } } }
+            e.volume = r.getOrNull(4)?.toFloatOrNull() ?: 1f; e.curve = PointCurve.upgrade(r.getOrNull(5)?.split(';')?.mapNotNull { it.toFloatOrNull() }?.toFloatArray(), 1); e.motion = r.getOrNull(6)?.toIntOrNull() ?: 0 } } }
     private var curveSpeedSet = 0f
     /** While a clip with a speed curve plays, the preview's speed follows the curve (the player itself goes from 0.1× to 8×). */
     private fun followCurve(p: MediaPlayer, pos: Long) {
@@ -596,17 +596,21 @@ class VideoEditorActivity : ComponentActivity() {
         }
 
         val bar = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(10), dp(14), dp(6)) }
-        bar.addView(EditorKit.round(this, Icons.CLOSE, "ปิดตัวตัดต่อ") { leave() }, dp(48), dp(48))
+        // Close at the left edge, export at the right, undo and redo exactly in the middle of the bar.
+        val barRow = FrameLayout(this); bar.addView(barRow, LinearLayout.LayoutParams(-1, dp(48)))
+        barRow.addView(EditorKit.round(this, Icons.CLOSE, "ปิดตัวตัดต่อ") { leave() }, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.START))
         // Quiet status that appears for a moment each time the project has been saved on its own.
         saveLabel = text("", 12f, Glass.TEXT3).apply { alpha = 0f; setPadding(dp(10), 0, 0, 0); importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
-        bar.addView(saveLabel, LinearLayout.LayoutParams(0, -2, 1f))
         undoButton = EditorKit.round(this, "M9 14L4 9l5-5 M4 9h10a6 6 0 0 1 0 12h-3", "ย้อนกลับ") { stepHistory(true) }
         redoButton = EditorKit.round(this, "M15 14l5-5-5-5 M20 9H10a6 6 0 0 0 0 12h3", "ทำซ้ำ") { stepHistory(false) }
-        bar.addView(undoButton, LinearLayout.LayoutParams(dp(48), dp(48)).apply { rightMargin = dp(8) })
-        bar.addView(redoButton, LinearLayout.LayoutParams(dp(48), dp(48)).apply { rightMargin = dp(10) })
+        val history = LinearLayout(this).apply { gravity = Gravity.CENTER }
+        history.addView(undoButton, LinearLayout.LayoutParams(dp(48), dp(48)).apply { rightMargin = dp(8) })
+        history.addView(redoButton, LinearLayout.LayoutParams(dp(48), dp(48)))
+        barRow.addView(history, FrameLayout.LayoutParams(-2, dp(48), Gravity.CENTER))
         paintHistory()
         exportButton = EditorKit.primary(this, "ส่งออก") { export() }
-        bar.addView(exportButton, LinearLayout.LayoutParams(-2, dp(48)))
+        barRow.addView(exportButton, FrameLayout.LayoutParams(-2, dp(48), Gravity.END))
+        barRow.addView(saveLabel, FrameLayout.LayoutParams(-2, -2, Gravity.START or Gravity.CENTER_VERTICAL).apply { leftMargin = dp(52) })
         root.addView(bar, -1, -2)
 
         stage = FrameLayout(this).apply { clipChildren = true }
@@ -1891,30 +1895,41 @@ class VideoEditorActivity : ComponentActivity() {
         runCatching { texture.getBitmap(96, 54) }.getOrNull()?.let { b -> v.feed(b, if (comparing) null else lastCube); b.recycle() }
         handler.postDelayed(this, 450)
     } }
-    /** One tone curve to bend by dragging its five points up and down. */
+    /** One curve (see [PointCurve]): drag a point up or down, add a point where the curve has most room, or take the chosen point away. */
     private class CurveEdit(c: Context) : View(c) {
-        var points = FloatArray(20); var at = 0; var color = Color.WHITE
+        var points = PointCurve.identitySets(4); var at = 0; var color = Color.WHITE
         var onChange: () -> Unit = {}
+        /** The point last touched; "remove" takes this one away. */
+        var selected = -1
         private val d = resources.displayMetrics.density
         private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 2.4f * resources.displayMetrics.density }
         private val dot = Paint(Paint.ANTI_ALIAS_FLAG); private val grid = Paint().apply { color = 0x26ffffff }
         private var drag = -1
-        init { contentDescription = "เส้นโค้งโทน ลากจุดขึ้นลง"; isClickable = true }
+        init { contentDescription = "เส้นโค้ง ลากจุดขึ้นลง"; isClickable = true }
         private fun x(i: Float) = 10 * d + i * (width - 20 * d); private fun y(v: Float) = height - 8 * d - v * (height - 16 * d)
         override fun onDraw(c: Canvas) {
             for (k in 0..4) { val gx = x(k / 4f); c.drawLine(gx, y(0f), gx, y(1f), grid); val gy = y(k / 4f); c.drawLine(x(0f), gy, x(1f), gy, grid) }
-            line.color = color; var px = x(0f); var py = y(StudioGrade.curve(points, at, 0f))
-            for (s in 1..60) { val t = s / 60f; val nx = x(t); val ny = y(StudioGrade.curve(points, at, t)); c.drawLine(px, py, nx, ny, line); px = nx; py = ny }
-            for (k in 0..4) { dot.color = if (k == drag) Glass.ACCENT else Color.WHITE; c.drawCircle(x(k / 4f), y(points[at + k]), (if (k == drag) 8f else 6f) * d, dot) }
+            line.color = color; var px = x(0f); var py = y(PointCurve.eval(points, at, 0f))
+            for (s in 1..60) { val t = s / 60f; val nx = x(t); val ny = y(PointCurve.eval(points, at, t)); c.drawLine(px, py, nx, ny, line); px = nx; py = ny }
+            for (k in PointCurve.slotsOf(points, at)) { val on = k == drag || k == selected; dot.color = if (on) Glass.ACCENT else Color.WHITE; c.drawCircle(x(k / 8f), y(points[at + k]), (if (on) 8f else 6f) * d, dot) }
         }
+        fun addPoint(): Boolean { val s = PointCurve.add(points, at, PointCurve.widestGap(points, at)); if (s < 0) return false; selected = s; invalidate(); onChange(); return true }
+        fun removePoint(): Boolean { if (!PointCurve.remove(points, at, selected)) return false; selected = -1; invalidate(); onChange(); return true }
         override fun onTouchEvent(e: MotionEvent): Boolean {
             when (e.actionMasked) {
-                MotionEvent.ACTION_DOWN -> { parent?.requestDisallowInterceptTouchEvent(true); drag = ((e.x - x(0f)) / (x(1f) - x(0f)) * 4 + 0.5f).toInt().coerceIn(0, 4); invalidate() }
+                MotionEvent.ACTION_DOWN -> { parent?.requestDisallowInterceptTouchEvent(true)
+                    drag = PointCurve.slotsOf(points, at).minByOrNull { abs(x(it / 8f) - e.x) } ?: -1; selected = drag; invalidate() }
                 MotionEvent.ACTION_MOVE -> if (drag >= 0) { points[at + drag] = ((height - 8 * d - e.y) / (height - 16 * d)).coerceIn(0f, 1f); invalidate(); onChange() }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { drag = -1; invalidate() }
             }
             return true
         }
+    }
+    /** The two buttons under a curve: add a point, remove the chosen point. */
+    private fun curveButtons(edit: CurveEdit): View = LinearLayout(this).apply {
+        gravity = Gravity.CENTER
+        addView(EditorKit.chip(this@VideoEditorActivity, "เพิ่มจุด", Icons.PLUS) { if (!edit.addPoint()) notice("ใส่จุดได้สูงสุด 9 จุด") }, LinearLayout.LayoutParams(-2, dp(32)).apply { setMargins(dp(3), 0, dp(3), 0) })
+        addView(EditorKit.chip(this@VideoEditorActivity, "ลบจุด", "M5 12h14") { if (!edit.removePoint()) notice("แตะจุดบนเส้นก่อน จุดหัวท้ายลบไม่ได้") }, LinearLayout.LayoutParams(-2, dp(32)).apply { setMargins(dp(3), 0, dp(3), 0) })
     }
     private fun colourTools(col: LinearLayout) {
         col.gravity = Gravity.TOP
@@ -1987,9 +2002,10 @@ class VideoEditorActivity : ComponentActivity() {
             }
             2 -> {
                 chips(listOf("ทั้งหมด", "แดง", "เขียว", "น้ำเงิน"), null, curveChannel) { curveChannel = it; showTool(COLOR_TOOL, false) }
-                val edit = CurveEdit(this).apply { points = grade.curves; at = curveChannel * 5; color = intArrayOf(Color.WHITE, 0xffff5a5a.toInt(), 0xff52d96b.toInt(), 0xff5a9bff.toInt())[curveChannel]
+                val edit = CurveEdit(this).apply { points = grade.curves; at = curveChannel * PointCurve.SLOTS; color = intArrayOf(Color.WHITE, 0xffff5a5a.toInt(), 0xff52d96b.toInt(), 0xff5a9bff.toInt())[curveChannel]
                     onChange = { applyLook() } }
                 body.addView(edit, LinearLayout.LayoutParams(-1, 0, 1f).apply { setMargins(dp(24), dp(2), dp(24), dp(2)) })
+                body.addView(curveButtons(edit), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(2) })
             }
             3 -> {
                 val names = listOf("แดง", "ส้ม", "เหลือง", "เขียว", "ฟ้า", "น้ำเงิน", "ม่วง", "ชมพู")
@@ -2201,7 +2217,6 @@ class VideoEditorActivity : ComponentActivity() {
         fun setBase(v: Float) { if (e != null) e.speed = v else speed = v; showTime(); player?.let { p -> if (p.isPlaying) runCatching { p.playbackParams = p.playbackParams.setSpeed(v.coerceIn(0.1f, 8f)) } } }
         fun setCurve(c: FloatArray?) { if (e != null) e.curve = c else { mainCurve = c; if (c != null) smooth = false }; curveSpeedSet = 0f; showTime() }
         val head = text("คลิป ${order().indexOf(playIndex) + 1} · ยาว ${clock(lenOf(playIndex))}" + (if (curve() == null) " · ${speedName(base())}" else " · เส้นโค้ง"), 13f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; setPadding(0, dp(2), 0, dp(4)) }
-        col.addView(head, -1, -2)
         if (e == null && cutValid()) col.addView(text("ตัดช่วงกลางไว้ · ความเร็วคงที่เท่านั้น", 11.5f, Glass.TEXT3).apply { gravity = Gravity.CENTER }, -1, -2)
         val tabs = LinearLayout(this).apply { gravity = Gravity.CENTER }
         listOf("ความเร็วคงที่", "เส้นโค้งความเร็ว").forEachIndexed { i, n -> val on = i == speedTab
@@ -2213,19 +2228,6 @@ class VideoEditorActivity : ComponentActivity() {
                 grad = intArrayOf(0xff64d2ff.toInt(), Color.WHITE, Glass.ACCENT); contentDescription = "ความเร็ววิดีโอ"
                 onChange = { k -> setCurve(null); setBase(SPEEDS[k]); head.text = "คลิป ${order().indexOf(playIndex) + 1} · ยาว ${clock(lenOf(playIndex))} · ${speedName(SPEEDS[k])}" } }
             col.addView(slider, LinearLayout.LayoutParams(-1, dp(44)).apply { setMargins(dp(12), dp(2), dp(12), 0) })
-            val row = LinearLayout(this).apply { gravity = Gravity.CENTER }
-            // Any length: the speed follows from how long the clip should take, down to a hundredth of a second.
-            row.addView(EditorKit.chip(this, "กำหนดความยาว", "M12 7v5l3 2 M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18") {
-                val field = GlassDialog.field(this, "วินาที", String.format(Locale.US, "%.2f", lenOf(playIndex) / 1000f), true); field.selectAll()
-                GlassDialog.ask(this, "ความยาวของคลิป", "M12 7v5l3 2 M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18", "ตั้งได้ตั้งแต่ 0.01 วินาที · ความเร็วจะปรับตามเอง", field, focus = field) {
-                    val sec = field.text.toString().toFloatOrNull()
-                    if (sec == null || sec < 0.01f) { notice("ใส่ตัวเลขตั้งแต่ 0.01 ขึ้นไป"); false } else { setCurve(null); setBase((src / (sec * 1000f)).coerceIn(0.001f, 5000f)); showTool(2, false); true } } }, LinearLayout.LayoutParams(-2, dp(34)).apply { setMargins(dp(3), 0, dp(3), 0) })
-            row.addView(EditorKit.chip(this, "ใส่ตัวเลขความเร็ว", EditorKit.SPEED) {
-                val field = GlassDialog.field(this, "เท่า", base().toString(), true); field.selectAll()
-                GlassDialog.ask(this, "ความเร็ว (เท่า)", EditorKit.SPEED, "0.1 ช้าลงสิบเท่า · 2 เร็วขึ้นสองเท่า", field, focus = field) {
-                    val v = field.text.toString().toFloatOrNull()
-                    if (v == null || v <= 0f) { notice("ใส่ตัวเลขมากกว่า 0"); false } else { setCurve(null); setBase(v.coerceIn(0.001f, 5000f)); showTool(2, false); true } } }, LinearLayout.LayoutParams(-2, dp(34)).apply { setMargins(dp(3), 0, dp(3), 0) })
-            col.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(row) }, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.CENTER_HORIZONTAL; topMargin = dp(4) })
             val sp = allSpeeds()
             if (hasAudio && sp.any { it !in SOUND_MIN..SOUND_MAX }) col.addView(text("ต่ำกว่า 0.25× หรือเกิน 4× · ไม่มีเสียงคลิป", 11f, Glass.TEXT3).apply { gravity = Gravity.CENTER; setPadding(dp(16), dp(4), dp(16), 0) }, -1, -2)
             if (e == null && speed < 1f && mainCurve == null) col.addView(EditorKit.chip(this, if (smooth) "สโลว์ลื่น (Optical flow) · เปิด" else "สโลว์ลื่น (Optical flow) · ปิด", SMOOTH, smooth) {
@@ -2236,14 +2238,18 @@ class VideoEditorActivity : ComponentActivity() {
             // Ready-made curves (the middle line is the clip's own speed; up is faster, down is slower), then bend it by hand.
             val presets = listOf("มอนทาจ" to floatArrayOf(0.8f, 0.75f, 0.25f, 0.75f, 0.8f), "ฮีโร่" to floatArrayOf(0.5f, 0.5f, 0.1f, 0.5f, 0.5f),
                 "บูลเล็ต" to floatArrayOf(0.85f, 0.85f, 0.05f, 0.85f, 0.85f), "ค่อย ๆ เร็วขึ้น" to floatArrayOf(0.35f, 0.45f, 0.55f, 0.7f, 0.85f),
-                "ค่อย ๆ ช้าลง" to floatArrayOf(0.85f, 0.7f, 0.55f, 0.45f, 0.35f), "จางเข้า-ออก" to floatArrayOf(0.25f, 0.5f, 0.6f, 0.5f, 0.25f))
-            val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(10), 0, dp(10), 0) }
-            presets.forEach { (n, c) -> row.addView(EditorKit.chip(this, n, curveIcon(c), curve()?.contentEquals(c) == true) { setCurve(c.copyOf()); showTool(2, false) }, LinearLayout.LayoutParams(-2, dp(32)).apply { setMargins(dp(3), 0, dp(3), 0) }) }
-            if (curve() != null) row.addView(EditorKit.chip(this, "ล้างเส้นโค้ง", Icons.CLOSE) { setCurve(null); showTool(2, false) }, LinearLayout.LayoutParams(-2, dp(32)).apply { setMargins(dp(3), 0, dp(3), 0) })
-            col.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(row) }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
-            val points = curve()?.copyOf() ?: floatArrayOf(0.5f, 0.5f, 0.5f, 0.5f, 0.5f)
+                "ค่อย ๆ ช้าลง" to floatArrayOf(0.85f, 0.7f, 0.55f, 0.45f, 0.35f), "จางเข้าออก" to floatArrayOf(0.25f, 0.5f, 0.6f, 0.5f, 0.25f))
+            val now = presets.indexOfFirst { curve()?.contentEquals(PointCurve.fromFive(it.second)) == true }
+            val points = curve()?.copyOf() ?: PointCurve.fromFive(floatArrayOf(0.5f, 0.5f, 0.5f, 0.5f, 0.5f))
             val edit = CurveEdit(this).apply { this.points = points; at = 0; color = Glass.ACCENT; contentDescription = "เส้นโค้งความเร็ว ลากจุดขึ้นเพื่อเร็วขึ้น ลงเพื่อช้าลง"
                 onChange = { setCurve(points.copyOf()); head.text = "คลิป ${order().indexOf(playIndex) + 1} · ยาว ${clock(lenOf(playIndex))} · เส้นโค้ง" } }
+            val bar = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(10), 0, dp(10), 0) }
+            bar.addView(dropButton(if (now >= 0) presets[now].first else if (curve() != null) "กำหนดเอง" else "รูปแบบเส้นโค้ง") { v ->
+                menu.show(v, "รูปแบบเส้นโค้ง", presets.map { GlassMenu.Option(it.first, curveIcon(it.second)) }, now) { k -> setCurve(PointCurve.fromFive(presets[k].second)); showTool(2, false) } },
+                LinearLayout.LayoutParams(-2, dp(36)).apply { rightMargin = dp(6) })
+            bar.addView(curveButtons(edit))
+            if (curve() != null) bar.addView(EditorKit.chip(this, "ล้าง", Icons.CLOSE) { setCurve(null); showTool(2, false) }, LinearLayout.LayoutParams(-2, dp(32)).apply { setMargins(dp(3), 0, dp(3), 0) })
+            col.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(bar) }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) })
             col.addView(edit, LinearLayout.LayoutParams(-1, 0, 1f).apply { setMargins(dp(24), dp(4), dp(24), 0) })
             col.addView(LinearLayout(this).apply { setPadding(dp(24), 0, dp(24), 0)
                 addView(text("ช้าลง 8×", 10.5f, Glass.TEXT3), LinearLayout.LayoutParams(0, -2, 1f)); addView(text("เส้นกลาง = ${speedName(base())}", 10.5f, Glass.TEXT3).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(0, -2, 1f))
@@ -2809,7 +2815,7 @@ class VideoEditorActivity : ComponentActivity() {
     private fun restoreGrade(s: Bundle) {
         val keep = StudioGrade().also { it.copyFrom(grade) }
         grade.reset()
-        s.getFloatArray("curves")?.takeIf { it.size == 20 }?.copyInto(grade.curves); s.getFloatArray("hsl")?.takeIf { it.size == 24 }?.copyInto(grade.hsl); s.getFloatArray("wheels")?.takeIf { it.size == 9 }?.copyInto(grade.wheels)
+        PointCurve.upgrade(s.getFloatArray("curves"), 4)?.copyInto(grade.curves); s.getFloatArray("hsl")?.takeIf { it.size == 24 }?.copyInto(grade.hsl); s.getFloatArray("wheels")?.takeIf { it.size == 9 }?.copyInto(grade.wheels)
         grade.lutAmount = s.getFloat("lutAmount", 1f)
         val path = s.getString("lutPath").orEmpty(); lutName = s.getString("lutName").orEmpty()
         // The same LUT file as before is kept as it is; only a different file is read again.
@@ -3553,7 +3559,7 @@ class VideoEditorActivity : ComponentActivity() {
         caption = s.getString("caption") ?: ""; place = s.getInt("place", 2); textColor = s.getInt("textColor", Color.WHITE); textBig = s.getBoolean("big")
         film = Films.byId(s.getString("film")); filmStrength = s.getFloat("strength", 1f); music = s.getString("music")?.let { Uri.parse(it) }; musicName = s.getString("musicName") ?: ""
         keepSound = s.getBoolean("sound", true); tool = s.getInt("tool")
-        s.getFloatArray("adjust")?.takeIf { it.size == adjust.size }?.copyInto(adjust); fx.fill(0f); restoreGrade(s); mainCurve = s.getFloatArray("mainCurve")?.takeIf { it.size == 5 }?.copyOf(); eq.fill(0f); s.getFloatArray("eq")?.takeIf { it.size == 3 }?.copyInto(eq); lowCut = s.getBoolean("lowCut"); voice = s.getBoolean("voice"); duck = s.getBoolean("duck", true); mainMuted = s.getBoolean("mainMuted"); s.getFloatArray("fx")?.takeIf { it.size == fx.size }?.copyInto(fx); turns = s.getInt("turns"); mirror = s.getBoolean("mirror"); volume = s.getFloat("volume", 1f); musicVolume = s.getFloat("musicVolume", 1f)
+        s.getFloatArray("adjust")?.takeIf { it.size == adjust.size }?.copyInto(adjust); fx.fill(0f); restoreGrade(s); mainCurve = PointCurve.upgrade(s.getFloatArray("mainCurve"), 1); eq.fill(0f); s.getFloatArray("eq")?.takeIf { it.size == 3 }?.copyInto(eq); lowCut = s.getBoolean("lowCut"); voice = s.getBoolean("voice"); duck = s.getBoolean("duck", true); mainMuted = s.getBoolean("mainMuted"); s.getFloatArray("fx")?.takeIf { it.size == fx.size }?.copyInto(fx); turns = s.getInt("turns"); mirror = s.getBoolean("mirror"); volume = s.getFloat("volume", 1f); musicVolume = s.getFloat("musicVolume", 1f)
         cutFrom = s.getLong("cutFrom", -1L); cutTo = s.getLong("cutTo", -1L); textBox = s.getBoolean("textBox")
         transition = s.getInt("transition"); stickers.clear(); mainAt = s.getInt("mainAt")
         markers.clear(); s.getStringArrayList("markers")?.mapNotNullTo(markers) { it.toLongOrNull() }

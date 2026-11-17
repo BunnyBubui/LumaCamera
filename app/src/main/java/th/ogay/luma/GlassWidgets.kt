@@ -789,6 +789,8 @@ class GlassSheet(private val host: FrameLayout, private val pivotYFromBottom: ()
     /** The screen behind the sheet; it is blurred together with the sheet when something opens on top. */
     var behind: View? = null
     private var dragged = 0f
+    /** The pressed button the sheet grew from (sheet coordinates); the sheet shrinks back into it. -1 when none. */
+    private var tapX = 0f; private var tapY = 0f; private var tapSet = false
     private var settling: android.animation.ValueAnimator? = null
     private var pendingRelease: Pair<Boolean, Float>? = null
     /** Follows a finger that is opening the sheet from the dock (see [open] with interactive = true). */
@@ -862,7 +864,8 @@ class GlassSheet(private val host: FrameLayout, private val pivotYFromBottom: ()
         } else {
             pushBack(1f)
             sheet.alpha = 0f
-            sheet.post { Liquid.show(sheet, sheet.width / 2f, sheet.height - pivotYFromBottom(), true) }
+            sheet.post { val t = TapPoint.inside(sheet, 700); if (t != null) { tapX = t.first; tapY = t.second; tapSet = true } else tapSet = false
+                Liquid.show(sheet, if (tapSet) tapX else sheet.width / 2f, if (tapSet) tapY else sheet.height - pivotYFromBottom(), true) }
         }
     }
     /** Softens the sheet while a menu sits on top of it, the way the prototype blurs what is behind a menu. */
@@ -889,7 +892,7 @@ class GlassSheet(private val host: FrameLayout, private val pivotYFromBottom: ()
         modal.restore()
         pushBack(0f)
         s?.let { it.isClickable = false; it.setOnClickListener(null); it.animate().alpha(0f).setDuration(300).withEndAction { host.removeView(it) }.start() }
-        Liquid.hide(sheet, sheet.width / 2f, sheet.height - pivotYFromBottom(), true) { host.removeView(sheet); end?.invoke() }
+        Liquid.hide(sheet, if (tapSet) tapX else sheet.width / 2f, if (tapSet) tapY else sheet.height - pivotYFromBottom(), true) { host.removeView(sheet); end?.invoke() }
         onClosed()
     }
 }

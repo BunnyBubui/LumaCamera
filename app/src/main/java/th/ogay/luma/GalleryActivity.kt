@@ -909,7 +909,13 @@ class GalleryActivity : ComponentActivity() {
     private fun showAlbums(items: List<Item>, lumora: List<Item>, favourites: Int) {
         showingId = null; viewerKind = ""; immersive(false); root.removeAllViews()
         val bar = topBar("อัลบั้ม") { finish() }
-        if (device) bar.addView(EditorKit.chip(this, if (managing) "เสร็จ" else "จัดการ", if (managing) Icons.CHECK else Icons.GEAR, managing) { managing = !managing; reload() }, LinearLayout.LayoutParams(-2, dp(48)))
+        if (device) {
+            lateinit var dots: View
+            fun menu(anchor: View) = sortMenu.show(anchor, "อัลบั้ม", listOf(GlassMenu.Option("ตั้งค่าแกลเลอรี", Icons.GEAR), GlassMenu.Option(if (managing) "เสร็จการจัดการ" else "จัดการอัลบั้ม", if (managing) Icons.CHECK else PENCIL)), -1) { i ->
+                if (i == 0) gallerySettings() else { managing = !managing; reload() } }
+            dots = roundButton("M12 5.2v.1 M12 12v.1 M12 18.8v.1", "ตัวเลือกเพิ่มเติม") { menu(dots) }
+            bar.addView(dots, LinearLayout.LayoutParams(dp(48), dp(48)))
+        }
         val col = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, 0, 0, dp(16)) }
         val scroll = ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(col) }
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -1402,7 +1408,6 @@ class GalleryActivity : ComponentActivity() {
         val frame = FrameLayout(this).apply { addView(player, -1, -1) }
         root.addView(frame, LinearLayout.LayoutParams(-1, 0, 1f))
         val top = viewerBar("วิดีโอ").also { root.removeView(it) }
-        top.addView(roundButton(Icons.INFO, "รายละเอียด") { itemInfo(item) }, dp(48), dp(48))
         toggle = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(dp(6), dp(2), dp(6), dp(10)) }
         val bottom = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, 0, 0, bars.bottom) }
         player.shades(bars.top + dp(84), bars.bottom + dp(150))
@@ -1541,14 +1546,17 @@ class GalleryActivity : ComponentActivity() {
         chip("ลบ", false, TRASH) { confirmDelete(listOf(Item(s.id, s.uri, s.time, false, "", "Lumora", s))) }
     }
     private fun infoPanel(preview: () -> Bitmap?, time: String, rows: List<Triple<String, String, String>>, tech: List<Pair<String, String>>) {
-        GlassDialog.panel(this, time) { col, d ->
+        val sheet = screenSheet()
+        sheet.open { col, sh ->
+            col.addView(text(time, 18f, Glass.TEXT, true).apply { setPadding(0, dp(4), 0, dp(8)) }, -1, -2)
             // A small preview on top, then one row per fact: icon, value, quiet detail.
-            val pic = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP; setBackgroundColor(0x14ffffff); outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: android.graphics.Outline) { o.setRoundRect(0, 0, v.width, v.height, dp(18).toFloat()) } }; clipToOutline = true }
+            val pic = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP; setBackgroundColor(0x14ffffff); clipToOutline = true
+                outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: Outline) { o.setRoundRect(0, 0, v.width, v.height, dp(16).toFloat()) } } }
             col.addView(pic, LinearLayout.LayoutParams(-1, dp(150)).apply { topMargin = dp(4); bottomMargin = dp(10) })
             thumbs.execute { val b = runCatching { preview() }.getOrNull(); runOnUiThread { if (b != null) pic.setImageBitmap(b) } }
             rows.forEach { (icon, value, note) ->
                 val r = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(7), 0, dp(7)) }
-                r.addView(FrameLayout(this).apply { background = glass(14, 0x1affffff); addView(IconView(this@GalleryActivity, icon).apply { tint = Glass.ACCENT }, FrameLayout.LayoutParams(dp(18), dp(18), Gravity.CENTER)) }, dp(36), dp(36))
+                r.addView(FrameLayout(this).apply { background = glass(14, 0x1affffff); addView(IconView(this@GalleryActivity, icon).apply { tint = Glass.ACCENT }, FrameLayout.LayoutParams(dp(18), dp(18), Gravity.CENTER)) }, dp(38), dp(38))
                 val t = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, 0, 0) }
                 t.addView(text(value, 14.5f, Glass.TEXT, true).apply { maxLines = 2; ellipsize = null })
                 if (note.isNotEmpty()) t.addView(text(note, 12f, Glass.TEXT3).apply { maxLines = 2; ellipsize = null })
@@ -1566,8 +1574,8 @@ class GalleryActivity : ComponentActivity() {
                     setOnClickListener { more.visibility = if (more.visibility == View.VISIBLE) View.GONE else View.VISIBLE; text = if (more.visibility == View.VISIBLE) "รายละเอียดทางเทคนิค ▴" else "รายละเอียดทางเทคนิค ▾" } }
                 col.addView(toggle, -1, -2); col.addView(more, -1, -2)
             }
-            col.addView(GlassDialog.actions(this, "ปิด" to { d.dismiss() }), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
-        }.show()
+            col.addView(GlassDialog.actions(this, "ปิด" to { sh.close() }), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
+        }
     }
     private fun details(s: Shot) {
         val ai = s.aiSize

@@ -13,10 +13,10 @@ class StudioGradeTest {
         assertEquals(0xff800000.toInt() or 0x8000 or 0x80, t[4][4][4] or 0)
     }
     @Test fun curvePassesThroughItsPointsWithoutOvershoot() {
-        val p = floatArrayOf(0f, 0.1f, 0.5f, 0.9f, 1f)
+        val p = PointCurve.fromFive(floatArrayOf(0f, 0.1f, 0.5f, 0.9f, 1f))
         assertEquals(0.1f, StudioGrade.curve(p, 0, 0.25f), 1e-5f)
         assertEquals(0.5f, StudioGrade.curve(p, 0, 0.5f), 1e-5f)
-        val flat = floatArrayOf(0f, 0.5f, 0.5f, 0.5f, 1f)
+        val flat = PointCurve.fromFive(floatArrayOf(0f, 0.5f, 0.5f, 0.5f, 1f))
         for (i in 25..75) assertEquals(0.5f, StudioGrade.curve(flat, 0, i / 100f), 1e-5f)
         var last = -1f; for (i in 0..100) { val v = StudioGrade.curve(p, 0, i / 100f); assertTrue(v >= last); last = v }
     }
