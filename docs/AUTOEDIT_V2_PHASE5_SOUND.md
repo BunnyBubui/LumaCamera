@@ -18,6 +18,7 @@ Pure Kotlin `AutoSoundDirector` in `autoedit/effects/AutoSoundDirector.kt`:
 - Produces output-mapped `MusicDuckRange` windows (300 ms slopes, recommended remaining music gain 0.3); these are **recommendations only**, not active mixing DSP.
 - Avoids emitting cues for events outside selected clips or unverified events. Logs a reason for skipping each failed candidate.
 - Outputs `SoundDirectorResult.plan` with validated, editable SFX cues, but does not render or export any audio.
+- Provides `SfxStudioLayerAdapter` to convert explicitly licensed/readable SFX cues into **existing** `VideoLayer.SOUND` items, with dB→amplitude conversion, media duration checking and duplicate-prevention. The Studio UI/export still needs to invoke the adapter and apply music-duck recommendations.
 
 ## Related code
 
