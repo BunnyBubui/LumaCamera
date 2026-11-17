@@ -428,8 +428,8 @@ class PhotoEditorActivity : ComponentActivity() {
             file.delete()
             runOnUiThread {
                 saving = false; saveButton.alpha = 1f
-                result.onSuccess { if (then != null) { notice("บันทึกการแก้ไขแล้ว"); then(it) } else { notice("บันทึกเป็นภาพใหม่แล้ว · ต้นฉบับยังอยู่"); setResult(RESULT_OK, Intent().putExtra(RESULT_ID, it)); finish() } }
-                    .onFailure { notice("บันทึกไม่สำเร็จ · ${it.localizedMessage}") }
+                result.onSuccess { if (then != null) { notice("บันทึกการแก้ไขแล้ว"); then(it) } else { notice("บันทึกเป็นภาพใหม่แล้ว ต้นฉบับยังอยู่"); setResult(RESULT_OK, Intent().putExtra(RESULT_ID, it)); finish() } }
+                    .onFailure { notice("บันทึกไม่สำเร็จ ${it.localizedMessage}") }
             }
         }
     }

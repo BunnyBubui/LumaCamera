@@ -53,7 +53,7 @@ object TaskNotice {
         if (!ExportJob.appVisible()) LiveNotice.done(c.applicationContext, 47022, jobTitle, words, LiveNotice.openApp(c))
     }
 
-    internal fun build(c: Context): Notification = LiveNotice.progress(c, "Lumora · $title", text, pct, LiveNotice.openApp(c),
+    internal fun build(c: Context): Notification = LiveNotice.progress(c, "Lumora $title", text, pct, LiveNotice.openApp(c),
         PendingIntent.getService(c, 4, Intent(c, TaskNoticeService::class.java).setAction(TaskNoticeService.CANCEL), PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT), chip)
 
     internal fun cancelJob() { val job = cancel; if (job != null) Handler(Looper.getMainLooper()).post { job() } }

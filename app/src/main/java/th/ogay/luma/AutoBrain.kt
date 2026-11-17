@@ -16,9 +16,9 @@ object AutoBrain {
     private const val Q17 = "https://huggingface.co/unsloth/Qwen3-1.7B-GGUF/resolve/main/"
     private const val Q4 = "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/"
     val MODELS = listOf(
-        ModelSpec("qwen3-1.7b", "planner", "Qwen3 1.7B", "เร็ว", "Alibaba · ~1.1 GB · อ่านคำสั่งไทยได้", "", 1110,
+        ModelSpec("qwen3-1.7b", "planner", "Qwen3 1.7B", "เร็ว", "Alibaba ~1.1 GB อ่านคำสั่งไทยได้", "", 1110,
             listOf("Qwen3-1.7B-Q4_K_M.gguf" to Q17 + "Qwen3-1.7B-Q4_K_M.gguf")),
-        ModelSpec("qwen3-4b", "planner", "Qwen3 4B Instruct", "เข้าใจดีกว่า", "Alibaba · ~2.5 GB · ช้ากว่า ใช้ RAM มากกว่า", "", 2500,
+        ModelSpec("qwen3-4b", "planner", "Qwen3 4B Instruct", "เข้าใจดีกว่า", "Alibaba ~2.5 GB ช้ากว่า ใช้ RAM มากกว่า", "", 2500,
             listOf("Qwen3-4B-Instruct-2507-Q4_K_M.gguf" to Q4 + "Qwen3-4B-Instruct-2507-Q4_K_M.gguf")),
     )
     fun selected(c: Context) = ModelStore.selected(c, "planner", MODELS)

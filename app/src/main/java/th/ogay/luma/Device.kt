@@ -67,5 +67,5 @@ object Device {
     }
 
     /** One line for reports and bug notes. */
-    fun summary(c: Context) = "${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE} · RAM ${totalMb(c)} MB · ${Runtime.getRuntime().availableProcessors()} cores · tier ${tier(c)} · threads $threads · llm ${if (llmSupported) "ok" else "no"}"
+    fun summary(c: Context) = "${Build.MANUFACTURER} ${Build.MODEL} Android ${Build.VERSION.RELEASE} RAM ${totalMb(c)} MB ${Runtime.getRuntime().availableProcessors()} cores tier ${tier(c)} threads $threads llm ${if (llmSupported) "ok" else "no"}"
 }

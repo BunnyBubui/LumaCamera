@@ -57,11 +57,11 @@ object GlassNav {
         val tile = inPanel(device, By.descStartsWith("รูปแบบไฟล์"))
         assertNotNull("Format tile is missing", tile); tile!!.click()
         val row = device.wait(Until.findObject(menuRow(label)), 5000)
-        assertNotNull("Format $label is not offered · ${dump(device)}", row); row.click()
+        assertNotNull("Format $label is not offered ${dump(device)}", row); row.click()
         SystemClock.sleep(600)
         val prefs = androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext.getSharedPreferences("camera", 0)
         val want = CaptureOutput.entries.first { it.label == label }.name
-        org.junit.Assert.assertEquals("Format $label was not applied · ${dump(device)}", want, prefs.getString("output", ""))
+        org.junit.Assert.assertEquals("Format $label was not applied ${dump(device)}", want, prefs.getString("output", ""))
         closeLayers(device)
     }
 

@@ -24,7 +24,7 @@ fun Context.showCaptureSettings(rawAvailable: Boolean, changed: () -> Unit) {
             setTextColor(WHITE)
             isChecked = prefs.getBoolean(key, default)
             if (key == "sound" && androidx.camera.core.CameraInfo.mustPlayShutterSound()) {
-                text = "เสียงชัตเตอร์ · ระบบกำหนดให้เปิด"
+                text = "เสียงชัตเตอร์ ระบบกำหนดให้เปิด"
                 isChecked = true
                 isEnabled = false
             }

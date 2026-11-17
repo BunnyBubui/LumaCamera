@@ -46,7 +46,7 @@ class RawLabActivity:ComponentActivity(){
     override fun onCreate(state:Bundle?){super.onCreate(state)
         val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(12),0,dp(12),0)};installRoot(root)
         root.addView(pill("‹ กลับ"){if(!running&&!finishing)finish()},-1,-2);root.addView(label("RAW LAB",26f,LIME).apply{minHeight=dp(56)},-1,-2)
-        root.addView(label("ทดลอง · DNG sequence / RAW linear fusion\nความเร็วและเสียงต้องประเมินจาก timestamps จริง",13f,MUTED).apply{minHeight=dp(64)},-1,-2)
+        root.addView(label("ทดลอง DNG sequence / RAW linear fusion\nความเร็วและเสียงต้องประเมินจาก timestamps จริง",13f,MUTED).apply{minHeight=dp(64)},-1,-2)
         status=label("กำลังตรวจ RAW…",14f).apply{gravity=Gravity.CENTER;minHeight=dp(88)};root.addView(status,-1,-2)
         texture=TextureView(this);root.addView(texture,LinearLayout.LayoutParams(-1,0,1f))
         texture.surfaceTextureListener=object:TextureView.SurfaceTextureListener{override fun onSurfaceTextureAvailable(t:SurfaceTexture,w:Int,h:Int){if(visible)open()};override fun onSurfaceTextureSizeChanged(t:SurfaceTexture,w:Int,h:Int){};override fun onSurfaceTextureUpdated(t:SurfaceTexture){};override fun onSurfaceTextureDestroyed(t:SurfaceTexture):Boolean{handler.post{closeCamera()};return true}}
@@ -58,15 +58,15 @@ class RawLabActivity:ComponentActivity(){
     override fun onResume(){super.onResume();visible=true;if(texture.isAvailable)open()}
     private fun options(){if(running||finishing||opening)return
         studioSheet("RAW ทดลอง"){box,d->
-            box.addView(pill(if(ai)"โหมด RAW AI · $requestedFrames เฟรม" else "โหมด RAW Video · ทดสอบ 10 วินาที"){AlertDialog.Builder(this).setTitle("การบันทึก").setItems(arrayOf("RAW Video · 10 วินาที","RAW AI · 4 เฟรม","RAW AI · 8 เฟรม","RAW AI · 16 เฟรม")){_,i->ai=i>0;requestedFrames=if(i>0)listOf(4,8,16)[i-1]else 8;d.dismiss();status.text=if(ai)"RAW AI · $requestedFrames เฟรม · ถือเครื่องนิ่ง"else "RAW Video · 10 วินาที"}.show()},-1,-2)
+            box.addView(pill(if(ai)"โหมด RAW AI $requestedFrames เฟรม" else "โหมด RAW Video ทดสอบ 10 วินาที"){AlertDialog.Builder(this).setTitle("การบันทึก").setItems(arrayOf("RAW Video 10 วินาที","RAW AI 4 เฟรม","RAW AI 8 เฟรม","RAW AI 16 เฟรม")){_,i->ai=i>0;requestedFrames=if(i>0)listOf(4,8,16)[i-1]else 8;d.dismiss();status.text=if(ai)"RAW AI $requestedFrames เฟรม ถือเครื่องนิ่ง"else "RAW Video 10 วินาที"}.show()},-1,-2)
             val ids=Capabilities.rawIds(this)
-            box.addView(pill("กล้อง RAW · $cameraId"){AlertDialog.Builder(this).setItems(ids.map{"Camera $it"}.toTypedArray()){_,i->cameraId=ids[i];size=Size(0,0);d.dismiss();open()}.show()},-1,-2)
+            box.addView(pill("กล้อง RAW $cameraId"){AlertDialog.Builder(this).setItems(ids.map{"Camera $it"}.toTypedArray()){_,i->cameraId=ids[i];size=Size(0,0);d.dismiss();open()}.show()},-1,-2)
             if(cameraId.isNotBlank()){
                 val sizes=Capabilities.characteristics(this,cameraId).get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)?.getOutputSizes(ImageFormat.RAW_SENSOR).orEmpty().filter{it.width.toLong()*it.height<=16_000_000}
-                box.addView(pill("ขนาด · $size"){AlertDialog.Builder(this).setTitle("RAW ≤ 16 MP ในรุ่นทดลองนี้").setItems(sizes.map{it.toString()}.toTypedArray()){_,i->size=sizes[i];d.dismiss();open()}.show()},-1,-2)
+                box.addView(pill("ขนาด $size"){AlertDialog.Builder(this).setTitle("RAW ≤ 16 MP ในรุ่นทดลองนี้").setItems(sizes.map{it.toString()}.toTypedArray()){_,i->size=sizes[i];d.dismiss();open()}.show()},-1,-2)
             }
-            box.addView(pill("เป้าหมายสูงสุด · $requestedFps fps"){AlertDialog.Builder(this).setItems(arrayOf("1 fps","5 fps","10 fps","15 fps","24 fps")){_,i->requestedFps=listOf(1,5,10,15,24)[i];d.dismiss()}.show()},-1,-2)
-            box.addView(Switch(this).apply{text="WAV แยกพร้อมข้อมูลซิงก์ · เฉพาะ RAW video";setTextColor(WHITE);isChecked=mic;setOnCheckedChangeListener{_,v->mic=v}},-1,-2)
+            box.addView(pill("เป้าหมายสูงสุด $requestedFps fps"){AlertDialog.Builder(this).setItems(arrayOf("1 fps","5 fps","10 fps","15 fps","24 fps")){_,i->requestedFps=listOf(1,5,10,15,24)[i];d.dismiss()}.show()},-1,-2)
+            box.addView(Switch(this).apply{text="WAV แยกพร้อมข้อมูลซิงก์ เฉพาะ RAW video";setTextColor(WHITE);isChecked=mic;setOnCheckedChangeListener{_,v->mic=v}},-1,-2)
             box.addView(label("วัด fps ที่เขียนได้จริง เฟรมที่ทิ้งเพราะเขียนไม่ทันแสดงแยกจากเฟรมที่เว้นตามเป้าหมาย หาก sensor timestamp source ไม่ใช่ REALTIME จะยังยืนยัน A/V sync ไม่ได้",13f,MUTED),-1,-2)
         }
     }
@@ -94,7 +94,7 @@ class RawLabActivity:ComponentActivity(){
             }},handler)
             manager.openCamera(cameraId,object:CameraDevice.StateCallback(){override fun onOpened(camera:CameraDevice){device=camera;if(!visible){closeCamera();return}
                 val st=texture.surfaceTexture?:return;st.setDefaultBufferSize(640,480);previewSurface=Surface(st)
-                camera.createCaptureSession(listOf(previewSurface!!,r.surface),object:CameraCaptureSession.StateCallback(){override fun onConfigured(s:CameraCaptureSession){session=s;preview();runOnUiThread{opening=false;shutter.isEnabled=true;status.text="Camera $cameraId · $size\n${if(ai)"RAW AI $requestedFrames เฟรม"else "RAW Video 10 วินาที · เป้าหมาย $requestedFps fps"}"}}
+                camera.createCaptureSession(listOf(previewSurface!!,r.surface),object:CameraCaptureSession.StateCallback(){override fun onConfigured(s:CameraCaptureSession){session=s;preview();runOnUiThread{opening=false;shutter.isEnabled=true;status.text="Camera $cameraId $size\n${if(ai)"RAW AI $requestedFrames เฟรม"else "RAW Video 10 วินาที เป้าหมาย $requestedFps fps"}"}}
                     override fun onConfigureFailed(s:CameraCaptureSession){s.close();fail("ชุด RAW + preview นี้ไม่รองรับ")}},handler)
             };override fun onDisconnected(camera:CameraDevice){camera.close();device=null;stop();fail("กล้องถูกตัดการเชื่อมต่อ")};override fun onError(camera:CameraDevice,error:Int){camera.close();device=null;stop();fail("กล้อง RAW ผิดพลาด $error")}},handler)
         }catch(e:Exception){closeCamera();fail(e.localizedMessage?:"เปิด RAW ไม่ได้")}}
@@ -116,7 +116,7 @@ class RawLabActivity:ComponentActivity(){
         val manifest=JSONObject().put("schema",1).put("state","recording").put("cameraId",cameraId).put("width",size.width).put("height",size.height).put("kind",if(ai)"RAW_LINEAR_AI"else "DNG_SEQUENCE")
             .put("rotationDegrees",sensorRotation).put("requestedFps",requestedFps).put("requestedFrames",if(ai)requestedFrames else JSONObject.NULL).put("timestampSource",cc.get(CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE)).put("startElapsedRealtimeNs",SystemClock.elapsedRealtimeNanos())
         File(dir,"manifest.json").writeText(manifest.toString(2))
-        if(mic&&!ai)runCatching{PcmAudio(File(dir,"audio.wav")).also{audio=it;it.start()}}.onFailure{audio=null;notice("ไมค์เปิดไม่ได้ · ${it.localizedMessage}")}
+        if(mic&&!ai)runCatching{PcmAudio(File(dir,"audio.wav")).also{audio=it;it.start()}}.onFailure{audio=null;notice("ไมค์เปิดไม่ได้ ${it.localizedMessage}")}
         shutter.recording=true;status.text="กำลังรับ RAW…"
         handler.post{try{if(ai)nextAi()else{session?.setRepeatingRequest(rawRequest(),callback,handler);handler.postDelayed({if(running&&!ai)stop()},10_000)}}catch(e:Exception){stop();fail(e.localizedMessage?:"เริ่ม RAW ไม่ได้")}}
     }
@@ -137,8 +137,8 @@ class RawLabActivity:ComponentActivity(){
                 frames++
                 if(firstSavedSensor==0L)firstSavedSensor=ts;lastSavedSensor=ts
                 if(ai){val linear=RawBayer.sample(image,result,cc);val f=fusion;if(f==null)fusion=LinearRawFusion(linear.width,linear.height,linear.rgb)else f.add(linear.rgb)}
-                runOnUiThread{status.text="${if(ai)"RAW AI $frames/$requestedFrames"else "DNG $frames เฟรม"}\nทิ้งเพราะเขียนไม่ทัน $dropped · เว้นตามเป้าหมาย $throttled"}
-            }catch(e:OutOfMemoryError){handler.post{stop();fail("หน่วยความจำไม่พอ · เก็บ DNG ที่ปิดไฟล์แล้วไว้")}}catch(e:Exception){handler.post{stop();fail("RAW หยุด · ${e.localizedMessage}")}}
+                runOnUiThread{status.text="${if(ai)"RAW AI $frames/$requestedFrames"else "DNG $frames เฟรม"}\nทิ้งเพราะเขียนไม่ทัน $dropped เว้นตามเป้าหมาย $throttled"}
+            }catch(e:OutOfMemoryError){handler.post{stop();fail("หน่วยความจำไม่พอ เก็บ DNG ที่ปิดไฟล์แล้วไว้")}}catch(e:Exception){handler.post{stop();fail("RAW หยุด ${e.localizedMessage}")}}
             finally{image.close();writing.set(false);handler.post{if(ai&&running)nextAi()}}
         }
     }
@@ -151,15 +151,15 @@ class RawLabActivity:ComponentActivity(){
                 val manifest=JSONObject(File(dir,"manifest.json").readText());val audioInfo=audio?.stop();audio=null
                 manifest.put("state",if(frames>0)"complete"else "empty").put("frames",frames).put("received",received).put("droppedBusy",dropped).put("throttled",throttled)
                     .put("firstSensorNs",firstSensor).put("lastSensorNs",lastSensor).put("firstSavedSensorNs",firstSavedSensor).put("lastSavedSensorNs",lastSavedSensor).put("measuredWrittenFps",if(lastSavedSensor>firstSavedSensor)(frames-1).coerceAtLeast(0)*1e9/(lastSavedSensor-firstSavedSensor)else 0.0).put("audio",audioInfo?:JSONObject.NULL)
-                File(dir,"manifest.json").writeText(manifest.toString(2));MediaLedger.rememberFile(this,File(dir,"manifest.json"),"application/json","RAW $frames เฟรม · dropped $dropped")
+                File(dir,"manifest.json").writeText(manifest.toString(2));MediaLedger.rememberFile(this,File(dir,"manifest.json"),"application/json","RAW $frames เฟรม dropped $dropped")
                 if(ai&&fusion!=null&&frames>0){
                     val f=fusion!!;val bitmap=Bitmap.createBitmap(f.finish(),f.width(),f.height(),Bitmap.Config.ARGB_8888);val merged=File(dir,"RAW_LINEAR_FUSION.jpg");PhotoEffects.write(bitmap,merged);PhotoMedia.tag(merged,sensorRotation);bitmap.recycle()
                     val time=System.currentTimeMillis();val id=UUID.randomUUID().toString();val first=dir.listFiles{file->file.extension=="dng"}!!.sortedBy{it.name}.first()
                     val raw=PhotoMedia.publish(this,first,"Lumora_RAW_${time}.dng",time,"image/x-adobe-dng");val uri=PhotoMedia.publish(this,merged,"Lumora_RAW_FUSION_${time}.jpg",time)
-                    luma.shots.insert(Shot(id,time,uri,PhotoMedia.dimensions(merged),1f,true,cameraId,null,Decision.MANUAL_AI,Stage.QUEUED,null,0,null,false,raw,CaptureOutput.RAW,frames,requestedFrames,f.used(),"ทดลอง RAW linear fusion ก่อน gamma · ลดขนาด Bayer 2×2 · ไม่มี lens shading / hot-pixel calibration"));EnhanceWorker.enqueue(this,id)
+                    luma.shots.insert(Shot(id,time,uri,PhotoMedia.dimensions(merged),1f,true,cameraId,null,Decision.MANUAL_AI,Stage.QUEUED,null,0,null,false,raw,CaptureOutput.RAW,frames,requestedFrames,f.used(),"ทดลอง RAW linear fusion ก่อน gamma ลดขนาด Bayer 2×2 ไม่มี lens shading / hot-pixel calibration"));EnhanceWorker.enqueue(this,id)
                 }
                 fusion=null
-            }.onSuccess{runOnUiThread{status.text="เก็บ $frames เฟรมแล้ว · dropped $dropped\n${if(ai)"เข้าคิว SR1 แล้ว · DNG ต้นฉบับยังอยู่"else "ส่งออก ZIP เพื่อดู DNG / WAV / timestamps"}"}}.onFailure{runOnUiThread{status.text="ไฟล์ที่ปิดแล้วอยู่ในแอป · ${it.localizedMessage}"}}
+            }.onSuccess{runOnUiThread{status.text="เก็บ $frames เฟรมแล้ว dropped $dropped\n${if(ai)"เข้าคิว SR1 แล้ว DNG ต้นฉบับยังอยู่"else "ส่งออก ZIP เพื่อดู DNG / WAV / timestamps"}"}}.onFailure{runOnUiThread{status.text="ไฟล์ที่ปิดแล้วอยู่ในแอป ${it.localizedMessage}"}}
             runOnUiThread{finishing=false;shutter.isEnabled=visible&&session!=null;requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT}
         }
     }

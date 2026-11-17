@@ -21,8 +21,8 @@ class ClipEditorActivity:ComponentActivity(){
     private var transformer:Transformer?=null;private var preset=0;private var codec="video/avc";private var speed=1f;private var crop=false
     private var lut:Array<Array<IntArray>>?=null;private var job:File?=null;private var output:File?=null
     private val handler=Handler(Looper.getMainLooper());private val progress=ProgressHolder()
-    private val pickLut=registerForActivityResult(ActivityResultContracts.OpenDocument()){uri->if(uri!=null)luma.fileIo.execute{runCatching{contentResolver.openInputStream(uri)!!.bufferedReader().use{CubeLut.read(it)}}.onSuccess{cube->runOnUiThread{lut=cube;preset=4;status.text="นำเข้า LUT 3D ${cube.size} แล้ว"}}.onFailure{runOnUiThread{status.text="LUT ใช้ไม่ได้ · ${it.localizedMessage}"}}}}
-    private val poll=object:Runnable{override fun run(){val t=transformer?:return;val state=t.getProgress(progress);status.text=if(state==Transformer.PROGRESS_STATE_AVAILABLE)"กำลังส่งออก ${progress.progress}% · เปิดหน้านี้ไว้"else "กำลังเตรียมส่งออก · เปิดหน้านี้ไว้";handler.postDelayed(this,500)}}
+    private val pickLut=registerForActivityResult(ActivityResultContracts.OpenDocument()){uri->if(uri!=null)luma.fileIo.execute{runCatching{contentResolver.openInputStream(uri)!!.bufferedReader().use{CubeLut.read(it)}}.onSuccess{cube->runOnUiThread{lut=cube;preset=4;status.text="นำเข้า LUT 3D ${cube.size} แล้ว"}}.onFailure{runOnUiThread{status.text="LUT ใช้ไม่ได้ ${it.localizedMessage}"}}}}
+    private val poll=object:Runnable{override fun run(){val t=transformer?:return;val state=t.getProgress(progress);status.text=if(state==Transformer.PROGRESS_STATE_AVAILABLE)"กำลังส่งออก ${progress.progress}% เปิดหน้านี้ไว้"else "กำลังเตรียมส่งออก เปิดหน้านี้ไว้";handler.postDelayed(this,500)}}
     override fun onCreate(state:Bundle?){super.onCreate(state)
         preset=state?.getInt("preset")?:0;speed=state?.getFloat("speed")?:1f;crop=state?.getBoolean("crop")?:false
         val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(14),0,dp(14),0)};installRoot(root)
@@ -30,17 +30,17 @@ class ClipEditorActivity:ComponentActivity(){
         player=VideoView(this);player.minimumHeight=dp(120);root.addView(player,LinearLayout.LayoutParams(-1,0,1f));intent.data?.let{player.setVideoURI(it);player.seekTo(1)}
         // Controls scroll on short screens or large fonts; the preview keeps at least 120 dp.
         val controls=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL};root.addView(ScrollView(this).apply{addView(controls)},LinearLayout.LayoutParams(-1,0,1f))
-        status=label("พรีวิวต้นฉบับ · ผลแต่งอยู่ในไฟล์ส่งออก\nSR1 รายเฟรมยังไม่มีการแก้ความสม่ำเสมอข้ามเฟรม",13f,MUTED).apply{minHeight=dp(80)};controls.addView(status,-1,-2)
+        status=label("พรีวิวต้นฉบับ ผลแต่งอยู่ในไฟล์ส่งออก\nSR1 รายเฟรมยังไม่มีการแก้ความสม่ำเสมอข้ามเฟรม",13f,MUTED).apply{minHeight=dp(80)};controls.addView(status,-1,-2)
         controls.addView(pill("▶ เล่น / พักพรีวิว"){if(player.isPlaying)player.pause()else player.start()},-1,-2)
-        val presets=listOf("ต้นฉบับ / เปลี่ยน codec","AI SR1 2× · SDR ≤1080p","Movie LUT","Lumora Log · แปลงจาก SDR","LUT .cube ที่นำเข้า")
+        val presets=listOf("ต้นฉบับ / เปลี่ยน codec","AI SR1 2× SDR ≤1080p","Movie LUT","Lumora Log แปลงจาก SDR","LUT .cube ที่นำเข้า")
         // A pill plus a dialog instead of a Spinner: the label wraps at large font and TalkBack hears what is being chosen.
         lateinit var choice:TextView
-        choice=pill("การแต่ง · ${presets[preset]}"){if(transformer==null)android.app.AlertDialog.Builder(this).setTitle("การแต่งคลิป").setSingleChoiceItems(presets.toTypedArray(),preset){d,i->preset=i;choice.text="การแต่ง · ${presets[i]}";d.dismiss()}.show()}
+        choice=pill("การแต่ง ${presets[preset]}"){if(transformer==null)android.app.AlertDialog.Builder(this).setTitle("การแต่งคลิป").setSingleChoiceItems(presets.toTypedArray(),preset){d,i->preset=i;choice.text="การแต่ง ${presets[i]}";d.dismiss()}.show()}
         controls.addView(choice,-1,-2)
         val options=LinearLayout(this)
         options.addView(pill("นำเข้า .cube"){if(transformer==null)pickLut.launch(arrayOf("*/*"))},LinearLayout.LayoutParams(0,-2,1f))
         options.addView(pill("H.264 / HEVC"){if(transformer==null){codec=if(codec=="video/avc")"video/hevc"else "video/avc";status.text="Codec ส่งออก $codec"}},LinearLayout.LayoutParams(0,-2,1f))
-        options.addView(pill("ความเร็ว"){if(transformer==null)android.app.AlertDialog.Builder(this).setItems(arrayOf("0.25×","0.5×","1×","2×","4×")){_,i->speed=listOf(.25f,.5f,1f,2f,4f)[i];status.text="ความเร็ว $speed× · ปรับเสียงตามเวลา"}.show()},LinearLayout.LayoutParams(0,-2,1f));controls.addView(options,-1,-2)
+        options.addView(pill("ความเร็ว"){if(transformer==null)android.app.AlertDialog.Builder(this).setItems(arrayOf("0.25×","0.5×","1×","2×","4×")){_,i->speed=listOf(.25f,.5f,1f,2f,4f)[i];status.text="ความเร็ว $speed× ปรับเสียงตามเวลา"}.show()},LinearLayout.LayoutParams(0,-2,1f));controls.addView(options,-1,-2)
         controls.addView(Switch(this).apply{text="ครอป Movie 2.39:1 ตอนส่งออก";setTextColor(WHITE);isChecked=crop;setOnCheckedChangeListener{_,v->if(transformer==null)crop=v}}.apply{minHeight=dp(48)},-1,-2)
         export=pill("ส่งออกเป็นไฟล์ใหม่"){if(transformer==null)start()else cancel()}.apply{contentDescription="ส่งออกคลิป"};export.minHeight=dp(60);root.addView(export,-1,-2)
     }
@@ -57,10 +57,10 @@ class ClipEditorActivity:ComponentActivity(){
             if(speed!=1f)builder.setSpeed(object:SpeedProvider{override fun getSpeed(timeUs:Long)=speed;override fun getNextSpeedChangeTimeUs(timeUs:Long)=C.TIME_UNSET})
             val listener=object:Transformer.Listener{
                 override fun onCompleted(composition:Composition,result:ExportResult){transformer=null;handler.removeCallbacks(poll);export.text="ส่งออกอีกครั้ง";status.text="กำลังบันทึกไฟล์…"
-                    luma.fileIo.execute{runCatching{val out=MediaLedger.publishVideo(this@ClipEditorActivity,file,file.name,when(preset){1->"SR1 2× รายเฟรม · ทดลอง";3->"Lumora Log SDR · ดู sidecar";else->"แต่งคลิป"});metadata.put("state","complete").put("videoFrames",result.videoFrameCount).put("output",out.toString());job!!.writeText(metadata.toString(2));MediaLedger.rememberFile(this@ClipEditorActivity,job!!,"application/json","ข้อมูลการส่งออกและ transfer curve");ClipInspector.record(this@ClipEditorActivity,out,file.name);file.delete();out}.onSuccess{out->runOnUiThread{if(!isDestroyed){status.text="ส่งออกแล้ว · ${result.videoFrameCount} เฟรม";player.setVideoURI(out);player.seekTo(1)}}}.onFailure{e->runOnUiThread{status.text="ไฟล์อยู่ในแอป · ${e.localizedMessage}"};MediaLedger.rememberFile(this@ClipEditorActivity,file,"video/mp4")}}
+                    luma.fileIo.execute{runCatching{val out=MediaLedger.publishVideo(this@ClipEditorActivity,file,file.name,when(preset){1->"SR1 2× รายเฟรม ทดลอง";3->"Lumora Log SDR ดู sidecar";else->"แต่งคลิป"});metadata.put("state","complete").put("videoFrames",result.videoFrameCount).put("output",out.toString());job!!.writeText(metadata.toString(2));MediaLedger.rememberFile(this@ClipEditorActivity,job!!,"application/json","ข้อมูลการส่งออกและ transfer curve");ClipInspector.record(this@ClipEditorActivity,out,file.name);file.delete();out}.onSuccess{out->runOnUiThread{if(!isDestroyed){status.text="ส่งออกแล้ว ${result.videoFrameCount} เฟรม";player.setVideoURI(out);player.seekTo(1)}}}.onFailure{e->runOnUiThread{status.text="ไฟล์อยู่ในแอป ${e.localizedMessage}"};MediaLedger.rememberFile(this@ClipEditorActivity,file,"video/mp4")}}
                 }
-                override fun onError(composition:Composition,result:ExportResult,e:ExportException){transformer=null;handler.removeCallbacks(poll);file.delete();metadata.put("state","failed").put("error",e.toString());job!!.writeText(metadata.toString(2));status.text="ส่งออกไม่ได้ · ${e.localizedMessage}\nลองลดขนาดหรือเปลี่ยน codec";export.text="ลองส่งออกใหม่";restorePreview()}
-                override fun onFallbackApplied(c:Composition,original:TransformationRequest,fallback:TransformationRequest){status.text="encoder ปรับรูปแบบตามที่เครื่องรองรับ · รายงานไฟล์จะแสดงค่าจริง"}
+                override fun onError(composition:Composition,result:ExportResult,e:ExportException){transformer=null;handler.removeCallbacks(poll);file.delete();metadata.put("state","failed").put("error",e.toString());job!!.writeText(metadata.toString(2));status.text="ส่งออกไม่ได้ ${e.localizedMessage}\nลองลดขนาดหรือเปลี่ยน codec";export.text="ลองส่งออกใหม่";restorePreview()}
+                override fun onFallbackApplied(c:Composition,original:TransformationRequest,fallback:TransformationRequest){status.text="encoder ปรับรูปแบบตามที่เครื่องรองรับ รายงานไฟล์จะแสดงค่าจริง"}
             }
             // Expensive SR must apply backpressure before the decoder releases another surface
             // frame. Some codecs otherwise coalesce SurfaceTexture callbacks and lose frames.
@@ -80,10 +80,10 @@ class ClipEditorActivity:ComponentActivity(){
             }
             val loaders=DefaultAssetLoaderFactory(this,decoder,androidx.media3.common.util.Clock.DEFAULT,null)
             val t=Transformer.Builder(this).setAssetLoaderFactory(loaders).setVideoMimeType(codec).setPortraitEncodingEnabled(true).addListener(listener).build();transformer=t;t.start(builder.build(),file.path);export.text="ยกเลิกส่งออก";handler.post(poll)
-        }catch(e:Exception){transformer?.cancel();transformer=null;file.delete();metadata.put("state","failed").put("error",e.toString());job!!.writeText(metadata.toString(2));status.text="เริ่มส่งออกไม่ได้ · ${e.localizedMessage}";restorePreview()}
+        }catch(e:Exception){transformer?.cancel();transformer=null;file.delete();metadata.put("state","failed").put("error",e.toString());job!!.writeText(metadata.toString(2));status.text="เริ่มส่งออกไม่ได้ ${e.localizedMessage}";restorePreview()}
     }
     private fun restorePreview(){intent.data?.let{player.setVideoURI(it);player.seekTo(1)}}
-    private fun cancel(){if(transformer==null)return;transformer?.cancel();transformer=null;handler.removeCallbacks(poll);output?.delete();job?.let{runCatching{val m=JSONObject(it.readText());m.put("state","cancelled");it.writeText(m.toString(2))}};status.text="ยกเลิกแล้ว · ต้นฉบับยังอยู่";export.text="ลองส่งออกใหม่";restorePreview()}
+    private fun cancel(){if(transformer==null)return;transformer?.cancel();transformer=null;handler.removeCallbacks(poll);output?.delete();job?.let{runCatching{val m=JSONObject(it.readText());m.put("state","cancelled");it.writeText(m.toString(2))}};status.text="ยกเลิกแล้ว ต้นฉบับยังอยู่";export.text="ลองส่งออกใหม่";restorePreview()}
     override fun onSaveInstanceState(out:Bundle){out.putInt("preset",preset);out.putFloat("speed",speed);out.putBoolean("crop",crop);super.onSaveInstanceState(out)}
     override fun onStop(){cancel();player.pause();super.onStop()}
     override fun onDestroy(){player.stopPlayback();super.onDestroy()}

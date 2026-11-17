@@ -55,7 +55,7 @@ class HomeActivity : ComponentActivity() {
         @Suppress("DEPRECATION") val uri = r.data?.getParcelableArrayListExtra<Uri>(GalleryActivity.RESULT_URIS)?.firstOrNull() ?: return@registerForActivityResult
         when (editKind) {
             // Pick a photo, then the AI sheet (model, size, strength, preview) opens right here; the result lands in Lumora's gallery.
-            "ai_image" -> th.ogay.luma.ai.EnhanceUi.showForUri(this, uri) { notice("เริ่มเพิ่มรายละเอียดแล้ว · ดูความคืบหน้าในแกลเลอรี")
+            "ai_image" -> th.ogay.luma.ai.EnhanceUi.showForUri(this, uri) { notice("เริ่มเพิ่มรายละเอียดแล้ว ดูความคืบหน้าในแกลเลอรี")
                 startActivity(Intent(this, GalleryActivity::class.java).putExtra("tab", "luma").putExtra("from", "home")) }
             "ai_video" -> startActivity(VideoEditorActivity.intent(this, uri).putExtra("ai_export", true))
             "video" -> startActivity(Intent(this, VideoEditorActivity::class.java).setData(uri).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
@@ -126,7 +126,7 @@ class HomeActivity : ComponentActivity() {
         showProject(null, 0)
         val grid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(6), dp(12), 0); minimumHeight = dp(190) }
         val rowA = LinearLayout(this); val rowB = LinearLayout(this)
-        rowA.addView(tile(Icons.PHOTO, "ถ่ายภาพ", "กล้อง · 9 โหมด", "ถ่ายภาพ กลับไปที่กล้อง", null) { returnMode(PhotoMode.PHOTO) }, LinearLayout.LayoutParams(0, -1, 1f).apply { rightMargin = dp(4) })
+        rowA.addView(tile(Icons.PHOTO, "ถ่ายภาพ", "กล้อง 9 โหมด", "ถ่ายภาพ กลับไปที่กล้อง", null) { returnMode(PhotoMode.PHOTO) }, LinearLayout.LayoutParams(0, -1, 1f).apply { rightMargin = dp(4) })
         rowA.addView(tile(Icons.LIBRARY, "แกลเลอรี", "รูปและวิดีโอ", "แกลเลอรี รูปและวิดีโอทั้งหมด", null) { startActivity(Intent(this, GalleryActivity::class.java).putExtra("from", "home")) }, LinearLayout.LayoutParams(0, -1, 1f).apply { leftMargin = dp(4) })
         rowB.addView(tile(Icons.FILM, "ฟิล์ม", "ลุคฟิล์มและเกรน", "ฟิล์ม โทนสีและเกรนฟิล์ม", null) { returnMode(PhotoMode.FILM) }, LinearLayout.LayoutParams(0, -1, 1f).apply { rightMargin = dp(4) })
         rowB.addView(tile(EditorKit.ADJUST, "ปรับแต่งด้วย AI", "ภาพหรือวิดีโอ", "ปรับแต่งภาพหรือวิดีโอด้วย AI", "AI" to { chooseAi() }) { chooseAi() }, LinearLayout.LayoutParams(0, -1, 1f).apply { leftMargin = dp(4) })
@@ -505,7 +505,7 @@ class HomeActivity : ComponentActivity() {
         row.removeAllViews()
         val words = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         words.addView(text(last?.name ?: "ตัดต่อวิดีโอ", 16f, Glass.TEXT, true).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END })
-        words.addView(text(if (last != null) "แก้ไขล่าสุด ${ago(last.updated)}" + (if (count > 1) " · $count โปรเจกต์" else "") else "เลเยอร์ สโลว์ 4K ส่งออก", 12f, Glass.TEXT3).apply { maxLines = 1 })
+        words.addView(text(if (last != null) "แก้ไขล่าสุด ${ago(last.updated)}" + (if (count > 1) " $count โปรเจกต์" else "") else "เลเยอร์ สโลว์ 4K ส่งออก", 12f, Glass.TEXT3).apply { maxLines = 1 })
         row.addView(words, LinearLayout.LayoutParams(0, -2, 1f))
         fun pill(label: String, go: () -> Unit) = text(label, 14f, Glass.ON_ACCENT, true).apply {
             gravity = Gravity.CENTER; setPadding(dp(18), 0, dp(18), 0); isClickable = true; glassTouch(); contentDescription = label

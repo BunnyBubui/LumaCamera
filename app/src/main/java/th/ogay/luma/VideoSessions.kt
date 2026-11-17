@@ -71,5 +71,5 @@ class VideoSessions {
         // the clip's measured fps (ClipInspector) decides, per camera.
         true
     }.getOrDefault(false)
-    fun label(mode: Mode): String { val range = mode.range; return (if (range.lower == range.upper) "${range.upper} fps" else "สูงสุด ${range.upper} fps (${range.lower}–${range.upper})") + if (mode.source == Recorder.VIDEO_CAPABILITIES_SOURCE_CODEC_CAPABILITIES) " · ตรวจไฟล์จริง" else "" }
+    fun label(mode: Mode): String { val range = mode.range; return (if (range.lower == range.upper) "${range.upper} fps" else "สูงสุด ${range.upper} fps (${range.lower}–${range.upper})") + if (mode.source == Recorder.VIDEO_CAPABILITIES_SOURCE_CODEC_CAPABILITIES) " ตรวจไฟล์จริง" else "" }
 }

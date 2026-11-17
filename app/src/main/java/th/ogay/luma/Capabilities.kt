@@ -57,7 +57,7 @@ object Capabilities {
             activity.runOnUiThread {
                 if(activity.isFinishing||activity.isDestroyed)return@runOnUiThread
                 json.onSuccess{j->
-                    val text="${Build.MANUFACTURER} ${Build.MODEL} · Android ${Build.VERSION.RELEASE}\n\n"+j.getJSONArray("cameras").let{a->(0 until a.length()).joinToString("\n\n"){i->val x=a.getJSONObject(i);"กล้อง ${x.getString("id")}\nRAW ${x.getBoolean("raw")} · Manual ${x.getBoolean("manualSensor")}\nJPEG ${x.getJSONArray("jpegSizes").optString(0)}\nFPS ${x.getJSONArray("aeFpsRanges")}"}}+"\n\nค่าข้างต้นเป็นสิ่งที่ Android รายงาน ต้องทดสอบชุดความละเอียด / fps / HDR / กันสั่นร่วมกัน"
+                    val text="${Build.MANUFACTURER} ${Build.MODEL} Android ${Build.VERSION.RELEASE}\n\n"+j.getJSONArray("cameras").let{a->(0 until a.length()).joinToString("\n\n"){i->val x=a.getJSONObject(i);"กล้อง ${x.getString("id")}\nRAW ${x.getBoolean("raw")} Manual ${x.getBoolean("manualSensor")}\nJPEG ${x.getJSONArray("jpegSizes").optString(0)}\nFPS ${x.getJSONArray("aeFpsRanges")}"}}+"\n\nค่าข้างต้นเป็นสิ่งที่ Android รายงาน ต้องทดสอบชุดความละเอียด / fps / HDR / กันสั่นร่วมกัน"
                     AlertDialog.Builder(activity).setTitle("ความสามารถกล้อง").setMessage(text).setPositiveButton("ส่งออก JSON"){_,_->
                         val file=File(activity.filesDir,"reports/camera-${System.currentTimeMillis()}.json");file.parentFile?.mkdirs();file.writeText(j.toString(2));MediaLedger.rememberFile(activity,file,"application/json");MediaLedger.share(activity,MediaLedger.privateUri(activity,file),"application/json")
                     }.setNeutralButton("ทดสอบกล้อง"){_,_->activity.startActivity(Intent(activity,CameraProbeActivity::class.java))}.setNegativeButton("ปิด",null).show()

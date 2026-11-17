@@ -47,7 +47,7 @@ object ExportSheet {
             outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: android.graphics.Outline) = o.setRoundRect(0, 0, v.width, v.height, a.dp(12).toFloat()) } }, a.dp(62), a.dp(84))
         val heads = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; setPadding(a.dp(14), 0, 0, 0) }
         heads.addView(a.text("ส่งออกวิดีโอ", 20f, Glass.TEXT, true))
-        heads.addView(a.text("ยาว ${clock(src.durationMs)} · ต้นฉบับ ${sideName(src.shortSide)} ${fpsName(src.fps)} fps", 12.5f, Glass.TEXT2))
+        heads.addView(a.text("ยาว ${clock(src.durationMs)} ต้นฉบับ ${sideName(src.shortSide)} ${fpsName(src.fps)} fps", 12.5f, Glass.TEXT2))
         head.addView(heads, LinearLayout.LayoutParams(0, -2, 1f))
         card.addView(head, -1, -2)
 
@@ -113,7 +113,7 @@ object ExportSheet {
                 flowBox.visibility = if (wantFlow) View.VISIBLE else View.GONE
                 if (!first) sheet.unpin() }
             estimate.text = if (!ok) "เครื่องนี้เข้ารหัส ${sideName(s)} ${fpsName(r)} fps ไม่ได้ ลองลดความละเอียดหรือเฟรมเรต"
-                else "ไฟล์ประมาณ ${if (mb < 10) String.format(Locale.US, "%.1f", mb) else mb.toInt().toString()} MB" + (if (minutes > 0) " · ใช้เวลาประมาณ ${if (minutes < 1) "ไม่ถึง 1" else ceil(minutes).toInt().toString()} นาที" else "")
+                else "ไฟล์ประมาณ ${if (mb < 10) String.format(Locale.US, "%.1f", mb) else mb.toInt().toString()} MB" + (if (minutes > 0) " ใช้เวลาประมาณ ${if (minutes < 1) "ไม่ถึง 1" else ceil(minutes).toInt().toString()} นาที" else "")
             estimate.setTextColor(if (ok) Glass.TEXT2 else 0xffff6b5e.toInt())
             go.isEnabled = ok; go.alpha = if (ok) 1f else 0.4f
         }
@@ -133,7 +133,7 @@ object ExportSheet {
             val pill = LinearLayout(a).apply { gravity = Gravity.CENTER_VERTICAL; background = a.glass(16, 0x26ffffff); setPadding(a.dp(14), 0, a.dp(10), 0); isClickable = true; glassTouch(); contentDescription = title
                 addView(value); addView(IconView(a, "M7 10l5 5 5-5", 2f).apply { tint = Glass.TEXT2 }, LinearLayout.LayoutParams(a.dp(16), a.dp(16)).apply { leftMargin = a.dp(6) }); setOnClickListener { tap(this) } }
             top.addView(pill, LinearLayout.LayoutParams(-2, a.dp(38)))
-            into.addView(top, -1, -2); into.addView(note.apply { setPadding(0, a.dp(4), 0, 0) }, -1, -2)
+            into.addView(top, -1, -2)
         }
         // What the file is comes first: choosing sound only takes the picture rows away and shows the sound ones.
         val typeValue = a.text("วิดีโอ", 14f, Glass.TEXT, true); val typeNote = a.text("ภาพพร้อมเสียง .mp4", 12f, Glass.TEXT3)
@@ -159,7 +159,7 @@ object ExportSheet {
         val hevcOk = runCatching { android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS).codecInfos.any { it.isEncoder && it.supportedTypes.any { t -> t.equals("video/hevc", true) } } }.getOrDefault(false)
         if (hevcOk && !upscale) {
             val codecValue = a.text("", 14f, Glass.TEXT, true); val codecNote = a.text("", 12f, Glass.TEXT3)
-            fun paintCodec(k: Int) { codecValue.text = if (k == 1) "H.265" else "H.264"; codecNote.text = if (k == 1) "ไฟล์เล็กกว่าที่คุณภาพเท่ากัน · เครื่องหรือแอปรุ่นเก่าบางตัวเปิดไม่ได้" else "เปิดได้ทุกเครื่อง" }
+            fun paintCodec(k: Int) { codecValue.text = if (k == 1) "H.265" else "H.264"; codecNote.text = if (k == 1) "ไฟล์เล็กกว่าที่คุณภาพเท่ากัน เครื่องหรือแอปรุ่นเก่าบางตัวเปิดไม่ได้" else "เปิดได้ทุกเครื่อง" }
             paintCodec(if (prefs.getBoolean("export_hevc", false)) 1 else 0)
             pickRow("การบีบอัด", codecValue, codecNote) { v -> pickMenu.show(v, "การบีบอัดวิดีโอ", listOf(GlassMenu.Option("H.264", "", "เปิดได้ทุกเครื่อง"), GlassMenu.Option("H.265", "", "ไฟล์เล็กกว่า")), if (prefs.getBoolean("export_hevc", false)) 1 else 0) { k ->
                 prefs.edit().putBoolean("export_hevc", k == 1).apply(); paintCodec(k) } }
@@ -168,7 +168,7 @@ object ExportSheet {
         if (!upscale) {
             val boxes = listOf("mp4" to "MP4", "mov" to "MOV")
             val boxValue = a.text("", 14f, Glass.TEXT, true); val boxNote = a.text("", 12f, Glass.TEXT3)
-            fun paintBox(k: Int) { boxValue.text = boxes[k].second; boxNote.text = if (k == 0) "เปิดได้ทุกเครื่องและทุกแอป" else "ชื่อ .mov · ใช้กับโปรแกรมตัดต่อและอุปกรณ์ Apple" }
+            fun paintBox(k: Int) { boxValue.text = boxes[k].second; boxNote.text = if (k == 0) "เปิดได้ทุกเครื่องและทุกแอป" else "ชื่อ .mov ใช้กับโปรแกรมตัดต่อและอุปกรณ์ Apple" }
             paintBox(boxes.indexOfFirst { it.first == prefs.getString("export_container", "mp4") }.coerceAtLeast(0))
             pickRow("รูปแบบไฟล์", boxValue, boxNote) { v -> pickMenu.show(v, "รูปแบบไฟล์วิดีโอ", boxes.map { GlassMenu.Option(it.second, Icons.FILE, if (it.first == "mp4") "แนะนำ" else "QuickTime") }, boxes.indexOfFirst { it.first == prefs.getString("export_container", "mp4") }.coerceAtLeast(0)) { k ->
                 prefs.edit().putString("export_container", boxes[k].first).apply(); paintBox(k) } }
@@ -179,7 +179,7 @@ object ExportSheet {
             val mbpsList = listOf(0, 1, 2, 3, 4, 5, 6, 8, 10, 12, 14, 16, 20, 24, 30, 40, 50, 60, 80, 100)
             val mbpsValue = a.text("", 15f, Glass.TEXT, true); val mbpsNote = a.text("", 12f, Glass.TEXT2)
             fun paintRate(k: Int) { val m = mbpsList[k]; mbpsValue.text = if (m == 0) "อัตโนมัติ" else "$m Mbps"; mbpsValue.setTextColor(if (m == 0) Color.WHITE else Glass.ACCENT)
-                mbpsNote.text = if (m == 0) "แอปเลือกให้ตามขนาดภาพ · แนะนำ" else String.format(java.util.Locale.US, "ไฟล์ประมาณ %.0f MB · %s", m / 8.0 * src.durationMs / 1000.0, if (m <= 8) "ประหยัดที่ ภาพหยาบลง" else if (m <= 20) "สมดุล" else "คมที่สุด ไฟล์ใหญ่") }
+                mbpsNote.text = if (m == 0) "แอปเลือกให้ตามขนาดภาพ แนะนำ" else String.format(java.util.Locale.US, "ไฟล์ประมาณ %.0f MB %s", m / 8.0 * src.durationMs / 1000.0, if (m <= 8) "ประหยัดที่ ภาพหยาบลง" else if (m <= 20) "สมดุล" else "คมที่สุด ไฟล์ใหญ่") }
             val start = mbpsList.indexOf(prefs.getInt("export_mbps", 0)).let { if (it >= 0) it else mbpsList.indexOfFirst { m -> m >= prefs.getInt("export_mbps", 0) }.coerceAtLeast(0) }
             paintRate(start)
             row("บิตเรตวิดีโอ", mbpsValue, mbpsNote, mbpsList.map { if (it == 0) "อัตโนมัติ" else "$it Mbps" }, start) { k -> prefs.edit().putInt("export_mbps", mbpsList[k]).apply(); paintRate(k) }
@@ -188,15 +188,15 @@ object ExportSheet {
         into = audioBox
         run {
             val fmtValue = a.text("", 14f, Glass.TEXT, true); val fmtNote = a.text("", 12f, Glass.TEXT3)
-            fun paintFmt() { fmtValue.text = if (aformat == 1) "WAV" else "M4A · AAC"; fmtNote.text = if (aformat == 1) "PCM ไม่บีบอัด ใช้กับโปรแกรมตัดต่อ · ได้จาก AAC 320 kbps จึงไม่ใช่เสียงต้นฉบับแบบไม่สูญเสีย" else "เล็กและเปิดได้เกือบทุกเครื่อง · แนะนำ" }
+            fun paintFmt() { fmtValue.text = if (aformat == 1) "WAV" else "M4A AAC"; fmtNote.text = if (aformat == 1) "PCM ไม่บีบอัด ใช้กับโปรแกรมตัดต่อ ได้จาก AAC 320 kbps จึงไม่ใช่เสียงต้นฉบับแบบไม่สูญเสีย" else "เล็กและเปิดได้เกือบทุกเครื่อง แนะนำ" }
             paintFmt()
-            pickRow("รูปแบบเสียง", fmtValue, fmtNote) { v -> pickMenu.show(v, "รูปแบบไฟล์เสียง", listOf(GlassMenu.Option("M4A · AAC", Icons.SOUND, "แนะนำ"), GlassMenu.Option("WAV", Icons.SOUND, "ไม่บีบอัด ไฟล์ใหญ่")), aformat) { k ->
+            pickRow("รูปแบบเสียง", fmtValue, fmtNote) { v -> pickMenu.show(v, "รูปแบบไฟล์เสียง", listOf(GlassMenu.Option("M4A AAC", Icons.SOUND, "แนะนำ"), GlassMenu.Option("WAV", Icons.SOUND, "ไม่บีบอัด ไฟล์ใหญ่")), aformat) { k ->
                 aformat = k; prefs.edit().putInt("export_aformat", k).apply(); paintFmt(); refresh() } }
             audioBox.addView(kBox, -1, -2); into = kBox
             val kbpsList = listOf(32, 48, 64, 96, 112, 128, 160, 192, 224, 256, 320)
             val kValue = a.text("", 15f, Glass.TEXT, true); val kNote = a.text("", 12f, Glass.TEXT2)
             fun paintK(k: Int) { val v = kbpsList[k]; kValue.text = "$v kbps"; kValue.setTextColor(if (v == 128) Color.WHITE else Glass.ACCENT)
-                kNote.text = String.format(java.util.Locale.US, "ไฟล์ประมาณ %.1f MB · %s", v * 1000 / 8.0 * src.durationMs / 1000.0 / 1_000_000.0, if (v <= 64) "เสียงพูด ไฟล์เล็ก" else if (v <= 128) "สมดุล เหมาะกับเพลงทั่วไป" else "คมชัดสูง ไฟล์ใหญ่") }
+                kNote.text = String.format(java.util.Locale.US, "ไฟล์ประมาณ %.1f MB %s", v * 1000 / 8.0 * src.durationMs / 1000.0 / 1_000_000.0, if (v <= 64) "เสียงพูด ไฟล์เล็ก" else if (v <= 128) "สมดุล เหมาะกับเพลงทั่วไป" else "คมชัดสูง ไฟล์ใหญ่") }
             val startK = kbpsList.indexOf(akbps).let { if (it >= 0) it else kbpsList.indexOfFirst { v -> v >= akbps }.let { j -> if (j < 0) kbpsList.size - 1 else j } }
             akbps = kbpsList[startK]; paintK(startK)
             row("บิตเรตเสียง", kValue, kNote, kbpsList.map { "$it kbps" }, startK) { k -> akbps = kbpsList[k]; prefs.edit().putInt("export_akbps", akbps).apply(); paintK(k) }
@@ -214,13 +214,13 @@ object ExportSheet {
                 amono = k == 1; prefs.edit().putBoolean("export_amono", amono).apply(); paintCh() } }
         }
         into = card
-        val names = listOf("ไม่ใช้ AI · เร็วที่สุด", "Natural SR3 · แนะนำ", "Classic SR2 · คมชัด")
-        val notes = listOf("ขยายภาพแบบปกติ เร็วที่สุด", "คน ใบหน้า ตัวหนังสือ · เนียนตา", "วิว ตึก ใบไม้ · คมเต็มที่")
+        val names = listOf("ไม่ใช้ AI", "Natural SR3", "Classic SR2")
+        val notes = listOf("ขยายภาพแบบปกติ เร็วที่สุด", "คน ใบหน้า ตัวหนังสือ เนียนตา", "วิว ตึก ใบไม้ คมเต็มที่")
         val icons = listOf(Icons.PHOTO, th.ogay.luma.ai.EnhanceUi.LEAF, th.ogay.luma.ai.EnhanceUi.GEM)
         var syncPrev: () -> Unit = {}
         val menu = GlassMenu(a.window.decorView as FrameLayout) { on -> sheet.recede(on) }
         val modelIcon = IconView(a, icons[model], 1.8f).apply { tint = Glass.ACCENT }
-        val modelName = a.text(names[model].substringBefore(" ·"), 15f, Glass.TEXT, true)
+        val modelName = a.text(names[model], 15f, Glass.TEXT, true)
         val modelNote = a.text(notes[model], 12f, Glass.TEXT2).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END }
         aiChip.apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; background = a.glass(20, 0x1affffff); setPadding(a.dp(10), a.dp(8), a.dp(12), a.dp(8)); isClickable = true; glassTouch(); contentDescription = "โมเดล AI ${names[model]}" }
         aiChip.addView(FrameLayout(a).apply { background = a.glass(12, 0x24ffffff); addView(modelIcon, FrameLayout.LayoutParams(a.dp(20), a.dp(20), Gravity.CENTER)) }, a.dp(38), a.dp(38))
@@ -231,7 +231,7 @@ object ExportSheet {
             if (!aiChip.isEnabled) return@pressMenu
             menu.show(anchor, "โมเดล AI สร้างพิกเซล", names.indices.map { GlassMenu.Option(names[it], icons[it], notes[it]) }, model) { i ->
                 model = i; prefs.edit().putInt("video_ai_model", i).apply()
-                modelIcon.path = icons[i]; modelName.text = names[i].substringBefore(" ·"); modelNote.text = notes[i]; aiChip.contentDescription = "โมเดล AI ${names[i]}"; refresh(); syncPrev() }
+                modelIcon.path = icons[i]; modelName.text = names[i]; modelNote.text = notes[i]; aiChip.contentDescription = "โมเดล AI ${names[i]}"; refresh(); syncPrev() }
         }
         // The model chip and the preview live in one box that opens only when the resolution goes above the source;
         // making in-between frames alone needs no AI model, so the box stays closed and the rows below move up.
@@ -366,7 +366,7 @@ class ExportProgress(private val a: Activity, thumb: Bitmap?, private val steps:
         ring.progress = p; percent.text = "${(p * 100).toInt()}%"
         val i = s.stage
         backdrop.mode = kinds.getOrElse(i) { Backdrop.SAVE }
-        frames.text = listOfNotNull(if (s.totalFrames > 0) "${String.format(Locale.US, "%,d", s.frames)} / ${String.format(Locale.US, "%,d", s.totalFrames)} เฟรม" else null, s.detail.takeIf { it.isNotEmpty() }).joinToString(" · ")
+        frames.text = listOfNotNull(if (s.totalFrames > 0) "${String.format(Locale.US, "%,d", s.frames)} / ${String.format(Locale.US, "%,d", s.totalFrames)} เฟรม" else null, s.detail.takeIf { it.isNotEmpty() }).joinToString(" ")
         // The AI step knows its own pace; every other step (and plain exports) is timed from how far the whole job has got.
         etaBox.visibility = View.VISIBLE
         eta.text = Eta.text(s.leftMs())
@@ -536,7 +536,7 @@ class CaptionProgress(
         buttons.addView(button("ย่อไปทำเบื้องหลัง", true) { minimize() }, LinearLayout.LayoutParams(0, a.dp(46), 1.4f))
         buttons.addView(button("ยกเลิก", false) { onCancel() }, LinearLayout.LayoutParams(0, a.dp(46), 1f).apply { leftMargin = a.dp(10) })
         col.addView(buttons, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(14) })
-        col.addView(a.text("ย่อแล้วยังตัดต่อต่อได้ · ถ้าออกจากหน้านี้ งานจะหยุด", 11.5f, Glass.TEXT3).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(8) })
+        col.addView(a.text("ย่อแล้วยังตัดต่อต่อได้ ถ้าออกจากหน้านี้ งานจะหยุด", 11.5f, Glass.TEXT3).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(-1, -2).apply { topMargin = a.dp(8) })
         layer.addView(android.widget.ScrollView(a).apply { isVerticalScrollBarEnabled = false; isFillViewport = true; addView(col, FrameLayout.LayoutParams(-1, -2, Gravity.CENTER)) }, -1, -1)
 
         pill.apply { orientation = LinearLayout.VERTICAL; background = a.accentFrame(22); setPadding(a.dp(10), a.dp(10), a.dp(10), a.dp(12)); visibility = View.GONE; isClickable = true; glassTouch()
@@ -576,7 +576,7 @@ class CaptionProgress(
         backdrop.mode = kinds.getOrElse(stage) { ExportProgress.Backdrop.SAVE }
         val head = headings.getOrElse(stage) { "" }
         heading.text = head; detail.text = note; pillText.text = head
-        if (!gone) TaskNotice.update(a, noticeTitle, head + if (note.isNotEmpty()) " · $note" else "", pct, left, cancelJob)
+        if (!gone) TaskNotice.update(a, noticeTitle, head + if (note.isNotEmpty()) " $note" else "", pct, left, cancelJob)
         if (lastWords.isNotEmpty()) { heard.text = "“$lastWords”"; heardBox.visibility = View.VISIBLE }
         marks.forEachIndexed { k, m ->
             m.text = if (k < stage) "✓" else if (k == stage) "●" else "○"

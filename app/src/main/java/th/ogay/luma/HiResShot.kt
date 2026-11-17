@@ -58,7 +58,7 @@ object HiResShot {
             cm.cameraIdList.joinToString("\n") { id ->
                 val normal = cm.getCameraCharacteristics(id).get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)?.getOutputSizes(ImageFormat.JPEG)?.maxByOrNull { it.width.toLong() * it.height }
                 val full = maxSize(context, id)
-                "กล้อง $id · ปกติ ${normal?.let { "${it.width}×${it.height}" } ?: "-"} · เต็มเซนเซอร์ ${full?.let { "${it.width}×${it.height}" } ?: "ไม่เปิดให้แอป"}"
+                "กล้อง $id ปกติ ${normal?.let { "${it.width}×${it.height}" } ?: "-"} เต็มเซนเซอร์ ${full?.let { "${it.width}×${it.height}" } ?: "ไม่เปิดให้แอป"}"
             }
         }.getOrDefault("อ่านข้อมูลกล้องไม่ได้")
     }
@@ -126,7 +126,7 @@ object HiResShot {
                     } catch (e: Exception) { finish(e) }
                 }
                 override fun onDisconnected(camera: CameraDevice) { device = camera; finish(IllegalStateException("กล้องถูกตัดการเชื่อมต่อ")) }
-                override fun onError(camera: CameraDevice, error: Int) { device = camera; finish(IllegalStateException("เปิดกล้องไม่ได้ · รหัส $error")) }
+                override fun onError(camera: CameraDevice, error: Int) { device = camera; finish(IllegalStateException("เปิดกล้องไม่ได้ รหัส $error")) }
             }, handler)
         } catch (e: Exception) { finish(e) }
     }

@@ -51,7 +51,7 @@ class ShareReceiverActivity : ComponentActivity() {
                     startActivity(VideoEditorActivity.intent(this, copied[0]).putExtra("name", name)
                         .putStringArrayListExtra("share_more", ArrayList(copied.drop(1).map { it.toString() })))
                     // Says how many arrived, so a missing clip is visible at once instead of silently dropped.
-                    notice("รับวิดีโอ ${copied.size} จาก ${videos.size} ไฟล์ที่แชร์มา" + (if (images.isNotEmpty()) " · ข้ามรูป ${images.size} รูป" else ""))
+                    notice("รับวิดีโอ ${copied.size} จาก ${videos.size} ไฟล์ที่แชร์มา" + (if (images.isNotEmpty()) " ข้ามรูป ${images.size} รูป" else ""))
                     finish()
                 }
             } else if (images.isNotEmpty()) {
@@ -60,7 +60,7 @@ class ShareReceiverActivity : ComponentActivity() {
                     if (isDestroyed) return@runOnUiThread
                     if (one == null) { notice("นำเข้ารูปไม่ได้"); finish(); return@runOnUiThread }
                     startActivity(PhotoEditorActivity.intent(this, one))
-                    if (images.size > 1) notice("ตัดต่อภาพรับได้ทีละรูป · เปิดรูปแรกให้")
+                    if (images.size > 1) notice("ตัดต่อภาพรับได้ทีละรูป เปิดรูปแรกให้")
                     finish()
                 }
             } else runOnUiThread { notice("แอปนี้รับเฉพาะรูปและวิดีโอ"); finish() }

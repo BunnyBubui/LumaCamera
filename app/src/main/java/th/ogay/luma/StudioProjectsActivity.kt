@@ -53,7 +53,7 @@ class StudioProjectsActivity : ComponentActivity() {
     /** Step 1 names the project, step 2 picks its video, then the editor opens already carrying that name. */
     private fun create() {
         // A new project needs the phone's encoder and memory, so wait until the video being saved is finished.
-        if (ExportJob.state?.active == true) { notice("กำลังส่งออกวิดีโออยู่ · รอให้เรนเดอร์เสร็จก่อน จึงสร้างโปรเจกต์ใหม่ได้"); return }
+        if (ExportJob.state?.active == true) { notice("กำลังส่งออกวิดีโออยู่ รอให้เรนเดอร์เสร็จก่อน จึงสร้างโปรเจกต์ใหม่ได้"); return }
         val field = GlassDialog.field(this, "ชื่อโปรเจกต์", "โปรเจกต์ ${StudioProjects.list(this).size + 1}"); field.selectAll()
         GlassDialog.ask(this, "โปรเจกต์ใหม่", Icons.PLUS, "ตั้งชื่อก่อน แล้วเลือกวิดีโอที่จะตัดต่อ", field, "เลือกวิดีโอ", focus = field) {
             newName = field.text.toString().trim().ifEmpty { "โปรเจกต์ใหม่" }; pick()
@@ -169,7 +169,7 @@ class StudioProjectsActivity : ComponentActivity() {
         addView(pic, dp(76), dp(76))
         val words = LinearLayout(this@StudioProjectsActivity).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, dp(4), 0) }
         words.addView(text(p.name, 15.5f, Glass.TEXT, true).apply { maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END })
-        if (p.missing) words.addView(text("ไม่พบวิดีโอต้นฉบับ · แตะเพื่อเลือกไฟล์แทน", 12f, 0xffffb27a.toInt()).apply { setPadding(0, dp(3), 0, 0) })
+        if (p.missing) words.addView(text("ไม่พบวิดีโอต้นฉบับ แตะเพื่อเลือกไฟล์แทน", 12f, 0xffffb27a.toInt()).apply { setPadding(0, dp(3), 0, 0) })
         else {
             words.addView(text(whenText(p.updated), 12f, Glass.TEXT3).apply { setPadding(0, dp(3), 0, 0); maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END })
             val tags = LinearLayout(this@StudioProjectsActivity)
@@ -184,7 +184,7 @@ class StudioProjectsActivity : ComponentActivity() {
     }
 
     private fun open(p: StudioProjects.Info) {
-        if (p.missing) { relinking = p.id; notice("ไม่พบวิดีโอต้นฉบับ · เลือกไฟล์วิดีโอที่จะใช้แทน"); pickReplacement.launch(arrayOf("video/*")) }
+        if (p.missing) { relinking = p.id; notice("ไม่พบวิดีโอต้นฉบับ เลือกไฟล์วิดีโอที่จะใช้แทน"); pickReplacement.launch(arrayOf("video/*")) }
         else startActivity(VideoEditorActivity.intent(this, p.source).putExtra("project", p.id))
     }
 

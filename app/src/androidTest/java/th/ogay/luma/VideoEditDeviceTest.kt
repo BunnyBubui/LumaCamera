@@ -32,7 +32,7 @@ class VideoEditDeviceTest {
             "look" to base.copy(look = look), "caption" to base.copy(caption = "Lumora"), "music" to base.copy(music = song), "speed+music" to base.copy(speed = 2f, music = song),
             "all" to base.copy(from = 200, to = 1800, speed = 0.5f, crop = 9f / 16, look = look, caption = "Lumora", place = 0, music = song))
         val results = cases.map { (name, spec) -> name to export(spec) }
-        assertTrue("Video edit exports · " + results.joinToString(" | ") { "${it.first}: ${it.second}" }, results.all { it.second.startsWith("ok") })
+        assertTrue("Video edit exports " + results.joinToString(" | ") { "${it.first}: ${it.second}" }, results.all { it.second.startsWith("ok") })
     }
 
     /** Joined clips (a second clip of another shape), each transition, and stickers, one export each. */
@@ -47,11 +47,11 @@ class VideoEditDeviceTest {
             "fade" to two.copy(transition = 1), "flash" to two.copy(transition = 2), "zoom" to two.copy(transition = 3),
             "three+all" to two.copy(extras = two.extras + VideoPart(clip, 500, 1500), transition = 1, speed = 2f, crop = 1f, look = EditorKit.film(Films.default, 1f), caption = "Lumora", stickers = stickers, music = song))
         val results = cases.map { (name, spec) -> name to export(spec) }
-        assertTrue("Clip exports · " + results.joinToString(" | ") { "${it.first}: ${it.second}" }, results.all { it.second.startsWith("ok") })
+        assertTrue("Clip exports " + results.joinToString(" | ") { "${it.first}: ${it.second}" }, results.all { it.second.startsWith("ok") })
         // Joined clips last as long as their parts together (2.0 s + 1.5 s), not as long as the first.
         val joined = results.first { it.first == "fade" }.second
         val ms = Regex("(\\d+)ms").find(joined)?.groupValues?.get(1)?.toLong() ?: 0
-        assertTrue("Joined length · $joined", ms in 3000..4000)
+        assertTrue("Joined length $joined", ms in 3000..4000)
     }
 
     /** Video, picture and sound layers export on top of the clip, and the file keeps the main clip's length. */
@@ -67,9 +67,9 @@ class VideoEditDeviceTest {
         val cases = listOf("picture" to base.copy(layers = listOf(picture)), "video" to base.copy(layers = listOf(video)),
             "sound" to base.copy(layers = listOf(sound)), "all" to base.copy(layers = listOf(picture, video, sound), speed = 2f, stickers = listOf(VideoSticker("😀", 0.5f, 0.5f))))
         val results = cases.map { (name, spec) -> name to export(spec) }
-        assertTrue("Layer exports · " + results.joinToString(" | ") { "${it.first}: ${it.second}" }, results.all { it.second.startsWith("ok") })
+        assertTrue("Layer exports " + results.joinToString(" | ") { "${it.first}: ${it.second}" }, results.all { it.second.startsWith("ok") })
         val ms = Regex("(\\d+)ms").find(results.first { it.first == "picture" }.second)?.groupValues?.get(1)?.toLong() ?: 0
-        assertTrue("Layer keeps clip length · ${results.first().second}", ms in 1700..2400)
+        assertTrue("Layer keeps clip length ${results.first().second}", ms in 1700..2400)
     }
 
     /** Optical-flow slow motion: ×4 frames from a 1 s clip gives about 4 s at the same frame rate, and it exports. */
@@ -79,10 +79,10 @@ class VideoEditDeviceTest {
         val out = File(c.cacheDir, "flow-test-${System.nanoTime()}.mp4")
         val r = SlowFlow.render(c, clip, 0, 1000, 4, out, java.util.concurrent.atomic.AtomicBoolean(false))
         val ms = android.media.MediaMetadataRetriever().run { try { setDataSource(out.path); extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)!!.toLong() } finally { release() } }
-        assertTrue("Smooth clip · ${r.frames} frames, ${ms} ms, ${r.width}x${r.height}", r.frames > 40 && ms in 3000..4700)
+        assertTrue("Smooth clip ${r.frames} frames, ${ms} ms, ${r.width}x${r.height}", r.frames > 40 && ms in 3000..4700)
         val exported = export(VideoEditSpec(Uri.fromFile(out), 0, ms, r.width, r.height, speed = 1f, keepAudio = false))
         out.delete()
-        assertTrue("Smooth export · $exported", exported.startsWith("ok"))
+        assertTrue("Smooth export $exported", exported.startsWith("ok"))
     }
 
     /** Export above the source: AI doubles the pixels and optical flow doubles the frames; the sound is kept. */
@@ -97,9 +97,9 @@ class VideoEditDeviceTest {
         val frames = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_FRAME_COUNT)?.toInt() ?: 0
         val ms = r.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_DURATION)!!.toLong()
         r.release(); out.delete(); clip.delete()
-        assertTrue("Enhanced size · ${w}x$h", w == 512 && h == 288)
+        assertTrue("Enhanced size ${w}x$h", w == 512 && h == 288)
         // 0.6 s at 60 fps is about 36 frames; the source had about half as many.
-        assertTrue("Enhanced frames · $frames in $ms ms", frames in 28..44 && ms in 450..800)
+        assertTrue("Enhanced frames $frames in $ms ms", frames in 28..44 && ms in 450..800)
     }
 
     private fun export(spec: VideoEditSpec): String {

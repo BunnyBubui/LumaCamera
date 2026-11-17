@@ -200,7 +200,7 @@ object SoundLibrary {
     fun imported(c: Context): List<Track> = runCatching {
         val a = JSONArray(c.getSharedPreferences("camera", 0).getString("sound_library", "[]"))
         (0 until a.length()).mapNotNull { i -> val o = a.getJSONObject(i); val f = File(o.getString("file"))
-            if (!f.isFile) null else Track(o.getString("id"), o.getString("name"), "นำเข้าเอง · ${o.getInt("bpm")} BPM", o.getDouble("bpm").toFloat(), o.getInt("energy"), false, f, o.getLong("dur")) }
+            if (!f.isFile) null else Track(o.getString("id"), o.getString("name"), "นำเข้าเอง ${o.getInt("bpm")} BPM", o.getDouble("bpm").toFloat(), o.getInt("energy"), false, f, o.getLong("dur")) }
     }.getOrDefault(emptyList())
     fun all(c: Context) = BUILT_IN + imported(c)
     fun byId(c: Context, id: String?) = all(c).firstOrNull { it.id == id }

@@ -89,7 +89,7 @@ class CameraFlowTest {
                 val end = SystemClock.elapsedRealtime() + 60000
                 fun done(): Boolean { shot = context.luma.shots.latest(); return shot != null && shot!!.id !in before && shot!!.output == CaptureOutput.RAW && shot!!.stage == Stage.ORIGINAL }
                 while (SystemClock.elapsedRealtime() < end && !done()) SystemClock.sleep(250)
-                assertTrue("No RAW shot · output pref=${context.getSharedPreferences("camera", Context.MODE_PRIVATE).getString("output", "")} latest=${shot?.let { "${it.output}/${it.stage}/${it.id in before}" }} · ${GlassNav.dump(device)}", done())
+                assertTrue("No RAW shot output pref=${context.getSharedPreferences("camera", Context.MODE_PRIVATE).getString("output", "")} latest=${shot?.let { "${it.output}/${it.stage}/${it.id in before}" }} ${GlassNav.dump(device)}", done())
                 assertNotNull(shot!!.raw)
                 context.contentResolver.openInputStream(shot!!.raw!!)!!.use { stream ->
                     val header = ByteArray(4)

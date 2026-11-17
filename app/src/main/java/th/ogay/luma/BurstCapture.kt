@@ -111,7 +111,7 @@ class BurstCapture(
 
                 override fun onError(exception: ImageCaptureException) {
                     // A partially saved DNG remains accessible in the system gallery.
-                    if (!done && generation == ticket) finish("ถ่าย RAW ไม่สำเร็จ · ${exception.localizedMessage}")
+                    if (!done && generation == ticket) finish("ถ่าย RAW ไม่สำเร็จ ${exception.localizedMessage}")
                 }
             }
         )
@@ -152,7 +152,7 @@ class BurstCapture(
             }
 
             override fun onError(exception: ImageCaptureException) {
-                if (!done && generation == ticket) finish("เก็บเฟรมได้บางส่วน · ${exception.localizedMessage}")
+                if (!done && generation == ticket) finish("เก็บเฟรมได้บางส่วน ${exception.localizedMessage}")
             }
         })
     }
@@ -214,8 +214,8 @@ class BurstCapture(
         File(folder, "sensor.dng").delete()
         val message = when {
             !inserted -> note ?: "ไม่ได้รับภาพจากกล้อง"
-            output.enhance -> "เก็บ $captured/$count เฟรมแล้ว · เข้าคิว AI"
-            rawUri != null -> "บันทึก DNG แล้ว · แตะรูปย่อเพื่อดู RAW"
+            output.enhance -> "เก็บ $captured/$count เฟรมแล้ว เข้าคิว AI"
+            rawUri != null -> "บันทึก DNG แล้ว แตะรูปย่อเพื่อดู RAW"
             else -> note ?: "บันทึกรูปแล้ว"
         }
         main.post { finished(message) }

@@ -30,6 +30,6 @@ object ClipInspector{
         if(sensor!=null)report.put("sensorTiming",sensor)
         if(capture!=null)report.put("capture",capture)
         val file=File(c.filesDir,"reports/$name.json");file.parentFile?.mkdirs();file.writeText(report.toString(2));MediaLedger.rememberFile(c,file,"application/json","ผลตรวจไฟล์วิดีโอจริง")
-        MediaLedger.add(c,uri,name,"video/mp4","${report.optInt("width")}×${report.optInt("height")} · %.1f fps · %s".format(java.util.Locale.US,report.optDouble("measuredFps"),if(report.optBoolean("audio"))"มีเสียง" else "ไม่มีเสียง"))
+        MediaLedger.add(c,uri,name,"video/mp4","${report.optInt("width")}×${report.optInt("height")} %.1f fps %s".format(java.util.Locale.US,report.optDouble("measuredFps"),if(report.optBoolean("audio"))"มีเสียง" else "ไม่มีเสียง"))
     }}
 }

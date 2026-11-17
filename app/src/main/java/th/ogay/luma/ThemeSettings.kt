@@ -103,7 +103,7 @@ fun Activity.showThemeSettings(closed: (Boolean) -> Unit) {
                 addView(FrameLayout(context).apply { background = glass(12, Glass.ACCENT_SOFT); addView(IconView(context, Icons.AI, 1.8f).apply { tint = Glass.ACCENT }, FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER)) }, dp(38), dp(38))
                 addView(LinearLayout(context).apply {
                     orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, 0, 0)
-                    addView(text("ตัวอย่างธีม · ${Theme.name()}", 15f, Glass.TEXT, true))
+                    addView(text("ตัวอย่างธีม ${Theme.name()}", 15f, Glass.TEXT, true))
                     addView(text("ข้อความรอง และคำอธิบายสั้น ๆ", 12f, Glass.TEXT3))
                 }, LinearLayout.LayoutParams(0, -2, 1f))
                 addView(View(context).apply { background = GradientDrawable().apply { setStroke(dp(2), Glass.FOCUS); cornerRadius = dp(5).toFloat() }; contentDescription = "กรอบโฟกัส" }, dp(34), dp(34))
@@ -132,10 +132,10 @@ fun Activity.showThemeSettings(closed: (Boolean) -> Unit) {
             }, LinearLayout.LayoutParams(0, dp(40), 1f))
         }
         body.addView(modes, -1, -2)
-        body.addView(text(if (Theme.light) "กำลังแก้ชุดสีของโหมดสว่าง · หน้ากล้อง ตัดต่อวิดีโอและตัดต่อภาพยังเป็นพื้นมืดเสมอ" else "กำลังแก้ชุดสีของโหมดมืด · สลับไปโหมดสว่างเพื่อแก้ชุดสีสว่างแยกกัน", 12f, Glass.TEXT3).apply { setPadding(dp(16), dp(8), dp(16), 0); maxLines = 3; ellipsize = null }, -1, -2)
+        body.addView(text(if (Theme.light) "กำลังแก้ชุดสีของโหมดสว่าง หน้ากล้อง ตัดต่อวิดีโอและตัดต่อภาพยังเป็นพื้นมืดเสมอ" else "กำลังแก้ชุดสีของโหมดมืด สลับไปโหมดสว่างเพื่อแก้ชุดสีสว่างแยกกัน", 12f, Glass.TEXT3).apply { setPadding(dp(16), dp(8), dp(16), 0); maxLines = 3; ellipsize = null }, -1, -2)
 
         // Ready-made sets.
-        header(if (Theme.light) "ชุดสี · สว่าง" else "ชุดสี · มืด")
+        header(if (Theme.light) "ชุดสี สว่าง" else "ชุดสี มืด")
         val presets = LinearLayout(this).apply { setPadding(0, 0, dp(4), 0) }
         Theme.presets().forEach { pr ->
             val on = pr.palette == Theme.p

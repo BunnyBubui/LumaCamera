@@ -38,7 +38,7 @@ class StudioFlowTest{
             // The glass pause button changes its description when CameraX reports Pause and Resume.
             val end=SystemClock.elapsedRealtime()+15000
             while(SystemClock.elapsedRealtime()<end&&device.findObject(By.desc("พักการบันทึก"))?.isEnabled!=true)SystemClock.sleep(250)
-            assertTrue("Pause button not ready · "+GlassNav.dump(device),device.findObject(By.desc("พักการบันทึก"))?.isEnabled==true)
+            assertTrue("Pause button not ready "+GlassNav.dump(device),device.findObject(By.desc("พักการบันทึก"))?.isEnabled==true)
             SystemClock.sleep(2500);device.findObject(By.desc("พักการบันทึก")).click()
             assertNotNull(device.wait(Until.findObject(By.desc("ต่อการบันทึก")),10000));SystemClock.sleep(500)
             device.findObject(By.desc("ต่อการบันทึก")).click();assertNotNull(device.wait(Until.findObject(By.desc("พักการบันทึก")),10000))
@@ -65,7 +65,7 @@ class StudioFlowTest{
         ActivityScenario.launch<RawLabActivity>(Intent(context,RawLabActivity::class.java)).use{
             until(35000){device.findObject(By.desc("เริ่ม RAW video หรือ RAW AI"))?.isEnabled==true}
             device.findObject(By.text("ตัวเลือก")).click();device.wait(Until.findObject(By.textContains("โหมด RAW Video")),10000).click()
-            device.wait(Until.findObject(By.text("RAW AI · 4 เฟรม")),10000).click()
+            device.wait(Until.findObject(By.text("RAW AI 4 เฟรม")),10000).click()
             device.findObject(By.desc("เริ่ม RAW video หรือ RAW AI")).click()
             until(90000){MediaLedger.all(context).any{it.mime=="application/json"&&it.uri !in old&&it.note.startsWith("RAW ")}}
             val item=MediaLedger.all(context).first{it.mime=="application/json"&&it.uri !in old&&it.note.startsWith("RAW ")}
@@ -76,8 +76,8 @@ class StudioFlowTest{
     @Test fun sr1GpuExportsTwiceTheVideoResolution(){
         val file=syntheticVideo();val source=ClipInspector.inspect(context,MediaLedger.privateUri(context,file));assertEquals(source.toString(),30L,source.getLong("frames"));val old=MediaLedger.all(context).map{it.uri}.toSet()
         ActivityScenario.launch<ClipEditorActivity>(Intent(context,ClipEditorActivity::class.java).setData(MediaLedger.privateUri(context,file))).use{
-            val preset=device.wait(Until.findObject(By.textStartsWith("การแต่ง ·")),15000);assertNotNull(preset);preset.click()
-            device.wait(Until.findObject(By.text("AI SR1 2× · SDR ≤1080p")),10000).click()
+            val preset=device.wait(Until.findObject(By.textStartsWith("การแต่ง ")),15000);assertNotNull(preset);preset.click()
+            device.wait(Until.findObject(By.text("AI SR1 2× SDR ≤1080p")),10000).click()
             val action=device.wait(Until.findObject(By.desc("ส่งออกคลิป")),10000)
             if(action==null){val dump=java.io.ByteArrayOutputStream();device.dumpWindowHierarchy(dump);android.util.Log.e("LumaUiTest",dump.toString("UTF-8"));fail("Export control was not accessible")}
             action!!.click()
@@ -94,7 +94,7 @@ class StudioFlowTest{
             GlassNav.openPanel(device)
             GlassNav.inPanel(device,By.descStartsWith("รูปแบบไฟล์"))!!.click()
             val aiRow=device.wait(Until.findObject(GlassNav.menuRow("AI")),5000)
-            assertNotNull("AI row missing · "+GlassNav.dump(device),aiRow)
+            assertNotNull("AI row missing "+GlassNav.dump(device),aiRow)
             assertTrue(aiRow.isSelected)
             device.findObject(GlassNav.menuRow("JPEG")).click()
             until(10000){context.getSharedPreferences("camera",0).getString("output","")=="JPEG"}

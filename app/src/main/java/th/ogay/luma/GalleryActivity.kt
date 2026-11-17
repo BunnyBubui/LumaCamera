@@ -347,7 +347,7 @@ class GalleryActivity : ComponentActivity() {
             if (items.size > 3) col.addView(text("และอีก ${items.size - 3} รายการ", 12.5f, Glass.TEXT3).apply { gravity = Gravity.CENTER })
             val note = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; background = glass(16, 0x14ffffff); setPadding(dp(12), dp(10), dp(12), dp(10)) }
             note.addView(IconView(this, TRASH, 1.8f).apply { tint = RED }, dp(20), dp(20))
-            note.addView(text("ย้ายไปถังขยะของเครื่อง กู้คืนได้จากแอปรูปภาพของเครื่องภายใน 30 วัน" + if (items.any { it.shot?.ai != null }) " · ภาพ AI ของรูปนี้จะถูกลบด้วย" else "", 12.5f, Glass.TEXT2).apply { maxLines = 4; ellipsize = null; setPadding(dp(10), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
+            note.addView(text("ย้ายไปถังขยะของเครื่อง กู้คืนได้จากแอปรูปภาพของเครื่องภายใน 30 วัน" + if (items.any { it.shot?.ai != null }) " ภาพ AI ของรูปนี้จะถูกลบด้วย" else "", 12.5f, Glass.TEXT2).apply { maxLines = 4; ellipsize = null; setPadding(dp(10), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
             col.addView(note, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
             val buttons = LinearLayout(this)
             buttons.addView(text("ยกเลิก", 14f, Glass.TEXT, true).apply { gravity = Gravity.CENTER; background = glass(22, 0x1affffff); isClickable = true; glassTouch(); setOnClickListener { d.dismiss() } }, LinearLayout.LayoutParams(0, dp(48), 1f))
@@ -423,8 +423,8 @@ class GalleryActivity : ComponentActivity() {
                     val frames = if (android.os.Build.VERSION.SDK_INT >= 28) k(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_FRAME_COUNT)?.toLongOrNull() else null
                     val fps = if (frames != null && ms > 0) frames * 1000.0 / ms else null
                     val sw = if (turn % 180 == 90) h else w; val sh = if (turn % 180 == 90) w else h
-                    rows += Triple(Icons.VIDEO, "$sw × $sh", listOfNotNull(fps?.let { String.format(Locale.US, "%.1f fps", it) }, String.format(Locale.US, "%d:%02d", ms / 60000, ms / 1000 % 60)).joinToString(" · "))
-                    rows += Triple(Icons.FILE, name.ifBlank { "วิดีโอ" }, listOfNotNull(if (size > 0) String.format(Locale.US, "%.1f MB", size / 1_048_576.0) else null, k(android.media.MediaMetadataRetriever.METADATA_KEY_BITRATE)?.toLongOrNull()?.let { "${it / 1_000_000} Mbps" }).joinToString(" · "))
+                    rows += Triple(Icons.VIDEO, "$sw × $sh", listOfNotNull(fps?.let { String.format(Locale.US, "%.1f fps", it) }, String.format(Locale.US, "%d:%02d", ms / 60000, ms / 1000 % 60)).joinToString(" "))
+                    rows += Triple(Icons.FILE, name.ifBlank { "วิดีโอ" }, listOfNotNull(if (size > 0) String.format(Locale.US, "%.1f MB", size / 1_048_576.0) else null, k(android.media.MediaMetadataRetriever.METADATA_KEY_BITRATE)?.toLongOrNull()?.let { "${it / 1_000_000} Mbps" }).joinToString(" "))
                     rows += Triple(Icons.SOUND, if (k(android.media.MediaMetadataRetriever.METADATA_KEY_HAS_AUDIO) == "yes") "มีเสียง" else "ไม่มีเสียง", "")
                     frames?.let { tech += Icons.STACK to "$it เฟรม" }
                     k(android.media.MediaMetadataRetriever.METADATA_KEY_MIMETYPE)?.let { tech += Icons.INFO to it }
@@ -433,7 +433,7 @@ class GalleryActivity : ComponentActivity() {
                 // What Lumora checked after recording, if this is its own clip.
                 runCatching { JSONObject(File(filesDir, "reports/${item.name}.json").readText()) }.getOrNull()?.let { j ->
                     j.optString("codec").takeIf { it.isNotEmpty() }?.let { tech += Icons.INFO to "Codec $it" }
-                    j.optJSONObject("capture")?.optJSONObject("lens")?.let { l -> tech += Icons.SEARCH to String.format(Locale.US, "เลนส์ %s · %.1f มม. · f/%.1f", l.optString("lens"), l.optDouble("focalLengthMm"), l.optDouble("aperture")) }
+                    j.optJSONObject("capture")?.optJSONObject("lens")?.let { l -> tech += Icons.SEARCH to String.format(Locale.US, "เลนส์ %s %.1f มม. f/%.1f", l.optString("lens"), l.optDouble("focalLengthMm"), l.optDouble("aperture")) }
                 }
             } else {
                 val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -447,8 +447,8 @@ class GalleryActivity : ComponentActivity() {
                 val fn = exif?.getAttributeDouble(androidx.exifinterface.media.ExifInterface.TAG_F_NUMBER, 0.0)?.takeIf { it > 0 }?.let { String.format(Locale.US, "f/%.1f", it) }
                 val iso = e(androidx.exifinterface.media.ExifInterface.TAG_PHOTOGRAPHIC_SENSITIVITY)?.let { "ISO $it" }
                 val focal = e(androidx.exifinterface.media.ExifInterface.TAG_FOCAL_LENGTH_IN_35MM_FILM)?.let { "$it มม." }
-                if (camera.isNotBlank() || shutter != null) rows += Triple(Icons.FLIP, camera.ifBlank { "กล้อง" }, listOfNotNull(focal, fn, shutter, iso).joinToString(" · "))
-                rows += Triple(Icons.FILE, name.ifBlank { "รูปภาพ" }, listOfNotNull(if (size > 0) String.format(Locale.US, "%.1f MB", size / 1_048_576.0) else null, item.album.takeIf { it.isNotBlank() }).joinToString(" · "))
+                if (camera.isNotBlank() || shutter != null) rows += Triple(Icons.FLIP, camera.ifBlank { "กล้อง" }, listOfNotNull(focal, fn, shutter, iso).joinToString(" "))
+                rows += Triple(Icons.FILE, name.ifBlank { "รูปภาพ" }, listOfNotNull(if (size > 0) String.format(Locale.US, "%.1f MB", size / 1_048_576.0) else null, item.album.takeIf { it.isNotBlank() }).joinToString(" "))
                 e(androidx.exifinterface.media.ExifInterface.TAG_LENS_MODEL)?.let { tech += Icons.SEARCH to it }
                 e(androidx.exifinterface.media.ExifInterface.TAG_SOFTWARE)?.let { tech += Icons.INFO to "ซอฟต์แวร์ $it" }
                 e(androidx.exifinterface.media.ExifInterface.TAG_WHITE_BALANCE)?.let { tech += Icons.INFO to "สมดุลแสงขาว ${if (it == "0") "อัตโนมัติ" else "กำหนดเอง"}" }
@@ -500,7 +500,7 @@ class GalleryActivity : ComponentActivity() {
         addView(text(end, 12.5f, Glass.TEXT2))
     }
     /** Sort orders, as in the phone's own gallery: by date taken, date added, size and name; then video or AI first. */
-    private val SORTS = listOf("วันที่ถ่าย · ใหม่ก่อน", "วันที่ถ่าย · เก่าก่อน", "วันที่เพิ่ม · ใหม่ก่อน", "ขนาดไฟล์ · ใหญ่ก่อน", "ชื่อไฟล์ · ก–ฮ", "วิดีโอก่อน", "AI ก่อน")
+    private val SORTS = listOf("วันที่ถ่าย ใหม่ก่อน", "วันที่ถ่าย เก่าก่อน", "วันที่เพิ่ม ใหม่ก่อน", "ขนาดไฟล์ ใหญ่ก่อน", "ชื่อไฟล์ ก–ฮ", "วิดีโอก่อน", "AI ก่อน")
     private val SORT_ICONS = listOf(Icons.CHEVRON_UP, Icons.UPDOWN, Icons.PLUS, Icons.FILE, "M5 18L9 6l4 12 M6.4 14h5.2 M15 6h5l-5 12h5", Icons.VIDEO, Icons.AI)
     private val SORT_SHORT = listOf("ใหม่ก่อน", "เก่าก่อน", "เพิ่มล่าสุด", "ใหญ่ก่อน", "ชื่อ", "วิดีโอก่อน", "AI ก่อน")
     private val sortMenu by lazy { GlassMenu(host) }
@@ -685,7 +685,7 @@ class GalleryActivity : ComponentActivity() {
             navKeys = shown.filter { !it.file }.map { itemKey(it) }
             adapter.notifyDataSetChanged()
             gridTitle.text = if (albumKind != null) "" else if (device) "รูปและวิดีโอทั้งหมด" else "ถ่ายด้วย Lumora"
-            (gridHead.getChildAt(1) as TextView).text = "${shown.size} รายการ · ${SORT_SHORT[sortOrder]} ▾"
+            (gridHead.getChildAt(1) as TextView).text = "${shown.size} รายการ ${SORT_SHORT[sortOrder]} ▾"
             empty.text = if (all.isEmpty()) (if (device) "ไม่พบรูปหรือวิดีโอในเครื่อง" else "รูปและวิดีโอที่ถ่ายด้วย Lumora จะปรากฏที่นี่") else "ไม่พบรายการที่ตรงกัน"
             empty.visibility = if (shown.isEmpty()) View.VISIBLE else View.GONE
             if (!Glass.reduced(this)) { grid.alpha = 0.4f; grid.scaleX = 0.97f; grid.scaleY = 0.97f; grid.animate().alpha(1f).scaleX(1f).scaleY(1f).setInterpolator(Glass.SPRING).setDuration(360).start() }
@@ -924,7 +924,7 @@ class GalleryActivity : ComponentActivity() {
         val buckets = if (device) ordered(albums(items)) else emptyList()
         val hidden = prefList("album_hidden"); val pinned = prefList("album_pinned")
         if (managing) {
-            col.addView(text("ลาก ≡ หรือกดค้างแถวเพื่อเรียง · ปักหมุดให้อยู่บนสุด · ซ่อนเพื่อเอาออกจากแท็บรูปภาพ", 12.5f, Glass.TEXT2).apply { maxLines = 3; setPadding(dp(16), dp(4), dp(16), dp(10)) }, -1, -2)
+            col.addView(text("ลาก ≡ หรือกดค้างแถวเพื่อเรียง ปักหมุดให้อยู่บนสุด ซ่อนเพื่อเอาออกจากแท็บรูปภาพ", 12.5f, Glass.TEXT2).apply { maxLines = 3; setPadding(dp(16), dp(4), dp(16), dp(10)) }, -1, -2)
             val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
             col.addView(list, -1, -2)
             manageList(list, buckets.toMutableList(), scroll)
@@ -948,7 +948,7 @@ class GalleryActivity : ComponentActivity() {
                     col.addView(LinearLayout(this).apply {
                         gravity = Gravity.CENTER_VERTICAL; isClickable = true; minimumHeight = dp(52); setPadding(dp(16), 0, dp(16), 0); contentDescription = "อัลบั้มที่ซ่อน ${gone.size} อัลบั้ม"
                         addView(IconView(this@GalleryActivity, EYE_OFF, 2f).apply { tint = Glass.TEXT2 }, dp(20), dp(20))
-                        addView(text("อัลบั้มที่ซ่อน · ${gone.size}", 14f, Glass.TEXT2, true).apply { setPadding(dp(10), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
+                        addView(text("อัลบั้มที่ซ่อน ${gone.size}", 14f, Glass.TEXT2, true).apply { setPadding(dp(10), 0, 0, 0) }, LinearLayout.LayoutParams(0, -2, 1f))
                         addView(IconView(this@GalleryActivity, if (showHidden) Icons.CHEVRON_UP else Icons.CHEVRON_RIGHT, 2f).apply { tint = Glass.TEXT2 }, dp(18), dp(18))
                         glassTouch(); setOnClickListener { showHidden = !showHidden; reload() }
                     }, -1, -2)
@@ -1011,7 +1011,7 @@ class GalleryActivity : ComponentActivity() {
             rounded(img, 12); row.addView(img, dp(48), dp(48))
             img.tag = a.cover.key; thumbs.execute { val b = thumbnail(a.cover, 160); runOnUiThread { if (!isDestroyed && img.tag == a.cover.key && b != null) img.setImageBitmap(b) } }
             row.addView(LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, dp(8), 0)
-                addView(text(a.name, 14.5f, if (a.name in hidden) Glass.TEXT3 else Color.WHITE, true)); addView(text("${a.count} รายการ${if (a.name in hidden) " · ซ่อนอยู่" else ""}", 12f, Glass.TEXT2)) }, LinearLayout.LayoutParams(0, -2, 1f))
+                addView(text(a.name, 14.5f, if (a.name in hidden) Glass.TEXT3 else Color.WHITE, true)); addView(text("${a.count} รายการ${if (a.name in hidden) " ซ่อนอยู่" else ""}", 12f, Glass.TEXT2)) }, LinearLayout.LayoutParams(0, -2, 1f))
             val isPinned = a.name in pinned; val isHidden = a.name in hidden
             row.addView(FrameLayout(this).apply { isClickable = true; contentDescription = if (isPinned) "เลิกปักหมุด ${a.name}" else "ปักหมุด ${a.name}"; isSelected = isPinned; glassTouch()
                 addView(IconView(this@GalleryActivity, Icons.PIN, 2f).apply { tint = if (isPinned) Glass.ACCENT else Glass.TEXT2 }, FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER))
@@ -1215,7 +1215,7 @@ class GalleryActivity : ComponentActivity() {
         fun tag(t: String, accent: Boolean = false) = tags.addView(text(t, 11.5f, if (accent) Glass.ACCENT else Glass.TEXT2, accent).apply { gravity = Gravity.CENTER; maxLines = 1; background = glass(11, if (accent) Glass.ACCENT_SOFT else 0x14ffffff); setPadding(dp(9), 0, dp(9), 0) }, ViewGroup.LayoutParams(-2, dp(24)))
         item.album.takeIf { it.isNotBlank() }?.let { tag(it) }
         item.shot?.let { tag(pixelsText(it.size.pixels)) }
-        item.shot?.takeIf { it.ai != null }?.let { tag("AI ×${it.aiScale.coerceAtLeast(1)} · ${pixelsText(it.aiSize.pixels)}", true) }
+        item.shot?.takeIf { it.ai != null }?.let { tag("AI ×${it.aiScale.coerceAtLeast(1)} ${pixelsText(it.aiSize.pixels)}", true) }
         if (tags.childCount > 0) left.addView(tags, -1, -2)
         val label = text("เลื่อนนิ้วไปที่ปุ่มแล้วปล่อย", 12f, Glass.TEXT3).apply { setPadding(dp(4), dp(8), dp(4), 0); maxLines = 1 }
         left.addView(label, -1, -2); peekLabel = label
@@ -1393,7 +1393,7 @@ class GalleryActivity : ComponentActivity() {
         if (!::ring.isInitialized || ring.visibility != View.VISIBLE || showingId != id || isDestroyed) return
         val p = th.ogay.luma.ai.AiProgress
         if (p.shotId == id) {
-            if (p.total > 0) ring.update(p.fraction() * 99f, ring.caption, listOf("${String.format(Locale.US, "%,d", p.done)} / ${String.format(Locale.US, "%,d", p.total)} ไทล์", p.model).filter { it.isNotEmpty() }.joinToString(" · "), p.etaText().ifEmpty { "กำลังคำนวณเวลา…" })
+            if (p.total > 0) ring.update(p.fraction() * 99f, ring.caption, listOf("${String.format(Locale.US, "%,d", p.done)} / ${String.format(Locale.US, "%,d", p.total)} ไทล์", p.model).filter { it.isNotEmpty() }.joinToString(" "), p.etaText().ifEmpty { "กำลังคำนวณเวลา…" })
             else ring.update(null, ring.caption, p.step)
         }
         host.postDelayed(this, 330)
@@ -1436,11 +1436,11 @@ class GalleryActivity : ComponentActivity() {
             add("${j.optInt("displayWidth", j.optInt("width"))} × ${j.optInt("displayHeight", j.optInt("height"))}")
             add(String.format(Locale.US, "fps ที่วัดได้ %.2f", j.optDouble("measuredFps")))
             if (j.has("requestedCaptureFps")) add("fps ที่ขอ ${j.optInt("requestedCaptureFps")}")
-            add("${j.optLong("frames")} เฟรม · ${if (j.optBoolean("audio")) "มีเสียง" else "ไม่มีเสียง"}")
+            add("${j.optLong("frames")} เฟรม ${if (j.optBoolean("audio")) "มีเสียง" else "ไม่มีเสียง"}")
             j.optString("codec").takeIf { it.isNotEmpty() }?.let { add("Codec $it") }
             j.optJSONObject("capture")?.optString("profile")?.takeIf { it.isNotEmpty() }?.let { add("โปรไฟล์ $it") }
             j.optJSONObject("capture")?.optString("fpsPath")?.takeIf { it.isNotEmpty() }?.let { add("60 fps ผ่าน Camera2") }
-            if (lens != null) add(String.format(Locale.US, "เลนส์ %s · %.1f มม. · เทียบ %d มม. · f/%.1f", lens.optString("lens"), lens.optDouble("focalLengthMm"), lens.optInt("equivalent35mm"), lens.optDouble("aperture")))
+            if (lens != null) add(String.format(Locale.US, "เลนส์ %s %.1f มม. เทียบ %d มม. f/%.1f", lens.optString("lens"), lens.optDouble("focalLengthMm"), lens.optInt("equivalent35mm"), lens.optDouble("aperture")))
         }
         AlertDialog.Builder(this).setTitle("ผลตรวจไฟล์วิดีโอ").setMessage(lines.joinToString("\n")).setPositiveButton("ปิด", null)
             .setNeutralButton("ส่งออก JSON") { _, _ -> MediaLedger.share(this, MediaLedger.privateUri(this, file), "application/json") }.show()
@@ -1504,9 +1504,9 @@ class GalleryActivity : ComponentActivity() {
         status.text = when (s.stage) {
             Stage.CAPTURING -> "กำลังถ่าย ${s.frames}/${s.requestedFrames} เฟรม"
             Stage.QUEUED, Stage.RUNNING -> ""
-            Stage.FAILED -> "AI ยังไม่สำเร็จ · ${s.error}"
+            Stage.FAILED -> "AI ยังไม่สำเร็จ ${s.error}"
             Stage.DONE -> ""
-            Stage.ORIGINAL -> if (s.output.rawOnly) "ภาพตัวอย่าง RAW · DNG เก็บแยก" else ""
+            Stage.ORIGINAL -> if (s.output.rawOnly) "ภาพตัวอย่าง RAW DNG เก็บแยก" else ""
         }
         status.visibility = if (status.text.isEmpty()) View.GONE else View.VISIBLE
         // The AI works at full speed only while its progress is on screen.
@@ -1590,18 +1590,18 @@ class GalleryActivity : ComponentActivity() {
             // Icon rows instead of a wall of text: the essentials first, technical details folded at the bottom.
             val rows = buildList<Triple<String, String, String>> {
                 add(Triple(Icons.PHOTO, "${s.size.w} × ${s.size.h}", pixelsText(s.size.pixels)))
-                add(Triple(Icons.FLIP, if (s.rear) "กล้องหลัง" else "กล้องหน้า", listOfNotNull(zoomText(s.zoom), eq?.let { "$it มม." }, fnText).joinToString(" · ")))
+                add(Triple(Icons.FLIP, if (s.rear) "กล้องหลัง" else "กล้องหน้า", listOfNotNull(zoomText(s.zoom), eq?.let { "$it มม." }, fnText).joinToString(" ")))
                 add(Triple(Icons.FILE, s.output.label, if (s.softwareCrop) "ครอปในแอป" else "ซูมระบบ"))
                 if (s.output.enhance) add(Triple(Icons.STACK, "${s.fusedFrames}/${s.requestedFrames} เฟรม", "รวมหลายเฟรม"))
                 s.captureNote?.let { add(Triple(Icons.INFO, it, "")) }
-                if (s.ai != null) add(Triple(Icons.AI, "AI ×${s.aiScale.coerceAtLeast(1)} · ${ai.w} × ${ai.h}", listOfNotNull(pixelsText(ai.pixels), report?.optString("backend")?.takeIf { it.isNotEmpty() }, "${s.elapsed / 1000.0} วิ".takeIf { s.elapsed > 0 }).joinToString(" · ")))
+                if (s.ai != null) add(Triple(Icons.AI, "AI ×${s.aiScale.coerceAtLeast(1)} ${ai.w} × ${ai.h}", listOfNotNull(pixelsText(ai.pixels), report?.optString("backend")?.takeIf { it.isNotEmpty() }, "${s.elapsed / 1000.0} วิ".takeIf { s.elapsed > 0 }).joinToString(" ")))
             }
             val tech = buildList<Pair<String, String>> {
                 lens?.let { add(Icons.SEARCH to it) }
-                add(Icons.FRAME to "กล้องตัวที่ ${s.lens ?: "-"} · ครอป ${s.cropped?.let(::pixelsText) ?: "ไม่มี"}")
+                add(Icons.FRAME to "กล้องตัวที่ ${s.lens ?: "-"} ครอป ${s.cropped?.let(::pixelsText) ?: "ไม่มี"}")
                 if (s.reason != Decision.OFF) add(Icons.INFO to s.reason.description)
                 if (s.output.needsRaw) add(Icons.RAW to "DNG เก็บข้อมูลเซนเซอร์เต็มตามที่กล้องส่ง")
-                report?.takeIf { it.has("totalMs") }?.let { j -> add(Icons.TIMER to "เวลา AI ${j.optLong("inferenceMs")} · อ่าน ${j.optLong("decodeMs")} · ผสาน ${j.optLong("renderMs")} · บันทึก ${j.optLong("encodeMs")} · รวม ${j.optLong("totalMs")} ms") }
+                report?.takeIf { it.has("totalMs") }?.let { j -> add(Icons.TIMER to "เวลา AI ${j.optLong("inferenceMs")} อ่าน ${j.optLong("decodeMs")} ผสาน ${j.optLong("renderMs")} บันทึก ${j.optLong("encodeMs")} รวม ${j.optLong("totalMs")} ms") }
                 if (s.ai != null) add(Icons.AI to "รายละเอียดบางส่วนเป็นการคาดเดาของ AI")
             }
             runOnUiThread { if (!isDestroyed) infoPanel({ PhotoMedia.thumbnail(this, s.ai ?: s.uri, 540) }, formatTime(s.time), rows, tech) }

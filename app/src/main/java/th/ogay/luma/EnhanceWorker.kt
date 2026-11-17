@@ -119,8 +119,8 @@ class EnhanceWorker(context: Context, params: WorkerParameters) : Worker(context
     private fun foreground(shot: Shot, progress: Int): ForegroundInfo {
         val context = applicationContext
         val scale = when (shot.aiModel) { EnhanceSpec.NATURAL_MODEL -> "Natural ×${shot.aiScale}"; EnhanceSpec.MODEL -> "Classic ×${shot.aiScale}"; else -> "SR1" }
-        val notification = LiveNotice.progress(context, "Lumora · กำลังเพิ่มรายละเอียดภาพ $scale",
-            if (progress == 0) "กำลังเตรียมภาพ" else "ทำไปแล้ว $progress%" + th.ogay.luma.ai.AiProgress.etaText().let { if (it.isEmpty()) "" else " · $it" }, if (progress == 0) -1 else progress,
+        val notification = LiveNotice.progress(context, "Lumora กำลังเพิ่มรายละเอียดภาพ $scale",
+            if (progress == 0) "กำลังเตรียมภาพ" else "ทำไปแล้ว $progress%" + th.ogay.luma.ai.AiProgress.etaText().let { if (it.isEmpty()) "" else " $it" }, if (progress == 0) -1 else progress,
             openGallery(shot), WorkManager.getInstance(context).createCancelPendingIntent(id),
             th.ogay.luma.ai.AiProgress.etaMs().takeIf { it > 0 }?.let { th.ogay.luma.Eta.chip(it) })
         val notificationId = 40000+(shot.id.hashCode() and 0x7fff)
@@ -132,7 +132,7 @@ class EnhanceWorker(context: Context, params: WorkerParameters) : Worker(context
     private fun finished(shot: Shot) = runCatching {
         val state = android.app.ActivityManager.RunningAppProcessInfo(); android.app.ActivityManager.getMyMemoryState(state)
         if (state.importance == android.app.ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND) return@runCatching
-        LiveNotice.done(applicationContext, 50000+(shot.id.hashCode() and 0x7fff), "ภาพ AI เสร็จแล้ว", "เพิ่มรายละเอียด ×${shot.aiScale.coerceAtLeast(1)} เรียบร้อย · แตะเพื่อเปิดดู", openGallery(shot))
+        LiveNotice.done(applicationContext, 50000+(shot.id.hashCode() and 0x7fff), "ภาพ AI เสร็จแล้ว", "เพิ่มรายละเอียด ×${shot.aiScale.coerceAtLeast(1)} เรียบร้อย แตะเพื่อเปิดดู", openGallery(shot))
     }
 
     companion object {
