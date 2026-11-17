@@ -60,16 +60,21 @@ object AudioPeaks {
             val out = FloatArray((durMs / STEP_MS).toInt() + 2)
             codec = MediaCodec.createDecoderByType(format.getString(MediaFormat.KEY_MIME)!!).apply { configure(format, null, null, 0); start() }
             val info = MediaCodec.BufferInfo(); var inDone = false; var outDone = false; var float = false; var guard = 0
+            // A decoder that stops answering must not hold the thread for hours: give up after 5 s with no input taken and no output given.
+            var lastLife = android.os.SystemClock.elapsedRealtime()
             while (!outDone && guard++ < 2_000_000) {
+                if (android.os.SystemClock.elapsedRealtime() - lastLife > 5_000) break
                 if (!inDone) {
                     val i = codec.dequeueInputBuffer(2000)
                     if (i >= 0) {
                         val n = ex.readSampleData(codec.getInputBuffer(i)!!, 0)
                         if (n < 0 || ex.sampleTime / 1000 > toMs) { codec.queueInputBuffer(i, 0, 0, 0, MediaCodec.BUFFER_FLAG_END_OF_STREAM); inDone = true }
                         else { codec.queueInputBuffer(i, 0, n, ex.sampleTime, 0); ex.advance() }
+                        lastLife = android.os.SystemClock.elapsedRealtime()
                     }
                 }
                 val o = codec.dequeueOutputBuffer(info, 2000)
+                if (o >= 0 || o == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) lastLife = android.os.SystemClock.elapsedRealtime()
                 if (o == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) { val f = codec.outputFormat; float = f.containsKey("pcm-encoding") && f.getInteger("pcm-encoding") == 4 }
                 else if (o >= 0) {
                     if (info.size > 0) {
