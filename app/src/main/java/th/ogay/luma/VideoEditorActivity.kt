@@ -1204,6 +1204,11 @@ class VideoEditorActivity : ComponentActivity() {
                 addView(text("ตัดต่ออัตโนมัติ", 20f, Glass.TEXT, true)); addView(text("ยาว ${clock(total)} $clips คลิป กดย้อนกลับเพื่อคืนของเดิมได้", 12.5f, Glass.TEXT2)) }, LinearLayout.LayoutParams(0, -2, 1f))
             card.addView(head, -1, -2)
 
+            // Game highlights (experimental): off until the user turns it on here.
+            heading("ไฮไลต์เกม ทดลอง")
+            switchRow("โหมดไฮไลต์เกม", "หาช่วงที่น่าสนใจในวิดีโอเกม ให้ตรวจก่อนใช้ ไม่แตะไฟล์ต้นฉบับ", "autoedit_v2", false, true)
+            if (p.getBoolean("autoedit_v2", false)) tile("วิเคราะห์วิดีโอนี้", "หาไฮไลต์เกม", "ใช้ได้กับคลิปแรกคลิปเดียว", Icons.AI) { sheet.close { gamingAutoEdit() } }
+
             heading("คำสั่ง")
             val said = p.getString("auto_prompt", "").orEmpty()
             tile("สิ่งที่อยากได้ ไม่บังคับ", said.ifEmpty { "แตะเพื่อพิมพ์คำสั่ง" }, if (said.isEmpty()) "เช่น \"คลิปสั้น 20 วิ เน้นช่วงที่หัวเราะ ใส่ชื่อเรื่องว่า ทริปทะเล\"" else "", EditorKit.TEXT, said.isEmpty()) {
@@ -1708,6 +1713,77 @@ class VideoEditorActivity : ComponentActivity() {
         val wantSubs = subs && plan.captions != false
         if (wantSubs) window.decorView.postDelayed({ if (!isDestroyed) autoCaptions() }, 600)
         else if (hadCaptions) notice("ลบซับเดิมออกแล้ว เพราะเวลาไม่ตรงกับการตัดใหม่")
+    }
+
+    // ---------- Game highlights (Auto Edit v2, experimental) ----------
+    private var gamingRun = 0
+    /** Reads sound and picture of the main clip off the main thread, asks the Gaming Director for highlights and shows them for review. */
+    private fun gamingAutoEdit() {
+        if (analysing) return
+        if (extras.isNotEmpty()) { notice("โหมดนี้ใช้กับวิดีโอที่มีคลิปเดียว ลบคลิปที่เพิ่มก่อน"); return }
+        analysing = true; val run = ++gamingRun
+        val cancel = th.ogay.luma.autoedit.analysis.CancelToken()
+        val sheet = screenSheet(); val bar = ModelBar(this); val label = text("เริ่มวิเคราะห์", 14f, Glass.TEXT2, true)
+        sheet.open { col, sh ->
+            col.addView(text("วิเคราะห์ไฮไลต์เกม", 18f, Glass.TEXT, true).apply { setPadding(0, dp(4), 0, dp(10)) }, -1, -2)
+            col.addView(label, -1, -2); col.addView(bar, LinearLayout.LayoutParams(-1, dp(6)).apply { topMargin = dp(10) })
+            col.addView(GlassDialog.actions(this, "ยกเลิก" to { cancel.cancel(); gamingRun++; analysing = false; sh.close() }))
+        }
+        val uri = source; val durUs = duration * 1000; val w = videoW; val h = videoH; val from = start * 1000; val to = end * 1000
+        luma.readIo.execute {
+            try {
+                val src = th.ogay.luma.autoedit.analysis.AndroidAnalysisSource(this, uri, "main", durUs, w, h, 0, cancelled = { cancel.cancelled })
+                val pipeline = th.ogay.luma.autoedit.analysis.AnalysisPipeline(listOf(th.ogay.luma.autoedit.analysis.SceneAnalyzer(), th.ogay.luma.autoedit.analysis.AudioEventAnalyzer(), th.ogay.luma.autoedit.analysis.HudAnalyzer()))
+                val result = pipeline.run(src, cancel) { f, name -> runOnUiThread { if (run == gamingRun) { bar.fraction = f; label.text = "กำลังวิเคราะห์ $name" } } }
+                val events = result.events.filter { it.sourceEndUs > from && it.sourceStartUs < to }
+                val asset = th.ogay.luma.autoedit.core.MediaAssetRef("main", uri.toString(), durUs, w.coerceAtLeast(1), h.coerceAtLeast(1))
+                val proposal = th.ogay.luma.autoedit.directors.GamingHighlightDirector.propose(listOf(asset), events)
+                // The EDL goes through the motion director so the review shows what Phase 4 would add; only the cuts are applied for now.
+                runOnUiThread {
+                    if (run != gamingRun) return@runOnUiThread
+                    analysing = false; sheet.close { gamingReview(proposal, events.size, result.diagnostics) }
+                }
+            } catch (e: th.ogay.luma.autoedit.analysis.AnalysisCancelled) { runOnUiThread { if (run == gamingRun) analysing = false }
+            } catch (e: Throwable) { runOnUiThread { if (run == gamingRun) { analysing = false; sheet.close(); notice("วิเคราะห์ไม่สำเร็จ ${e.message ?: ""}") } } }
+        }
+    }
+    /** The proposed highlights as a checklist; nothing changes until "ใช้ที่เลือก". */
+    private fun gamingReview(proposal: th.ogay.luma.autoedit.directors.GamingEditProposal, eventCount: Int, notes: Map<String, String>) {
+        val picked = BooleanArray(proposal.selected.size) { true }
+        val sheet = screenSheet()
+        sheet.open { col, sh ->
+            col.addView(text("ไฮไลต์ที่พบ", 18f, Glass.TEXT, true).apply { setPadding(0, dp(4), 0, dp(6)) }, -1, -2)
+            if (proposal.selected.isEmpty()) {
+                col.addView(text("ไม่พบช่วงที่ยืนยันได้ว่าเป็นไฮไลต์ ตรวจเสียงและภาพแล้ว $eventCount จุด แต่ยังไม่มีตัวอ่านหน้าจอของเกมนี้ จึงไม่ตัดอะไร วิดีโอยังเหมือนเดิม", 14f, Glass.TEXT2).apply { setPadding(0, dp(6), 0, dp(10)) }, -1, -2)
+            } else {
+                proposal.selected.forEachIndexed { i, hl ->
+                    val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(6), 0, dp(6)); isClickable = true }
+                    val sw = GlassSwitch(this); sw.set(true, false); sw.contentDescription = "ไฮไลต์ ${i + 1}"; sw.onToggle = { v -> picked[i] = v }
+                    row.setOnClickListener { sw.performClick() }
+                    row.addView(LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, 0, dp(12), 0)
+                        addView(text("${clock(hl.startUs / 1000)} ถึง ${clock(hl.endUs / 1000)}", 14.5f, Glass.TEXT, true))
+                        addView(text(hl.reason + if (hl.confirmedKills > 0) "" else " ยังไม่ยืนยัน", 12f, Glass.TEXT3)) }, LinearLayout.LayoutParams(0, -2, 1f))
+                    row.addView(sw, LinearLayout.LayoutParams(dp(51), dp(31)))
+                    col.addView(row, -1, -2)
+                }
+                col.addView(GlassDialog.actions(this, "ปิด" to { sh.close() }, "ใช้ที่เลือก" to {
+                    val ranges = proposal.selected.filterIndexed { i, _ -> picked[i] }.map { (it.startUs / 1000).coerceIn(0, duration) to (it.endUs / 1000).coerceIn(0, duration) }.filter { it.second - it.first >= 300 }
+                    sh.close { applyHighlights(ranges) } }))
+            }
+            if (proposal.selected.isEmpty()) col.addView(GlassDialog.actions(this, "ปิด" to { sh.close() }))
+        }
+    }
+    /** Puts the chosen ranges of the main clip on the timeline as separate clips, in time order. */
+    private fun applyHighlights(ranges: List<Pair<Long, Long>>) {
+        if (ranges.isEmpty()) { notice("ไม่ได้เลือกช่วงไหน"); return }
+        val template = extraCache.getOrPut(source.toString()) { Extra(source, duration, videoW, videoH, "คลิปแรก", firstFrame) }
+        start = ranges[0].first; end = ranges[0].second; speed = 1f; mainCurve = null; cutFrom = -1; cutTo = -1; split = -1
+        extras.clear()
+        ranges.drop(1).forEach { (a, b) -> extras.add(template.copy().also { it.from = a; it.to = b; it.speed = 1f; it.curve = null; it.muted = mainMuted }) }
+        mainAt = 0; playIndex = 0
+        if (::trim.isInitialized) { trim.split = -1; showClipOnBar(); trim.playhead = start }
+        openPlayer(); showTime(); refreshTimeline(); showTool(0, false)
+        notice("วางไฮไลต์ ${ranges.size} ช่วงลงไทม์ไลน์แล้ว กดย้อนกลับเพื่อคืนค่า")
     }
 
     /** Cuts the clip on screen at every marker inside it. */
@@ -2927,7 +3003,7 @@ class VideoEditorActivity : ComponentActivity() {
             row.addView(GlassSlider(this).apply { values = steps.map { String.format(Locale.US, "%.1f", it / 1000f) }; index = steps.indices.minByOrNull { abs(steps[it] - ms) } ?: 0; contentDescription = "ความยาวทรานซิชัน"
                 onChange = { n -> ms = steps[n].toLong(); label.text = sec(); apply() } }, LinearLayout.LayoutParams(0, dp(40), 1f))
             col.addView(row, -1, -2)
-            GlassDialog.actions(this, "เสร็จ" to { sh.close() })
+            col.addView(GlassDialog.actions(this, "เสร็จ" to { sh.close() }), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
         }
     }
     private fun transitionTools(col: LinearLayout) {
