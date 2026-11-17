@@ -716,13 +716,14 @@ class VideoEditorActivity : ComponentActivity() {
         grabber = FrameLayout(this).apply { contentDescription = "ลากขึ้นลงเพื่อเปิดหรือพับแถบเครื่องมือ"; isClickable = true
             addView(View(this@VideoEditorActivity).apply { background = glass(2, 0x66ffffff) }, FrameLayout.LayoutParams(dp(40), dp(4), Gravity.CENTER)) }
         grabber.setOnTouchListener(GrabberTouch())
+        toolCard = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; background = glass(22, Glass.FILL_POP); setPadding(dp(8), dp(2), dp(8), dp(8)); elevation = 12 * resources.displayMetrics.density; clipChildren = false; visibility = View.GONE }
         root.addView(tools, LinearLayout.LayoutParams(-1, dp(124)))
         toolBar = EditorKit.ToolBar(this, listOf(EditorKit.SCISSORS to "ตัด", EditorKit.SPEED to "ความเร็ว", EditorKit.CROP to "ครอป", EditorKit.ROTATE to "หมุน",
             EditorKit.ADJUST to "ปรับแต่งภาพ", Icons.FILM to "ฟิลเตอร์", EditorKit.TEXT to "ข้อความ", "M4 6h16v10H8l-4 4z M8 10h8 M8 13h5" to "คำบรรยาย",
-            STICKER to "สติกเกอร์", LAYERS to "เลเยอร์", JOIN to "ทรานซิชัน", Icons.SOUND to "เสียง", "M12 4a3 3 0 0 0-3 3v5a3 3 0 0 0 6 0V7a3 3 0 0 0-3-3z M6 11a6 6 0 0 0 12 0 M12 17v3" to "อัดเสียง")) { val folded = collapsed; if (landscape()) setCollapsed(false); showTool(TOOL_IDS[it]); if (folded && !landscape() && collapsed) springTools(fullH()) }
+            STICKER to "สติกเกอร์", LAYERS to "เลเยอร์", JOIN to "ทรานซิชัน", Icons.SOUND to "เสียง", "M12 4a3 3 0 0 0-3 3v5a3 3 0 0 0 6 0V7a3 3 0 0 0-3-3z M6 11a6 6 0 0 0 12 0 M12 17v3" to "อัดเสียง")) { val folded = collapsed; val before = tool; if (landscape()) setCollapsed(false); showTool(TOOL_IDS[it]); if (!landscape()) { if (folded) showCard() else if (before == tool) hideCard() } }
         root.addView(toolBar, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(4), 0, dp(4), dp(8)) })
         rootBox = root; topBar = bar; transportRow = transport
-        collapsed = state?.getBoolean("collapsed") == true
+        collapsed = state?.getBoolean("collapsed", true) ?: true
         arrange()
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) { override fun handleOnBackPressed() = leave() })
 
@@ -1052,46 +1053,46 @@ class VideoEditorActivity : ComponentActivity() {
     private var toolsHolder: android.widget.ScrollView? = null
     private lateinit var grabber: FrameLayout
     private var toolsFull = 0
-    private var toolsAnim: android.animation.ValueAnimator? = null
+    /** The tool panel floats over the lower part of the picture, like a drop-down, and folds away again. Upright screens only. */
+    private lateinit var toolCard: LinearLayout
     private fun fullH() = toolsFull.takeIf { it > 0 } ?: dp(124)
-    private fun setToolsHeight(h: Int) {
-        val lp = tools.layoutParams ?: return
-        if (lp.height != h) { lp.height = h; tools.requestLayout() }
-        tools.visibility = if (h <= 0) View.GONE else View.VISIBLE
+    /** Puts the card just above the play row (so the timeline and the tabs stay clear). */
+    private fun placeCard() {
+        if (!::toolCard.isInitialized || landscape()) return
+        val decor = window.decorView as FrameLayout
+        val a = IntArray(2); val b = IntArray(2); transportRow.getLocationInWindow(a); decor.getLocationInWindow(b)
+        val lp = toolCard.layoutParams as? FrameLayout.LayoutParams ?: return
+        val bottom = decor.height - (a[1] - b[1]) + dp(8)
+        if (lp.bottomMargin != bottom) { lp.bottomMargin = bottom; toolCard.requestLayout() }
     }
-    /** Moves the tool panel to [target] px high with a springy settle (it overshoots a little when it opens, like the sheets). */
-    private fun springTools(target: Int) {
-        toolsAnim?.cancel()
-        val from = tools.layoutParams.height
-        collapsed = target <= 0; collapseIcon.path = if (collapsed) "M6 15l6-6 6 6" else "M6 9l6 6 6-6"
-        if (Glass.reduced(this) || from == target) { setToolsHeight(target); return }
-        tools.visibility = View.VISIBLE
-        toolsAnim = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
-            duration = 560; interpolator = android.animation.TimeInterpolator { Glass.spring(it * 0.56f, 0.55f, 22f) }
-            addUpdateListener { setToolsHeight((from + (target - from) * (it.animatedValue as Float)).toInt().coerceAtLeast(0)) }
-            addListener(object : android.animation.AnimatorListenerAdapter() {
-                var cancelled = false
-                override fun onAnimationCancel(a: android.animation.Animator) { cancelled = true }
-                override fun onAnimationEnd(a: android.animation.Animator) { if (!cancelled) setToolsHeight(target) }
-            })
-            start()
-        }
+    private fun showCard() {
+        if (landscape()) return
+        collapsed = false; collapseIcon.path = "M6 9l6 6 6-6"
+        placeCard()
+        tools.layoutParams.height = fullH()
+        toolCard.animate().cancel(); toolCard.translationY = 0f; toolCard.alpha = 0f; toolCard.visibility = View.VISIBLE
+        toolCard.post { placeCard(); Liquid.show(toolCard, toolCard.width / 2f, toolCard.height.toFloat(), false) }
     }
-    // Dragging the panel: it follows the finger, then springs open or shut by where it was let go and how fast.
-    private var dragStartY = 0f; private var dragStartH = 0; private val dragTrail = ArrayList<Pair<Long, Float>>()
-    private fun dragBegin(rawY: Float) { toolsAnim?.cancel(); dragStartY = rawY; dragStartH = tools.layoutParams.height.coerceAtLeast(0); dragTrail.clear(); dragTrail += android.os.SystemClock.uptimeMillis() to rawY; tools.visibility = View.VISIBLE }
+    private fun hideCard() {
+        collapsed = true; collapseIcon.path = "M6 15l6-6 6 6"
+        if (landscape() || toolCard.visibility != View.VISIBLE) { toolCard.visibility = View.GONE; return }
+        Liquid.hide(toolCard, toolCard.width / 2f, toolCard.height.toFloat(), false) { toolCard.visibility = View.GONE; toolCard.translationY = 0f }
+    }
+    private fun toggleTools() { Glass.tick(tools); if (collapsed) showCard() else hideCard() }
+    // Dragging the card down: it follows the finger, then goes away or springs back by how far and how fast.
+    private var dragStartY = 0f; private val dragTrail = ArrayList<Pair<Long, Float>>()
+    private fun dragBegin(rawY: Float) { toolCard.animate().cancel(); dragStartY = rawY; dragTrail.clear(); dragTrail += android.os.SystemClock.uptimeMillis() to rawY }
     private fun dragMove(rawY: Float) {
         dragTrail += android.os.SystemClock.uptimeMillis() to rawY; if (dragTrail.size > 8) dragTrail.removeAt(0)
-        setToolsHeight((dragStartH - (rawY - dragStartY)).toInt().coerceIn(0, fullH()))
+        val dy = rawY - dragStartY
+        toolCard.translationY = if (dy > 0) dy else dy / 4f   // a little give when pulled up, none to go further
     }
     private fun dragEnd() {
-        val full = fullH(); val h = tools.layoutParams.height
         val a = dragTrail.firstOrNull(); val b = dragTrail.lastOrNull()
-        val vy = if (a != null && b != null && b.first > a.first) (b.second - a.second) / (b.first - a.first) * 1000f else 0f   // px/s, down is positive
-        val open = when { vy > dp(500) -> false; vy < -dp(500) -> true; else -> h > full / 2 }
-        Glass.tick(tools); springTools(if (open) full else 0)
+        val vy = if (a != null && b != null && b.first > a.first) (b.second - a.second) / (b.first - a.first) * 1000f else 0f
+        if (toolCard.translationY > dp(48) || vy > dp(600)) { Glass.tick(tools); hideCard() }
+        else toolCard.animate().translationY(0f).setInterpolator(android.view.animation.OvershootInterpolator(2.2f)).setDuration(380).start()
     }
-    private fun toggleTools() { Glass.tick(tools); springTools(if (collapsed) fullH() else 0) }
     /** The grip above the tabs: drag it up or down, or tap it. */
     private inner class GrabberTouch : View.OnTouchListener {
         private var downY = 0f; private var moved = false
@@ -1100,7 +1101,7 @@ class VideoEditorActivity : ComponentActivity() {
                 MotionEvent.ACTION_DOWN -> { downY = e.rawY; moved = false; dragBegin(e.rawY); v.parent?.requestDisallowInterceptTouchEvent(true) }
                 MotionEvent.ACTION_MOVE -> { if (!moved && abs(e.rawY - downY) > dp(6)) moved = true; if (moved) dragMove(e.rawY) }
                 MotionEvent.ACTION_UP -> if (moved) dragEnd() else { v.performClick(); toggleTools() }
-                MotionEvent.ACTION_CANCEL -> if (moved) dragEnd() else springTools(if (collapsed) 0 else fullH())
+                MotionEvent.ACTION_CANCEL -> if (moved) dragEnd()
             }
             return true
         }
@@ -1143,8 +1144,8 @@ class VideoEditorActivity : ComponentActivity() {
     private fun setCollapsed(on: Boolean) {
         collapsed = on
         collapseIcon.path = if (on) "M6 15l6-6 6 6" else "M6 9l6 6 6-6"
-        if (landscape()) { tools.layoutParams.height = fullH(); (toolsHolder ?: tools).visibility = if (on) View.GONE else View.VISIBLE; tools.visibility = View.VISIBLE }
-        else setToolsHeight(if (on) 0 else fullH())
+        if (landscape()) { tools.layoutParams.height = fullH(); (toolsHolder ?: tools).visibility = if (on) View.GONE else View.VISIBLE; tools.visibility = View.VISIBLE; toolCard.visibility = View.GONE }
+        else { toolCard.visibility = if (on) View.GONE else View.VISIBLE; tools.visibility = View.VISIBLE; tools.layoutParams.height = fullH(); toolCard.post { placeCard() } }
     }
     /**
      * Puts the parts of the page where the screen's shape wants them. Upright: top bar, picture, play row, timeline, tools, tabs
@@ -1154,6 +1155,7 @@ class VideoEditorActivity : ComponentActivity() {
     private fun arrange() {
         val parts = listOf<View>(topBar, stage, transportRow, timelineScroll, trim, grabber, tools, toolBar)
         parts.forEach { (it.parent as? android.view.ViewGroup)?.removeView(it) }
+        (toolCard.parent as? android.view.ViewGroup)?.removeView(toolCard)
         rootBox.removeAllViews(); toolsHolder = null
         val toolsH = fullH()
         if (!landscape()) {
@@ -1163,8 +1165,10 @@ class VideoEditorActivity : ComponentActivity() {
             rootBox.addView(transportRow, -1, -2)
             rootBox.addView(timelineScroll, LinearLayout.LayoutParams(-1, timelineScroll.layoutParams?.height ?: dp(68)).apply { topMargin = dp(2) })
             rootBox.addView(trim, LinearLayout.LayoutParams(-1, 0))
-            rootBox.addView(grabber, LinearLayout.LayoutParams(-1, dp(20)))
-            rootBox.addView(tools, LinearLayout.LayoutParams(-1, if (collapsed) 0 else toolsH))
+            toolCard.removeAllViews()
+            toolCard.addView(grabber, LinearLayout.LayoutParams(-1, dp(20)))
+            toolCard.addView(tools, LinearLayout.LayoutParams(-1, toolsH))
+            (window.decorView as FrameLayout).addView(toolCard, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply { setMargins(dp(8), 0, dp(8), 0) })
             rootBox.addView(toolBar, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(4), 0, dp(4), dp(8)) })
         } else {
             rootBox.orientation = LinearLayout.HORIZONTAL
@@ -2491,10 +2495,8 @@ class VideoEditorActivity : ComponentActivity() {
         if (i != COLOR_TOOL) { handler.removeCallbacks(histTick); hist = null }
         val want = dp(when (i) { LAYER_TOOL -> 312; COLOR_TOOL -> 286; 9 -> 260; 2 -> if (speedTab == 1) 276 else 178; 4 -> 236; 3 -> 150; 5 -> 196; 12, 15, 16 -> 220; else -> 124 })
         toolsFull = want
-        // Choosing another tool opens a folded panel (with the spring); the same tool refreshing keeps it as it is.
-        if (collapsed && !landscape()) { if (animate && dir != 0) springTools(want) }
+        if (!landscape() && collapsed) tools.layoutParams.height = want
         else if (tools.layoutParams.height != want) {
-            toolsAnim?.cancel()
             if (!animate || Glass.reduced(this)) { tools.layoutParams.height = want; tools.requestLayout() }
             else android.animation.ValueAnimator.ofInt(tools.layoutParams.height, want).apply { duration = 260; interpolator = Glass.EASE
                 addUpdateListener { tools.layoutParams.height = it.animatedValue as Int; tools.requestLayout() } }.start()
