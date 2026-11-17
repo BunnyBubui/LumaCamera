@@ -50,11 +50,24 @@ class AutoSoundDirectorTest {
     }
 
     @Test fun unverifiedAudioSpikeDoesNotCreateImpact() {
+        // Phase 2 must never label a loud spike CONFIRMED_KILL. A valid
+        // POSSIBLE_KILL with audio-only evidence is ignored safely.
         val suspicious = event(kind = "audio_peak")
+            .copy(type = AnalysisEventType.POSSIBLE_KILL)
         val result = AutoSoundDirector.propose(plan(listOf(suspicious)),
             licensed(SoundRole.IMPACT))
         assertTrue(result.decisions.isEmpty())
         assertTrue(result.plan.sfxCues.isEmpty())
+    }
+
+    @Test fun forgedConfirmedKillWithAudioOnlyIsRejectedByEdlGate() {
+        val forged = event(kind = "audio_peak")
+        try {
+            AutoSoundDirector.propose(plan(listOf(forged)), licensed(SoundRole.IMPACT))
+            fail("Expected invalid confirmed kill evidence to be rejected")
+        } catch (_: IllegalArgumentException) {
+            // Good: the EDL validator blocks contradictory confirmed labels.
+        }
     }
 
     @Test fun beatSnapOnlyOccursWhenCloseEnough() {
