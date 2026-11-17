@@ -193,7 +193,7 @@ object GamingHighlightDirector {
         require(assets.isNotEmpty() && assets.all { it.id.isNotBlank() && it.durationUs > 0 })
         require(assets.map { it.id }.distinct().size == assets.size)
         val rejected = mutableListOf<RejectedGamingEvent>()
-        val seeds = readSeeds(assets.associateBy { it.id }, events, options, rejected)
+        val seeds = readSeeds(assets.associateBy { it.id }, GamingContextFusion.enrich(events), options, rejected)
         if (seeds.isEmpty()) return GamingEditProposal(emptyList(), rejected, null,
             listOf("No corroborated gameplay highlights; original video stays unchanged."))
         val candidates = mergeWindows(sourceWindows(
