@@ -84,12 +84,14 @@ data class VideoEditSpec(
     /** Slow camera move over the first clip ([ClipMotion]). */
     val mainMotion: Int = 0,
     /** The same as [VideoPart.join] for the main clip when it is not the first. */
-    val mainJoin: Int = -1, val mainJoinMs: Long = 0L)
+    val mainJoin: Int = -1, val mainJoinMs: Long = 0L,
+    /** Length in ms of the main clip's whole file (0 = unknown); an overlapping transition borrows picture from beyond the clip, and needs to know there is some. */
+    val mainSourceMs: Long = 0L)
 
 /** A clip appended after the main one. [from]/[to] in ms of that clip. */
 data class VideoPart(val source: Uri, val from: Long, val to: Long, val speed: Float = 1f, val muted: Boolean = false, val volume: Float = 1f, val curve: FloatArray? = null, val motion: Int = 0,
     /** The change into this clip from the one before: -1 follows [VideoSpec.transition], otherwise 0..6 as there; [joinMs] its length (0 = the usual). */
-    val join: Int = -1, val joinMs: Long = 0L)
+    val join: Int = -1, val joinMs: Long = 0L, val sourceMs: Long = 0L)
 
 /** An emoji on the picture: [x], [y] are 0..1 across the visible (cropped) frame, [big] doubles its size. */
 data class VideoSticker(val text: String, val x: Float, val y: Float, val big: Boolean = false)
@@ -158,6 +160,25 @@ object VideoEdit {
             return floatArrayOf(k, 0f, 0f, 0f, 0f, k, 0f, 0f, 0f, 0f, k, 0f, o, o, o, 1f)
         }
     }
+    /** Kind number of the overlapping change in [VideoEditSpec.transition] and [VideoPart.join]. */
+    const val OVERLAP = 7
+    private class Cover(val from: Long, val to: Long, val onTop: Boolean)
+    private class Lap(val from: Long, val to: Long, val incomingOnTop: Boolean)
+    /** Draws the first video track over the second, fading it in and out where a clip arrives or leaves over the other. */
+    private class Dissolve(private val w: Int, private val h: Int, private val covers: List<Cover>, private val laps: List<Lap>) : androidx.media3.common.VideoCompositorSettings {
+        override fun getOutputSize(inputSizes: List<androidx.media3.common.util.Size>) = androidx.media3.common.util.Size(w, h)
+        override fun getOverlaySettings(inputId: Int, presentationTimeUs: Long): androidx.media3.common.OverlaySettings {
+            if (inputId != 0) return StaticOverlaySettings.Builder().build()
+            val t = presentationTimeUs
+            val top = covers.any { it.onTop && t >= it.from && t <= it.to }; val bottom = covers.any { !it.onTop && t >= it.from && t <= it.to }
+            val alpha = when {
+                !top -> 0f
+                !bottom -> 1f
+                else -> laps.firstOrNull { t >= it.from && t <= it.to }?.let { l -> val k = ((t - l.from).toFloat() / (l.to - l.from).coerceAtLeast(1)).coerceIn(0f, 1f); if (l.incomingOnTop) k else 1 - k } ?: 1f
+            }
+            return StaticOverlaySettings.Builder().setAlphaScale(alpha).build()
+        }
+    }
     /** Zoom in: a clip starts 12 % closer and settles to its normal size. */
     private class Punch(private val durationUs: Long, spanMs: Long) : MatrixTransformation {
         private var first = C.TIME_UNSET
@@ -198,17 +219,34 @@ object VideoEdit {
         if (!multi && texts.isNotEmpty()) effects += OverlayEffect(texts)
         val sound = if (s.keepAudio && s.volume != 1f) listOf(gain(s.volume)) else emptyList()
         // Each clip with its length after the speed change, and which clip (0 = main) it comes from.
-        data class Piece(val item: MediaItem, val clip: Int, val durationUs: Long, val speed: Float)
+        data class Piece(val item: MediaItem, val clip: Int, val durationUs: Long, val speed: Float, val uri: Uri, val a: Long, val b: Long)
         // A clip with a speed curve becomes several pieces of steady speed that follow each other.
         fun pieces(uri: Uri, a: Long, b: Long, base: Float, curve: FloatArray?, clip: Int): List<Piece> {
-            if (curve == null) return listOf(Piece(clipped(uri, a, b), clip, ((b - a) * 1000 / base).toLong(), base))
+            if (curve == null) return listOf(Piece(clipped(uri, a, b), clip, ((b - a) * 1000 / base).toLong(), base, uri, a, b))
             val sp = StudioMath.partSpeeds(base, curve); val n = StudioMath.CURVE_PARTS
-            return (0 until n).map { k -> val x = a + (b - a) * k / n; val y = a + (b - a) * (k + 1) / n; Piece(clipped(uri, x, y), clip, ((y - x) * 1000 / sp[k]).toLong().coerceAtLeast(1), sp[k]) }
+            return (0 until n).map { k -> val x = a + (b - a) * k / n; val y = a + (b - a) * (k + 1) / n; Piece(clipped(uri, x, y), clip, ((y - x) * 1000 / sp[k]).toLong().coerceAtLeast(1), sp[k], uri, x, y) }
         }
         val mainPieces = ranges.flatMap { (a, b) -> pieces(s.source, a, b, s.speed, if (ranges.size == 1) s.mainCurve else null, 0) }
         val extraPieces = s.extras.flatMapIndexed { i, p -> pieces(p.source, p.from, p.to, p.speed, p.curve, i + 1) }
         val lead = s.mainAt.coerceIn(0, extraPieces.size)
         val pieces = extraPieces.take(lead) + mainPieces + extraPieces.drop(lead)
+        // ---- Overlapping change (kind [OVERLAP]): both clips show at once, so the second clip is opened before its start and the first runs on past its end ----
+        fun kindAt(clip: Int) = (if (clip == 0) s.mainJoin else s.extras[clip - 1].join).let { if (it < 0) s.transition else it }
+        fun packedAt(clip: Int) = if (clip == 0) s.mainJoinMs else s.extras[clip - 1].joinMs
+        fun sourceMsOf(clip: Int) = if (clip == 0) s.mainSourceMs else s.extras[clip - 1].sourceMs
+        val n = pieces.size
+        val pre = LongArray(n); val post = LongArray(n); val lap = BooleanArray(n)   // ms borrowed before the piece, after it; whether the change into it overlaps
+        if (!s.audioOnly) for (j in 1 until n) {
+            val p0 = pieces[j - 1]; val p1 = pieces[j]
+            if (p0.clip == p1.clip || kindAt(p1.clip) != OVERLAP || p0.speed != 1f || p1.speed != 1f) continue
+            val packed = packedAt(p1.clip)
+            val before = minOf(joinOutMs(packed), p0.durationUs / 2000, p1.a)                                    // from the second clip, before its start
+            val after = minOf(joinInMs(packed), p1.durationUs / 2000, (sourceMsOf(p0.clip) - p0.b).coerceAtLeast(0))  // from the first clip, after its end
+            if (before + after < 50) continue
+            lap[j] = true; pre[j] = before; post[j - 1] = after
+        }
+        val overlapOn = lap.any { it }
+        val cutAt = LongArray(n); run { var acc = 0L; for (j in 0 until n) { cutAt[j] = acc; acc += pieces[j].durationUs } }
         val items = pieces.mapIndexed { i, piece ->
             val own: MutableList<Effect> = if (piece.clip == 0) effects.toMutableList() else mutableListOf()
             val motion = if (piece.clip == 0) s.mainMotion else s.extras[piece.clip - 1].motion
@@ -224,24 +262,26 @@ object VideoEdit {
             // across the cut it takes half of each clip, ending at the cut it all sits on the end of the first clip, starting at the cut on the start of the next.
             fun kindOf(clip: Int) = (if (clip == 0) s.mainJoin else s.extras[clip - 1].join).let { if (it < 0) s.transition else it }
             fun packedOf(clip: Int) = if (clip == 0) s.mainJoinMs else s.extras[clip - 1].joinMs
-            val joinIn = i > 0 && pieces[i - 1].clip != piece.clip; val joinOut = i < pieces.size - 1 && pieces[i + 1].clip != piece.clip
+            val joinIn = i > 0 && pieces[i - 1].clip != piece.clip && !lap[i]; val joinOut = i < pieces.size - 1 && pieces[i + 1].clip != piece.clip && !(i + 1 < n && lap[i + 1])
+            val pieceUs = piece.durationUs + (pre[i] + post[i]) * 1000
             val kIn = if (joinIn) kindOf(piece.clip) else 0; val msIn = if (joinIn) joinInMs(packedOf(piece.clip)) else 0L
             val kOut = if (joinOut) kindOf(pieces[i + 1].clip) else 0; val msOut = if (joinOut) joinOutMs(packedOf(pieces[i + 1].clip)) else 0L
             fun draw(kind: Int, inMs: Long, outMs: Long) {
-                if (kind == 0 || (inMs <= 0 && outMs <= 0)) return
+                if (kind == 0 || kind == OVERLAP || (inMs <= 0 && outMs <= 0)) return
                 when (kind) {
-                    3 -> if (inMs > 0) own += Punch(piece.durationUs, inMs)
-                    4 -> own += StudioSlide(piece.durationUs, inMs, outMs)
-                    5 -> own += StudioTransition(StudioTransition.WIPE, piece.durationUs, inMs, outMs)
-                    6 -> own += StudioTransition(StudioTransition.BLUR, piece.durationUs, inMs, outMs)
-                    else -> own += Dip(piece.durationUs, inMs, outMs, kind == 2)
+                    3 -> if (inMs > 0) own += Punch(pieceUs, inMs)
+                    4 -> own += StudioSlide(pieceUs, inMs, outMs)
+                    5 -> own += StudioTransition(StudioTransition.WIPE, pieceUs, inMs, outMs)
+                    6 -> own += StudioTransition(StudioTransition.BLUR, pieceUs, inMs, outMs)
+                    else -> own += Dip(pieceUs, inMs, outMs, kind == 2)
                 }
             }
             if (kIn == kOut) draw(kIn, msIn, msOut) else { draw(kIn, msIn, 0); draw(kOut, 0, msOut) }
+            if (overlapOn) { val (fw, fh) = frameSize(s); own += Presentation.createForWidthAndHeight(fw / 2 * 2, fh / 2 * 2, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP) }
             val muted = if (piece.clip == 0) s.mainMuted else s.extras[piece.clip - 1].muted
             val partVolume = if (piece.clip == 0) 1f else s.extras[piece.clip - 1].volume
             val own_sound = if (muted) listOf(gain(0f)) else (if (piece.clip == 0) sound else if (partVolume != 1f) listOf(gain(partVolume)) else emptyList()) + listOfNotNull(if (s.audio.active) StudioAudio.Shape(s.audio) else null)
-            val edited = EditedMediaItem.Builder(piece.item).setEffects(Effects(own_sound, if (s.audioOnly) emptyList() else own)).setRemoveAudio(!s.keepAudio).setRemoveVideo(s.audioOnly)
+            val edited = EditedMediaItem.Builder(if (pre[i] + post[i] > 0) clipped(piece.uri, piece.a - pre[i], piece.b + post[i]) else piece.item).setEffects(Effects(own_sound, if (s.audioOnly) emptyList() else own)).setRemoveAudio(!s.keepAudio).setRemoveVideo(s.audioOnly)
             // With sound, setSpeed changes picture and sound together. Without a sound track it stalls the export (no
             // output sample ever reaches the muxer), so a picture-only clip changes speed through a video effect instead.
             if (piece.speed != 1f && s.keepAudio) edited.setSpeed(object : SpeedProvider { override fun getSpeed(timeUs: Long) = piece.speed; override fun getNextSpeedChangeTimeUs(timeUs: Long) = C.TIME_UNSET })
@@ -249,6 +289,18 @@ object VideoEdit {
         }
         val main = if (s.audioOnly) EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_AUDIO)).apply { items.forEach { addItem(it) } }.build()
             else if (s.keepAudio) EditedMediaItemSequence.withAudioAndVideoFrom(items) else EditedMediaItemSequence.withVideoFrom(items)
+        // Overlapping changes: even pieces on one video track, odd pieces on another, each with gaps where it is not playing; the first track
+        // is drawn over the second, and its opacity makes the dissolve.
+        val bothTracks = if (!overlapOn) emptyList() else (0..1).map { tr ->
+            val b = EditedMediaItemSequence.Builder(if (s.keepAudio) setOf(C.TRACK_TYPE_AUDIO, C.TRACK_TYPE_VIDEO) else setOf(C.TRACK_TYPE_VIDEO))
+            var cursor = 0L
+            for (j in 0 until n) if (j % 2 == tr) {
+                val start = cutAt[j] - pre[j] * 1000; val gap = start - cursor
+                if (gap > 1000) b.addGap(gap)
+                b.addItem(items[j]); cursor = start + pieces[j].durationUs + (pre[j] + post[j]) * 1000
+            }
+            b.build()
+        }
         val whole = mutableListOf<Effect>()
         // Layers are measured on the finished frame, so they go last, over everything else.
         val layerOverlays = if (!s.audioOnly && s.layers.any { it.visual }) VideoLayers.overlays(requireNotNull(context) { "layers need a context" }, s.layers) else emptyList()
@@ -264,7 +316,7 @@ object VideoEdit {
         if (s.outFps > 0f) whole += FrameDropEffect.createDefaultFrameDropEffect(s.outFps)
         val song = s.music
         // Sound only and the clips have no sound to keep: the file is made from the music and sound layers alone.
-        val sequences = if (s.audioOnly && !s.keepAudio) mutableListOf() else mutableListOf(main)
+        val sequences = if (s.audioOnly && !s.keepAudio) mutableListOf() else if (overlapOn) bothTracks.toMutableList() else mutableListOf(main)
         if (song != null) {
             val spans = if (s.duck) s.layers.filter { it.audible && it.volume > 0f }.map { it.at to it.end } else emptyList()
             val track = EditedMediaItem.Builder(MediaItem.fromUri(song)).setRemoveVideo(true).setEffects(Effects(listOfNotNull(if (s.musicVolume != 1f) gain(s.musicVolume) else null, if (spans.isNotEmpty()) StudioAudio.Duck(spans) else null), emptyList())).build()
@@ -272,6 +324,8 @@ object VideoEdit {
         }
         if (s.layers.any { it.audible }) sequences += VideoLayers.sounds(requireNotNull(context) { "layers need a context" }, s.layers, s.duck) { gain(it) }
         val builder = Composition.Builder(sequences)
+        if (overlapOn) { val (fw, fh) = frameSize(s); builder.setVideoCompositorSettings(Dissolve(fw / 2 * 2, fh / 2 * 2, (0 until n).map { j -> Cover(cutAt[j] - pre[j] * 1000, cutAt[j] + pieces[j].durationUs + post[j] * 1000, j % 2 == 0) },
+            (1 until n).filter { lap[it] }.map { j -> Lap(cutAt[j] - pre[j] * 1000, cutAt[j] + post[j - 1] * 1000, j % 2 == 0) })) }
         if (whole.isNotEmpty() && !s.audioOnly) builder.setEffects(Effects(emptyList(), whole))
         if (s.audioOnly && (s.audioHz > 0 || s.audioMono)) {
             // The whole mix is shaped last: first to one channel, then to the chosen sample rate.
