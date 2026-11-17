@@ -127,28 +127,39 @@ object VideoEdit {
     /** Share of the frame height a sticker takes (the preview uses the same numbers). */
     const val STICKER = 0.10f
     const val STICKER_BIG = 0.17f
-    /** Length of a transition at each side of a cut between two clips. */
-    const val TRANSITION_MS = 400L
+    /** Whole length of a transition across a cut between two clips (it is split between the end of the first clip and the start of the next, see [joinAlign]). */
+    const val TRANSITION_MS = 600L
+    // A seam's length and place are kept together in one number: length in ms below JOIN_STEP, place above it.
+    private const val JOIN_STEP = 1_000_000L
+    /** Whole length in ms of the transition stored as [packed] (0 = the usual). */
+    fun joinLength(packed: Long): Long = (packed % JOIN_STEP).takeIf { it > 0 } ?: TRANSITION_MS
+    /** Where it sits: 0 across the cut (half on each clip), 1 ending at the cut (all on the end of the first clip), 2 starting at the cut (all on the start of the next clip). */
+    fun joinAlign(packed: Long): Int = (packed / JOIN_STEP).toInt().coerceIn(0, 2)
+    fun joinPack(ms: Long, align: Int): Long = ms % JOIN_STEP + align.coerceIn(0, 2) * JOIN_STEP
+    /** Part of the transition drawn on the end of the first clip. */
+    fun joinOutMs(packed: Long): Long = when (joinAlign(packed)) { 0 -> joinLength(packed) / 2; 1 -> joinLength(packed); else -> 0L }
+    /** Part of the transition drawn on the start of the next clip. */
+    fun joinInMs(packed: Long): Long = when (joinAlign(packed)) { 0 -> joinLength(packed) / 2; 2 -> joinLength(packed); else -> 0L }
 
     /**
      * Fade or flash at the start and/or end of one clip. Times are counted from the clip's own first frame (the
      * pipeline adds the clip's place in the sequence to every timestamp), after any speed change.
      */
-    private class Dip(private val durationUs: Long, private val fadeIn: Boolean, private val fadeOut: Boolean, private val white: Boolean, spanMs: Long = TRANSITION_MS) : RgbMatrix {
+    private class Dip(private val durationUs: Long, inMs: Long, outMs: Long, private val white: Boolean) : RgbMatrix {
         private var first = C.TIME_UNSET
-        private val span = minOf(spanMs * 1000, durationUs / 2).coerceAtLeast(1)
+        private val spanIn = minOf(inMs * 1000, durationUs / 2); private val spanOut = minOf(outMs * 1000, durationUs / 2)
         override fun getMatrix(presentationTimeUs: Long, useHdr: Boolean): FloatArray {
             if (first == C.TIME_UNSET) first = presentationTimeUs
             val t = presentationTimeUs - first
             var k = 1f
-            if (fadeIn && t < span) k = minOf(k, t.toFloat() / span)
-            if (fadeOut && t > durationUs - span) k = minOf(k, ((durationUs - t).toFloat() / span).coerceAtLeast(0f))
+            if (spanIn > 0 && t < spanIn) k = minOf(k, t.toFloat() / spanIn)
+            if (spanOut > 0 && t > durationUs - spanOut) k = minOf(k, ((durationUs - t).toFloat() / spanOut).coerceAtLeast(0f))
             val o = if (white) 1 - k else 0f
             return floatArrayOf(k, 0f, 0f, 0f, 0f, k, 0f, 0f, 0f, 0f, k, 0f, o, o, o, 1f)
         }
     }
     /** Zoom in: a clip starts 12 % closer and settles to its normal size. */
-    private class Punch(private val durationUs: Long, spanMs: Long = TRANSITION_MS) : MatrixTransformation {
+    private class Punch(private val durationUs: Long, spanMs: Long) : MatrixTransformation {
         private var first = C.TIME_UNSET
         private val span = minOf(spanMs * 1000, durationUs / 2).coerceAtLeast(1)
         override fun getMatrix(presentationTimeUs: Long): android.graphics.Matrix {
@@ -209,23 +220,24 @@ object VideoEdit {
             }
             // Fast speeds (up to thousands ×) would hand the encoder hundreds of frames per second; keep about 30 of them.
             if (piece.speed != 1f) { if (!s.keepAudio) own += SpeedChangeEffect(piece.speed); if (piece.speed > 1f) own += FrameDropEffect.createDefaultFrameDropEffect(30f) }
-            // Every clip owns the change into it; the clip before gets the same change as its way out.
+            // Every clip owns the change into it; the clip before gets the same change as its way out. The change is split by its place:
+            // across the cut it takes half of each clip, ending at the cut it all sits on the end of the first clip, starting at the cut on the start of the next.
             fun kindOf(clip: Int) = (if (clip == 0) s.mainJoin else s.extras[clip - 1].join).let { if (it < 0) s.transition else it }
-            fun msOf(clip: Int) = ((if (clip == 0) s.mainJoinMs else s.extras[clip - 1].joinMs).takeIf { it > 0 } ?: TRANSITION_MS)
+            fun packedOf(clip: Int) = if (clip == 0) s.mainJoinMs else s.extras[clip - 1].joinMs
             val joinIn = i > 0 && pieces[i - 1].clip != piece.clip; val joinOut = i < pieces.size - 1 && pieces[i + 1].clip != piece.clip
-            val kIn = if (joinIn) kindOf(piece.clip) else 0; val msIn = if (joinIn) msOf(piece.clip) else TRANSITION_MS
-            val kOut = if (joinOut) kindOf(pieces[i + 1].clip) else 0; val msOut = if (joinOut) msOf(pieces[i + 1].clip) else TRANSITION_MS
-            fun draw(kind: Int, ms: Long, inn: Boolean, out: Boolean) {
-                if (kind == 0 || (!inn && !out)) return
+            val kIn = if (joinIn) kindOf(piece.clip) else 0; val msIn = if (joinIn) joinInMs(packedOf(piece.clip)) else 0L
+            val kOut = if (joinOut) kindOf(pieces[i + 1].clip) else 0; val msOut = if (joinOut) joinOutMs(packedOf(pieces[i + 1].clip)) else 0L
+            fun draw(kind: Int, inMs: Long, outMs: Long) {
+                if (kind == 0 || (inMs <= 0 && outMs <= 0)) return
                 when (kind) {
-                    3 -> if (inn) own += Punch(piece.durationUs, ms)
-                    4 -> own += StudioSlide(piece.durationUs, inn, out, ms)
-                    5 -> own += StudioTransition(StudioTransition.WIPE, piece.durationUs, inn, out, ms)
-                    6 -> own += StudioTransition(StudioTransition.BLUR, piece.durationUs, inn, out, ms)
-                    else -> own += Dip(piece.durationUs, inn, out, kind == 2, ms)
+                    3 -> if (inMs > 0) own += Punch(piece.durationUs, inMs)
+                    4 -> own += StudioSlide(piece.durationUs, inMs, outMs)
+                    5 -> own += StudioTransition(StudioTransition.WIPE, piece.durationUs, inMs, outMs)
+                    6 -> own += StudioTransition(StudioTransition.BLUR, piece.durationUs, inMs, outMs)
+                    else -> own += Dip(piece.durationUs, inMs, outMs, kind == 2)
                 }
             }
-            if (kIn == kOut && msIn == msOut) draw(kIn, msIn, joinIn, joinOut) else { draw(kIn, msIn, joinIn, false); draw(kOut, msOut, false, joinOut) }
+            if (kIn == kOut) draw(kIn, msIn, msOut) else { draw(kIn, msIn, 0); draw(kOut, 0, msOut) }
             val muted = if (piece.clip == 0) s.mainMuted else s.extras[piece.clip - 1].muted
             val partVolume = if (piece.clip == 0) 1f else s.extras[piece.clip - 1].volume
             val own_sound = if (muted) listOf(gain(0f)) else (if (piece.clip == 0) sound else if (partVolume != 1f) listOf(gain(partVolume)) else emptyList()) + listOfNotNull(if (s.audio.active) StudioAudio.Shape(s.audio) else null)

@@ -340,6 +340,8 @@ class VideoEditorActivity : ComponentActivity() {
     private val visible = RectF()
     /** Which clip the preview plays: 0 the main clip, k the k-th added clip. */
     private var playIndex = 0; private var autoPlay = false; private var switching = false
+    /** The clip whose transition has begun drawing over the end of the clip now playing (-1 = none). */
+    private var outFor = -1
 
     // ---- Playback ----
     private var player: MediaPlayer? = null; private var musicPlayer: MediaPlayer? = null
@@ -353,10 +355,11 @@ class VideoEditorActivity : ComponentActivity() {
             followCurve(p, pos)
             if (playIndex == 0 && !switching) {
                 if (pos >= end - 30) { if (extras.isNotEmpty()) playClip(nextOf(0)) else { p.seekTo(start.toInt()); musicPlayer?.seekTo(0) } }
+                else if (extras.isNotEmpty() && pos < end) maybeOut(pos, end)
                 else if (cutValid() && pos in cutFrom until cutTo) p.seekTo(cutTo.toInt())
                 trim.playhead = pos.coerceIn(start, end)
             } else if (playIndex > 0 && !switching) extras.getOrNull(playIndex - 1)?.let { e ->
-                if (pos >= e.to - 30) playClip(nextOf(playIndex)) else trim.playhead = pos.coerceIn(e.from, e.to) }
+                if (pos >= e.to - 30) playClip(nextOf(playIndex)) else { maybeOut(pos, e.to); trim.playhead = pos.coerceIn(e.from, e.to) } }
             showTime(); syncLayerSound(true); showMotion(pos)
             if (++tickCount % 30 == 0) preloadNext()
         } else if (prepared && ++tickCount % 4 == 0) syncLayerSound(false)
@@ -860,32 +863,57 @@ class VideoEditorActivity : ComponentActivity() {
         if (k == order().first()) musicPlayer?.runCatching { seekTo(0) }
         switching = true
         val go = Runnable { playIndex = k; switching = false; showClipOnBar(); trim.playhead = trim.start; openPlayer(); showTime() }
-        val half = VideoEdit.TRANSITION_MS / 2
-        if (Glass.reduced(this) || extras.isEmpty()) go.run()
-        else when (kindFor(k)) {
+        // The way out was already drawn over the end of the clip that just played (see startOut), so the next clip takes over at once.
+        go.run()
+    }
+    /** Starts the way out of the clip being played, [ms] before its end, when the change into clip [k] has a part on the first clip's end. */
+    private fun maybeOut(pos: Long, endMs: Long) {
+        val nk = nextOf(playIndex); if (nk == playIndex || outFor == nk || kindFor(nk) == 0) return
+        val om = VideoEdit.joinOutMs(joinMsOf(nk))
+        if (om > 0 && pos >= endMs - om) startOut(nk, om)
+    }
+    private fun startOut(k: Int, ms: Long) {
+        outFor = k
+        if (Glass.reduced(this)) return
+        when (kindFor(k)) {
             1, 2 -> { dip.setBackgroundColor(if (kindFor(k) == 2) Color.WHITE else Color.BLACK); dip.pivotX = 0f; dip.scaleX = 1f
-                dip.animate().cancel(); dip.animate().alpha(1f).setDuration(half).withEndAction(go).start() }
-            4 -> texture.animate().translationX(-texture.width.toFloat()).setInterpolator(Glass.EASE).setDuration(half).withEndAction { go.run() }.start()
+                dip.animate().cancel(); dip.animate().alpha(1f).setDuration(ms).start() }
+            4 -> texture.animate().translationX(-texture.width.toFloat()).setInterpolator(Glass.EASE).setDuration(ms).start()
             5 -> { dip.setBackgroundColor(Color.BLACK); dip.alpha = 1f; dip.pivotX = dip.width.toFloat(); dip.scaleX = 0f
-                dip.animate().cancel(); dip.animate().scaleX(1f).setDuration(half).withEndAction(go).start() }
-            6 -> if (android.os.Build.VERSION.SDK_INT >= 31) android.animation.ValueAnimator.ofFloat(0f, 1f).apply { duration = half
-                addUpdateListener { blurPreview(it.animatedValue as Float) }; addListener(object : android.animation.AnimatorListenerAdapter() { override fun onAnimationEnd(a: android.animation.Animator) { blurIn = true; go.run() } }); start() } else go.run()
-            else -> go.run()
+                dip.animate().cancel(); dip.animate().scaleX(1f).setDuration(ms).start() }
+            6 -> if (android.os.Build.VERSION.SDK_INT >= 31) { blurIn = true; android.animation.ValueAnimator.ofFloat(0f, 1f).apply { duration = ms; addUpdateListener { blurPreview(it.animatedValue as Float) }; start() } }
         }
+    }
+    /** Takes a way out that is half drawn off the picture (the preview was moved or paused before the clip ended). */
+    private fun cancelOut() {
+        if (outFor == -1) return
+        outFor = -1
+        dip.animate().cancel(); dip.alpha = 0f; dip.scaleX = 1f
+        texture.animate().cancel(); texture.translationX = 0f
+        if (blurIn) { blurIn = false; paintLook() }
     }
     /** The new clip is ready: uncover it (fade, flash) or let it settle from a little closer (zoom). */
     private fun arrived() {
         if (motionOf(playIndex) != 0 || texture.scaleY != 1f) clearMotion()
         if (motionOf(playIndex) != 0) showMotion(clipFrom(playIndex))
+        outFor = -1
         if (Glass.reduced(this)) { dip.alpha = 0f; return }
-        if (kindFor(playIndex) == 5 && dip.alpha > 0f) { dip.pivotX = 0f; dip.animate().cancel(); dip.animate().scaleX(0f).setDuration(VideoEdit.TRANSITION_MS).withEndAction { dip.alpha = 0f; dip.scaleX = 1f }.start() }
-        else if (dip.alpha > 0f) dip.animate().alpha(0f).setDuration(VideoEdit.TRANSITION_MS).start()
-        if (texture.translationX != 0f) { texture.translationX = texture.width.toFloat(); texture.animate().translationX(0f).setInterpolator(Glass.EASE).setDuration(VideoEdit.TRANSITION_MS).start() }
-        if (blurIn && android.os.Build.VERSION.SDK_INT >= 31) { blurIn = false; android.animation.ValueAnimator.ofFloat(1f, 0f).apply { duration = VideoEdit.TRANSITION_MS
-            addUpdateListener { blurPreview(it.animatedValue as Float) }; addListener(object : android.animation.AnimatorListenerAdapter() { override fun onAnimationEnd(a: android.animation.Animator) { paintLook() } }); start() } }
-        if (kindFor(playIndex) == 3 && playIndex > 0) {
+        val kind = kindFor(playIndex); val inMs = if (kind == 0) 0L else VideoEdit.joinInMs(joinMsOf(playIndex))
+        if (kind == 5 && dip.alpha > 0f) {
+            dip.pivotX = 0f; dip.animate().cancel()
+            if (inMs > 0) dip.animate().scaleX(0f).setDuration(inMs).withEndAction { dip.alpha = 0f; dip.scaleX = 1f }.start() else { dip.alpha = 0f; dip.scaleX = 1f } }
+        else if (dip.alpha > 0f) { dip.animate().cancel(); if (inMs > 0) dip.animate().alpha(0f).setDuration(inMs).start() else dip.alpha = 0f }
+        if (texture.translationX != 0f) {
+            if (kind == 4 && inMs > 0) { texture.translationX = texture.width.toFloat(); texture.animate().translationX(0f).setInterpolator(Glass.EASE).setDuration(inMs).start() }
+            else { texture.animate().cancel(); texture.translationX = 0f } }
+        if (blurIn && android.os.Build.VERSION.SDK_INT >= 31) {
+            blurIn = false
+            if (inMs > 0 && kind == 6) android.animation.ValueAnimator.ofFloat(1f, 0f).apply { duration = inMs
+                addUpdateListener { blurPreview(it.animatedValue as Float) }; addListener(object : android.animation.AnimatorListenerAdapter() { override fun onAnimationEnd(a: android.animation.Animator) { paintLook() } }); start() }
+            else paintLook() }
+        if (kind == 3 && playIndex > 0 && inMs > 0) {
             texture.scaleY = 1.12f; texture.scaleX = 1.12f
-            texture.animate().scaleX(1f).scaleY(1f).setInterpolator(Glass.EASE).setDuration(VideoEdit.TRANSITION_MS).start()
+            texture.animate().scaleX(1f).scaleY(1f).setInterpolator(Glass.EASE).setDuration(inMs).start()
         }
     }
     // ---- Portrait and landscape ----
@@ -952,7 +980,8 @@ class VideoEditorActivity : ComponentActivity() {
         if (m == 0) return
         val a = clipFrom(playIndex); val b = if (playIndex == 0) end else extras[playIndex - 1].to
         // A zoom or slide transition is drawn over the first moments of the clip; the move joins in after it.
-        if ((kindFor(playIndex) == 3 || kindFor(playIndex) == 4) && pos - a < VideoEdit.TRANSITION_MS) return
+        if (outFor != -1) return
+        if ((kindFor(playIndex) == 3 || kindFor(playIndex) == 4) && pos - a < VideoEdit.joinInMs(joinMsOf(playIndex))) return
         val (sc, x) = ClipMotion.at(m, (pos - a).toFloat() / (b - a).coerceAtLeast(1))
         texture.scaleX = base * sc; texture.scaleY = sc; texture.translationX = x * texture.width / 2f
     }
@@ -978,7 +1007,7 @@ class VideoEditorActivity : ComponentActivity() {
     }
     private fun togglePlay() {
         val p = player ?: return; if (!prepared) return
-        if (p.isPlaying) { p.pause(); musicPlayer?.pause(); syncLayerSound(false); playIcon.path = "M9 6.5v11l9-5.5z" }
+        if (p.isPlaying) { cancelOut(); p.pause(); musicPlayer?.pause(); syncLayerSound(false); playIcon.path = "M9 6.5v11l9-5.5z" }
         else {
             if (playIndex == 0 && p.currentPosition >= end - 60) p.seekTo(start.toInt())
             extras.getOrNull(playIndex - 1)?.let { if (p.currentPosition >= it.to - 60) p.seekTo(it.from.toInt()) }
@@ -988,7 +1017,7 @@ class VideoEditorActivity : ComponentActivity() {
         }
     }
     private fun seek(ms: Long) {
-        trim.playhead = ms
+        cancelOut(); trim.playhead = ms
         val p = player ?: return
         if (prepared) { if (android.os.Build.VERSION.SDK_INT >= 26) p.seekTo(ms, MediaPlayer.SEEK_CLOSEST) else p.seekTo(ms.toInt()) }
         showTime()
@@ -2987,14 +3016,20 @@ class VideoEditorActivity : ComponentActivity() {
         val sheet = screenSheet()
         sheet.open { col, sh ->
             col.addView(text("ทรานซิชันก่อนคลิป ${i + 1}", 17f, Glass.TEXT, true).apply { setPadding(0, dp(4), 0, dp(10)) }, -1, -2)
-            var kind = kindFor(k); var ms = joinMsOf(k).takeIf { it > 0 } ?: VideoEdit.TRANSITION_MS
+            var kind = kindFor(k); var ms = VideoEdit.joinLength(joinMsOf(k)); var at = VideoEdit.joinAlign(joinMsOf(k))
             val holder = LinearLayout(this)
-            fun apply() { setJoin(k, kind, ms); refreshTimeline() }
+            fun apply() { setJoin(k, kind, VideoEdit.joinPack(ms, at)); refreshTimeline() }
             fun build() {
                 holder.removeAllViews()
                 holder.addView(dropButton(TRANSITIONS[kind]) { v -> menu.show(v, "ทรานซิชัน", TRANSITIONS.mapIndexed { n, name -> GlassMenu.Option(name, TRANSITION_ICONS[n]) }, kind) { n -> kind = n; apply(); build() } }, LinearLayout.LayoutParams(-2, dp(40)))
             }
             build(); col.addView(holder, -1, -2)
+            // Where it sits, as in a desktop editor: across the cut, ending where the first clip ends, or starting where the next clip starts.
+            val places = listOf("กลางรอยต่อ" to "ครึ่งหนึ่งอยู่ท้ายคลิปแรก อีกครึ่งอยู่ต้นคลิปหลัง", "ท้ายคลิปแรก" to "ทรานซิชันจบตรงที่คลิปแรกจบ", "ต้นคลิปหลัง" to "ทรานซิชันเริ่มตรงที่คลิปหลังเริ่ม")
+            val placeHolder = LinearLayout(this)
+            fun buildPlace() { placeHolder.removeAllViews()
+                placeHolder.addView(dropButton(places[at].first) { v -> menu.show(v, "ตำแหน่งทรานซิชัน", places.map { GlassMenu.Option(it.first, TRANSITION_ICONS[kind], it.second) }, at) { n -> at = n; apply(); buildPlace() } }, LinearLayout.LayoutParams(-2, dp(40))) }
+            buildPlace(); col.addView(placeHolder, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
             val steps = (200..1500 step 100).toList()
             fun sec() = "ความยาว " + String.format(Locale.US, "%.1f", ms / 1000f) + " วิ"
             val label = text(sec(), 12f, Glass.TEXT2, true).apply { minWidth = dp(112) }
