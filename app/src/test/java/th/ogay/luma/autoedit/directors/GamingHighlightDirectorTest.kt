@@ -79,6 +79,24 @@ class GamingHighlightDirectorTest {
         assertTrue(result.selected.all { it.confirmedKills == 1 })
     }
 
+    @Test fun separateGameProfilesCannotBeFalselyReportedAsOneStreak() {
+        val events = listOf(
+            kill("a", 10, profile = "first-game"),
+            kill("b", 10, profile = "different-game")
+        )
+        val result = GamingHighlightDirector.propose(listOf(video), events)
+        assertEquals(1, result.selected.size)
+        assertEquals(1, result.selected.single().confirmedKills)
+    }
+
+    @Test fun identicalVisualEventRetriesAreDeduplicated() {
+        val original = kill("one", 10)
+        val retry = original.copy(id = "retried")
+        val result = GamingHighlightDirector.propose(listOf(video), listOf(original, retry))
+        assertEquals(1, result.selected.single().confirmedKills)
+        assertTrue(result.rejected.any { it.reason == "duplicate_visual_observation" })
+    }
+
     @Test fun distantKillsAreSeparateHighlights() {
         val result = GamingHighlightDirector.propose(listOf(video),
             listOf(kill("a", 2), kill("b", 22)))
