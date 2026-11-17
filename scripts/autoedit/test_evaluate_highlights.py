@@ -40,6 +40,21 @@ class HighlightEvaluatorTest(unittest.TestCase):
         self.assertEqual(1, r["false_positive"])
         self.assertAlmostEqual(2 / 3, r["precision"])
 
+    def test_nearby_kills_use_maximum_matching_not_greedy_nearest(self):
+        truth = [
+            {"asset_id": "g1", "at_us": 1_000_000, "type": "KILL"},
+            {"asset_id": "g1", "at_us": 1_600_000, "type": "KILL"},
+        ]
+        # First prediction can match either kill; second can match only first.
+        predicted = [
+            {"asset_id": "g1", "at_us": 1_250_000, "type": "CONFIRMED_KILL"},
+            {"asset_id": "g1", "at_us": 750_000, "type": "CONFIRMED_KILL"},
+        ]
+        r = event_metrics(truth, predicted, tolerance_us=500_000)
+        self.assertEqual(2, r["true_positive"])
+        self.assertEqual(0, r["false_positive"])
+        self.assertEqual(0, r["false_negative"])
+
     def test_cross_asset_predictions_cannot_match(self):
         wrong = [dict(self.pred[0], asset_id="different")]
         r = event_metrics(self.truth, wrong)
