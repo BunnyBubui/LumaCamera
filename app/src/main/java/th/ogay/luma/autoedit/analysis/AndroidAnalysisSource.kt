@@ -30,7 +30,7 @@ class AndroidAnalysisSource(
             val out = FloatArray(n); var prev: IntArray? = null
             for (i in 0 until n) {
                 if (cancelled()) throw AnalysisCancelled()
-                val b = r.getScaledFrameAtTime(i * frameStepUs, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, SW, SH) ?: continue
+                val b = small(r, i * frameStepUs, SW, SH) ?: continue
                 val px = IntArray(b.width * b.height); b.getPixels(px, 0, b.width, 0, 0, b.width, b.height); b.recycle()
                 val p = prev
                 if (p != null && p.size == px.size) { var s = 0L; for (k in px.indices) s += abs(luma(px[k]) - luma(p[k])); out[i] = s / 255f / px.size }
@@ -46,10 +46,15 @@ class AndroidAnalysisSource(
         val r = MediaMetadataRetriever()
         return try {
             r.setDataSource(context, uri)
-            val b: Bitmap = r.getScaledFrameAtTime(us, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 320, 180) ?: return null
+            val b: Bitmap = small(r, us, 320, 180) ?: return null
             val px = IntArray(b.width * b.height); b.getPixels(px, 0, b.width, 0, 0, b.width, b.height)
             val f = Frame(b.width, b.height, ByteArray(px.size) { luma(px[it]).toByte() }); b.recycle(); f
         } catch (e: Exception) { null } finally { runCatching { r.release() } }
+    }
+    /** A frame shrunk to [w] x [h] (getScaledFrameAtTime needs API 27, the app supports 23): the full frame is freed at once. */
+    private fun small(r: MediaMetadataRetriever, us: Long, w: Int, h: Int): Bitmap? {
+        val full = r.getFrameAtTime(us, MediaMetadataRetriever.OPTION_CLOSEST_SYNC) ?: return null
+        val out = Bitmap.createScaledBitmap(full, w, h, true); if (out !== full) full.recycle(); return out
     }
     private fun luma(c: Int) = (((c shr 16) and 255) * 77 + ((c shr 8) and 255) * 150 + (c and 255) * 29) shr 8
     private companion object { const val SW = 48; const val SH = 27 }
