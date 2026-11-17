@@ -28,6 +28,7 @@ Multi-kill retention: a streak counts as preserved only when a **single clip** c
 ### Target release gates (not achieved yet)
 
 - **Kill Precision >= 90%**, Recall >= 80%, across supported game profiles.
+- **Minimum sample size:** at least 100 human-labeled kills and 20 annotated multi-kill streaks per release evaluation; tiny perfect samples cannot make the release gate pass.
 - **Multi-kill complete retention >= 95%**, separately measured.
 - Failed/undefined metrics must make an enforced benchmark **fail**, not show green.
 - 0 source-audio unintended mutes; output SFX must not drown out dialogue or game effects.
@@ -43,7 +44,7 @@ Multi-kill retention: a streak counts as preserved only when a **single clip** c
 python -m unittest discover -s scripts/autoedit -p 'test_*.py' -v
 python scripts/autoedit/evaluate_highlights.py --input annotated_gameplay.json \
   --output report.json --enforce --min-precision 0.90 \
-  --min-recall 0.80 --min-streak 0.95
+  --min-recall 0.80 --min-streak 0.95 --min-truth-kills 100 --min-streaks 20
 ```
 
 Do NOT commit any third-party gaming recordings or personal speech without rights/consent. Maintain one report per game profile, resolution and capture condition. The benchmark cannot be green without real human-labeled data.
