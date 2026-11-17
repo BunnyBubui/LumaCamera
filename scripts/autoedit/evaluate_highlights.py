@@ -89,8 +89,8 @@ def event_metrics(
     recall = tp / len(reference) if reference else None
     f1 = (
         2 * precision * recall / (precision + recall)
-        if precision is not None and recall is not None and precision + recall
-        else None
+        if precision is not None and recall is not None and precision + recall > 0
+        else 0.0 if precision is not None and recall is not None else None
     )
     return {
         "truth_kills": len(reference),
@@ -179,10 +179,14 @@ def enforce_gate(
     min_precision: float = 0.90,
     min_recall: float = 0.80,
     min_streak_retention: float = 0.95,
+    min_truth_kills: int = 100,
+    min_streaks: int = 20,
 ) -> tuple[bool, list[str]]:
     for threshold in (min_precision, min_recall, min_streak_retention):
         if not 0 <= threshold <= 1:
             raise ValueError("Thresholds must be in [0,1]")
+    if min_truth_kills < 1 or min_streaks < 1:
+        raise ValueError("Minimum annotation counts must be >= 1")
     values = {
         "precision": (report["kill_detection"]["precision"], min_precision),
         "recall": (report["kill_detection"]["recall"], min_recall),
@@ -194,6 +198,16 @@ def enforce_gate(
         for name, (value, limit) in values.items()
         if value is None or value < limit
     ]
+    if report["kill_detection"]["truth_kills"] < min_truth_kills:
+        failures.append(
+            "insufficient truth kills: " +
+            str(report["kill_detection"]["truth_kills"]) + " < " + str(min_truth_kills)
+        )
+    if report["multi_kill"]["annotated_multi_kill_streaks"] < min_streaks:
+        failures.append(
+            "insufficient annotated streaks: " +
+            str(report["multi_kill"]["annotated_multi_kill_streaks"]) + " < " + str(min_streaks)
+        )
     return not failures, failures
 
 
@@ -206,10 +220,15 @@ def main() -> int:
     p.add_argument("--min-precision", type=float, default=0.90)
     p.add_argument("--min-recall", type=float, default=0.80)
     p.add_argument("--min-streak", type=float, default=0.95)
+    p.add_argument("--min-truth-kills", type=int, default=100)
+    p.add_argument("--min-streaks", type=int, default=20)
     args = p.parse_args()
     report = evaluate(json.loads(args.input.read_text(encoding="utf-8")), args.tolerance_us)
     if args.enforce:
-        passed, failures = enforce_gate(report, args.min_precision, args.min_recall, args.min_streak)
+        passed, failures = enforce_gate(
+            report, args.min_precision, args.min_recall, args.min_streak,
+            args.min_truth_kills, args.min_streaks
+        )
         report["quality_gate"] = {"passed": passed, "failures": failures}
     output = json.dumps(report, indent=2, ensure_ascii=False, sort_keys=True)
     if args.output:
