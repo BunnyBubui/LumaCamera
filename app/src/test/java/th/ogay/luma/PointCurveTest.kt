@@ -27,7 +27,7 @@ class PointCurveTest {
         assertTrue(PointCurve.isIdentity(p, 0))
     }
     @Test fun curveNeverOvershootsBetweenPoints() {
-        val p = PointCurve.identity(); PointCurve.add(p, 0, 0.5f); p[4] = 0.9f; PointCurve.add(p, 0, 0.25f); p[2] = 0.2f
+        val p = PointCurve.identity(); p[2] = 0.2f; p[4] = 0.9f; p[6] = 0.95f; PointCurve.add(p, 0, 0.125f)
         var last = -1f; for (i in 0..200) { val v = PointCurve.eval(p, 0, i / 200f); assertTrue(v in 0f..1f); assertTrue(v >= last - 1e-5f); last = v }
     }
     @Test fun oldFivePointCurvesUpgradeToTheSameCurve() {
