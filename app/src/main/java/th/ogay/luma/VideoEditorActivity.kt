@@ -75,7 +75,7 @@ class VideoEditorActivity : ComponentActivity() {
         private val CROP_ORDER = listOf(0, 12, 1, 2, 6, 8, 4, 3, 7, 9, 10, 5, 11)
         private val PLACES = listOf("บน", "กลาง", "ล่าง")
         private val TEXT_COLORS = intArrayOf(Color.WHITE, Color.BLACK, Glass.ACCENT, 0xffffd60a.toInt(), 0xff0a84ff.toInt())
-        private val TRANSITIONS = listOf("ตัดตรง", "จางดำ", "แฟลชขาว", "ซูมเข้า", "เลื่อน", "ปาด", "เบลอ")
+        private val TRANSITIONS = listOf("ตัดตรง", "จางดำ", "แฟลชขาว", "ซูมเข้า", "เลื่อน", "ปาด", "เบลอ", "ซ้อนทับ")
         private val STICKERS = listOf("😀", "😂", "😍", "🥳", "😎", "🔥", "❤️", "✨", "👍", "🎉", "⭐", "🌸", "☀️", "🌙", "📍", "💯")
         private const val CLIPS = "M3 6h7v12H3z M14 6h7v12h-7z"
         private const val JOIN = "M3 5h6v14H3z M15 5h6v14h-6z M10 12h4 M12.5 10l1.5 2-1.5 2"
@@ -3024,7 +3024,7 @@ class VideoEditorActivity : ComponentActivity() {
         }
         Glass.tick(timeline); showClipOnBar(); trim.playhead = trim.playhead.coerceIn(trim.start, trim.end); showTime(); if (tool == 10) showTool(10, false)
     }
-    private val TRANSITION_ICONS = listOf(EditorKit.SCISSORS, "M4 12h16 M4 6h16 M4 18h16", "M12 3v4 M12 17v4 M3 12h4 M17 12h4 M6 6l2.5 2.5 M15.5 15.5L18 18 M18 6l-2.5 2.5 M8.5 15.5L6 18", "M10 4H4v6 M14 4h6v6 M10 20H4v-6 M14 20h6v-6", "M4 12h12 M12 7l5 5-5 5 M20 5v14", "M4 4h8v16H4z M15 4v16 M19 4v16", "M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16 M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8")
+    private val TRANSITION_ICONS = listOf(EditorKit.SCISSORS, "M4 12h16 M4 6h16 M4 18h16", "M12 3v4 M12 17v4 M3 12h4 M17 12h4 M6 6l2.5 2.5 M15.5 15.5L18 18 M18 6l-2.5 2.5 M8.5 15.5L6 18", "M10 4H4v6 M14 4h6v6 M10 20H4v-6 M14 20h6v-6", "M4 12h12 M12 7l5 5-5 5 M20 5v14", "M4 4h8v16H4z M15 4v16 M19 4v16", "M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16 M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8", "M3 7h12v10H3z M9 7h12v10H9z")
     /** The change into clip [k] (0 = main): its own pick, or the default for the whole video. */
     private fun joinOf(k: Int) = if (k == 0) mainJoin else extras.getOrNull(k - 1)?.join ?: -1
     private fun joinMsOf(k: Int) = if (k == 0) mainJoinMs else extras.getOrNull(k - 1)?.joinMs ?: 0L
@@ -3700,7 +3700,7 @@ class VideoEditorActivity : ComponentActivity() {
         return VideoEdit.composition(VideoEditSpec(f?.let { Uri.fromFile(it.file) } ?: source, at(from), at(to), if (turns % 2 == 1) vh else vw, if (turns % 2 == 1) vw else vh,
         speed * n, cropRatio(), caption, place, textColor, textBig, if (looked()) colour() else null, music, f == null && hasAudio && keepSound && allSpeeds().all { it in SOUND_MIN..SOUND_MAX },
         turns, mirror, volume, musicVolume, if (cut) at(cutFrom) else -1L, if (cut) at(cutTo) else -1L, textBox,
-        extras.map { VideoPart(it.uri, it.from, it.to, it.speed, it.muted, it.volume, it.curve, it.motion, it.join, it.joinMs) }, if (extras.isEmpty()) 0 else transition, stickers.toList(), clampedLayers(), shrinkShort, shrinkFps, mainPos(), fx[0], fx[1], fx[2], mainMotion = mainMotion, mainJoin = mainJoin, mainJoinMs = mainJoinMs, grade = if (grade.active()) gradeCube(33) else null, audio = audioSettings(), mainMuted = mainMuted, mainCurve = if (f == null) mainCurve else null, audioOnly = audioOnly, duck = duck, audioHz = if (audioOnly) soundHz else 0, audioMono = audioOnly && soundMono), applicationContext)
+        extras.map { VideoPart(it.uri, it.from, it.to, it.speed, it.muted, it.volume, it.curve, it.motion, it.join, it.joinMs, it.duration) }, if (extras.isEmpty()) 0 else transition, stickers.toList(), clampedLayers(), shrinkShort, shrinkFps, mainPos(), fx[0], fx[1], fx[2], mainMotion = mainMotion, mainJoin = mainJoin, mainJoinMs = mainJoinMs, mainSourceMs = if (f == null) duration else 0L, grade = if (grade.active()) gradeCube(33) else null, audio = audioSettings(), mainMuted = mainMuted, mainCurve = if (f == null) mainCurve else null, audioOnly = audioOnly, duck = duck, audioHz = if (audioOnly) soundHz else 0, audioMono = audioOnly && soundMono), applicationContext)
     }
 
     /** Export problems stay on screen until dismissed, so the reason can be read (and reported). */
