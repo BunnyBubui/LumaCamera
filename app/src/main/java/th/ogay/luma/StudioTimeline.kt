@@ -38,6 +38,18 @@ class StudioTimeline(context: Context) : View(context) {
     var selected = 0
     /** One entry per clip: null for the first, "" for a plain cut, otherwise the name of the change into that clip. */
     var seams: List<String?> = emptyList(); set(v) { field = v; invalidate() }
+    /** Per clip like [seams]: the icon path of the change, and how many ms of the first clip's end and of this clip's start it covers (shown as a band across the join). */
+    var seamIcons: List<String?> = emptyList(); set(v) { field = v; invalidate() }
+    var seamSpans: List<Pair<Long, Long>> = emptyList(); set(v) { field = v; invalidate() }
+    private val iconPaths = HashMap<String, Path>()
+    private fun iconPath(data: String) = iconPaths.getOrPut(data) { androidx.core.graphics.PathParser.createPathFromPathData(data) ?: Path() }
+    /** Where the middle of the seam button is: the middle of the band that the change covers, or the cut itself for a plain cut. */
+    private fun seamCenter(i: Int): Float {
+        val cut = startOf(i); val sp = seamSpans.getOrNull(i)
+        if (seams.getOrNull(i).isNullOrEmpty() || sp == null) return x(cut)
+        val o = minOf(sp.first, clips[i - 1].len / 2); val n = minOf(sp.second, clips[i].len / 2)
+        return (x(cut - o) + x(cut + n)) / 2f
+    }
     /** The seam button before the clip at this index was tapped. */
     var onSeam: (Int) -> Unit = {}
     /** Markers the user set, in ms of the finished video. */
@@ -72,6 +84,7 @@ class StudioTimeline(context: Context) : View(context) {
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x99ffffff.toInt(); textSize = 9.5f * d }
     private val accent = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Glass.ACCENT }
     private val stroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Glass.ACCENT; style = Paint.Style.STROKE; strokeWidth = 2.5f * d }
+    private val iconStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xff101014.toInt(); style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
     private val clipPath = Path(); private val rect = RectF(); private val src = Rect(); private val dst = RectF()
 
     private companion object { const val IDLE = 0; const val SCRUB = 1; const val TRIM_L = 2; const val TRIM_R = 3; const val MOVE = 4; const val ZOOM = 5; const val BAR = 6; const val BAR_L = 7; const val BAR_R = 8 }
@@ -110,10 +123,10 @@ class StudioTimeline(context: Context) : View(context) {
     private fun x(t: Long) = width / 2f + (t - ph) * pxPerMs
     private fun startOf(i: Int): Long { var t = 0L; for (k in 0 until i) t += clips[k].len; return t }
     private fun clipAt(px: Float): Int { var t = 0L; clips.forEachIndexed { i, c -> if (px >= x(t) && px < x(t + c.len)) return i; t += c.len }; return -1 }
-    private fun seamHalf(i: Int) = (if (seams.getOrNull(i).isNullOrEmpty()) 9f else (textPaint.measureText(seams[i]!!) / d / 2f + 8f)) * d
+    private fun seamHalf(i: Int) = 13f * d
     private fun seamAt(px: Float, py: Float): Int? {
-        if (seams.size != clips.size || py > rulerH + clipH * 0.6f) return null
-        for (i in 1 until clips.size) { if (abs(px - x(startOf(i))) <= seamHalf(i) + 4 * d) return i }
+        if (seams.size != clips.size || py > rulerH + clipH + 6 * d) return null
+        for (i in 1 until clips.size) { if (abs(px - seamCenter(i)) <= seamHalf(i) + 4 * d) return i }
         return null
     }
     private fun inClipRow(y: Float) = y >= rulerH - 6 * d && y <= rulerH + clipH + 6 * d
@@ -248,12 +261,24 @@ class StudioTimeline(context: Context) : View(context) {
                 c.drawRoundRect(x0 - hw * 0.4f, top + 6 * d, x0 + hw * 0.6f, bottom - 6 * d, hw / 2, hw / 2, accent)
                 c.drawRoundRect(x1 - hw * 0.6f, top + 6 * d, x1 + hw * 0.4f, bottom - 6 * d, hw / 2, hw / 2, accent)
             }
-            // Seam button above the join: "+" for a plain cut, the name of the change when one is set.
+            // The change across the join: a band from how far it reaches into the first clip to how far it reaches into this one, with its button in the middle ("+" for a plain cut).
             if (i > 0 && seams.size == clips.size) {
-                val sx = x0 - 1 * d; val name = seams[i].orEmpty(); val hw = seamHalf(i); val cy = top + 1 * d
-                paint.color = 0xe6101014.toInt(); c.drawRoundRect(sx - hw, cy - 9 * d, sx + hw, cy + 9 * d, 9 * d, 9 * d, paint)
-                if (name.isEmpty()) { paint.color = Color.WHITE; val a2 = 4.5f * d; c.drawRoundRect(sx - a2, cy - 0.8f * d, sx + a2, cy + 0.8f * d, d, d, paint); c.drawRoundRect(sx - 0.8f * d, cy - a2, sx + 0.8f * d, cy + a2, d, d, paint) }
-                else { textPaint.color = Color.WHITE; textPaint.textAlign = Paint.Align.CENTER; c.drawText(name, sx, cy + 3.4f * d, textPaint); textPaint.textAlign = Paint.Align.LEFT; textPaint.color = 0x99ffffff.toInt() }
+                val cut = x0; val name = seams[i].orEmpty(); val hw = seamHalf(i); val cy = (top + bottom) / 2
+                val sp = seamSpans.getOrNull(i)
+                if (name.isNotEmpty() && sp != null) {
+                    val bl = x(startOf(i) - minOf(sp.first, clips[i - 1].len / 2)); val br = x(startOf(i) + minOf(sp.second, clip.len / 2))
+                    paint.color = Glass.ACCENT; paint.alpha = 95; c.drawRoundRect(bl, top, br, bottom, 4 * d, 4 * d, paint)
+                    paint.alpha = 255; paint.color = Glass.ACCENT; c.drawRect(bl, top, bl + 2 * d, bottom, paint); c.drawRect(br - 2 * d, top, br, bottom, paint)
+                    // The cut itself, thin, so it is clear where the clips meet.
+                    paint.color = 0xccffffff.toInt(); c.drawRect(cut - 0.5f * d, top, cut + 0.5f * d, bottom, paint)
+                }
+                val sx = seamCenter(i)
+                paint.color = if (name.isEmpty()) 0xe6101014.toInt() else Color.WHITE
+                c.drawRoundRect(sx - hw, cy - hw, sx + hw, cy + hw, 7 * d, 7 * d, paint)
+                if (name.isEmpty()) { paint.color = Color.WHITE; val a2 = 5f * d; c.drawRoundRect(sx - a2, cy - 0.9f * d, sx + a2, cy + 0.9f * d, d, d, paint); c.drawRoundRect(sx - 0.9f * d, cy - a2, sx + 0.9f * d, cy + a2, d, d, paint) }
+                else seamIcons.getOrNull(i)?.let { data ->
+                    c.save(); val k = (hw * 1.4f) / 24f; c.translate(sx - 12 * k, cy - 12 * k); c.scale(k, k)
+                    iconStroke.strokeWidth = 2f; c.drawPath(iconPath(data), iconStroke); c.restore() }
             }
         }
         addRect(addBox)

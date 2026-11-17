@@ -254,7 +254,7 @@ class VideoEditorActivity : ComponentActivity() {
             while (lanes.size <= at) lanes += mutableListOf<StudioTimeline.Bar>()
             lanes[at] += bar
         }
-        timeline.clips = list; timeline.lanes = lanes; timeline.selected = if (barActive) -1 else seq.indexOf(playIndex).coerceAtLeast(0); timeline.seams = if (extras.isEmpty()) emptyList() else seamLabels(); timeline.marks = markers
+        timeline.clips = list; timeline.lanes = lanes; timeline.selected = if (barActive) -1 else seq.indexOf(playIndex).coerceAtLeast(0); timeline.seams = if (extras.isEmpty()) emptyList() else seamLabels(); timeline.seamIcons = if (extras.isEmpty()) emptyList() else order().map { k -> TRANSITION_ICONS.getOrNull(kindFor(k)) }; timeline.seamSpans = if (extras.isEmpty()) emptyList() else order().map { k -> VideoEdit.joinOutMs(joinMsOf(k)) to VideoEdit.joinInMs(joinMsOf(k)) }; timeline.marks = markers
         timeline.selectedBar = if (barActive && layerPick in layers.indices) layerPick else -2
         if (lanes.size != laneCount) { laneCount = lanes.size; val full = dp(68) + (laneDp() * resources.displayMetrics.density * lanes.size).toInt(); timeline.layoutParams = timeline.layoutParams.apply { height = full }
             timelineScroll.layoutParams = timelineScroll.layoutParams.apply { height = minOf(full, dp(68) + (laneDp() * resources.displayMetrics.density * 3).toInt()) } }
@@ -361,7 +361,7 @@ class VideoEditorActivity : ComponentActivity() {
             } else if (playIndex > 0 && !switching) extras.getOrNull(playIndex - 1)?.let { e ->
                 if (pos >= e.to - 30) playClip(nextOf(playIndex)) else { maybeOut(pos, e.to); trim.playhead = pos.coerceIn(e.from, e.to) } }
             showTime(); syncLayerSound(true); showMotion(pos)
-            if (++tickCount % 30 == 0) preloadNext()
+            if (++tickCount % 15 == 0) preloadNext()
         } else if (prepared && ++tickCount % 4 == 0) syncLayerSound(false)
         handler.postDelayed(this, 33)
     } }
@@ -638,6 +638,9 @@ class VideoEditorActivity : ComponentActivity() {
         playIcon = IconView(this, "M9 6.5v11l9-5.5z", 2f)
         transport.addView(FrameLayout(this).apply { background = glass(24, 0x40ffffff); isClickable = true; contentDescription = "เล่นหรือหยุด"; glassTouch(); setOnClickListener { togglePlay() }
             addView(playIcon, FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER)) }, dp(48), dp(48))
+        // Start and end of the whole video.
+        transport.addView(EditorKit.round(this, "M7 5v14 M18 6l-8 6 8 6z", "ไปต้นวิดีโอ") { if (player?.isPlaying == true) togglePlay(); val (k, at) = locate(0L); jumpTo(k, at, true) }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { leftMargin = dp(6) })
+        transport.addView(EditorKit.round(this, "M17 5v14 M6 6l8 6-8 6z", "ไปท้ายวิดีโอ") { if (player?.isPlaying == true) togglePlay(); val (k, at) = locate(totalOut()); jumpTo(k, (at - 40).coerceAtLeast(clipFrom(k)), true) }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { leftMargin = dp(6) })
         timeLabel = text("", 13f, Glass.TEXT2).apply { setPadding(dp(12), 0, 0, 0) }
         transport.addView(timeLabel, LinearLayout.LayoutParams(0, -2, 1f))
         timeLabel.maxLines = 2
@@ -831,7 +834,7 @@ class VideoEditorActivity : ComponentActivity() {
             val ok = runCatching { np.setOnSeekCompleteListener(null); np.setOnPreparedListener(null); np.setOnErrorListener(null); np.setSurface(s); np.setOnCompletionListener { onClipEnd() } }.isSuccess
             if (ok) {
                 player = np; prepared = true; applySound(); layoutVideo(); arrived(); startIfAsked(np)
-                handler.post(tick); handler.postDelayed({ preloadNext() }, 250)
+                handler.post(tick); handler.postDelayed({ preloadNext() }, 60)
                 return
             }
             np.runCatching { release() }
@@ -847,7 +850,7 @@ class VideoEditorActivity : ComponentActivity() {
                     val from = clipFrom(playIndex); if (from > 0) exactSeek(mp, from)
                     if (pendingSeek >= 0) { seekTo(pendingSeek.toInt()); pendingSeek = -1 }; applySound(); layoutVideo(); arrived()
                     startIfAsked(mp)
-                    handler.postDelayed({ preloadNext() }, 250)
+                    handler.postDelayed({ preloadNext() }, 60)
                 }
                 setOnCompletionListener { onClipEnd() }
                 prepareAsync()
@@ -857,6 +860,7 @@ class VideoEditorActivity : ComponentActivity() {
     }
     /** Moves the preview to clip [k] and keeps playing, with the chosen transition drawn over the change. */
     private fun playClip(k: Int, play: Boolean = true) {
+        if (play && player?.isPlaying == true && continueInto(k)) return
         val wasPlaying = play && (player?.isPlaying == true || autoPlay)
         autoPlay = wasPlaying
         // Back at the start after the last clip: the music starts again too.
@@ -865,6 +869,22 @@ class VideoEditorActivity : ComponentActivity() {
         val go = Runnable { playIndex = k; switching = false; showClipOnBar(); trim.playhead = trim.start; openPlayer(); showTime() }
         // The way out was already drawn over the end of the clip that just played (see startOut), so the next clip takes over at once.
         go.run()
+    }
+    /**
+     * Two clips cut from the same file that follow each other (a split) need no new player: the one playing simply goes on, and the
+     * editor takes it as the next clip. Opening a player at the cut is what made the preview stop for a moment at every join.
+     */
+    private fun continueInto(k: Int): Boolean {
+        if (!prepared || k == playIndex || k == order().first() || clipUri(k) != clipUri(playIndex)) return false
+        val curEnd = if (playIndex == 0) end else extras[playIndex - 1].to
+        if (abs(clipFrom(k) - curEnd) > 60) return false
+        fun sp(i: Int) = if (i == 0) speed else extras[i - 1].speed
+        fun curve(i: Int) = if (i == 0) mainCurve else extras[i - 1].curve
+        if (sp(k) != 1f || sp(playIndex) != 1f || curve(k) != null || curve(playIndex) != null) return false
+        if ((playIndex == 0 || k == 0) && cutValid()) return false
+        playIndex = k; showClipOnBar(); applySound(); arrived(); showTime()
+        handler.postDelayed({ preloadNext() }, 60)
+        return true
     }
     /** Starts the way out of the clip being played, [ms] before its end, when the change into clip [k] has a part on the first clip's end. */
     private fun maybeOut(pos: Long, endMs: Long) {
