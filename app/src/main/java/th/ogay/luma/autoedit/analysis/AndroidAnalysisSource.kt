@@ -15,7 +15,9 @@ import kotlin.math.abs
 class AndroidAnalysisSource(
     private val context: Context, private val uri: Uri, override val assetId: String, override val durationUs: Long,
     override val width: Int, override val height: Int, override val rotationDegrees: Int = 0,
-    override val frameStepUs: Long = 250_000, private val cancelled: () -> Boolean = { false }
+    override val frameStepUs: Long = 500_000, private val cancelled: () -> Boolean = { false },
+    /** Overall progress 0..1 and what is being read; frames take the first 70 %, sound the rest. */
+    private val report: (Float, String) -> Unit = { _, _ -> }
 ) : AnalysisSource {
     override val loudnessStepUs: Long = AudioPeaks.STEP_MS * 1000L
     private var diffs: FloatArray? = null; private var diffsDone = false
@@ -30,6 +32,7 @@ class AndroidAnalysisSource(
             val out = FloatArray(n); var prev: IntArray? = null
             for (i in 0 until n) {
                 if (cancelled()) throw AnalysisCancelled()
+                if (i % 4 == 0) report(0.7f * i / n.coerceAtLeast(1), "อ่านภาพ")
                 val b = small(r, i * frameStepUs, SW, SH) ?: continue
                 val px = IntArray(b.width * b.height); b.getPixels(px, 0, b.width, 0, 0, b.width, b.height); b.recycle()
                 val p = prev
@@ -40,7 +43,7 @@ class AndroidAnalysisSource(
         } catch (e: AnalysisCancelled) { throw e } catch (e: Exception) { null } finally { runCatching { r.release() } }
         return diffs
     }
-    override fun loudness(): FloatArray? = runCatching { AudioPeaks.getOrDecode(context, uri).takeIf { it.isNotEmpty() } }.getOrNull()
+    override fun loudness(): FloatArray? = runCatching { report(0.7f, "ฟังเสียง"); AudioPeaks.range(context, uri, 0, durationUs / 1000) { f -> report(0.7f + 0.3f * f, "ฟังเสียง") }.takeIf { it.isNotEmpty() } }.getOrNull()
     override fun speechSpans(): List<LongRange>? = null
     override fun frameAt(us: Long): Frame? {
         val r = MediaMetadataRetriever()

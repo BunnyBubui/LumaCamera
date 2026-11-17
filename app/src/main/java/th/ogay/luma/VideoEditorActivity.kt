@@ -1599,7 +1599,7 @@ class VideoEditorActivity : ComponentActivity() {
         /** What a step just found, shown in the box under the heading. */
         fun found(text: String) = runOnUiThread { if (run == autoRun && autoUi === ui) ui.found(text) }
         fun label(i: Int) = if (srcs.size > 1) "คลิป ${i + 1} จาก ${srcs.size}" else "คลิปนี้"
-        luma.readIo.execute { try {
+        luma.analysisIo.execute { try {
             val stop = { isDestroyed || run != autoRun }
             class Stopped : RuntimeException()
             // 1. Loudness of every clip (0–20 % of the bar).
@@ -1730,11 +1730,13 @@ class VideoEditorActivity : ComponentActivity() {
             col.addView(GlassDialog.actions(this, "ยกเลิก" to { cancel.cancel(); gamingRun++; analysing = false; sh.close() }))
         }
         val uri = source; val durUs = duration * 1000; val w = videoW; val h = videoH; val from = start * 1000; val to = end * 1000
-        luma.readIo.execute {
+        // Its own thread: the shared single-thread reader also loads thumbnails and waveforms, and must not be held for a minute.
+        Thread {
             try {
-                val src = th.ogay.luma.autoedit.analysis.AndroidAnalysisSource(this, uri, "main", durUs, w, h, 0, cancelled = { cancel.cancelled })
+                val src = th.ogay.luma.autoedit.analysis.AndroidAnalysisSource(this, uri, "main", durUs, w, h, 0, cancelled = { cancel.cancelled },
+                    report = { f, what -> runOnUiThread { if (run == gamingRun) { bar.fraction = f; label.text = what + " " + (f * 100).toInt() + "%" } } })
                 val pipeline = th.ogay.luma.autoedit.analysis.AnalysisPipeline(listOf(th.ogay.luma.autoedit.analysis.SceneAnalyzer(), th.ogay.luma.autoedit.analysis.AudioEventAnalyzer(), th.ogay.luma.autoedit.analysis.HudAnalyzer()))
-                val result = pipeline.run(src, cancel) { f, name -> runOnUiThread { if (run == gamingRun) { bar.fraction = f; label.text = "กำลังวิเคราะห์ $name" } } }
+                val result = pipeline.run(src, cancel)
                 val events = result.events.filter { it.sourceEndUs > from && it.sourceStartUs < to }
                 val asset = th.ogay.luma.autoedit.core.MediaAssetRef("main", uri.toString(), durUs, w.coerceAtLeast(1), h.coerceAtLeast(1))
                 val proposal = th.ogay.luma.autoedit.directors.GamingHighlightDirector.propose(listOf(asset), events)
@@ -1745,7 +1747,7 @@ class VideoEditorActivity : ComponentActivity() {
                 }
             } catch (e: th.ogay.luma.autoedit.analysis.AnalysisCancelled) { runOnUiThread { if (run == gamingRun) analysing = false }
             } catch (e: Throwable) { runOnUiThread { if (run == gamingRun) { analysing = false; sheet.close(); notice("วิเคราะห์ไม่สำเร็จ ${e.message ?: ""}") } } }
-        }
+        }.start()
     }
     /** The proposed highlights as a checklist; nothing changes until "ใช้ที่เลือก". */
     private fun gamingReview(proposal: th.ogay.luma.autoedit.directors.GamingEditProposal, eventCount: Int, notes: Map<String, String>) {

@@ -185,6 +185,8 @@ class LumaApp : Application(), Configuration.Provider {
     val fileIo = Executors.newSingleThreadExecutor()
     /** Reading lists for screens, kept off [fileIo] so saving a capture never waits behind a gallery refresh. */
     val readIo = Executors.newSingleThreadExecutor()
+    /** Long analysis jobs (auto edit) get their own thread, so thumbnails and waveforms on [readIo] are not stuck behind them, nor they behind those. */
+    val analysisIo = Executors.newSingleThreadExecutor()
     private val aiExecutor = Executors.newSingleThreadExecutor()
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder().setExecutor(aiExecutor).build()
