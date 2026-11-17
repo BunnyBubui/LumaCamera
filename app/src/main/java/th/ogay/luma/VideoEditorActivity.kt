@@ -323,7 +323,7 @@ class VideoEditorActivity : ComponentActivity() {
 
     // ---- Views ----
     private lateinit var stage: FrameLayout
-    private lateinit var texture: TextureView
+    private lateinit var texture: TextureView; private lateinit var texture2: TextureView; private var surface2: Surface? = null
     private lateinit var mask: CropMask
     private lateinit var captionView: TextView
     private lateinit var playIcon: IconView
@@ -354,12 +354,14 @@ class VideoEditorActivity : ComponentActivity() {
             val pos = p.currentPosition.toLong()
             followCurve(p, pos)
             if (playIndex == 0 && !switching) {
-                if (pos >= end - 30) { if (extras.isNotEmpty()) playClip(nextOf(0)) else { p.seekTo(start.toInt()); musicPlayer?.seekTo(0) } }
+                if (extras.isNotEmpty() && lapTick(pos, end)) trim.playhead = pos.coerceIn(start, end)
+                else if (pos >= end - 30) { if (extras.isNotEmpty()) playClip(nextOf(0)) else { p.seekTo(start.toInt()); musicPlayer?.seekTo(0) } }
                 else if (extras.isNotEmpty() && pos < end) maybeOut(pos, end)
                 else if (cutValid() && pos in cutFrom until cutTo) p.seekTo(cutTo.toInt())
                 trim.playhead = pos.coerceIn(start, end)
             } else if (playIndex > 0 && !switching) extras.getOrNull(playIndex - 1)?.let { e ->
-                if (pos >= e.to - 30) playClip(nextOf(playIndex)) else { maybeOut(pos, e.to); trim.playhead = pos.coerceIn(e.from, e.to) } }
+                if (lapTick(pos, e.to)) trim.playhead = pos.coerceIn(e.from, e.to)
+                else if (pos >= e.to - 30) playClip(nextOf(playIndex)) else { maybeOut(pos, e.to); trim.playhead = pos.coerceIn(e.from, e.to) } }
             showTime(); syncLayerSound(true); showMotion(pos)
             if (++tickCount % 15 == 0) preloadNext()
         } else if (prepared && ++tickCount % 4 == 0) syncLayerSound(false)
@@ -621,6 +623,15 @@ class VideoEditorActivity : ComponentActivity() {
         stage = FrameLayout(this).apply { clipChildren = true }
         texture = TextureView(this)
         stage.addView(texture, FrameLayout.LayoutParams(0, 0, Gravity.CENTER))
+        // The second picture of an overlapping change: the clip that arrives is drawn here, over the first, while both play.
+        texture2 = TextureView(this).apply { alpha = 0f; isClickable = false; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
+        stage.addView(texture2, FrameLayout.LayoutParams(0, 0, Gravity.CENTER))
+        texture2.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+            override fun onSurfaceTextureAvailable(s: SurfaceTexture, w: Int, h: Int) { surface2 = Surface(s) }
+            override fun onSurfaceTextureSizeChanged(s: SurfaceTexture, w: Int, h: Int) {}
+            override fun onSurfaceTextureDestroyed(s: SurfaceTexture): Boolean { cancelLap(); surface2?.release(); surface2 = null; return true }
+            override fun onSurfaceTextureUpdated(s: SurfaceTexture) {}
+        }
         fxView = FxView(this).also { stage.addView(it, -1, -1) }
         mask = CropMask(this); stage.addView(mask, -1, -1)
         captionView = text("", 20f, Glass.TEXT, true).apply { gravity = Gravity.CENTER; maxLines = 3; setShadowLayer(6f, 0f, 2f, 0x99000000.toInt()); importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
@@ -795,22 +806,25 @@ class VideoEditorActivity : ComponentActivity() {
     // ---- The next clip, opened ahead of time ----
     // Opening a file takes a few tenths of a second; done at the moment of the cut it showed as a hitch at every join.
     // So while one clip plays, the next one is opened and moved to its first frame without a screen; at the cut it only takes the screen over.
-    private var nextPlayer: MediaPlayer? = null; private var nextFor = -1; private var nextFrom = -1L; private var nextUri: Uri? = null; private var nextReady = false
+    private var nextLead = 0L; private var nextPlayer: MediaPlayer? = null; private var nextFor = -1; private var nextFrom = -1L; private var nextUri: Uri? = null; private var nextReady = false
     private fun clipUri(k: Int): Uri = if (k == 0) source else extras.getOrNull(k - 1)?.uri ?: source
     private fun clipFrom(k: Int): Long = if (k == 0) start else extras.getOrNull(k - 1)?.from ?: 0L
     private fun exactSeek(mp: MediaPlayer, ms: Long) { if (android.os.Build.VERSION.SDK_INT >= 26) mp.seekTo(ms, MediaPlayer.SEEK_CLOSEST) else mp.seekTo(ms.toInt()) }
     private fun dropNext() { nextPlayer?.runCatching { release() }; nextPlayer = null; nextFor = -1; nextReady = false }
     private fun preloadNext() {
+        if (lapNext >= 0) return
         if (isDestroyed || surface == null || extras.isEmpty()) { dropNext(); return }
         val k = nextOf(playIndex); if (k == playIndex) { dropNext(); return }
         val uri = clipUri(k); val from = clipFrom(k)
-        if (nextPlayer != null && nextFor == k && nextFrom == from && nextUri == uri) return
-        dropNext(); nextFor = k; nextFrom = from; nextUri = uri
+        // An overlapping change shows the next clip from a little before its start.
+        val lead = lapPlan(playIndex, k)?.before ?: 0L
+        if (nextPlayer != null && nextFor == k && nextFrom == from && nextUri == uri && nextLead == lead) return
+        dropNext(); nextFor = k; nextFrom = from; nextUri = uri; nextLead = lead
         val mp = MediaPlayer(); nextPlayer = mp
         runCatching {
             mp.setDataSource(this, uri)
             mp.setOnSeekCompleteListener { if (nextPlayer === it) nextReady = true }
-            mp.setOnPreparedListener { if (nextPlayer === it) { if (from > 0) exactSeek(it, from) else nextReady = true } }
+            mp.setOnPreparedListener { if (nextPlayer === it) { if (from - lead > 0) exactSeek(it, from - lead) else nextReady = true } }
             mp.setOnErrorListener { it, _, _ -> if (nextPlayer === it) dropNext(); true }
             mp.prepareAsync()
         }.onFailure { dropNext() }
@@ -820,14 +834,107 @@ class VideoEditorActivity : ComponentActivity() {
         autoPlay = false; val sp = if (playIndex == 0) speed else extras.getOrNull(playIndex - 1)?.speed ?: 1f
         if (sp != 1f) runCatching { mp.playbackParams = mp.playbackParams.setSpeed(sp) }; mp.start(); musicPlayer?.runCatching { start() }; playIcon.path = "M8 6v12 M16 6v12"
     }
-    private fun onClipEnd() { if (playIndex == 0 && extras.isEmpty()) player?.seekTo(start.toInt()) else playClip(nextOf(playIndex)) }
+    // ---- Overlapping change: the next clip plays on a second picture over this one, and takes over when the change is done ----
+    private class LapPlan(val before: Long, val after: Long)
+    private var lapNext = -1; private var lapPlayer: MediaPlayer? = null; private var lapPlanNow: LapPlan? = null
+    /** How the change from clip [from] into clip [to] overlaps: ms of [to] shown before the cut and ms of [from] shown after it; null when it does not (or cannot) overlap. Same rules as the export. */
+    private fun lapPlan(from: Int, to: Int): LapPlan? {
+        if (extras.isEmpty() || to == from || to == order().first() || kindFor(to) != VideoEdit.OVERLAP) return null
+        fun sp(i: Int) = if (i == 0) speed else extras.getOrNull(i - 1)?.speed ?: 1f
+        fun curve(i: Int) = if (i == 0) mainCurve else extras.getOrNull(i - 1)?.curve
+        if (sp(from) != 1f || sp(to) != 1f || curve(from) != null || curve(to) != null || cutValid()) return null
+        val packed = joinMsOf(to)
+        val endA = if (from == 0) end else extras[from - 1].to; val endB = if (to == 0) end else extras[to - 1].to
+        val srcA = if (from == 0) duration else extras[from - 1].duration
+        val before = minOf(VideoEdit.joinOutMs(packed), (endA - clipFrom(from)) / 2, clipFrom(to))
+        val after = minOf(VideoEdit.joinInMs(packed), (endB - clipFrom(to)) / 2, (srcA - endA).coerceAtLeast(0))
+        return if (before + after < 50) null else LapPlan(before, after)
+    }
+    private fun clipSoundLevel(k: Int) = if (keepSound && !isMuted(k) && recorder == null) clipVolume(k).coerceAtMost(1f) else 0f
+    /** Called every tick while a clip plays; true while the overlapping change owns the end of this clip. */
+    private fun lapTick(pos: Long, endMs: Long): Boolean {
+        val running = lapPlanNow
+        if (lapNext >= 0 && running != null) {
+            val k = ((pos - (endMs - running.before)).toFloat() / (running.before + running.after).coerceAtLeast(1)).coerceIn(0f, 1f)
+            texture2.alpha = k
+            val a = clipSoundLevel(playIndex) * (1 - k); val b = clipSoundLevel(lapNext) * k
+            player?.runCatching { setVolume(a, a) }; lapPlayer?.runCatching { setVolume(b, b) }
+            if (pos >= endMs + running.after - 20) finishLap()
+            return true
+        }
+        val nk = nextOf(playIndex); val plan = lapPlan(playIndex, nk) ?: return false
+        if (pos < endMs - maxOf(plan.before, 40L)) return false
+        return startLap(nk, plan)
+    }
+    private fun startLap(nk: Int, plan: LapPlan): Boolean {
+        val np = nextPlayer; val s2 = surface2
+        if (np == null || !nextReady || nextFor != nk || nextLead != plan.before || s2 == null || Glass.reduced(this)) return false
+        nextPlayer = null; nextFor = -1; nextReady = false
+        layoutTexture2(nk); lookOnTexture2()
+        runCatching { np.setOnSeekCompleteListener(null); np.setOnPreparedListener(null); np.setOnErrorListener(null); np.setSurface(s2); np.setVolume(0f, 0f); np.start() }
+            .onFailure { np.runCatching { release() }; return false }
+        lapPlayer = np; lapNext = nk; lapPlanNow = plan; texture2.alpha = 0f
+        return true
+    }
+    private fun finishLap() {
+        val np = lapPlayer ?: return; val nk = lapNext; val plan = lapPlanNow
+        lapNext = -1; lapPlayer = null; lapPlanNow = null
+        handler.removeCallbacks(tick)
+        val old = player; player = null; old?.runCatching { setOnCompletionListener(null); release() }
+        val s = surface
+        if (s == null) { np.runCatching { release() }; return }
+        runCatching { np.setSurface(s); np.setOnCompletionListener { onClipEnd() } }
+        player = np; prepared = true
+        playIndex = nk; showClipOnBar(); trim.playhead = (clipFrom(nk) + (plan?.after ?: 0L)).coerceIn(trim.start, trim.end)
+        applySound(); layoutVideo(); arrived(); showTime()
+        // The first picture stays over the new one for a moment, until the new one has drawn its first frame.
+        texture2.alpha = 1f; handler.postDelayed({ if (lapNext < 0) texture2.alpha = 0f }, 160)
+        handler.post(tick); handler.postDelayed({ preloadNext() }, 60)
+    }
+    /** Stops an overlapping change that is running (the preview was paused, moved, or closed). */
+    private fun cancelLap() {
+        if (lapNext < 0 && lapPlayer == null) return
+        lapNext = -1; lapPlanNow = null
+        lapPlayer?.runCatching { release() }; lapPlayer = null
+        if (::texture2.isInitialized) texture2.alpha = 0f
+        applySound()
+    }
+    /** Sizes and turns the second picture for clip [k], like [layoutVideo] does for the first. */
+    private fun layoutTexture2(k: Int) {
+        val pad = dp(8); val aw = stage.width - 2 * pad; val ah = stage.height - 2 * pad
+        val side = turns % 2 == 1; val ew = if (side) videoH else videoW; val eh = if (side) videoW else videoH
+        val fit = min(aw.toFloat() / ew, ah.toFloat() / eh)
+        val extra = extras.getOrNull(k - 1)
+        if (extra == null) {
+            val tw = (videoW * fit).toInt(); val th = (videoH * fit).toInt()
+            (texture2.layoutParams as FrameLayout.LayoutParams).let { it.width = tw; it.height = th; texture2.layoutParams = it }
+            texture2.rotation = turns * 90f; texture2.scaleX = if (mirror) -1f else 1f; texture2.scaleY = 1f; texture2.translationX = 0f; texture2.clipBounds = null
+        } else {
+            val f = max(visible.width() / extra.w, visible.height() / extra.h)
+            val tw = (extra.w * f).toInt(); val th = (extra.h * f).toInt()
+            (texture2.layoutParams as FrameLayout.LayoutParams).let { it.width = tw; it.height = th; texture2.layoutParams = it }
+            texture2.rotation = 0f; texture2.scaleX = 1f; texture2.scaleY = 1f; texture2.translationX = 0f
+            val cx = (tw - visible.width()) / 2f; val cy = (th - visible.height()) / 2f
+            texture2.clipBounds = Rect(cx.toInt(), cy.toInt(), (cx + visible.width()).toInt(), (cy + visible.height()).toInt())
+        }
+    }
+    private fun lookOnTexture2() {
+        val graded = grade.active() && !comparing
+        if (graded && android.os.Build.VERSION.SDK_INT >= 33) { texture2.setLayerPaint(null); texture2.setRenderEffect(lutEffect(lastCube ?: gradeCube(25))) }
+        else {
+            if (android.os.Build.VERSION.SDK_INT >= 31) texture2.setRenderEffect(null)
+            texture2.setLayerPaint(if (!looked() || comparing) null else Paint().apply { colorFilter = ColorMatrixColorFilter(colour()) })
+        }
+    }
+    private fun onClipEnd() { if (lapNext >= 0) { finishLap(); return }
+        if (playIndex == 0 && extras.isEmpty()) player?.seekTo(start.toInt()) else playClip(nextOf(playIndex)) }
 
     private fun openPlayer() {
         val s = surface ?: return
         if (playIndex > extras.size) playIndex = 0
         // The clip that was opened ahead is the one wanted, at the place wanted: it takes the screen and plays at once.
         val np = nextPlayer
-        if (np != null && nextReady && nextFor == playIndex && pendingSeek < 0 && nextUri == clipUri(playIndex) && nextFrom == clipFrom(playIndex)) {
+        if (np != null && nextReady && nextFor == playIndex && pendingSeek < 0 && nextUri == clipUri(playIndex) && nextFrom == clipFrom(playIndex) && nextLead == 0L) {
             nextPlayer = null; nextFor = -1; nextReady = false
             handler.removeCallbacks(tick); fxEq?.runCatching { release() }; fxEq = null
             val old = player; player = null; old?.runCatching { release() }
@@ -1009,7 +1116,7 @@ class VideoEditorActivity : ComponentActivity() {
     private fun clearMotion() { texture.scaleX = if (mirror) -1f else 1f; texture.scaleY = 1f; texture.translationX = 0f }
 
     private fun releasePlayer() {
-        handler.removeCallbacks(tick); prepared = false
+        handler.removeCallbacks(tick); prepared = false; cancelLap()
         player?.runCatching { release() }; player = null
         musicPlayer?.runCatching { pause() }
         if (::playIcon.isInitialized) playIcon.path = "M9 6.5v11l9-5.5z"
@@ -1027,7 +1134,7 @@ class VideoEditorActivity : ComponentActivity() {
     }
     private fun togglePlay() {
         val p = player ?: return; if (!prepared) return
-        if (p.isPlaying) { cancelOut(); p.pause(); musicPlayer?.pause(); syncLayerSound(false); playIcon.path = "M9 6.5v11l9-5.5z" }
+        if (p.isPlaying) { cancelOut(); cancelLap(); p.pause(); musicPlayer?.pause(); syncLayerSound(false); playIcon.path = "M9 6.5v11l9-5.5z" }
         else {
             if (playIndex == 0 && p.currentPosition >= end - 60) p.seekTo(start.toInt())
             extras.getOrNull(playIndex - 1)?.let { if (p.currentPosition >= it.to - 60) p.seekTo(it.from.toInt()) }
@@ -1037,7 +1144,7 @@ class VideoEditorActivity : ComponentActivity() {
         }
     }
     private fun seek(ms: Long) {
-        cancelOut(); trim.playhead = ms
+        cancelOut(); cancelLap(); trim.playhead = ms
         val p = player ?: return
         if (prepared) { if (android.os.Build.VERSION.SDK_INT >= 26) p.seekTo(ms, MediaPlayer.SEEK_CLOSEST) else p.seekTo(ms.toInt()) }
         showTime()
