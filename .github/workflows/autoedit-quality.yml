@@ -1,0 +1,25 @@
+name: Auto Edit quality evaluator
+
+on:
+  pull_request:
+    paths:
+      - 'scripts/autoedit/**'
+      - '.github/workflows/autoedit-quality.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  evaluator-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate highlight evaluator with synthetic unit fixtures
+        run: python -m unittest discover -s scripts/autoedit -p 'test_*.py' -v
+      - name: Warn that synthetic fixtures are not real-game accuracy
+        run: echo "Pass here validates the evaluator only; annotated gameplay is required for model performance claims."
