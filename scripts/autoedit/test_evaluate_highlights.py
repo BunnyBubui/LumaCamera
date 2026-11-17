@@ -31,7 +31,7 @@ class HighlightEvaluatorTest(unittest.TestCase):
         self.assertEqual(1.0, report["kill_detection"]["precision"])
         self.assertEqual(1.0, report["kill_detection"]["recall"])
         self.assertEqual(1.0, report["multi_kill"]["retention"])
-        self.assertEqual((True, []), enforce_gate(report))
+        self.assertEqual((True, []), enforce_gate(report, min_truth_kills=2, min_streaks=1))
 
     def test_duplicate_prediction_is_not_double_matched(self):
         p = self.pred + [dict(self.pred[0])]
@@ -87,6 +87,24 @@ class HighlightEvaluatorTest(unittest.TestCase):
         self.assertFalse(passed)
         self.assertTrue(any("undefined" in text for text in why))
 
+    def test_small_sample_is_not_enough_to_claim_release_accuracy(self):
+        report = evaluate({
+            "schema": 1,
+            "dataset_id": "unit-only",
+            "ground_truth_events": self.truth,
+            "predicted_events": self.pred,
+            "selected_clips": self.clips,
+        })
+        passed, reasons = enforce_gate(report)
+        self.assertFalse(passed)
+        self.assertTrue(any("insufficient truth kills" in reason for reason in reasons))
+        self.assertTrue(any("insufficient annotated streaks" in reason for reason in reasons))
+
+    def test_zero_precision_has_defined_zero_f1(self):
+        wrong = [{"asset_id": "g1", "at_us": 8_000_000, "type": "CONFIRMED_KILL"}]
+        result = event_metrics(self.truth, wrong)
+        self.assertEqual(0.0, result["f1"])
+        
     def test_requires_valid_annotation_schema(self):
         with self.assertRaises(ValueError):
             evaluate({
