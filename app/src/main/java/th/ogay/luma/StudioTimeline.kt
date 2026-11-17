@@ -36,7 +36,10 @@ class StudioTimeline(context: Context) : View(context) {
     var clips: List<Clip> = emptyList()
     var lanes: List<List<Bar>> = emptyList()
     var selected = 0
-    var joined = false
+    /** One entry per clip: null for the first, "" for a plain cut, otherwise the name of the change into that clip. */
+    var seams: List<String?> = emptyList(); set(v) { field = v; invalidate() }
+    /** The seam button before the clip at this index was tapped. */
+    var onSeam: (Int) -> Unit = {}
     /** Markers the user set, in ms of the finished video. */
     var marks: List<Long> = emptyList()
     /** The picked bar's [Bar.id], or -2 when none is picked. */
@@ -107,6 +110,12 @@ class StudioTimeline(context: Context) : View(context) {
     private fun x(t: Long) = width / 2f + (t - ph) * pxPerMs
     private fun startOf(i: Int): Long { var t = 0L; for (k in 0 until i) t += clips[k].len; return t }
     private fun clipAt(px: Float): Int { var t = 0L; clips.forEachIndexed { i, c -> if (px >= x(t) && px < x(t + c.len)) return i; t += c.len }; return -1 }
+    private fun seamHalf(i: Int) = (if (seams.getOrNull(i).isNullOrEmpty()) 9f else (textPaint.measureText(seams[i]!!) / d / 2f + 8f)) * d
+    private fun seamAt(px: Float, py: Float): Int? {
+        if (seams.size != clips.size || py > rulerH + clipH * 0.6f) return null
+        for (i in 1 until clips.size) { if (abs(px - x(startOf(i))) <= seamHalf(i) + 4 * d) return i }
+        return null
+    }
     private fun inClipRow(y: Float) = y >= rulerH - 6 * d && y <= rulerH + clipH + 6 * d
 
     private val scale = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
@@ -117,6 +126,7 @@ class StudioTimeline(context: Context) : View(context) {
         override fun onDown(e: MotionEvent) = true
         override fun onSingleTapUp(e: MotionEvent): Boolean {
             addRect(addBox)
+            seamAt(e.x, e.y)?.let { onSeam(it); performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK); return true }
             if (inClipRow(e.y) && e.x >= addBox.left - 6 * d && e.x <= addBox.right + 6 * d) { onAdd(); performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) }
             else if (inClipRow(e.y)) { val i = clipAt(e.x); if (i >= 0) { onSelect(i); performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) } }
             else barAt(e.x, e.y)?.let { onPickBar(it.id); performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) }
@@ -238,7 +248,13 @@ class StudioTimeline(context: Context) : View(context) {
                 c.drawRoundRect(x0 - hw * 0.4f, top + 6 * d, x0 + hw * 0.6f, bottom - 6 * d, hw / 2, hw / 2, accent)
                 c.drawRoundRect(x1 - hw * 0.6f, top + 6 * d, x1 + hw * 0.4f, bottom - 6 * d, hw / 2, hw / 2, accent)
             }
-            if (joined && i > 0) { paint.color = Color.WHITE; c.drawCircle(x0 - 1 * d, (top + bottom) / 2, 4.5f * d, paint); c.drawCircle(x0 - 1 * d, (top + bottom) / 2, 2.2f * d, accent) }
+            // Seam button above the join: "+" for a plain cut, the name of the change when one is set.
+            if (i > 0 && seams.size == clips.size) {
+                val sx = x0 - 1 * d; val name = seams[i].orEmpty(); val hw = seamHalf(i); val cy = top + 1 * d
+                paint.color = 0xe6101014.toInt(); c.drawRoundRect(sx - hw, cy - 9 * d, sx + hw, cy + 9 * d, 9 * d, 9 * d, paint)
+                if (name.isEmpty()) { paint.color = Color.WHITE; val a2 = 4.5f * d; c.drawRoundRect(sx - a2, cy - 0.8f * d, sx + a2, cy + 0.8f * d, d, d, paint); c.drawRoundRect(sx - 0.8f * d, cy - a2, sx + 0.8f * d, cy + a2, d, d, paint) }
+                else { textPaint.color = Color.WHITE; textPaint.textAlign = Paint.Align.CENTER; c.drawText(name, sx, cy + 3.4f * d, textPaint); textPaint.textAlign = Paint.Align.LEFT; textPaint.color = 0x99ffffff.toInt() }
+            }
         }
         addRect(addBox)
         if (addBox.right > 0 && addBox.left < w) {

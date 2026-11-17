@@ -124,15 +124,17 @@ class VideoEditorActivity : ComponentActivity() {
         var volume = 1f; var curve: FloatArray? = null
         /** Slow camera move over this part ([ClipMotion]). */
         var motion = 0
+        /** The change into this part from the one before it: -1 follows the default, else 0..6 ([TRANSITIONS]); [joinMs] its length, 0 = usual. */
+        var join = -1; var joinMs = 0L
         val len get() = StudioMath.outLen(to - from, speed, curve)
-        fun copy() = Extra(uri, duration, w, h, name, thumb).also { it.from = from; it.to = to; it.speed = speed; it.muted = muted; it.volume = volume; it.curve = curve?.copyOf(); it.motion = motion }
+        fun copy() = Extra(uri, duration, w, h, name, thumb).also { it.from = from; it.to = to; it.speed = speed; it.muted = muted; it.volume = volume; it.curve = curve?.copyOf(); it.motion = motion; it.join = join; it.joinMs = joinMs }
     }
     private var mainFrames: List<Bitmap> = emptyList()
     private val clipFrames = HashMap<String, List<Bitmap>>()
     private fun buildExtras(uris: List<String>, ranges: List<String>?, get: (String) -> Extra?): List<Extra> = uris.mapIndexedNotNull { i, u ->
         get(u)?.copy()?.also { e -> ranges?.getOrNull(i)?.split(",")?.takeIf { it.size >= 2 }?.let { r ->
             e.from = (r[0].toLongOrNull() ?: 0L).coerceIn(0, e.duration); e.to = (r[1].toLongOrNull() ?: e.duration).coerceIn(e.from, e.duration); e.speed = (r.getOrNull(2)?.toFloatOrNull() ?: 1f).coerceIn(0.001f, 5000f); e.muted = r.getOrNull(3) == "m"
-            e.volume = r.getOrNull(4)?.toFloatOrNull() ?: 1f; e.curve = PointCurve.upgrade(r.getOrNull(5)?.split(';')?.mapNotNull { it.toFloatOrNull() }?.toFloatArray(), 1); e.motion = r.getOrNull(6)?.toIntOrNull() ?: 0 } } }
+            e.volume = r.getOrNull(4)?.toFloatOrNull() ?: 1f; e.curve = PointCurve.upgrade(r.getOrNull(5)?.split(';')?.mapNotNull { it.toFloatOrNull() }?.toFloatArray(), 1); e.motion = r.getOrNull(6)?.toIntOrNull() ?: 0; e.join = r.getOrNull(7)?.toIntOrNull() ?: -1; e.joinMs = r.getOrNull(8)?.toLongOrNull() ?: 0L } } }
     private var curveSpeedSet = 0f
     /** While a clip with a speed curve plays, the preview's speed follows the curve (the player itself goes from 0.1× to 8×). */
     private fun followCurve(p: MediaPlayer, pos: Long) {
@@ -252,7 +254,7 @@ class VideoEditorActivity : ComponentActivity() {
             while (lanes.size <= at) lanes += mutableListOf<StudioTimeline.Bar>()
             lanes[at] += bar
         }
-        timeline.clips = list; timeline.lanes = lanes; timeline.selected = if (barActive) -1 else seq.indexOf(playIndex).coerceAtLeast(0); timeline.joined = transition != 0; timeline.marks = markers
+        timeline.clips = list; timeline.lanes = lanes; timeline.selected = if (barActive) -1 else seq.indexOf(playIndex).coerceAtLeast(0); timeline.seams = if (extras.isEmpty()) emptyList() else seamLabels(); timeline.marks = markers
         timeline.selectedBar = if (barActive && layerPick in layers.indices) layerPick else -2
         if (lanes.size != laneCount) { laneCount = lanes.size; val full = dp(68) + (laneDp() * resources.displayMetrics.density * lanes.size).toInt(); timeline.layoutParams = timeline.layoutParams.apply { height = full }
             timelineScroll.layoutParams = timelineScroll.layoutParams.apply { height = minOf(full, dp(68) + (laneDp() * resources.displayMetrics.density * 3).toInt()) } }
@@ -649,6 +651,7 @@ class VideoEditorActivity : ComponentActivity() {
         timeline.onSeek = { t, done -> if (player?.isPlaying == true) togglePlay(); val (k, at) = locate(t); jumpTo(k, at, done) }
         timeline.onPickBar = { id -> if (id >= 0) pickBar(id) }
         timeline.onAdd = { pickClip.launch(arrayOf("video/*")) }
+        timeline.onSeam = { i -> seamSheet(i) }
         timeline.onBar = { id, at, len, shift, done -> layers.getOrNull(id)?.let { cur ->
             val base = barBase ?: cur.also { barBase = it }
             var from = base.from; var begin = at; var length = len
@@ -859,8 +862,8 @@ class VideoEditorActivity : ComponentActivity() {
         val go = Runnable { playIndex = k; switching = false; showClipOnBar(); trim.playhead = trim.start; openPlayer(); showTime() }
         val half = VideoEdit.TRANSITION_MS / 2
         if (Glass.reduced(this) || extras.isEmpty()) go.run()
-        else when (transition) {
-            1, 2 -> { dip.setBackgroundColor(if (transition == 2) Color.WHITE else Color.BLACK); dip.pivotX = 0f; dip.scaleX = 1f
+        else when (kindFor(k)) {
+            1, 2 -> { dip.setBackgroundColor(if (kindFor(k) == 2) Color.WHITE else Color.BLACK); dip.pivotX = 0f; dip.scaleX = 1f
                 dip.animate().cancel(); dip.animate().alpha(1f).setDuration(half).withEndAction(go).start() }
             4 -> texture.animate().translationX(-texture.width.toFloat()).setInterpolator(Glass.EASE).setDuration(half).withEndAction { go.run() }.start()
             5 -> { dip.setBackgroundColor(Color.BLACK); dip.alpha = 1f; dip.pivotX = dip.width.toFloat(); dip.scaleX = 0f
@@ -875,12 +878,12 @@ class VideoEditorActivity : ComponentActivity() {
         if (motionOf(playIndex) != 0 || texture.scaleY != 1f) clearMotion()
         if (motionOf(playIndex) != 0) showMotion(clipFrom(playIndex))
         if (Glass.reduced(this)) { dip.alpha = 0f; return }
-        if (transition == 5 && dip.alpha > 0f) { dip.pivotX = 0f; dip.animate().cancel(); dip.animate().scaleX(0f).setDuration(VideoEdit.TRANSITION_MS).withEndAction { dip.alpha = 0f; dip.scaleX = 1f }.start() }
+        if (kindFor(playIndex) == 5 && dip.alpha > 0f) { dip.pivotX = 0f; dip.animate().cancel(); dip.animate().scaleX(0f).setDuration(VideoEdit.TRANSITION_MS).withEndAction { dip.alpha = 0f; dip.scaleX = 1f }.start() }
         else if (dip.alpha > 0f) dip.animate().alpha(0f).setDuration(VideoEdit.TRANSITION_MS).start()
         if (texture.translationX != 0f) { texture.translationX = texture.width.toFloat(); texture.animate().translationX(0f).setInterpolator(Glass.EASE).setDuration(VideoEdit.TRANSITION_MS).start() }
         if (blurIn && android.os.Build.VERSION.SDK_INT >= 31) { blurIn = false; android.animation.ValueAnimator.ofFloat(1f, 0f).apply { duration = VideoEdit.TRANSITION_MS
             addUpdateListener { blurPreview(it.animatedValue as Float) }; addListener(object : android.animation.AnimatorListenerAdapter() { override fun onAnimationEnd(a: android.animation.Animator) { paintLook() } }); start() } }
-        if (transition == 3 && playIndex > 0) {
+        if (kindFor(playIndex) == 3 && playIndex > 0) {
             texture.scaleY = 1.12f; texture.scaleX = 1.12f
             texture.animate().scaleX(1f).scaleY(1f).setInterpolator(Glass.EASE).setDuration(VideoEdit.TRANSITION_MS).start()
         }
@@ -949,7 +952,7 @@ class VideoEditorActivity : ComponentActivity() {
         if (m == 0) return
         val a = clipFrom(playIndex); val b = if (playIndex == 0) end else extras[playIndex - 1].to
         // A zoom or slide transition is drawn over the first moments of the clip; the move joins in after it.
-        if ((transition == 3 || transition == 4) && pos - a < VideoEdit.TRANSITION_MS) return
+        if ((kindFor(playIndex) == 3 || kindFor(playIndex) == 4) && pos - a < VideoEdit.TRANSITION_MS) return
         val (sc, x) = ClipMotion.at(m, (pos - a).toFloat() / (b - a).coerceAtLeast(1))
         texture.scaleX = base * sc; texture.scaleY = sc; texture.translationX = x * texture.width / 2f
     }
@@ -1069,7 +1072,7 @@ class VideoEditorActivity : ComponentActivity() {
         if (extras.isEmpty()) { notice("วิดีโอต้องมีอย่างน้อยหนึ่งคลิป"); return }
         val idx = mainPos().coerceAtMost(extras.size - 1); val e = extras.removeAt(idx)
         mainAt = idx; cutFrom = -1; cutTo = -1; split = -1
-        switchSource(e.uri); start = e.from; end = e.to; speed = e.speed; mainMuted = e.muted; mainMotion = e.motion; firstFrame = e.thumb ?: firstFrame
+        switchSource(e.uri); start = e.from; end = e.to; speed = e.speed; mainMuted = e.muted; mainMotion = e.motion; mainJoin = e.join; mainJoinMs = e.joinMs; firstFrame = e.thumb ?: firstFrame
         playIndex = 0; trim.split = -1; showClipOnBar(); trim.playhead = start; openPlayer(); showTime(); showTool(10, false)
         notice("ลบคลิปแล้ว")
     }
@@ -1459,7 +1462,7 @@ class VideoEditorActivity : ComponentActivity() {
                 ui.remove()
                 if (isDestroyed || stopped) return@runOnUiThread
                 if (e == null) { notice("ย้อนกลับไม่ได้ · ${made.exceptionOrNull()?.message ?: "อ่านไฟล์ใหม่ไม่ได้"}"); return@runOnUiThread }
-                e.motion = motionOf(k); extraCache[e.uri.toString()] = e.copy()
+                e.motion = motionOf(k); e.join = joinOf(k); e.joinMs = joinMsOf(k); extraCache[e.uri.toString()] = e.copy()
                 insertNear(k, e, before = false)
                 if (k == 0) deleteMain() else { extras.remove(extras[k - 1]); if (k - 1 < mainPos()) mainAt = mainPos() - 1 }
                 val at = extras.indexOf(e) + 1
@@ -1762,6 +1765,7 @@ class VideoEditorActivity : ComponentActivity() {
     private var lowCut = false; private var voice = false; private var duck = true; private var mainMuted = false
     /** Slow camera move over the first clip ([ClipMotion]). */
     private var mainMotion = 0
+    private var mainJoin = -1; private var mainJoinMs = 0L
     private var fxEq: android.media.audiofx.Equalizer? = null
     private fun audioSettings() = StudioAudio.Settings(eq[0], eq[1], eq[2], lowCut, voice)
     /** The equaliser on the preview: the phone's own equaliser on the player, its bands set from the three sliders. */
@@ -2893,11 +2897,44 @@ class VideoEditorActivity : ComponentActivity() {
         }
         Glass.tick(timeline); showClipOnBar(); trim.playhead = trim.playhead.coerceIn(trim.start, trim.end); showTime(); if (tool == 10) showTool(10, false)
     }
+    private val TRANSITION_ICONS = listOf(EditorKit.SCISSORS, "M4 12h16 M4 6h16 M4 18h16", "M12 3v4 M12 17v4 M3 12h4 M17 12h4 M6 6l2.5 2.5 M15.5 15.5L18 18 M18 6l-2.5 2.5 M8.5 15.5L6 18", "M10 4H4v6 M14 4h6v6 M10 20H4v-6 M14 20h6v-6", "M4 12h12 M12 7l5 5-5 5 M20 5v14", "M4 4h8v16H4z M15 4v16 M19 4v16", "M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16 M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8")
+    /** The change into clip [k] (0 = main): its own pick, or the default for the whole video. */
+    private fun joinOf(k: Int) = if (k == 0) mainJoin else extras.getOrNull(k - 1)?.join ?: -1
+    private fun joinMsOf(k: Int) = if (k == 0) mainJoinMs else extras.getOrNull(k - 1)?.joinMs ?: 0L
+    private fun kindFor(k: Int) = joinOf(k).let { if (it < 0) transition else it }
+    private fun setJoin(k: Int, kind: Int, ms: Long) { if (k == 0) { mainJoin = kind; mainJoinMs = ms } else extras.getOrNull(k - 1)?.let { it.join = kind; it.joinMs = ms } }
+    /** Label for each seam of the timeline: null on the first clip, "" for a plain cut, otherwise the name of the change. */
+    private fun seamLabels(): List<String?> = order().mapIndexed { i, k -> if (i == 0) null else if (kindFor(k) == 0) "" else TRANSITIONS[kindFor(k)] }
+    /** Sheet for the seam before timeline clip [i]: which change to use, and how long it lasts. */
+    private fun seamSheet(i: Int) {
+        val k = order().getOrNull(i) ?: return
+        val sheet = screenSheet()
+        sheet.open { col, sh ->
+            col.addView(text("ทรานซิชันก่อนคลิป ${i + 1}", 17f, Glass.TEXT, true).apply { setPadding(0, dp(4), 0, dp(10)) }, -1, -2)
+            var kind = kindFor(k); var ms = joinMsOf(k).takeIf { it > 0 } ?: VideoEdit.TRANSITION_MS
+            val holder = LinearLayout(this)
+            fun apply() { setJoin(k, kind, ms); refreshTimeline() }
+            fun build() {
+                holder.removeAllViews()
+                holder.addView(dropButton(TRANSITIONS[kind]) { v -> menu.show(v, "ทรานซิชัน", TRANSITIONS.mapIndexed { n, name -> GlassMenu.Option(name, TRANSITION_ICONS[n]) }, kind) { n -> kind = n; apply(); build() } }, LinearLayout.LayoutParams(-2, dp(40)))
+            }
+            build(); col.addView(holder, -1, -2)
+            val steps = (200..1500 step 100).toList()
+            fun sec() = "ความยาว " + String.format(Locale.US, "%.1f", ms / 1000f) + " วิ"
+            val label = text(sec(), 12f, Glass.TEXT2, true).apply { minWidth = dp(112) }
+            val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(0, dp(10), 0, dp(4)) }
+            row.addView(label)
+            row.addView(GlassSlider(this).apply { values = steps.map { String.format(Locale.US, "%.1f", it / 1000f) }; index = steps.indices.minByOrNull { abs(steps[it] - ms) } ?: 0; contentDescription = "ความยาวทรานซิชัน"
+                onChange = { n -> ms = steps[n].toLong(); label.text = sec(); apply() } }, LinearLayout.LayoutParams(0, dp(40), 1f))
+            col.addView(row, -1, -2)
+            GlassDialog.actions(this, "เสร็จ" to { sh.close() })
+        }
+    }
     private fun transitionTools(col: LinearLayout) {
-        val icons = listOf(EditorKit.SCISSORS, "M4 12h16 M4 6h16 M4 18h16", "M12 3v4 M12 17v4 M3 12h4 M17 12h4 M6 6l2.5 2.5 M15.5 15.5L18 18 M18 6l-2.5 2.5 M8.5 15.5L6 18", "M10 4H4v6 M14 4h6v6 M10 20H4v-6 M14 20h6v-6", "M4 12h12 M12 7l5 5-5 5 M20 5v14", "M4 4h8v16H4z M15 4v16 M19 4v16", "M12 4a8 8 0 1 0 0 16 8 8 0 0 0 0-16 M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8")
+        val icons = TRANSITION_ICONS
         val items = TRANSITIONS.mapIndexed { i, n -> EditorKit.StripItem(this, icons[i], n) }
         if (extras.isEmpty()) tip(col, "ทรานซิชันอยู่ระหว่างคลิป · เพิ่มคลิปก่อน (ปุ่ม + ท้ายไทม์ไลน์)", "M4 6h7v12H4z M13 6h7v12h-7z", Icons.PLUS, top = 0)
-        col.addView(EditorKit.strip(this, items.map { it to 70 }, transition, 60, { k -> items.forEachIndexed { j, v -> v.lit(j == k) } }) { k -> transition = k },
+        col.addView(EditorKit.strip(this, items.map { it to 70 }, transition, 60, { k -> items.forEachIndexed { j, v -> v.lit(j == k) } }) { k -> transition = k; mainJoin = -1; mainJoinMs = 0; extras.forEach { it.join = -1; it.joinMs = 0 }; refreshTimeline() },
             LinearLayout.LayoutParams(-1, dp(70)))
     }
     /** Emoji, shapes and the user's own pictures or GIFs; a picked shape can change colour or be drawn as an outline. */
@@ -3522,7 +3559,7 @@ class VideoEditorActivity : ComponentActivity() {
         return VideoEdit.composition(VideoEditSpec(f?.let { Uri.fromFile(it.file) } ?: source, at(from), at(to), if (turns % 2 == 1) vh else vw, if (turns % 2 == 1) vw else vh,
         speed * n, cropRatio(), caption, place, textColor, textBig, if (looked()) colour() else null, music, f == null && hasAudio && keepSound && allSpeeds().all { it in SOUND_MIN..SOUND_MAX },
         turns, mirror, volume, musicVolume, if (cut) at(cutFrom) else -1L, if (cut) at(cutTo) else -1L, textBox,
-        extras.map { VideoPart(it.uri, it.from, it.to, it.speed, it.muted, it.volume, it.curve, it.motion) }, if (extras.isEmpty()) 0 else transition, stickers.toList(), clampedLayers(), shrinkShort, shrinkFps, mainPos(), fx[0], fx[1], fx[2], mainMotion = mainMotion, grade = if (grade.active()) gradeCube(33) else null, audio = audioSettings(), mainMuted = mainMuted, mainCurve = if (f == null) mainCurve else null, audioOnly = audioOnly, duck = duck, audioHz = if (audioOnly) soundHz else 0, audioMono = audioOnly && soundMono), applicationContext)
+        extras.map { VideoPart(it.uri, it.from, it.to, it.speed, it.muted, it.volume, it.curve, it.motion, it.join, it.joinMs) }, if (extras.isEmpty()) 0 else transition, stickers.toList(), clampedLayers(), shrinkShort, shrinkFps, mainPos(), fx[0], fx[1], fx[2], mainMotion = mainMotion, mainJoin = mainJoin, mainJoinMs = mainJoinMs, grade = if (grade.active()) gradeCube(33) else null, audio = audioSettings(), mainMuted = mainMuted, mainCurve = if (f == null) mainCurve else null, audioOnly = audioOnly, duck = duck, audioHz = if (audioOnly) soundHz else 0, audioMono = audioOnly && soundMono), applicationContext)
     }
 
     /** Export problems stay on screen until dismissed, so the reason can be read (and reported). */
@@ -3547,13 +3584,13 @@ class VideoEditorActivity : ComponentActivity() {
         out.putBoolean("sound", keepSound); out.putInt("tool", tool)
         out.putFloatArray("adjust", adjust); out.putFloatArray("fx", fx); out.putFloatArray("curves", grade.curves.copyOf()); out.putFloatArray("hsl", grade.hsl.copyOf()); out.putFloatArray("wheels", grade.wheels.copyOf()); out.putString("lutPath", lutPath); out.putString("lutName", lutName); out.putFloat("lutAmount", grade.lutAmount); out.putFloatArray("eq", eq.copyOf()); out.putBoolean("lowCut", lowCut); out.putBoolean("voice", voice); out.putBoolean("duck", duck); out.putBoolean("mainMuted", mainMuted); out.putInt("turns", turns); out.putBoolean("mirror", mirror); out.putFloat("volume", volume); out.putFloat("musicVolume", musicVolume)
         out.putLong("cutFrom", cutFrom); out.putLong("cutTo", cutTo); out.putBoolean("textBox", textBox)
-        out.putStringArrayList("extras", ArrayList(extras.map { it.uri.toString() })); out.putStringArrayList("extraRanges", ArrayList(extras.map { "${it.from},${it.to},${it.speed}," + (if (it.muted) "m" else "") + ",${it.volume}," + (it.curve?.joinToString(";") ?: "") + ",${it.motion}" })); out.putInt("mainMotion", mainMotion);
-        mainCurve?.let { out.putFloatArray("mainCurve", it.copyOf()) }; out.putInt("mainAt", mainAt); out.putStringArrayList("markers", ArrayList(markers.map { it.toString() })); out.putInt("transition", transition)
+        out.putStringArrayList("extras", ArrayList(extras.map { it.uri.toString() })); out.putStringArrayList("extraRanges", ArrayList(extras.map { "${it.from},${it.to},${it.speed}," + (if (it.muted) "m" else "") + ",${it.volume}," + (it.curve?.joinToString(";") ?: "") + ",${it.motion},${it.join},${it.joinMs}" })); out.putInt("mainMotion", mainMotion);
+        mainCurve?.let { out.putFloatArray("mainCurve", it.copyOf()) }; out.putInt("mainAt", mainAt); out.putStringArrayList("markers", ArrayList(markers.map { it.toString() })); out.putInt("transition", transition); out.putInt("mainJoin", mainJoin); out.putLong("mainJoinMs", mainJoinMs)
         out.putStringArrayList("stickers", ArrayList(stickers.map { "${it.x}|${it.y}|${it.big}|${it.text}" }))
         out.putString("layers", VideoLayer.save(layers)); out.putInt("layerPick", layerPick); out.putBoolean("smooth", smooth)
     }
     private fun restore(s: Bundle) {
-        mainMotion = s.getInt("mainMotion", 0)
+        mainMotion = s.getInt("mainMotion", 0); mainJoin = s.getInt("mainJoin", -1); mainJoinMs = s.getLong("mainJoinMs", 0L)
         s.getString("mainSource")?.let { Uri.parse(it) }?.takeIf { it != source }?.let { switchSource(it) }
         start = s.getLong("start").coerceIn(0, (duration - 300).coerceAtLeast(0)); end = s.getLong("end", duration).coerceIn(start, duration); customCrop = s.getFloat("customCrop", 1f); split = s.getLong("split", -1); speed = s.getFloat("speed", 1f); cropIndex = s.getInt("crop")
         caption = s.getString("caption") ?: ""; place = s.getInt("place", 2); textColor = s.getInt("textColor", Color.WHITE); textBig = s.getBoolean("big")

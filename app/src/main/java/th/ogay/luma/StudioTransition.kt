@@ -19,11 +19,11 @@ import androidx.media3.effect.MatrixTransformation
  * into focus and lets it go out of focus.
  */
 @UnstableApi
-class StudioTransition(private val mode: Int, private val durationUs: Long, private val joinIn: Boolean, private val joinOut: Boolean) : GlEffect {
+class StudioTransition(private val mode: Int, private val durationUs: Long, private val joinIn: Boolean, private val joinOut: Boolean, private val spanMs: Long = VideoEdit.TRANSITION_MS) : GlEffect {
     companion object { const val WIPE = 0; const val BLUR = 1
         /** 0..1 at [t] µs of a [durationUs] clip: 0 = fully in the transition at the cut, 1 = clear of it. */
-        fun progress(t: Long, durationUs: Long, joinIn: Boolean, joinOut: Boolean): Float {
-            val span = minOf(VideoEdit.TRANSITION_MS * 1000, durationUs / 2).coerceAtLeast(1)
+        fun progress(t: Long, durationUs: Long, joinIn: Boolean, joinOut: Boolean, spanMs: Long = VideoEdit.TRANSITION_MS): Float {
+            val span = minOf(spanMs * 1000, durationUs / 2).coerceAtLeast(1)
             var k = 1f
             if (joinIn && t < span) k = minOf(k, t.toFloat() / span)
             if (joinOut && t > durationUs - span) k = minOf(k, ((durationUs - t).toFloat() / span).coerceAtLeast(0f))
@@ -66,9 +66,9 @@ class StudioTransition(private val mode: Int, private val durationUs: Long, priv
             try {
                 if (first == C.TIME_UNSET) first = presentationTimeUs
                 val t = presentationTimeUs - first
-                val span = minOf(VideoEdit.TRANSITION_MS * 1000, durationUs / 2)
+                val span = minOf(spanMs * 1000, durationUs / 2)
                 program.use(); program.setSamplerTexIdUniform("uTex", inputTexId, 0)
-                program.setFloatUniform("uK", progress(t, durationUs, joinIn, joinOut))
+                program.setFloatUniform("uK", progress(t, durationUs, joinIn, joinOut, spanMs))
                 program.setFloatUniform("uOut", if (joinOut && t > durationUs - span) 1f else 0f)
                 program.bindAttributesAndUniforms(); GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
             } catch (e: Exception) { throw VideoFrameProcessingException(e) }
@@ -79,12 +79,12 @@ class StudioTransition(private val mode: Int, private val durationUs: Long, priv
 
 /** Slide: an arriving clip comes in from the right, a leaving clip goes out to the left. */
 @UnstableApi
-class StudioSlide(private val durationUs: Long, private val joinIn: Boolean, private val joinOut: Boolean) : MatrixTransformation {
+class StudioSlide(private val durationUs: Long, private val joinIn: Boolean, private val joinOut: Boolean, private val spanMs: Long = VideoEdit.TRANSITION_MS) : MatrixTransformation {
     private var first = C.TIME_UNSET
     override fun getMatrix(presentationTimeUs: Long): android.graphics.Matrix {
         if (first == C.TIME_UNSET) first = presentationTimeUs
-        val t = presentationTimeUs - first; val span = minOf(VideoEdit.TRANSITION_MS * 1000, durationUs / 2).coerceAtLeast(1)
-        val k = StudioTransition.progress(t, durationUs, joinIn, joinOut); val e = 1 - (1 - k) * (1 - k)
+        val t = presentationTimeUs - first; val span = minOf(spanMs * 1000, durationUs / 2).coerceAtLeast(1)
+        val k = StudioTransition.progress(t, durationUs, joinIn, joinOut, spanMs); val e = 1 - (1 - k) * (1 - k)
         val leaving = joinOut && t > durationUs - span
         return android.graphics.Matrix().apply { setTranslate(if (leaving) -(1 - e) * 2f else (1 - e) * 2f, 0f) }
     }
