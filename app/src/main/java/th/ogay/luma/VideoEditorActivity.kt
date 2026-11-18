@@ -83,6 +83,8 @@ class VideoEditorActivity : ComponentActivity() {
         private const val JOIN = "M3 5h6v14H3z M15 5h6v14h-6z M10 12h4 M12.5 10l1.5 2-1.5 2"
         private const val STICKER = "M12 3a9 9 0 1 0 0.01 0 M8.5 14q3.5 3 7 0 M9 9.5v1 M15 9.5v1"
         private const val ADD = "M12 5v14 M5 12h14"
+        private const val FULL_ICON = "M4 9V4h5 M20 9V4h-5 M4 15v5h5 M20 15v5h-5"
+        private const val TURN_ICON = "M4 7h10a6 6 0 0 1 0 12H8 M7 4L4 7l3 3"
         private const val LAYERS = "M12 3l9 5-9 5-9-5z M3 12.5l9 5 9-5 M3 17l9 5 9-5"
         private const val LAYER_TOOL = 13
         private const val COLOR_TOOL = 14
@@ -720,6 +722,7 @@ class VideoEditorActivity : ComponentActivity() {
         transport.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
         // Marker flag, frame grid, save picture and freeze frame live in one menu button at the right, where the fold button used to be.
         moreButton = EditorKit.round(this, "M5 12h.01 M12 12h.01 M19 12h.01", "เมนูเพิ่มเติม") { moreMenu() }
+        transport.addView(EditorKit.round(this, FULL_ICON, "เต็มจอ") { setFull(true) }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { rightMargin = dp(6) })
         transport.addView(moreButton, LinearLayout.LayoutParams(dp(44), dp(44)))
         root.addView(transport, -1, -2)
         timeline = StudioTimeline(this).apply { contentDescription = "ไทม์ไลน์ ลากเพื่อเลื่อนเวลา แตะคลิปเพื่อเลือก ลากขอบคลิปที่เลือกเพื่อตัด กดค้างแล้วลากเพื่อสลับลำดับ" }
@@ -787,7 +790,7 @@ class VideoEditorActivity : ComponentActivity() {
         rootBox = root; topBar = bar; transportRow = transport
         collapsed = state?.getBoolean("collapsed", true) ?: true
         arrange()
-        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) { override fun handleOnBackPressed() = leave() })
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) { override fun handleOnBackPressed() { if (fullScreen) setFull(false) else leave() } })
 
         trim.duration = duration; trim.start = start; trim.end = end; trim.split = split
         luma.readIo.execute {
@@ -1627,6 +1630,7 @@ class VideoEditorActivity : ComponentActivity() {
         parts.forEach { (it.parent as? android.view.ViewGroup)?.removeView(it) }
         (toolCard.parent as? android.view.ViewGroup)?.removeView(toolCard)
         rootBox.removeAllViews(); toolsHolder = null
+        if (fullScreen) { rootBox.orientation = LinearLayout.VERTICAL; rootBox.addView(stage, LinearLayout.LayoutParams(-1, -1)); showFullControls(); return }
         val toolsH = fullH()
         if (!landscape()) {
             rootBox.orientation = LinearLayout.VERTICAL
@@ -1660,6 +1664,34 @@ class VideoEditorActivity : ComponentActivity() {
         }
         setCollapsed(collapsed)
     }
+    // ---------- Full screen preview ----------
+    private var fullScreen = false
+    private var fullBar: FrameLayout? = null
+    private var fullPlay: IconView? = null
+    /** Only the picture, with a play button, a turn button (upright or on its side) and a close button. Tapping the picture does not play. */
+    private fun setFull(on: Boolean) {
+        if (fullScreen == on) return
+        fullScreen = on
+        if (!on) { fullBar?.let { (it.parent as? android.view.ViewGroup)?.removeView(it) }; fullBar = null; requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            androidx.core.view.WindowCompat.getInsetsController(window, window.decorView).show(androidx.core.view.WindowInsetsCompat.Type.systemBars()) }
+        else androidx.core.view.WindowCompat.getInsetsController(window, window.decorView).apply { hide(androidx.core.view.WindowInsetsCompat.Type.systemBars()); systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE }
+        if (::trim.isInitialized) pendingSeek = trim.playhead
+        arrange(); rootBox.post { layoutVideo(); refreshTimeline() }
+    }
+    private fun showFullControls() {
+        fullBar?.let { (it.parent as? android.view.ViewGroup)?.removeView(it) }
+        val bar = FrameLayout(this).apply { isClickable = false }
+        fun btn(icon: String, label: String, f: () -> Unit) = EditorKit.round(this, icon, label, f)
+        val play = FrameLayout(this).apply { background = glass(34, 0x59000000); isClickable = true; contentDescription = "เล่นหรือหยุด"; glassTouch(); setOnClickListener { togglePlay(); syncFullPlay() }
+            addView(IconView(this@VideoEditorActivity, if (player?.isPlaying == true) "M8 6v12 M16 6v12" else "M9 6.5v11l9-5.5z", 2f).also { fullPlay = it }, FrameLayout.LayoutParams(dp(30), dp(30), Gravity.CENTER)) }
+        bar.addView(play, FrameLayout.LayoutParams(dp(68), dp(68), Gravity.CENTER))
+        bar.addView(btn(Icons.CLOSE, "ออกจากเต็มจอ") { setFull(false) }, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(24), dp(16), 0) })
+        bar.addView(btn(TURN_ICON, "สลับแนวตั้งแนวนอน") {
+            requestedOrientation = if (landscape()) android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT else android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE },
+            FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP or Gravity.START).apply { setMargins(dp(16), dp(24), 0, 0) })
+        (window.decorView as FrameLayout).addView(bar, FrameLayout.LayoutParams(-1, -1)); fullBar = bar
+    }
+    private fun syncFullPlay() { window.decorView.postDelayed({ fullPlay?.path = if (player?.isPlaying == true) "M8 6v12 M16 6v12" else "M9 6.5v11l9-5.5z" }, 120) }
     override fun onConfigurationChanged(c: android.content.res.Configuration) {
         super.onConfigurationChanged(c)
         if (!::rootBox.isInitialized) return
@@ -4119,6 +4151,27 @@ class VideoEditorActivity : ComponentActivity() {
         // Everything that used to be a row of buttons is folded into a few dropdowns, side by side.
         val drops = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(dp(8), dp(2), dp(8), dp(4)) }
         box.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(drops) }, LinearLayout.LayoutParams(-1, -2))
+        // Move and size the picked picture with buttons: one step each tap, the same step again while the button is held.
+        if (l.visual) {
+            val pad = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(dp(8), 0, dp(8), dp(6)) }
+            fun step(icon: String, label: String, f: (VideoLayer) -> VideoLayer) {
+                val b = EditorKit.round(this, icon, label) { }
+                var rep: Runnable? = null
+                fun once() { val k = layers.getOrNull(i) ?: return; layers[i] = f(k); placeLayers(); refreshTimeline() }
+                b.setOnTouchListener { v, e -> when (e.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> { v.isPressed = true; once(); rep = object : Runnable { override fun run() { once(); v.postDelayed(this, 70) } }; v.postDelayed(rep!!, 380) }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { v.isPressed = false; rep?.let { v.removeCallbacks(it) }; rep = null } }; true }
+                pad.addView(b, LinearLayout.LayoutParams(dp(42), dp(42)).apply { marginStart = dp(3); marginEnd = dp(3) })
+            }
+            fun at(k: VideoLayer) = k.rawPose(outNow().coerceIn(k.at, k.end))
+            step("M15 6l-6 6 6 6", "ย้ายไปซ้าย") { k -> posed(k, x = (at(k)[0] - 0.01f).coerceIn(0f, 1f)) }
+            step("M9 6l6 6-6 6", "ย้ายไปขวา") { k -> posed(k, x = (at(k)[0] + 0.01f).coerceIn(0f, 1f)) }
+            step("M6 15l6-6 6 6", "ย้ายขึ้น") { k -> posed(k, y = (at(k)[1] - 0.01f).coerceIn(0f, 1f)) }
+            step("M6 9l6 6 6-6", "ย้ายลง") { k -> posed(k, y = (at(k)[1] + 0.01f).coerceIn(0f, 1f)) }
+            step("M5 12h14", "เล็กลง") { k -> posed(k, size = (at(k)[2] * 0.97f).coerceIn(0.03f, 1f)) }
+            step("M5 12h14 M12 5v14", "ใหญ่ขึ้น") { k -> posed(k, size = (at(k)[2] / 0.97f).coerceIn(0.03f, 1f)) }
+            box.addView(pad, LinearLayout.LayoutParams(-1, -2))
+        }
         fun drop(label: String, icon: String, options: List<GlassMenu.Option>, run: (Int) -> Unit) {
             drops.addView(dropButton(label) { v -> menu.show(v, label, options, -1) { n -> run(n) } }.also { if (label == "เครื่องมือ") anchor = it }, LinearLayout.LayoutParams(-2, dp(38)).apply { setMargins(dp(3), 0, dp(3), 0) })
         }
