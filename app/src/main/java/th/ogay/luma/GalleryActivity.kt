@@ -268,6 +268,12 @@ class GalleryActivity : ComponentActivity() {
     /** Set when another screen opens the gallery to choose media: "video", "image" or "media". */
     private val pickKind: String? by lazy { intent.getStringExtra(EXTRA_PICK) }
     private fun pickAllows(item: Item) = when (pickKind) { "video" -> item.video; "image" -> !item.video; else -> true }
+    /** Files from outside the app's own library (Files, Drive, downloads), for every screen that asks the gallery to choose media. */
+    private val importOutside = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenMultipleDocuments()) { list ->
+        if (list.isNullOrEmpty()) return@registerForActivityResult
+        list.forEach { u -> runCatching { contentResolver.takePersistableUriPermission(u, Intent.FLAG_GRANT_READ_URI_PERMISSION) } }
+        setResult(RESULT_OK, Intent().putParcelableArrayListExtra(RESULT_URIS, ArrayList(list)).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)); finish()
+    }
     private fun returnPicked() {
         val uris = ArrayList(pickedItems().map { it.shot?.ai ?: it.uri })
         if (uris.isEmpty()) { notice("แตะรายการที่ต้องการก่อน"); return }
@@ -301,6 +307,7 @@ class GalleryActivity : ComponentActivity() {
                 // Choosing for the editor: one accent "add" button and a close button.
                 addView(text("เพิ่ม", 14.5f, Glass.ON_ACCENT, true).apply { gravity = Gravity.CENTER; background = glass(20, Glass.ACCENT); isClickable = true; glassTouch()
                     contentDescription = "เพิ่มรายการที่เลือก"; setOnClickListener { Glass.tick(this); returnPicked() } }, LinearLayout.LayoutParams(dp(84), dp(44)).apply { rightMargin = dp(4) })
+                act("M3 7h6l2 2h10v10H3z", "นำเข้าจากที่อื่น") { importOutside.launch(when (pickKind) { "video" -> arrayOf("video/*"); "image" -> arrayOf("image/*"); else -> arrayOf("image/*", "video/*") }) }
                 act(Icons.CLOSE, "ยกเลิก") { endSelection() }
             } else {
             act(Icons.SHARE, "แชร์") { shareSelected() }
