@@ -317,7 +317,7 @@ class VideoEditorActivity : ComponentActivity() {
             StudioTimeline.Bar(-1, 0, total, 0xff34d399.toInt(), musicName, false, pk, 0L, (pk?.size ?: 0).toLong() * AudioPeaks.STEP_MS) }
         addGroup(4, "เพลง", "M9 18V6l10-2v12 M9 18a3 3 0 1 1-3-3 M19 16a3 3 0 1 1-3-3", true, musicOff(), mus.isNotEmpty() && mus.all { layers[it].locked }, listOfNotNull(musicBar) + mus.map { barOf(it) }, 0xff34d399.toInt())
         timeline.groups = groups
-        timeline.clips = list; timeline.lanes = lanes; timeline.selected = if (barActive) -1 else seq.indexOf(playIndex).coerceAtLeast(0); timeline.seams = if (extras.isEmpty()) emptyList() else seamLabels(); timeline.seamIcons = if (extras.isEmpty()) emptyList() else order().map { k -> TRANSITION_ICONS.getOrNull(kindFor(k)) }; timeline.seamSpans = if (extras.isEmpty()) emptyList() else order().map { k -> VideoEdit.joinOutMs(joinMsOf(k)) to VideoEdit.joinInMs(joinMsOf(k)) }; timeline.marks = markers
+        timeline.clips = list; timeline.lanes = lanes; timeline.selected = if (barActive || pickedClip != playIndex) -1 else seq.indexOf(playIndex).coerceAtLeast(0); timeline.seams = if (extras.isEmpty()) emptyList() else seamLabels(); timeline.seamIcons = if (extras.isEmpty()) emptyList() else order().map { k -> TRANSITION_ICONS.getOrNull(kindFor(k)) }; timeline.seamSpans = if (extras.isEmpty()) emptyList() else order().map { k -> VideoEdit.joinOutMs(joinMsOf(k)) to VideoEdit.joinInMs(joinMsOf(k)) }; timeline.marks = markers
         timeline.selectedBar = if (barActive && layerPick in layers.indices) layerPick else -2
         val sig = groups.size * 1000 + lanes.size
         if (sig != laneCount) { laneCount = sig; fitTimeline(true) }
@@ -406,6 +406,8 @@ class VideoEditorActivity : ComponentActivity() {
     /** The part of the stage that is kept (after crop), where stickers and the caption are placed. */
     private val visible = RectF()
     /** Which clip the preview plays: 0 the main clip, k the k-th added clip. */
+    /** The clip the person tapped on the timeline; only it gets the selection frame (moving the playhead alone does not select). */
+    private var pickedClip = -1
     private var playIndex = 0; private var autoPlay = false; private var switching = false
     /** The clip whose transition has begun drawing over the end of the clip now playing (-1 = none). */
     private var outFor = -1
@@ -768,7 +770,7 @@ class VideoEditorActivity : ComponentActivity() {
             layers[id] = cur.copy(at = begin.coerceAtLeast(0), length = length.coerceAtLeast(200), from = from)
             if (done) barBase = null
             placeLayers(); refreshTimeline() } }
-        timeline.onSelect = { i -> val k = order().getOrNull(i) ?: 0; val was = barActive; barActive = false
+        timeline.onSelect = { i -> val k = order().getOrNull(i) ?: 0; val was = barActive; pickedClip = k; barActive = false
             if (k != playIndex) jumpTo(k, if (k == 0) start else extras[k - 1].from)
             if (tool == 0 || tool == 2 || tool == 9 || was) showTool(tool, false); refreshTimeline() }
         timeline.onTrim = { i, f, t, done -> val k = order().getOrNull(i) ?: 0
