@@ -91,7 +91,7 @@ data class VideoEditSpec(
 /** A clip appended after the main one. [from]/[to] in ms of that clip. */
 data class VideoPart(val source: Uri, val from: Long, val to: Long, val speed: Float = 1f, val muted: Boolean = false, val volume: Float = 1f, val curve: FloatArray? = null, val motion: Int = 0,
     /** The change into this clip from the one before: -1 follows [VideoSpec.transition], otherwise 0..6 as there; [joinMs] its length (0 = the usual). */
-    val join: Int = -1, val joinMs: Long = 0L, val sourceMs: Long = 0L)
+    val join: Int = -1, val joinMs: Long = 0L, val sourceMs: Long = 0L, val mirror: Boolean = false)
 
 /** An emoji on the picture: [x], [y] are 0..1 across the visible (cropped) frame, [big] doubles its size. */
 data class VideoSticker(val text: String, val x: Float, val y: Float, val big: Boolean = false)
@@ -249,6 +249,7 @@ object VideoEdit {
         val cutAt = LongArray(n); run { var acc = 0L; for (j in 0 until n) { cutAt[j] = acc; acc += pieces[j].durationUs } }
         val items = pieces.mapIndexed { i, piece ->
             val own: MutableList<Effect> = if (piece.clip == 0) effects.toMutableList() else mutableListOf()
+            if (piece.clip > 0 && s.extras[piece.clip - 1].mirror) own += ScaleAndRotateTransformation.Builder().setScale(-1f, 1f).build()
             val motion = if (piece.clip == 0) s.mainMotion else s.extras[piece.clip - 1].motion
             if (motion != ClipMotion.NONE) {
                 // Pieces of one clip follow each other; the move runs across all of them, not once per piece.

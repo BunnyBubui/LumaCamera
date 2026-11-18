@@ -14,6 +14,9 @@ class FrameGridView(c: Context) : View(c) {
     companion object {
         val NAMES = listOf("ปิดเส้น", "สามส่วน 3×3", "สี่ส่วน 4×4", "กากบาทกลาง", "เส้นทแยง", "สัดส่วนทอง", "กรอบ 1:1", "กรอบ 4:5", "กรอบ 9:16", "กรอบ 16:9")
         const val NOTES_START = 6
+        /** The same icons as the camera's grid menu (each one draws its lines), then a rectangle of each frame shape. */
+        val ICONS = listOf(Grids.icons[0], Grids.icons[1], Grids.icons[2], Grids.icons[5], Grids.icons[4], Grids.icons[3],
+            "M6 6h12v12H6z", "M6.5 5h11v13.75h-11z", "M7.75 4.5h8.5v15h-8.5z", "M3.5 7.2h17v9.6h-17z")
     }
     var mode = 0; set(v) { field = v; invalidate() }
     val box = RectF()

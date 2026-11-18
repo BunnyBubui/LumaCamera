@@ -128,10 +128,12 @@ class VideoEditorActivity : ComponentActivity() {
         var volume = 1f; var curve: FloatArray? = null
         /** Slow camera move over this part ([ClipMotion]). */
         var motion = 0
+        /** This part is flipped left to right (the main clip uses the editor's own flip). */
+        var mirror = false
         /** The change into this part from the one before it: -1 follows the default, else 0..6 ([TRANSITIONS]); [joinMs] its length, 0 = usual. */
         var join = -1; var joinMs = 0L
         val len get() = StudioMath.outLen(to - from, speed, curve)
-        fun copy() = Extra(uri, duration, w, h, name, thumb).also { it.from = from; it.to = to; it.speed = speed; it.muted = muted; it.volume = volume; it.curve = curve?.copyOf(); it.motion = motion; it.join = join; it.joinMs = joinMs }
+        fun copy() = Extra(uri, duration, w, h, name, thumb).also { it.from = from; it.to = to; it.speed = speed; it.muted = muted; it.volume = volume; it.curve = curve?.copyOf(); it.motion = motion; it.mirror = mirror; it.join = join; it.joinMs = joinMs }
     }
     private var mainFrames: List<Bitmap> = emptyList()
     private val clipFrames = HashMap<String, List<Bitmap>>()
@@ -1362,7 +1364,7 @@ class VideoEditorActivity : ComponentActivity() {
             val f = max(visible.width() / extra.w, visible.height() / extra.h)
             val tw = (extra.w * f).toInt(); val th = (extra.h * f).toInt()
             (texture2.layoutParams as FrameLayout.LayoutParams).let { it.width = tw; it.height = th; texture2.layoutParams = it }
-            texture2.rotation = 0f; texture2.scaleX = 1f; texture2.scaleY = 1f; texture2.translationX = 0f
+            texture2.rotation = 0f; texture2.scaleX = if (extra.mirror) -1f else 1f; texture2.scaleY = 1f; texture2.translationX = 0f
             val cx = (tw - visible.width()) / 2f; val cy = (th - visible.height()) / 2f
             texture2.clipBounds = Rect(cx.toInt(), cy.toInt(), (cx + visible.width()).toInt(), (cy + visible.height()).toInt())
         }
@@ -1811,7 +1813,7 @@ class VideoEditorActivity : ComponentActivity() {
             val f = max(visible.width() / extra.w, visible.height() / extra.h)
             val tw = (extra.w * f).toInt(); val th = (extra.h * f).toInt()
             (texture.layoutParams as FrameLayout.LayoutParams).let { if (it.width != tw || it.height != th) { it.width = tw; it.height = th; texture.layoutParams = it } }
-            texture.rotation = 0f; texture.scaleX = 1f
+            texture.rotation = 0f; texture.scaleX = if (extra.mirror) -1f else 1f
             val cx = (tw - visible.width()) / 2f; val cy = (th - visible.height()) / 2f
             texture.clipBounds = Rect(cx.toInt(), cy.toInt(), (cx + visible.width()).toInt(), (cy + visible.height()).toInt())
         }
@@ -3019,13 +3021,13 @@ class VideoEditorActivity : ComponentActivity() {
     private fun moreMenu() {
         val now = outNow(); val near = markers.firstOrNull { abs(it - now) <= 150 }
         val flag = GlassMenu.Option(if (near != null) "ถอนธงตรงหัวอ่าน" else "ปักธงตรงหัวอ่าน", "M7 4v16 M7 5h10l-2.5 3.5L17 12H7")
-        val grid = GlassMenu.Option("เส้นกริดและกรอบภาพ", Icons.GRID, "${FrameGridView.NAMES[frameGrid.mode]}  ▾  เลือกรูปแบบ")
+        val grid = GlassMenu.Option("เส้นกริดและกรอบภาพ", FrameGridView.ICONS[frameGrid.mode], "${FrameGridView.NAMES[frameGrid.mode]}  ▾  เลือกรูปแบบ")
         val save = GlassMenu.Option("บันทึกภาพนิ่ง", "M4 7h3l2-2h6l2 2h3v12H4z M12 10a3 3 0 1 0 0 6 3 3 0 0 0 0-6")
         val freeze = GlassMenu.Option("ค้างเฟรม", "M8 5v14 M16 5v14 M4 12h2 M18 12h2")
         toolMenu.show(moreButton, "เมนูเพิ่มเติม", listOf(flag, grid, save, freeze), -1) { i ->
             when (i) {
                 0 -> { if (near != null) markers.remove(near) else { markers += now; markers.sort() }; Glass.tick(timeline); refreshTimeline() }
-                1 -> moreButton.post { toolMenu.show(moreButton, "เส้นกริดและกรอบภาพ", FrameGridView.NAMES.mapIndexed { k, n -> GlassMenu.Option(n, if (k < FrameGridView.NOTES_START) Icons.GRID else "M5 5h14v14H5z") }, frameGrid.mode) { k ->
+                1 -> moreButton.post { toolMenu.show(moreButton, "เส้นกริดและกรอบภาพ", FrameGridView.NAMES.mapIndexed { k, n -> GlassMenu.Option(n, FrameGridView.ICONS[k]) }, frameGrid.mode) { k ->
                     frameGrid.mode = k; getSharedPreferences("camera", 0).edit().putInt("studio_frame_grid", k).apply() } }
                 2 -> saveFrame()
                 3 -> freezeFrame()
@@ -3080,8 +3082,8 @@ class VideoEditorActivity : ComponentActivity() {
             8 -> col.addView(EditorKit.actions(this, listOf(
                     EditorKit.action(this, EditorKit.ROTATE, "หมุน 90°") { turns = (turns + 1) % 4; layoutVideo()
                         if (!Glass.reduced(this)) { texture.rotation = texture.rotation - 90f; texture.animate().rotation(turns * 90f).setInterpolator(Glass.EASE).setDuration(320).start() } },
-                    EditorKit.action(this, Icons.MIRROR, "กลับด้าน", mirror) { mirror = !mirror; layoutVideo(); showTool(8, false) },
-                    EditorKit.action(this, Icons.RESET, "คืนค่า") { turns = 0; mirror = false; layoutVideo(); showTool(8, false) })), -1, -2)
+                    EditorKit.action(this, Icons.MIRROR, "กลับด้าน", extras.getOrNull(playIndex - 1)?.mirror ?: mirror) { val ex = extras.getOrNull(playIndex - 1); if (ex != null) ex.mirror = !ex.mirror else mirror = !mirror; layoutVideo(); if (playIndex > 0) layoutTexture2(playIndex); showTool(8, false) },
+                    EditorKit.action(this, Icons.RESET, "คืนค่า") { turns = 0; mirror = false; extras.forEach { it.mirror = false }; layoutVideo(); showTool(8, false) })), -1, -2)
             9 -> soundTools(col)
             11 -> transitionTools(col)
             12 -> stickerTools(col)
@@ -4504,7 +4506,7 @@ class VideoEditorActivity : ComponentActivity() {
         return VideoEdit.composition(VideoEditSpec(f?.let { Uri.fromFile(it.file) } ?: source, at(from), at(to), if (turns % 2 == 1) vh else vw, if (turns % 2 == 1) vw else vh,
         speed * n, cropRatio(), caption, place, textColor, textBig, if (looked()) colour() else null, music, f == null && hasAudio && keepSound && allSpeeds().all { it in SOUND_MIN..SOUND_MAX },
         turns, mirror, volume, musicVolume, if (cut) at(cutFrom) else -1L, if (cut) at(cutTo) else -1L, textBox,
-        extras.map { VideoPart(it.uri, it.from, it.to, it.speed, it.muted, it.volume, it.curve, it.motion, it.join, it.joinMs, it.duration) }, if (extras.isEmpty()) 0 else transition, stickers.toList(), clampedLayers(), shrinkShort, shrinkFps, mainPos(), fx[0], fx[1], fx[2], mainMotion = mainMotion, mainJoin = mainJoin, mainJoinMs = mainJoinMs, mainSourceMs = if (f == null) duration else 0L, grade = if (grade.active()) gradeCube(33) else null, audio = audioSettings(), mainMuted = mainMuted, mainCurve = if (f == null) mainCurve else null, audioOnly = audioOnly, duck = duck, audioHz = if (audioOnly) soundHz else 0, audioMono = audioOnly && soundMono), applicationContext)
+        extras.map { VideoPart(it.uri, it.from, it.to, it.speed, it.muted, it.volume, it.curve, it.motion, it.join, it.joinMs, it.duration, it.mirror) }, if (extras.isEmpty()) 0 else transition, stickers.toList(), clampedLayers(), shrinkShort, shrinkFps, mainPos(), fx[0], fx[1], fx[2], mainMotion = mainMotion, mainJoin = mainJoin, mainJoinMs = mainJoinMs, mainSourceMs = if (f == null) duration else 0L, grade = if (grade.active()) gradeCube(33) else null, audio = audioSettings(), mainMuted = mainMuted, mainCurve = if (f == null) mainCurve else null, audioOnly = audioOnly, duck = duck, audioHz = if (audioOnly) soundHz else 0, audioMono = audioOnly && soundMono), applicationContext)
     }
 
     /** Export problems stay on screen until dismissed, so the reason can be read (and reported). */

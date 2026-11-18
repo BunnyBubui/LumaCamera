@@ -83,44 +83,79 @@ object EditorKit {
     fun jumpButton(c: Context, icon: String, desc: String, dir: Int, farLabel: String, onTap: () -> Unit, onFar: () -> Unit): View = FrameLayout(c).apply {
         background = c.glass(24, 0x40ffffff); contentDescription = desc; isClickable = true; setTag(GLASS_FX_TAG, true)
         val ic = IconView(c, icon, 2.1f); addView(ic, FrameLayout.LayoutParams(c.dp(20), c.dp(20), Gravity.CENTER))
-        val reach = c.dp(64).toFloat(); val slop = c.dp(10).toFloat()
-        var downX = 0f; var down = false; var armed = false; var near = false; var moved = false; var hint: TextView? = null
-        fun drop(v: View) { hint?.let { h -> h.animate().alpha(0f).scaleX(0.8f).scaleY(0.8f).setDuration(160).withEndAction { (h.parent as? ViewGroup)?.removeView(h) }.start() }; hint = null }
+        val dm = c.resources.displayMetrics; val d = dm.density
+        val slop = c.dp(10).toFloat()
+        var downX = 0f; var down = false; var armed = false; var near = false; var moved = false
+        var layer: FrameLayout? = null; var thumb: FrameLayout? = null; var fill: View? = null; var endIcon: IconView? = null; var thumbIcon: IconView? = null
+        var travel = 0f
+        fun close(snapEnd: Boolean) {
+            val l = layer ?: return; layer = null
+            val t = thumb
+            if (snapEnd) t?.animate()?.translationX(travel * dir)?.setDuration(110)?.start()
+            else t?.animate()?.translationX(0f)?.setInterpolator(Glass.SPRING)?.setDuration(360)?.start()
+            l.animate().alpha(0f).setStartDelay(if (snapEnd) 140 else 220).setDuration(180).withEndAction { (l.parent as? ViewGroup)?.removeView(l); this@apply.alpha = 1f }.start()
+        }
+        // The long press opens a slide track beside the button (drawn above everything, so nothing clips it): the button turns into
+        // the handle, and letting go at the far end of the track jumps to the very end of the timeline.
         val arm = Runnable {
             if (!down || moved) return@Runnable; armed = true; Glass.tick(this, HapticFeedbackConstants.LONG_PRESS)
-            animate().scaleX(1.12f).scaleY(1.12f).setInterpolator(Glass.SPRING).setDuration(320).start()
             val host = (context as? android.app.Activity)?.window?.decorView as? FrameLayout ?: return@Runnable
             val l = IntArray(2); getLocationInWindow(l); val hl = IntArray(2); host.getLocationInWindow(hl)
-            val bw = width
-            hint = c.text((if (dir < 0) "‹  " else "") + farLabel + (if (dir > 0) "  ›" else ""), 12.5f, Glass.TEXT, true).apply {
-                background = c.glass(16, Glass.FILL_POP); setPadding(c.dp(14), c.dp(8), c.dp(14), c.dp(8)); elevation = 10 * c.resources.displayMetrics.density
-                alpha = 0f; scaleX = 0.8f; scaleY = 0.8f; measure(0, 0)
-                val x = (l[0] - hl[0] + bw / 2 - measuredWidth / 2).coerceIn(c.dp(8), host.width - measuredWidth - c.dp(8))
-                host.addView(this, FrameLayout.LayoutParams(-2, -2).apply { leftMargin = x; topMargin = l[1] - hl[1] - c.dp(50) })
-                pivotX = measuredWidth / 2f; pivotY = measuredHeight.toFloat(); animate().alpha(1f).scaleX(1f).scaleY(1f).setInterpolator(Glass.SPRING).setDuration(340).start() }
+            val r = width / 2f; val pad = 4 * d; val cx = l[0] - hl[0] + r; val cy = l[1] - hl[1] + height / 2f
+            val room = if (dir > 0) host.width - cx - r - pad - 10 * d else cx - r - pad - 10 * d
+            travel = minOf(170 * d, room).coerceAtLeast(60 * d)
+            val left = if (dir > 0) cx - r - pad else cx - travel - r - pad
+            val trackW = travel + 2 * r + 2 * pad; val trackH = 2 * r + 2 * pad
+            val box = FrameLayout(c).apply { elevation = 12 * d; clipChildren = false; contentDescription = farLabel }
+            val track = View(c).apply { background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = trackH / 2; setColor(0xf2202024.toInt()); setStroke(c.dp(1), 0x33ffffff) } }
+            box.addView(track, FrameLayout.LayoutParams(trackW.toInt(), trackH.toInt()))
+            val f = View(c).apply { background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = trackH / 2; setColor(0x66ff9f45) }; pivotX = if (dir > 0) 0f else trackW; pivotY = trackH / 2; scaleX = 0f }
+            box.addView(f, FrameLayout.LayoutParams(trackW.toInt(), trackH.toInt())); fill = f
+            // A row of small chevrons along the track says which way to slide; the end mark is where to let go.
+            val chev = View(c).apply { background = object : android.graphics.drawable.Drawable() {
+                val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeWidth = 1.8f * d; color = 0x88ffffff.toInt() }
+                override fun draw(cv: Canvas) { val n = 4; val b0 = bounds; val gap = (travel - 2 * r - 6 * d) / n
+                    for (i in 0 until n) { val x = if (dir > 0) b0.left + pad + 2 * r + 8 * d + i * gap else b0.right - pad - 2 * r - 8 * d - i * gap; val m = b0.exactCenterY()
+                        p.alpha = 70 + i * 40; cv.drawLine(x - dir * 2.5f * d, m - 4 * d, x + dir * 2.5f * d, m, p); cv.drawLine(x + dir * 2.5f * d, m, x - dir * 2.5f * d, m + 4 * d, p) } }
+                override fun setAlpha(a: Int) {}; override fun setColorFilter(cf: android.graphics.ColorFilter?) {}; override fun getOpacity() = android.graphics.PixelFormat.TRANSLUCENT } }
+            box.addView(chev, FrameLayout.LayoutParams(trackW.toInt(), trackH.toInt()))
+            val e = IconView(c, icon, 2.1f).apply { tint = 0x99ffffff.toInt() }; endIcon = e
+            box.addView(e, FrameLayout.LayoutParams(c.dp(22), c.dp(22)).apply { leftMargin = (cx + dir * travel - 11 * d - left).toInt(); topMargin = (pad + r - 11 * d).toInt() })
+            val th = FrameLayout(c).apply { background = c.glass(24, 0xff3a3a40.toInt()); elevation = 4 * d }
+            val ti = IconView(c, icon, 2.1f); th.addView(ti, FrameLayout.LayoutParams(c.dp(20), c.dp(20), Gravity.CENTER)); thumbIcon = ti
+            box.addView(th, FrameLayout.LayoutParams((2 * r).toInt(), (2 * r).toInt()).apply { leftMargin = (cx - r - left).toInt(); topMargin = pad.toInt() }); thumb = th
+            host.addView(box, FrameLayout.LayoutParams(trackW.toInt(), trackH.toInt()).apply { leftMargin = left.toInt(); topMargin = (cy - trackH / 2).toInt() })
+            layer = box
+            this.alpha = 0f   // the handle in the track takes this button's place
+            box.pivotX = if (dir > 0) 0f else trackW; box.pivotY = trackH / 2f; box.scaleX = 0.35f; box.alpha = 0f
+            box.animate().scaleX(1f).alpha(1f).setInterpolator(Glass.SPRING).setDuration(380).start()
         }
         setOnTouchListener { v, e ->
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> { down = true; armed = false; near = false; moved = false; downX = e.rawX; parent?.requestDisallowInterceptTouchEvent(true)
-                    animate().scaleX(1.05f).scaleY(1.05f).setInterpolator(Glass.EASE).setDuration(140).start(); (background as? GlassDrawable)?.let { it.touchX = e.x; it.touchY = e.y; it.touchAlpha = 1f }
+                    (background as? GlassDrawable)?.let { it.touchX = e.x; it.touchY = e.y; it.touchAlpha = 1f }
+                    if (!Glass.reduced(context)) animate().scaleX(0.96f).scaleY(0.96f).setInterpolator(Glass.EASE).setDuration(120).start()
                     postDelayed(arm, 340) }
                 MotionEvent.ACTION_MOVE -> if (down) {
-                    val dx = (e.rawX - downX) * dir
                     if (!armed && Math.abs(e.rawX - downX) > slop) { moved = true; removeCallbacks(arm) }
-                    if (armed) {
-                        val t = (dx / reach).coerceIn(0f, 1.15f); translationX = t * reach * 0.62f * dir; (background as? GlassDrawable)?.let { it.touchX = e.x; it.touchY = e.y; it.invalidateSelf() }
-                        val n = t >= 0.85f
-                        if (n != near) { near = n; Glass.tick(this); ic.tint = if (n) Glass.ACCENT else Glass.TEXT; hint?.animate()?.scaleX(if (n) 1.1f else 1f)?.scaleY(if (n) 1.1f else 1f)?.setDuration(160)?.start()
-                            animate().scaleX(if (n) 1.22f else 1.12f).scaleY(if (n) 1.22f else 1.12f).setInterpolator(Glass.SPRING).setDuration(260).start() }
+                    if (armed && thumb != null) {
+                        val t = (((e.rawX - downX) * dir) / travel).coerceIn(0f, 1f)
+                        thumb?.translationX = t * travel * dir
+                        fill?.scaleX = ((t * travel + 2 * (width / 2f) + 8 * c.resources.displayMetrics.density) / ((fill?.width ?: 1).coerceAtLeast(1))).coerceIn(0f, 1f)
+                        val n = t >= 0.94f
+                        if (n != near) { near = n; Glass.tick(this); endIcon?.tint = if (n) Glass.ACCENT else 0x99ffffff.toInt(); thumbIcon?.tint = if (n) Glass.ACCENT else Glass.TEXT
+                            thumb?.animate()?.scaleX(if (n) 1.08f else 1f)?.scaleY(if (n) 1.08f else 1f)?.setInterpolator(Glass.SPRING)?.setDuration(240)?.start()
+                            endIcon?.animate()?.scaleX(if (n) 1.3f else 1f)?.scaleY(if (n) 1.3f else 1f)?.setInterpolator(Glass.SPRING)?.setDuration(240)?.start() }
                     }
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> if (down) {
                     down = false; removeCallbacks(arm)
                     val fire = e.actionMasked == MotionEvent.ACTION_UP
-                    animate().scaleX(1f).scaleY(1f).translationX(0f).setInterpolator(Glass.SPRING).setDuration(520).start(); ic.tint = Glass.TEXT
+                    animate().scaleX(1f).scaleY(1f).setInterpolator(Glass.SPRING).setDuration(360).start()
                     (background as? GlassDrawable)?.let { g -> android.animation.ValueAnimator.ofFloat(g.touchAlpha, 0f).apply { duration = 420; addUpdateListener { g.touchAlpha = it.animatedValue as Float }; start() } }
-                    drop(v)
-                    if (fire) { if (armed && near) { Glass.tick(this, HapticFeedbackConstants.KEYBOARD_TAP); onFar() } else if (!armed && !moved) { Glass.tick(this, HapticFeedbackConstants.KEYBOARD_TAP); onTap() } }
+                    val go = fire && armed && near
+                    if (armed) close(go) else this.alpha = 1f
+                    if (fire) { if (go) { Glass.tick(this, HapticFeedbackConstants.KEYBOARD_TAP); onFar() } else if (!armed && !moved) { Glass.tick(this, HapticFeedbackConstants.KEYBOARD_TAP); onTap() } }
                 }
             }
             true
