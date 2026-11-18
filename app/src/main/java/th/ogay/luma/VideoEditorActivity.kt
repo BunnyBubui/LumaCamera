@@ -345,6 +345,7 @@ class VideoEditorActivity : ComponentActivity() {
             if (!prepared) pendingSeek = at
             else if (exact || now - lastSeekAt > 70) { lastSeekAt = now; player?.runCatching { if (android.os.Build.VERSION.SDK_INT >= 26) seekTo(at, if (exact) MediaPlayer.SEEK_CLOSEST else MediaPlayer.SEEK_CLOSEST_SYNC) else seekTo(at.toInt()) } }
         }
+        scrubJoin(k, at)
         showTime()
     }
 
@@ -716,6 +717,9 @@ class VideoEditorActivity : ComponentActivity() {
         overlayHost = FrameLayout(this).apply { clipChildren = true; clipToPadding = true; clipToOutline = false }
         stage.addView(overlayHost, FrameLayout.LayoutParams(1, 1, Gravity.TOP or Gravity.START))
         // Covers the picture for a moment when the preview moves to the next clip (fade or flash transitions).
+        // Shows the other clip's picture over the preview while the playhead is parked inside an overlapping change.
+        stillView = android.widget.ImageView(this).apply { visibility = View.GONE; scaleType = android.widget.ImageView.ScaleType.CENTER_CROP; isClickable = false; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
+        stage.addView(stillView, maxOf(stage.indexOfChild(texture), stage.indexOfChild(texture2)) + 1, FrameLayout.LayoutParams(1, 1, Gravity.TOP or Gravity.START))
         dip = View(this).apply { alpha = 0f; isClickable = false; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
         stage.addView(dip, -1, -1)
         stage.contentDescription = "พรีวิววิดีโอ"   // playing and pausing is the play button only; a tap on the picture does nothing
@@ -1514,11 +1518,104 @@ class VideoEditorActivity : ComponentActivity() {
     }
     /** Takes a way out that is half drawn off the picture (the preview was moved or paused before the clip ended). */
     private fun cancelOut() {
+        clearScrubFx()
         if (outFor == -1) return
         outFor = -1
         dip.animate().cancel(); dip.alpha = 0f; dip.scaleX = 1f
         texture.animate().cancel(); texture.translationX = 0f
         if (blurIn) { blurIn = false; paintLook() }
+    }
+    // ---- A change between clips, drawn at the place where the playhead is parked (scrubbing, tapping on the timeline) ----
+    private var scrubFx = false; private var scrubPunch = false
+    private val stills = HashMap<String, Bitmap>()
+    private var stillBusy = false; private var stillUri: Uri? = null; private var stillMs = 0L; private var stillAlpha = 0f
+    private lateinit var stillView: android.widget.ImageView
+    private fun clearScrubFx() {
+        if (!scrubFx) return
+        scrubFx = false
+        dip.animate().cancel(); dip.alpha = 0f; dip.scaleX = 1f
+        texture.animate().cancel(); texture.translationX = 0f
+        if (scrubPunch) { scrubPunch = false; texture.scaleY = 1f; texture.scaleX = if (if (playIndex == 0) mirror else extras.getOrNull(playIndex - 1)?.mirror == true) -1f else 1f }
+        if (blurIn) { blurIn = false; paintLook() }
+        stillUri = null; if (::stillView.isInitialized) stillView.visibility = View.GONE
+    }
+    private fun stillKey(u: Uri, ms: Long) = "$u@${ms / 40}"
+    private fun applyStill(b: Bitmap) {
+        val v = stillView; val r = visible
+        (v.layoutParams as FrameLayout.LayoutParams).let { lp -> val w = r.width().toInt().coerceAtLeast(1); val h = r.height().toInt().coerceAtLeast(1)
+            if (lp.width != w || lp.height != h || lp.leftMargin != r.left.toInt() || lp.topMargin != r.top.toInt()) { lp.width = w; lp.height = h; lp.leftMargin = r.left.toInt(); lp.topMargin = r.top.toInt(); v.layoutParams = lp } }
+        v.setImageBitmap(b); v.alpha = stillAlpha; v.visibility = View.VISIBLE
+    }
+    private fun showStill(u: Uri, ms: Long, alpha: Float) {
+        scrubFx = true; stillUri = u; stillMs = ms.coerceAtLeast(0); stillAlpha = alpha.coerceIn(0f, 1f)
+        if (::stillView.isInitialized && stillView.visibility == View.VISIBLE) stillView.alpha = stillAlpha
+        stills[stillKey(u, stillMs)]?.let { applyStill(it); return }
+        pumpStill()
+    }
+    private fun pumpStill() {
+        if (stillBusy) return; val u = stillUri ?: return; val ms = stillMs; val key = stillKey(u, ms)
+        stillBusy = true
+        luma.readIo.execute {
+            val b = runCatching { MediaMetadataRetriever().let { r -> try { r.setDataSource(this, u)
+                if (android.os.Build.VERSION.SDK_INT >= 27) r.getScaledFrameAtTime(ms * 1000, MediaMetadataRetriever.OPTION_CLOSEST, 720, 720) else r.getFrameAtTime(ms * 1000, MediaMetadataRetriever.OPTION_CLOSEST) } finally { runCatching { r.release() } } } }.getOrNull()
+            runOnUiThread {
+                stillBusy = false
+                if (isDestroyed) return@runOnUiThread
+                if (b != null) { if (stills.size > 16) stills.clear(); stills[key] = b }
+                val cu = stillUri
+                if (scrubFx && cu != null) { val cur = stillKey(cu, stillMs); val got = stills[cur]; if (got != null) applyStill(got) else pumpStill() }
+            }
+        }
+    }
+    /** Draws the change as it looks at [at] ms of clip [k], the same way playing draws it: fade/flash, zoom, slide, wipe, blur, and the overlapping change with the other clip's picture. */
+    private fun scrubJoin(k: Int, at: Long) {
+        if (extras.isEmpty() || Glass.reduced(this) || player?.isPlaying == true || !::dip.isInitialized) return
+        val o = order(); val first = o.first(); val sp = clipSpeed(k).coerceAtLeast(0.001f)
+        fun ease(x: Float) = x * x * (3 - 2 * x)
+        val local = (at - clipFrom(k)) / sp
+        val kin = kindFor(k)
+        // Into this clip.
+        if (k != first && kin != 0) {
+            val prev = o.getOrNull(o.indexOf(k) - 1)
+            if (kin == VideoEdit.OVERLAP) {
+                val plan = prev?.let { lapPlan(it, k) }
+                if (plan != null && at - clipFrom(k) < plan.after) {
+                    val pr = ((plan.before + (at - clipFrom(k))).toFloat() / (plan.before + plan.after)).coerceIn(0f, 1f)
+                    showStill(clipUri(prev), clipTo(prev) + (at - clipFrom(k)), 1f - pr); return }
+            } else {
+                val inMs = VideoEdit.joinInMs(joinMsOf(k))
+                if (inMs > 0 && local < inMs) { val a = 1f - (local / inMs).coerceIn(0f, 1f); scrubFx = true
+                    when (kin) {
+                        1, 2 -> { dip.setBackgroundColor(if (kin == 2) Color.WHITE else Color.BLACK); dip.alpha = a }
+                        3 -> { scrubPunch = true; val z = 1f + 0.12f * ease(a); texture.scaleY = z; texture.scaleX = if (playIndex == 0 && mirror || extras.getOrNull(playIndex - 1)?.mirror == true) -z else z }
+                        4 -> texture.translationX = texture.width * ease(a)
+                        5 -> { dip.setBackgroundColor(Color.BLACK); dip.alpha = 1f; dip.pivotX = 0f; dip.scaleX = a }
+                        6 -> { blurIn = true; blurPreview(a) }
+                    }
+                    return }
+            }
+        }
+        // Out of this clip.
+        val nk = nextOf(k); val kout = kindFor(nk)
+        if (nk != k && nk != first && kout != 0) {
+            if (kout == VideoEdit.OVERLAP) {
+                val plan = lapPlan(k, nk)
+                val remain = clipTo(k) - at
+                if (plan != null && remain < plan.before) {
+                    val pr = ((plan.before - remain).toFloat() / (plan.before + plan.after)).coerceIn(0f, 1f)
+                    showStill(clipUri(nk), clipFrom(nk) - remain, pr) }
+            } else {
+                val om = VideoEdit.joinOutMs(joinMsOf(nk)); val remain = (clipTo(k) - at) / sp
+                if (om > 0 && remain < om) { val a = (1f - remain / om).coerceIn(0f, 1f); scrubFx = true
+                    when (kout) {
+                        1, 2 -> { dip.setBackgroundColor(if (kout == 2) Color.WHITE else Color.BLACK); dip.alpha = a }
+                        4 -> texture.translationX = -texture.width * ease(a)
+                        5 -> { dip.setBackgroundColor(Color.BLACK); dip.alpha = 1f; dip.pivotX = dip.width.toFloat(); dip.scaleX = a }
+                        6 -> { blurIn = true; blurPreview(a) }
+                    }
+                }
+            }
+        }
     }
     /** The new clip is ready: uncover it (fade, flash) or let it settle from a little closer (zoom). */
     private fun arrived() {
@@ -1765,6 +1862,7 @@ class VideoEditorActivity : ComponentActivity() {
         cancelPendingCut(); cancelLap(); dropNext()
         if (p.isPlaying) { autoPlay = false; cancelOut(); cancelLap(); p.pause(); musicPlayer?.pause(); syncLayerSound(false); setPlayIcon("M9 6.5v11l9-5.5z") }
         else {
+            clearScrubFx()
             if (playIndex == 0 && p.currentPosition >= end - 60) p.seekTo(start.toInt())
             extras.getOrNull(playIndex - 1)?.let { if (p.currentPosition >= it.to - 60) p.seekTo(it.from.toInt()) }
             runCatching { p.playbackParams = p.playbackParams.setSpeed(if (playIndex == 0) speed else extras.getOrNull(playIndex - 1)?.speed ?: 1f) }
