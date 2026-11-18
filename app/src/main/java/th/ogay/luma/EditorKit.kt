@@ -332,7 +332,7 @@ object EditorKit {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; isClickable = true; isFocusable = true; contentDescription = name; minimumHeight = c.dp(60)
             addView(IconView(c, icon, 2f), LinearLayout.LayoutParams(c.dp(22), c.dp(22)))
             addView(c.text(name, 11.5f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; maxLines = 1; ellipsize = null; setPadding(0, c.dp(5), 0, 0) })
-            glassTouch(); setOnClickListener { if (i != selected) pick(i) }
+            glassTouch(); setOnClickListener { pick(i) }   // also the selected tab: it opens or folds the tool card
         } }
         init {
             clipChildren = false
