@@ -188,6 +188,9 @@ fun androidx.camera.view.PreviewView.smallFrame(width: Int): android.graphics.Bi
  * Sound and haptic for every tap on anything clickable, in every screen. Buttons that already call
  * [Glass.tick] keep their own feedback (a tick in the last 150 ms means the button handled it).
  */
+/** Marks a view that already animates its own press, so the app-wide soft press leaves it alone. */
+const val GLASS_FX_TAG = 0x6c756d61
+
 object ClickFeedback {
     fun install(a: Activity) {
         val w = a.window; val inner = w.callback ?: return
@@ -198,7 +201,9 @@ object ClickFeedback {
         private var target: View? = null; private var downAt = 0L
         override fun dispatchTouchEvent(e: android.view.MotionEvent): Boolean {
             val root = (inner as? Activity)?.window?.decorView
-            if (e.actionMasked == android.view.MotionEvent.ACTION_DOWN && root != null) { target = hit(root, e.rawX.toInt(), e.rawY.toInt()); downAt = android.os.SystemClock.uptimeMillis() }
+            if (e.actionMasked == android.view.MotionEvent.ACTION_DOWN && root != null) { target = hit(root, e.rawX.toInt(), e.rawY.toInt()); downAt = android.os.SystemClock.uptimeMillis(); target?.let { pressBegin(it, e) } }
+            else if (e.actionMasked == android.view.MotionEvent.ACTION_MOVE) pressMove(e)
+            else if (e.actionMasked == android.view.MotionEvent.ACTION_UP || e.actionMasked == android.view.MotionEvent.ACTION_CANCEL) pressEnd()
             if (e.actionMasked == android.view.MotionEvent.ACTION_UP) TapPoint.record(e)
             val handled = inner.dispatchTouchEvent(e)
             if (e.actionMasked == android.view.MotionEvent.ACTION_UP) {
@@ -210,6 +215,36 @@ object ClickFeedback {
             }
             if (e.actionMasked == android.view.MotionEvent.ACTION_CANCEL) target = null
             return handled
+        }
+        // ---- Soft press for every button in the app: it swells a little under the finger, leans and lights up where the finger is,
+        // swells a bit more when held, and springs back. Buttons that already do this themselves (glassTouch) are left alone.
+        private var fx: View? = null; private var fxX = 0f; private var fxY = 0f; private var fxMoved = false; private var fxHeld = false
+        private val fxHold = Runnable { val v = fx ?: return@Runnable; if (fxMoved) return@Runnable; fxHeld = true
+            if (!Glass.reduced(v.context)) v.animate().scaleX(1.07f).scaleY(1.07f).setInterpolator(Glass.SPRING).setDuration(320).start() }
+        private fun pressBegin(v: View, e: android.view.MotionEvent) {
+            if (v.getTag(GLASS_FX_TAG) != null || Glass.reduced(v.context)) return
+            val dm = v.resources.displayMetrics
+            if (v.width > dm.widthPixels * 0.7f || v.height > dm.heightPixels * 0.3f || v.width <= 0) return
+            fx = v; fxX = e.rawX; fxY = e.rawY; fxMoved = false; fxHeld = false
+            v.animate().cancel(); v.animate().scaleX(1.04f).scaleY(1.04f).setInterpolator(Glass.EASE).setDuration(150).start()
+            (v.background as? GlassDrawable)?.let { g -> val l = IntArray(2); v.getLocationOnScreen(l); g.touchX = e.rawX - l[0]; g.touchY = e.rawY - l[1]; g.touchAlpha = 1f }
+            v.removeCallbacks(fxHold); v.postDelayed(fxHold, 380)
+        }
+        private fun pressMove(e: android.view.MotionEvent) {
+            val v = fx ?: return
+            if (Math.hypot((e.rawX - fxX).toDouble(), (e.rawY - fxY).toDouble()) > 14 * v.resources.displayMetrics.density) { if (!fxMoved) { fxMoved = true; v.removeCallbacks(fxHold) } }
+            val l = IntArray(2); v.getLocationOnScreen(l)
+            val lx = (e.rawX - l[0]).coerceIn(0f, v.width.toFloat()); val ly = (e.rawY - l[1]).coerceIn(0f, v.height.toFloat())
+            val d = v.resources.displayMetrics.density
+            // The button follows the finger a little (a few dp), and the light under it moves with the finger.
+            v.translationX = (lx / v.width - 0.5f) * Math.min(7 * d, v.width * 0.1f)
+            v.translationY = (ly / v.height - 0.5f) * Math.min(6 * d, v.height * 0.1f)
+            (v.background as? GlassDrawable)?.let { g -> g.touchX = lx; g.touchY = ly; g.invalidateSelf() }
+        }
+        private fun pressEnd() {
+            val v = fx ?: return; fx = null; v.removeCallbacks(fxHold)
+            v.animate().scaleX(1f).scaleY(1f).translationX(0f).translationY(0f).setInterpolator(Glass.SPRING).setDuration(560).start()
+            (v.background as? GlassDrawable)?.let { g -> android.animation.ValueAnimator.ofFloat(g.touchAlpha, 0f).apply { duration = 480; addUpdateListener { g.touchAlpha = it.animatedValue as Float }; start() } }
         }
         private fun inside(v: View, x: Int, y: Int): Boolean { val r = android.graphics.Rect(); return v.getGlobalVisibleRect(r) && r.contains(x, y) }
         /** The deepest visible view under the finger that reacts to clicks. */

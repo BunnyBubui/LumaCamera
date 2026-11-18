@@ -326,6 +326,7 @@ class VideoEditorActivity : ComponentActivity() {
     private lateinit var stage: FrameLayout
     private lateinit var texture: TextureView; private lateinit var texture2: TextureView; private var surface2: Surface? = null
     private lateinit var mask: CropMask
+    private lateinit var frameGrid: FrameGridView
     private lateinit var captionView: TextView
     private lateinit var playIcon: IconView
     private lateinit var timeLabel: TextView
@@ -640,13 +641,14 @@ class VideoEditorActivity : ComponentActivity() {
         stage.addView(texture2, FrameLayout.LayoutParams(0, 0, Gravity.CENTER))
         installPreviewSurfaceListener(texture2)
         fxView = FxView(this).also { stage.addView(it, -1, -1) }
+        frameGrid = FrameGridView(this).apply { mode = getSharedPreferences("camera", 0).getInt("studio_frame_grid", 0) }; stage.addView(frameGrid, -1, -1)
         mask = CropMask(this); stage.addView(mask, -1, -1)
         captionView = text("", 20f, Glass.TEXT, true).apply { gravity = Gravity.CENTER; maxLines = 3; setShadowLayer(6f, 0f, 2f, 0x99000000.toInt()); importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
         stage.addView(captionView, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
         // Covers the picture for a moment when the preview moves to the next clip (fade or flash transitions).
         dip = View(this).apply { alpha = 0f; isClickable = false; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
         stage.addView(dip, -1, -1)
-        stage.setOnClickListener { togglePlay() }; stage.contentDescription = "พรีวิววิดีโอ แตะเพื่อเล่นหรือหยุด"
+        stage.contentDescription = "พรีวิววิดีโอ"   // playing and pausing is the play button only; a tap on the picture does nothing
         // Only a real size change re-fits the video: a layout pass alone must not, or setting the caption's width
         // asks for another layout and the page re-lays itself every frame.
         stage.addOnLayoutChangeListener { _, l, t, r, b, ol, ot, or_, ob -> if (r - l != or_ - ol || b - t != ob - ot) stage.post { layoutVideo() } }
@@ -654,19 +656,27 @@ class VideoEditorActivity : ComponentActivity() {
 
         val transport = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(6), dp(14), dp(2)) }
         playIcon = IconView(this, "M9 6.5v11l9-5.5z", 2f)
-        transport.addView(FrameLayout(this).apply { background = glass(24, 0x40ffffff); isClickable = true; contentDescription = "เล่นหรือหยุด"; glassTouch(); setOnClickListener { togglePlay() }
-            addView(playIcon, FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER)) }, dp(48), dp(48))
-        // Start and end of the whole video.
-        transport.addView(EditorKit.round(this, "M7 5v14 M18 6l-8 6 8 6z", "ไปต้นวิดีโอ") { if (player?.isPlaying == true) togglePlay(); val (k, at) = locate(0L); jumpTo(k, at, true) }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { leftMargin = dp(6) })
-        transport.addView(EditorKit.round(this, "M17 5v14 M6 6l8 6-8 6z", "ไปท้ายวิดีโอ") { if (player?.isPlaying == true) togglePlay(); val (k, at) = locate(totalOut()); jumpTo(k, (at - 40).coerceAtLeast(clipFrom(k)), true) }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { leftMargin = dp(6) })
         timeLabel = text("", 12.5f, Glass.TEXT2).apply { setPadding(dp(16), dp(2), dp(16), 0); maxLines = 1; gravity = Gravity.START }
-        transport.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
-        transport.addView(EditorKit.round(this, "M7 4v16 M7 5h10l-2.5 3.5L17 12H7", "ปักหรือถอนมาร์กเกอร์ตรงหัวอ่าน") {
-            val now = outNow(); val near = markers.firstOrNull { abs(it - now) <= 150 }
-            if (near != null) markers.remove(near) else { markers += now; markers.sort() }
-            Glass.tick(timeline); refreshTimeline() }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { rightMargin = dp(6) })
         collapseIcon = IconView(this, "M6 9l6 6 6-6", 2f)   // kept only so landscape's fold state has an icon to set; not shown
-        transport.addView(View(this), LinearLayout.LayoutParams(dp(6), 1))
+        // One tap: to the end of this clip (or the start of the next). Press and hold, then slide to the side: all the way to the end of the whole video.
+        val back = EditorKit.jumpButton(this, "M7 5v14 M18 6l-8 6 8 6z", "คลิปก่อนหน้า ลากค้างไปซ้ายเพื่อไปต้นวิดีโอ", -1, "ไปต้นวิดีโอ",
+            { if (player?.isPlaying == true) togglePlay(); val i = order().indexOf(playIndex); val atStart = (trim.playhead - clipFrom(playIndex)) < 600
+                val k = if (atStart && i > 0) order()[i - 1] else playIndex; jumpTo(k, clipFrom(k), true) },
+            { if (player?.isPlaying == true) togglePlay(); val (k, at) = locate(0L); jumpTo(k, at, true) })
+        val fwd = EditorKit.jumpButton(this, "M17 5v14 M6 6l8 6-8 6z", "คลิปถัดไป ลากค้างไปขวาเพื่อไปท้ายวิดีโอ", 1, "ไปท้ายวิดีโอ",
+            { if (player?.isPlaying == true) togglePlay(); val o = order(); val i = o.indexOf(playIndex)
+                if (i in 0 until o.size - 1) jumpTo(o[i + 1], clipFrom(o[i + 1]), true) else jumpTo(playIndex, (clipTo(playIndex) - 40).coerceAtLeast(clipFrom(playIndex)), true) },
+            { if (player?.isPlaying == true) togglePlay(); val (k, at) = locate(totalOut()); jumpTo(k, (at - 40).coerceAtLeast(clipFrom(k)), true) })
+        transport.addView(View(this), LinearLayout.LayoutParams(dp(58), 1))   // as wide as the menu button on the other side, so play stays in the middle
+        transport.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+        transport.addView(back, LinearLayout.LayoutParams(dp(48), dp(48)).apply { rightMargin = dp(14) })
+        transport.addView(FrameLayout(this).apply { background = glass(28, 0x40ffffff); isClickable = true; contentDescription = "เล่นหรือหยุด"; glassTouch(); setOnClickListener { togglePlay() }
+            addView(playIcon, FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER)) }, dp(56), dp(56))
+        transport.addView(fwd, LinearLayout.LayoutParams(dp(48), dp(48)).apply { leftMargin = dp(14) })
+        transport.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
+        // Marker flag, frame grid, save picture and freeze frame live in one menu button at the right, where the fold button used to be.
+        moreButton = EditorKit.round(this, "M5 12h.01 M12 12h.01 M19 12h.01", "เมนูเพิ่มเติม") { moreMenu() }
+        transport.addView(moreButton, LinearLayout.LayoutParams(dp(44), dp(44)))
         root.addView(transport, -1, -2)
         timeline = StudioTimeline(this).apply { contentDescription = "ไทม์ไลน์ ลากเพื่อเลื่อนเวลา แตะคลิปเพื่อเลือก ลากขอบคลิปที่เลือกเพื่อตัด กดค้างแล้วลากเพื่อสลับลำดับ" }
         timeline.onSeek = { t, done -> if (player?.isPlaying == true) togglePlay(); val (k, at) = locate(t); jumpTo(k, at, done) }
@@ -857,6 +867,7 @@ class VideoEditorActivity : ComponentActivity() {
 
     private fun clipUri(k: Int): Uri = if (k == 0) source else extras.getOrNull(k - 1)?.uri ?: source
     private fun clipFrom(k: Int): Long = if (k == 0) start else extras.getOrNull(k - 1)?.from ?: 0L
+    private fun clipTo(k: Int): Long = if (k == 0) end else extras.getOrNull(k - 1)?.to ?: 0L
     private fun clipSpeed(k: Int): Float = if (k == 0) speed else extras.getOrNull(k - 1)?.speed ?: 1f
     private fun exactSeek(mp: MediaPlayer, ms: Long) {
         if (android.os.Build.VERSION.SDK_INT >= 26) mp.seekTo(ms, MediaPlayer.SEEK_CLOSEST)
@@ -1463,6 +1474,7 @@ class VideoEditorActivity : ComponentActivity() {
     private lateinit var collapseIcon: IconView
     private var toolsHolder: android.widget.ScrollView? = null
     private lateinit var grabber: FrameLayout
+    private lateinit var moreButton: View
     private var toolsFull = 0
     /** The tool panel floats over the lower part of the picture, like a drop-down, and folds away again. Upright screens only. */
     private lateinit var toolCard: LinearLayout
@@ -1501,7 +1513,7 @@ class VideoEditorActivity : ComponentActivity() {
     private fun dragEnd() {
         val a = dragTrail.firstOrNull(); val b = dragTrail.lastOrNull()
         val vy = if (a != null && b != null && b.first > a.first) (b.second - a.second) / (b.first - a.first) * 1000f else 0f
-        if (toolCard.translationY > dp(48) || vy > dp(600)) { Glass.tick(tools); hideCard() }
+        if (toolCard.translationY > dp(26) || vy > dp(320)) { Glass.tick(tools); hideCard() }
         else toolCard.animate().translationY(0f).setInterpolator(android.view.animation.OvershootInterpolator(2.2f)).setDuration(380).start()
     }
     /** The grip above the tabs: drag it up or down, or tap it. */
@@ -1510,7 +1522,7 @@ class VideoEditorActivity : ComponentActivity() {
         override fun onTouch(v: View, e: MotionEvent): Boolean {
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> { downY = e.rawY; moved = false; dragBegin(e.rawY); v.parent?.requestDisallowInterceptTouchEvent(true) }
-                MotionEvent.ACTION_MOVE -> { if (!moved && abs(e.rawY - downY) > dp(6)) moved = true; if (moved) dragMove(e.rawY) }
+                MotionEvent.ACTION_MOVE -> { if (!moved && abs(e.rawY - downY) > dp(4)) moved = true; if (moved) dragMove(e.rawY) }
                 MotionEvent.ACTION_UP -> if (moved) dragEnd() else { v.performClick(); toggleTools() }
                 MotionEvent.ACTION_CANCEL -> if (moved) dragEnd()
             }
@@ -1536,7 +1548,7 @@ class VideoEditorActivity : ComponentActivity() {
                 MotionEvent.ACTION_DOWN -> { downX = e.x; downY = e.y; dragging = false; blocked = scrollsUpDown(this, e.x, e.y) }
                 MotionEvent.ACTION_MOVE -> if (!dragging && !blocked) {
                     val dx = e.x - downX; val dy = e.y - downY
-                    if (abs(dy) > slop && abs(dy) > abs(dx) * 1.4f) { dragging = true; dragBegin(e.rawY - dy); parent?.requestDisallowInterceptTouchEvent(true); return true }
+                    if (abs(dy) > slop * 0.7f && abs(dy) > abs(dx) * 0.9f) { dragging = true; dragBegin(e.rawY - dy); parent?.requestDisallowInterceptTouchEvent(true); return true }
                 }
             }
             return false
@@ -1578,7 +1590,7 @@ class VideoEditorActivity : ComponentActivity() {
             rootBox.addView(timeLabel, LinearLayout.LayoutParams(-1, -2))
             rootBox.addView(trim, LinearLayout.LayoutParams(-1, 0))
             toolCard.removeAllViews()
-            toolCard.addView(grabber, LinearLayout.LayoutParams(-1, dp(20)))
+            toolCard.addView(grabber, LinearLayout.LayoutParams(-1, dp(36)))
             toolCard.addView(tools, LinearLayout.LayoutParams(-1, toolsH))
             (window.decorView as FrameLayout).addView(toolCard, FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply { setMargins(dp(8), 0, dp(8), 0) })
             rootBox.addView(toolBar, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(4), 0, dp(4), dp(8)) })
@@ -1684,7 +1696,7 @@ class VideoEditorActivity : ComponentActivity() {
         val k = min(aw.toFloat() / ew, ah.toFloat() / eh)
         val w = (ew * k).toInt(); val h = (eh * k).toInt()
         val video = RectF((stage.width - w) / 2f, (stage.height - h) / 2f, (stage.width + w) / 2f, (stage.height + h) / 2f)
-        val visible = cropRect(video); mask.set(video, visible); this.visible.set(visible)
+        val visible = cropRect(video); mask.set(video, visible); this.visible.set(visible); frameGrid.box.set(visible); frameGrid.invalidate()
         val extra = extras.getOrNull(playIndex - 1)
         if (extra == null) {
             val tw = (videoW * k).toInt(); val th = (videoH * k).toInt()
@@ -2879,11 +2891,9 @@ class VideoEditorActivity : ComponentActivity() {
                 else { extraCache.getOrPut(source.toString()) { Extra(source, duration, videoW, videoH, "คลิปแรก", firstFrame) }
                     extras.add(mainPos(), Extra(source, duration, videoW, videoH, "คลิปแรก", firstFrame).also { it.from = start; it.to = end; it.speed = speed; it.curve = mainCurve?.copyOf(); it.volume = volume }) }
                 showTime(); showTool(0, false) },
-            EditorKit.action(this, "M8 5v14 M16 5v14 M4 12h2 M18 12h2", "ค้างเฟรม") { freezeFrame() },
             EditorKit.action(this, "M7 7H4V4 M4.5 7.5A8 8 0 1 1 4 12 M12 8v4l3 2", "ย้อนกลับ") { reverseClip() },
             run { lateinit var me: View; me = EditorKit.action(this, ClipMotion.ICONS[1], if (motionOf(playIndex) == 0) "ซูม/แพน" else ClipMotion.NAMES[motionOf(playIndex)], motionOf(playIndex) != 0) { motionMenu(me) }; me },
             EditorKit.action(this, "M4 12h6 M14 12h6 M10 8v8 M14 8v8", "แยกเสียง") { detachSound(); showTool(0, false) },
-            EditorKit.action(this, "M4 7h3l2-2h6l2 2h3v12H4z M12 10a3 3 0 1 0 0 6 3 3 0 0 0 0-6", "บันทึกภาพ") { saveFrame() },
             EditorKit.action(this, Icons.RESET, "ความยาวเดิม") { if (e != null) { e.from = 0; e.to = e.duration; showClipOnBar() } else { setRange(0, duration); cutFrom = -1; cutTo = -1 }; showTime(); showTool(0, false) })
         if (e != null) {
             // Slip: the clip keeps its length and place, and shows an earlier or later part of its file.
@@ -2894,6 +2904,24 @@ class VideoEditorActivity : ComponentActivity() {
             if (e == null) deleteMain() else { val c = playIndex - 1; extras.removeAt(c); if (c < mainPos()) mainAt = mainPos() - 1
                 playIndex = order().getOrNull(order().indexOf(0).coerceAtLeast(0)) ?: 0; jumpTo(0, start); showTime(); showTool(0, false) } }
         col.addView(EditorKit.actionRow(this, list), -1, -2)
+    }
+
+    /** The menu behind the dots button: marker flag, picture guide lines (one button, a list of shapes inside), save picture, freeze frame. */
+    private fun moreMenu() {
+        val now = outNow(); val near = markers.firstOrNull { abs(it - now) <= 150 }
+        val flag = GlassMenu.Option(if (near != null) "ถอนธงตรงหัวอ่าน" else "ปักธงตรงหัวอ่าน", "M7 4v16 M7 5h10l-2.5 3.5L17 12H7")
+        val grid = GlassMenu.Option("เส้นกริดและกรอบภาพ", Icons.GRID, "${FrameGridView.NAMES[frameGrid.mode]}  ▾  เลือกรูปแบบ")
+        val save = GlassMenu.Option("บันทึกภาพนิ่ง", "M4 7h3l2-2h6l2 2h3v12H4z M12 10a3 3 0 1 0 0 6 3 3 0 0 0 0-6")
+        val freeze = GlassMenu.Option("ค้างเฟรม", "M8 5v14 M16 5v14 M4 12h2 M18 12h2")
+        toolMenu.show(moreButton, "เมนูเพิ่มเติม", listOf(flag, grid, save, freeze), -1) { i ->
+            when (i) {
+                0 -> { if (near != null) markers.remove(near) else { markers += now; markers.sort() }; Glass.tick(timeline); refreshTimeline() }
+                1 -> moreButton.post { toolMenu.show(moreButton, "เส้นกริดและกรอบภาพ", FrameGridView.NAMES.mapIndexed { k, n -> GlassMenu.Option(n, if (k < FrameGridView.NOTES_START) Icons.GRID else "M5 5h14v14H5z") }, frameGrid.mode) { k ->
+                    frameGrid.mode = k; getSharedPreferences("camera", 0).edit().putInt("studio_frame_grid", k).apply() } }
+                2 -> saveFrame()
+                3 -> freezeFrame()
+            }
+        }
     }
 
     // ---------- Tools ----------
