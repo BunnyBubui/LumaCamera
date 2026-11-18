@@ -701,7 +701,13 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
             // The highlight only appears under a finger; the chosen row already carries its own border.
             hi.alpha = 0f
             list.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> val r = rows[current.coerceIn(0, rows.size - 1)]; if (r.height > 0) { hi.layoutParams = (hi.layoutParams as FrameLayout.LayoutParams).apply { height = r.height.coerceAtLeast(c.dp(52)) }; hi.translationY = (r.top - rows[0].top).toFloat() } }
-            fun handle(action: Int, y: Float) {
+            fun leave() {
+                rows.getOrNull(pressedRow)?.animate()?.scaleX(1f)?.scaleY(1f)?.setDuration(120)?.start(); pressedRow = -1
+                hi.animate().cancel(); hi.animate().alpha(0f).setDuration(160).start()
+            }
+            // A finger that is not over any row (outside the card, or on its title) picks nothing: lifting there only cancels.
+            fun handle(action: Int, y: Float, inside: Boolean = true) {
+                if (!inside) { if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL || action == MotionEvent.ACTION_MOVE || action == MotionEvent.ACTION_DOWN) leave(); return }
                 val i = rowAt(y)
                 when (action) {
                     MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> { if (i != current) { current = i; Glass.tick(menu) }; moveHi(i, true, y) }
@@ -711,7 +717,9 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
             }
             // The rows are clickable children and would swallow the touch; the card intercepts so dragging scrubs the highlight.
             menu.scrub = true
-            menu.setOnTouchListener { _, e -> handle(e.actionMasked, e.y); true }
+            menu.setOnTouchListener { _, e ->
+                val inRows = e.x >= 0 && e.x <= menu.width && e.y >= pad + rows[0].top - c.dp(2) && e.y <= pad + rows.last().bottom + c.dp(2)
+                handle(e.actionMasked, e.y, inRows); true }
             // A finger that opened the menu by holding the anchor keeps going: slide over a row and lift to pick it.
             // The card is still springing open for the first few hundred milliseconds, so its on-screen box is scaled;
             // the finger is mapped through the card's layout position (host + margins) instead, which does not move.
@@ -720,10 +728,10 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
             forward = { e ->
                 host.getLocationOnScreen(hostAt)
                 val lx = e.rawX - hostAt[0] - x; val ly = e.rawY - hostAt[1] - y
-                val inside = lx >= -c.dp(24) && lx <= w + c.dp(24) && ly >= pad + rows[0].top - c.dp(4) && ly <= h + c.dp(12)
+                val inside = lx >= -c.dp(24) && lx <= w + c.dp(24) && ly >= pad + rows[0].top - c.dp(4) && ly <= pad + rows.last().bottom + c.dp(4)
                 when {
                     inside -> handle(if (e.actionMasked == MotionEvent.ACTION_DOWN) MotionEvent.ACTION_MOVE else e.actionMasked, ly)
-                    else -> { rows.getOrNull(pressedRow)?.animate()?.scaleX(1f)?.scaleY(1f)?.setDuration(120)?.start(); pressedRow = -1; hi.animate().alpha(0f).setDuration(160).start() }
+                    else -> leave()
                 }
             }
         }

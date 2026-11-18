@@ -442,6 +442,8 @@ class StudioTimeline(context: Context) : View(context) {
         val step = RULER_STEPS.firstOrNull { it * pxPerMs >= 58 * d } ?: 3_600_000L
         var t = (floor((ph - cx() / pxPerMs) / step.toDouble()).toLong() * step).coerceAtLeast(0)
         paint.color = 0x55ffffff
+        // The same text paint is used by the track column (which leaves it faded while it opens or closes), so set it again here.
+        textPaint.color = 0x99ffffff.toInt(); textPaint.textSize = 9.5f * d; textPaint.isFakeBoldText = false
         while (t <= all && x(t) < w) { val px = x(t); c.drawRect(px, rulerH - 5 * d, px + d, rulerH - 1 * d, paint); c.drawText(label(t, step < 1000), px + 3 * d, rulerH - 5 * d, textPaint); t += step }
         marks.forEach { m -> val mx = x(m); if (mx > -8 * d && mx < w + 8 * d) { clipPath.reset(); clipPath.moveTo(mx - 4 * d, rulerH - 9 * d); clipPath.lineTo(mx + 4 * d, rulerH - 9 * d); clipPath.lineTo(mx, rulerH - 1 * d); clipPath.close(); c.drawPath(clipPath, accent)
             paint.color = Glass.ACCENT; paint.alpha = 120; c.drawRect(mx - 0.5f * d, rulerH, mx + 0.5f * d, rulerH + clipH, paint); paint.alpha = 255 } }

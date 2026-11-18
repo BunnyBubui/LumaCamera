@@ -436,13 +436,13 @@ class VideoEditorActivity : ComponentActivity() {
             followCurve(p, pos)
             if (playIndex == 0 && !switching) {
                 if (extras.isNotEmpty() && lapTick(pos, end)) trim.playhead = pos.coerceIn(start, end)
-                else if (pos >= end - 30) { if (extras.isNotEmpty()) playClip(nextOf(0)) else { p.seekTo(start.toInt()); musicPlayer?.seekTo(0) } }
+                else if (pos >= end - 30) { if (!stopAtEnd()) playClip(nextOf(0)) }
                 else if (extras.isNotEmpty() && pos < end) maybeOut(pos, end)
                 else if (cutValid() && pos in cutFrom until cutTo) p.seekTo(cutTo.toInt())
                 trim.playhead = pos.coerceIn(start, end)
             } else if (playIndex > 0 && !switching) extras.getOrNull(playIndex - 1)?.let { e ->
                 if (lapTick(pos, e.to)) trim.playhead = pos.coerceIn(e.from, e.to)
-                else if (pos >= e.to - 30) playClip(nextOf(playIndex)) else { maybeOut(pos, e.to); trim.playhead = pos.coerceIn(e.from, e.to) } }
+                else if (pos >= e.to - 30) { if (!stopAtEnd()) playClip(nextOf(playIndex)) } else { maybeOut(pos, e.to); trim.playhead = pos.coerceIn(e.from, e.to) } }
             showTime(); syncLayerSound(true); showMotion(pos)
             if (++tickCount % 15 == 0) preloadNext()
         } else if (prepared && ++tickCount % 4 == 0) syncLayerSound(false)
@@ -1383,16 +1383,23 @@ class VideoEditorActivity : ComponentActivity() {
             texture2.setLayerPaint(if (!looked() || comparing) null else Paint().apply { colorFilter = ColorMatrixColorFilter(colour()) })
         }
     }
+    /** At the end of the last clip the preview stops on its last picture; true when it did. */
+    private fun stopAtEnd(): Boolean {
+        if (order().last() != playIndex) return false
+        autoPlay = false; cancelOut()
+        player?.runCatching { if (isPlaying) pause() }
+        musicPlayer?.runCatching { pause() }; syncLayerSound(false)
+        trim.playhead = clipTo(playIndex).coerceIn(trim.start, trim.end)
+        setPlayIcon("M9 6.5v11l9-5.5z"); showTime()
+        return true
+    }
     private fun onClipEnd() {
         if (pendingCut >= 0) return // Still holding the last rendered frame until standby is ready.
         if (lapNext >= 0) { finishLap(); return }
-        if (playIndex == 0 && extras.isEmpty()) {
-            player?.runCatching { seekTo(start.toInt()); start() }
-        } else {
-            // A MediaPlayer completion callback arrives after isPlaying has become false.
-            autoPlay = true
-            playClip(nextOf(playIndex))
-        }
+        if (stopAtEnd()) return
+        // A MediaPlayer completion callback arrives after isPlaying has become false.
+        autoPlay = true
+        playClip(nextOf(playIndex))
     }
 
     private fun openPlayer() {
@@ -1507,6 +1514,7 @@ class VideoEditorActivity : ComponentActivity() {
     private fun startOut(k: Int, ms: Long) {
         outFor = k
         if (Glass.reduced(this)) return
+        fxClip(ms)
         when (kindFor(k)) {
             1, 2 -> { dip.setBackgroundColor(if (kindFor(k) == 2) Color.WHITE else Color.BLACK); dip.pivotX = 0f; dip.scaleX = 1f
                 dip.animate().cancel(); dip.animate().alpha(1f).setDuration(ms).start() }
@@ -1530,9 +1538,15 @@ class VideoEditorActivity : ComponentActivity() {
     private val stills = HashMap<String, Bitmap>()
     private var stillBusy = false; private var stillUri: Uri? = null; private var stillMs = 0L; private var stillAlpha = 0f
     private lateinit var stillView: android.widget.ImageView
+    /** While a change between clips moves or zooms the picture, nothing may show outside the preview frame. */
+    private val fxClipOff = object : Runnable { override fun run() { if (scrubFx || outFor != -1 || dip.alpha > 0f) handler.postDelayed(this, 300) else stage.clipBounds = null } }
+    private fun fxClip(ms: Long) {
+        val g = dp(2); stage.clipBounds = Rect(visible.left.toInt() - g, visible.top.toInt() - g, kotlin.math.ceil(visible.right).toInt() + g, kotlin.math.ceil(visible.bottom).toInt() + g)
+        handler.removeCallbacks(fxClipOff); handler.postDelayed(fxClipOff, ms + 200)
+    }
     private fun clearScrubFx() {
         if (!scrubFx) return
-        scrubFx = false
+        scrubFx = false; handler.postDelayed(fxClipOff, 250)
         dip.animate().cancel(); dip.alpha = 0f; dip.scaleX = 1f
         texture.animate().cancel(); texture.translationX = 0f
         if (scrubPunch) { scrubPunch = false; texture.scaleY = 1f; texture.scaleX = if (if (playIndex == 0) mirror else extras.getOrNull(playIndex - 1)?.mirror == true) -1f else 1f }
@@ -1584,7 +1598,7 @@ class VideoEditorActivity : ComponentActivity() {
                     showStill(clipUri(prev), clipTo(prev) + (at - clipFrom(k)), 1f - pr); return }
             } else {
                 val inMs = VideoEdit.joinInMs(joinMsOf(k))
-                if (inMs > 0 && local < inMs) { val a = 1f - (local / inMs).coerceIn(0f, 1f); scrubFx = true
+                if (inMs > 0 && local < inMs) { val a = 1f - (local / inMs).coerceIn(0f, 1f); scrubFx = true; fxClip(0)
                     when (kin) {
                         1, 2 -> { dip.setBackgroundColor(if (kin == 2) Color.WHITE else Color.BLACK); dip.alpha = a }
                         3 -> { scrubPunch = true; val z = 1f + 0.12f * ease(a); texture.scaleY = z; texture.scaleX = if (playIndex == 0 && mirror || extras.getOrNull(playIndex - 1)?.mirror == true) -z else z }
@@ -1606,7 +1620,7 @@ class VideoEditorActivity : ComponentActivity() {
                     showStill(clipUri(nk), clipFrom(nk) - remain, pr) }
             } else {
                 val om = VideoEdit.joinOutMs(joinMsOf(nk)); val remain = (clipTo(k) - at) / sp
-                if (om > 0 && remain < om) { val a = (1f - remain / om).coerceIn(0f, 1f); scrubFx = true
+                if (om > 0 && remain < om) { val a = (1f - remain / om).coerceIn(0f, 1f); scrubFx = true; fxClip(0)
                     when (kout) {
                         1, 2 -> { dip.setBackgroundColor(if (kout == 2) Color.WHITE else Color.BLACK); dip.alpha = a }
                         4 -> texture.translationX = -texture.width * ease(a)
@@ -1624,6 +1638,7 @@ class VideoEditorActivity : ComponentActivity() {
         outFor = -1
         if (Glass.reduced(this)) { dip.alpha = 0f; return }
         val kind = kindFor(playIndex); val inMs = if (kind == 0) 0L else VideoEdit.joinInMs(joinMsOf(playIndex))
+        if (inMs > 0) fxClip(inMs)
         if (kind == 5 && dip.alpha > 0f) {
             dip.pivotX = 0f; dip.animate().cancel()
             if (inMs > 0) dip.animate().scaleX(0f).setDuration(inMs).withEndAction { dip.alpha = 0f; dip.scaleX = 1f }.start() else { dip.alpha = 0f; dip.scaleX = 1f } }
@@ -1863,7 +1878,8 @@ class VideoEditorActivity : ComponentActivity() {
         if (p.isPlaying) { autoPlay = false; cancelOut(); cancelLap(); p.pause(); musicPlayer?.pause(); syncLayerSound(false); setPlayIcon("M9 6.5v11l9-5.5z") }
         else {
             clearScrubFx()
-            if (playIndex == 0 && p.currentPosition >= end - 60) p.seekTo(start.toInt())
+            if (extras.isNotEmpty() && order().last() == playIndex && p.currentPosition >= clipTo(playIndex) - 60) { autoPlay = true; playClip(order().first()); setPlayIcon("M8 6v12 M16 6v12"); return }
+            if (playIndex == 0 && p.currentPosition >= end - 60) { p.seekTo(start.toInt()); musicPlayer?.runCatching { seekTo(0) } }
             extras.getOrNull(playIndex - 1)?.let { if (p.currentPosition >= it.to - 60) p.seekTo(it.from.toInt()) }
             runCatching { p.playbackParams = p.playbackParams.setSpeed(if (playIndex == 0) speed else extras.getOrNull(playIndex - 1)?.speed ?: 1f) }
             p.start(); musicPlayer?.let { mp -> runCatching { mp.seekTo(((p.currentPosition - start).coerceAtLeast(0) % max(1, mp.duration)).toInt()); mp.start() } }

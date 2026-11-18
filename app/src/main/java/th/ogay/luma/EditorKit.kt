@@ -91,9 +91,11 @@ object EditorKit {
         fun close(snapEnd: Boolean) {
             val l = layer ?: return; layer = null
             val t = thumb
-            if (snapEnd) t?.animate()?.translationX(travel * dir)?.setDuration(110)?.start()
-            else t?.animate()?.translationX(0f)?.setInterpolator(Glass.SPRING)?.setDuration(360)?.start()
-            l.animate().alpha(0f).setStartDelay(if (snapEnd) 140 else 220).setDuration(180).withEndAction { (l.parent as? ViewGroup)?.removeView(l); this@apply.alpha = 1f }.start()
+            if (snapEnd) t?.animate()?.translationX(travel * dir)?.setInterpolator(Glass.EASE)?.setDuration(130)?.start()
+            else t?.animate()?.translationX(0f)?.setInterpolator(Glass.SPRING)?.setDuration(320)?.start()
+            // The track folds back into the button while the handle slides home: one smooth motion, nothing blinks off.
+            l.animate().scaleX(0.35f).alpha(0f).setStartDelay(if (snapEnd) 150 else 120).setInterpolator(Glass.EASE).setDuration(240).withEndAction { (l.parent as? ViewGroup)?.removeView(l) }.start()
+            android.animation.ObjectAnimator.ofFloat(this@apply, View.ALPHA, 1f).apply { startDelay = 190; duration = 200; start() }
         }
         // The long press opens a slide track beside the button (drawn above everything, so nothing clips it): the button turns into
         // the handle, and letting go at the far end of the track jumps to the very end of the timeline.
@@ -109,8 +111,9 @@ object EditorKit {
             val box = FrameLayout(c).apply { elevation = 12 * d; clipChildren = false; contentDescription = farLabel }
             val track = View(c).apply { background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = trackH / 2; setColor(0xf2202024.toInt()); setStroke(c.dp(1), 0x33ffffff) } }
             box.addView(track, FrameLayout.LayoutParams(trackW.toInt(), trackH.toInt()))
-            val f = View(c).apply { background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = trackH / 2; setColor(0x66ff9f45) }; pivotX = if (dir > 0) 0f else trackW; pivotY = trackH / 2; scaleX = 0f }
-            box.addView(f, FrameLayout.LayoutParams(trackW.toInt(), trackH.toInt())); fill = f
+            val f = View(c).apply { background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = trackH / 2; setColor(0x33ff9f45); setStroke(c.dp(2), Glass.ACCENT) } }
+            // The orange frame hugs the handle with the same gap on every side; only its length changes, so its ends stay round.
+            box.addView(f, FrameLayout.LayoutParams((2 * r + 2 * pad).toInt(), trackH.toInt(), if (dir > 0) Gravity.START else Gravity.END)); fill = f
             // A row of small chevrons along the track says which way to slide; the end mark is where to let go.
             val chev = View(c).apply { background = object : android.graphics.drawable.Drawable() {
                 val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeWidth = 1.8f * d; color = 0x88ffffff.toInt() }
@@ -141,7 +144,7 @@ object EditorKit {
                     if (armed && thumb != null) {
                         val t = (((e.rawX - downX) * dir) / travel).coerceIn(0f, 1f)
                         thumb?.translationX = t * travel * dir
-                        fill?.scaleX = ((t * travel + 2 * (width / 2f) + 8 * c.resources.displayMetrics.density) / ((fill?.width ?: 1).coerceAtLeast(1))).coerceIn(0f, 1f)
+                        fill?.let { f -> val w = (t * travel + width + 8 * c.resources.displayMetrics.density).toInt(); if (f.layoutParams.width != w) { f.layoutParams.width = w; f.requestLayout() } }
                         val n = t >= 0.94f
                         if (n != near) { near = n; Glass.tick(this); endIcon?.tint = if (n) Glass.ACCENT else 0x99ffffff.toInt(); thumbIcon?.tint = if (n) Glass.ACCENT else Glass.TEXT
                             thumb?.animate()?.scaleX(if (n) 1.08f else 1f)?.scaleY(if (n) 1.08f else 1f)?.setInterpolator(Glass.SPRING)?.setDuration(240)?.start()
