@@ -762,6 +762,9 @@ class VideoEditorActivity : ComponentActivity() {
         // Shows the other clip's picture over the preview while the playhead is parked inside an overlapping change.
         stillView = android.widget.ImageView(this).apply { visibility = View.GONE; scaleType = android.widget.ImageView.ScaleType.CENTER_CROP; isClickable = false; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
         stage.addView(stillView, maxOf(stage.indexOfChild(texture), stage.indexOfChild(texture2)) + 1, FrameLayout.LayoutParams(1, 1, Gravity.TOP or Gravity.START))
+        // The last picture of the clip that is leaving stays here while the next clip is opened from cold, so the preview never shows black in between.
+        holdView = android.widget.ImageView(this).apply { visibility = View.GONE; scaleType = android.widget.ImageView.ScaleType.FIT_XY; isClickable = false; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
+        stage.addView(holdView, maxOf(stage.indexOfChild(texture), stage.indexOfChild(texture2)) + 1, FrameLayout.LayoutParams(1, 1, Gravity.CENTER))
         dip = View(this).apply { alpha = 0f; isClickable = false; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
         stage.addView(dip, -1, -1)
         stage.contentDescription = "พรีวิววิดีโอ"   // playing and pausing is the play button only; a tap on the picture does nothing
@@ -1452,6 +1455,7 @@ class VideoEditorActivity : ComponentActivity() {
         if (playIndex > extras.size) playIndex = 0
         // Cold-path fallback: seek before autoplay. Normal clip joins use standby handoff,
         // so they do not release the old rendered output before the next frame is available.
+        holdFrame()
         releasePlayer()
         fxEq?.runCatching { release() }
         fxEq = null
@@ -1472,6 +1476,8 @@ class VideoEditorActivity : ComponentActivity() {
                             layoutVideo()
                             arrived()
                             startIfAsked(readyMp)
+                            // Two frames later the new picture is on screen; only then does the kept picture go.
+                            handler.postDelayed({ dropHold() }, 70L)
                             handler.postDelayed({ preloadNext() }, 60L)
                         }
                     }
@@ -1583,6 +1589,23 @@ class VideoEditorActivity : ComponentActivity() {
     private val stills = HashMap<String, Bitmap>()
     private var stillBusy = false; private var stillUri: Uri? = null; private var stillMs = 0L; private var stillAlpha = 0f
     private lateinit var stillView: android.widget.ImageView
+    private lateinit var holdView: android.widget.ImageView
+    private var holdOn = false
+    private val holdOff = Runnable { dropHold() }
+    private fun holdFrame() {
+        if (!::holdView.isInitialized || !prepared || player == null || !texture.isAvailable || texture.width < 8 || texture.alpha < 0.5f) return
+        val bmp = runCatching { texture.getBitmap(texture.width / 2, texture.height / 2) }.getOrNull() ?: return
+        (holdView.layoutParams as FrameLayout.LayoutParams).let { it.width = texture.width; it.height = texture.height; it.gravity = Gravity.CENTER; holdView.layoutParams = it }
+        holdView.animate().cancel(); holdView.rotation = texture.rotation; holdView.scaleX = texture.scaleX; holdView.scaleY = texture.scaleY; holdView.translationX = texture.translationX
+        holdView.clipBounds = texture.clipBounds
+        holdView.setImageBitmap(bmp); holdView.alpha = 1f; holdView.visibility = View.VISIBLE; holdOn = true
+        handler.removeCallbacks(holdOff); handler.postDelayed(holdOff, 1200)
+    }
+    private fun dropHold() {
+        if (!holdOn) return
+        holdOn = false; handler.removeCallbacks(holdOff); holdView.animate().cancel()
+        holdView.animate().alpha(0f).setDuration(80).withEndAction { holdView.visibility = View.GONE; holdView.setImageDrawable(null) }.start()
+    }
     /** While a change between clips moves or zooms the picture, nothing may show outside the preview frame. */
     private val fxClipOff = object : Runnable { override fun run() { if (scrubFx || outFor != -1 || dip.alpha > 0f) handler.postDelayed(this, 300) else stage.clipBounds = null } }
     private fun fxClip(ms: Long) {
@@ -1680,6 +1703,7 @@ class VideoEditorActivity : ComponentActivity() {
     private fun arrived() {
         if (motionOf(playIndex) != 0 || texture.scaleY != 1f) clearMotion()
         if (motionOf(playIndex) != 0) showMotion(clipFrom(playIndex))
+        val cameOut = outFor == playIndex   // the old picture slid or blurred out; the new one is another view and starts clean
         outFor = -1
         if (Glass.reduced(this)) { dip.alpha = 0f; return }
         val kind = kindFor(playIndex); val inMs = if (kind == 0) 0L else VideoEdit.joinInMs(joinMsOf(playIndex))
@@ -1688,13 +1712,13 @@ class VideoEditorActivity : ComponentActivity() {
             dip.pivotX = 0f; dip.animate().cancel()
             if (inMs > 0) dip.animate().scaleX(0f).setDuration(inMs).withEndAction { dip.alpha = 0f; dip.scaleX = 1f }.start() else { dip.alpha = 0f; dip.scaleX = 1f } }
         else if (dip.alpha > 0f) { dip.animate().cancel(); if (inMs > 0) dip.animate().alpha(0f).setDuration(inMs).start() else dip.alpha = 0f }
-        if (texture.translationX != 0f) {
+        if (texture.translationX != 0f || (cameOut && kind == 4)) {
             if (kind == 4 && inMs > 0) { texture.translationX = texture.width.toFloat(); texture.animate().translationX(0f).setInterpolator(Glass.EASE).setDuration(inMs).start() }
             else { texture.animate().cancel(); texture.translationX = 0f } }
         if (blurIn && android.os.Build.VERSION.SDK_INT >= 31) {
             blurIn = false
-            if (inMs > 0 && kind == 6) android.animation.ValueAnimator.ofFloat(1f, 0f).apply { duration = inMs
-                addUpdateListener { blurPreview(it.animatedValue as Float) }; addListener(object : android.animation.AnimatorListenerAdapter() { override fun onAnimationEnd(a: android.animation.Animator) { paintLook() } }); start() }
+            if (inMs > 0 && kind == 6) { blurPreview(1f); android.animation.ValueAnimator.ofFloat(1f, 0f).apply { duration = inMs
+                addUpdateListener { blurPreview(it.animatedValue as Float) }; addListener(object : android.animation.AnimatorListenerAdapter() { override fun onAnimationEnd(a: android.animation.Animator) { paintLook() } }); start() } }
             else paintLook() }
         if (kind == 3 && playIndex > 0 && inMs > 0) {
             texture.scaleY = 1.12f; texture.scaleX = 1.12f
