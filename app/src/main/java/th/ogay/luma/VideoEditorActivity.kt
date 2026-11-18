@@ -725,6 +725,9 @@ class VideoEditorActivity : ComponentActivity() {
             runOnUiThread { if (!isDestroyed) { mainFrames = frames; if (playIndex == 0) trim.frames = frames; firstFrame = frames.firstOrNull(); if (named) saveProject(); if (tool == 5) showTool(5, false) } }
         }
         installPreviewSurfaceListener(texture)
+        // A zero-sized standby TextureView may never acquire a SurfaceTexture.
+        // Size it after the stage is measured, before the first clip boundary.
+        stage.post { if (!isDestroyed && stage.width > 0 && stage.height > 0) layoutTexture2(playIndex) }
         applyLook(); showTool(tool, false); showTime()
         if (music != null) prepareMusic()
         // Undo starts watching only after the saved clips are back, or their return would count as an edit.
@@ -898,9 +901,9 @@ class VideoEditorActivity : ComponentActivity() {
     private fun warmNext(k: Int): Boolean {
         if (nextAttached) return nextFor == k
         val mp = nextPlayer ?: return false
-        val targetSurface = surface2 ?: return false
         if (nextFor != k || nextLead != 0L || !nextHandoff.canAttach(nextToken)) return false
         layoutTexture2(k)
+        val targetSurface = surface2 ?: return false
         lookOnTexture2()
         val now = android.os.SystemClock.uptimeMillis()
         if (!nextHandoff.beginRendering(nextToken, now)) return false
@@ -934,6 +937,7 @@ class VideoEditorActivity : ComponentActivity() {
                 } else {
                     surface2?.release()
                     surface2 = created
+                    if (pendingCut >= 0) warmNext(pendingCut)
                 }
             }
             override fun onSurfaceTextureSizeChanged(s: SurfaceTexture, w: Int, h: Int) {
@@ -1003,7 +1007,7 @@ class VideoEditorActivity : ComponentActivity() {
     }
 
     private fun beginCut(k: Int, resume: Boolean): Boolean {
-        if (surface2 == null || lapNext >= 0 || pendingSeek >= 0L) return false
+        if (lapNext >= 0 || pendingSeek >= 0L) return false
         if (nextPlayer == null || nextFor != k || nextUri != clipUri(k) ||
             nextFrom != clipFrom(k) || nextLead != 0L) return false
         pendingCut = k
