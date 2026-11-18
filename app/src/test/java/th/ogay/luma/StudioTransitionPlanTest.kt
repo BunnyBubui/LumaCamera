@@ -195,4 +195,26 @@ class StudioTransitionPlanTest {
         assertTrue(v.progress.isFinite())
         near(v.outgoingVideoAlpha + v.incomingVideoAlpha, 1f)
     }
+
+    @Test fun fivePointGridAcrossAllEffectsAndAlignments() {
+        val fractions = listOf(0f, .25f, .5f, .75f, 1f)
+        for (kind in s.DIP_BLACK..s.OVERLAP) for (alignment in 0..2) {
+            val p = plan(kind, alignment * 1_000_000L + 600L)
+            assertEquals(kind, p.kind)
+            fractions.forEachIndexed { index, fraction ->
+                val t = p.startUs + (p.endUs - p.startUs) * index / 4L
+                val value = s.sample(p, t)
+                near(value.progress, fraction)
+                listOf(value.progress, value.phaseProgress, value.easedProgress,
+                    value.outgoingVideoAlpha, value.incomingVideoAlpha,
+                    value.outgoingAudioGain, value.incomingAudioGain).forEach {
+                    assertTrue(it.isFinite() && it in 0f..1f)
+                }
+                if (kind == s.OVERLAP) {
+                    near(value.outgoingVideoAlpha + value.incomingVideoAlpha, 1f)
+                    near(value.outgoingAudioGain + value.incomingAudioGain, 1f)
+                }
+            }
+        }
+    }
 }
