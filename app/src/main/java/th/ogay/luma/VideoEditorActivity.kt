@@ -348,6 +348,17 @@ class VideoEditorActivity : ComponentActivity() {
     private var player: MediaPlayer? = null; private var musicPlayer: MediaPlayer? = null
     private var surface: Surface? = null; private var prepared = false
     private val handler = Handler(Looper.getMainLooper())
+    // Phase 4 adapter. A Choreographer implementation can replace post/cancel as a pair.
+    private var previewTickPost: ((Runnable, Long) -> Unit)? = null
+    private var previewTickCancel: ((Runnable) -> Unit)? = null
+    private fun postPreviewTick(delayMs: Long = 0L) {
+        val dispatch = previewTickPost
+        if (dispatch != null) dispatch(tick, delayMs) else handler.postDelayed(tick, delayMs)
+    }
+    private fun removePreviewTick() {
+        previewTickCancel?.invoke(tick)
+        handler.removeCallbacks(tick)
+    }
     private var tickCount = 0
     private val tick = object : Runnable { override fun run() {
         val p = player ?: return
@@ -366,7 +377,7 @@ class VideoEditorActivity : ComponentActivity() {
             showTime(); syncLayerSound(true); showMotion(pos)
             if (++tickCount % 15 == 0) preloadNext()
         } else if (prepared && ++tickCount % 4 == 0) syncLayerSound(false)
-        handler.postDelayed(this, 33)
+        postPreviewTick(33L)
     } }
 
     // ---- Export ----
@@ -1056,7 +1067,7 @@ class VideoEditorActivity : ComponentActivity() {
         nextUri = null
         nextAttached = false
         nextHandoff.reset()
-        handler.removeCallbacks(tick)
+        removePreviewTick()
         val old = player
         old?.runCatching { setOnCompletionListener(null); release() }
         player = np
@@ -1077,7 +1088,7 @@ class VideoEditorActivity : ComponentActivity() {
         runCatching { if (resume) np.start() else if (np.isPlaying) np.pause() }
         playIcon.path = if (resume) "M8 6v12 M16 6v12" else "M9 6.5v11l9-5.5z"
         showTime()
-        handler.post(tick)
+        postPreviewTick()
         handler.postDelayed({ preloadNext() }, 60L)
     }
 
@@ -1197,7 +1208,7 @@ class VideoEditorActivity : ComponentActivity() {
         lapCommitRequested = false
         lapFrameReady = false
         nextHandoff.reset()
-        handler.removeCallbacks(tick)
+        removePreviewTick()
         val old = player
         old?.runCatching { setOnCompletionListener(null); release() }
         player = np
@@ -1212,7 +1223,7 @@ class VideoEditorActivity : ComponentActivity() {
         applySound()
         arrived()
         showTime()
-        handler.post(tick)
+        postPreviewTick()
         handler.postDelayed({ preloadNext() }, 60L)
     }
 
@@ -1325,8 +1336,8 @@ class VideoEditorActivity : ComponentActivity() {
             }
             mp.prepareAsync()
         }.onFailure { notice("เล่นพรีวิวไม่ได้ ${it.localizedMessage}") }
-        handler.removeCallbacks(tick)
-        handler.post(tick)
+        removePreviewTick()
+        postPreviewTick()
     }
 
     /** Move to another clip. Prefer a pre-decoded, rendered standby buffer at a join. */
@@ -1496,7 +1507,7 @@ class VideoEditorActivity : ComponentActivity() {
     private fun clearMotion() { texture.scaleX = if (mirror) -1f else 1f; texture.scaleY = 1f; texture.translationX = 0f }
 
     private fun releasePlayer() {
-        handler.removeCallbacks(tick); cancelPendingCut(); dropNext(); prepared = false; cancelLap()
+        removePreviewTick(); cancelPendingCut(); dropNext(); prepared = false; cancelLap()
         player?.runCatching { release() }; player = null
         musicPlayer?.runCatching { pause() }
         if (::playIcon.isInitialized) playIcon.path = "M9 6.5v11l9-5.5z"
