@@ -159,6 +159,7 @@ class StudioTimeline(context: Context) : View(context) {
             }
             paint.alpha = 255
         }
+    }
     var selected = 0
     /** One entry per clip: null for the first, "" for a plain cut, otherwise the name of the change into that clip. */
     var seams: List<String?> = emptyList(); set(v) { field = v; invalidate() }
@@ -200,7 +201,7 @@ class StudioTimeline(context: Context) : View(context) {
     var playhead: Long
         get() = ph
         set(v) {
-            if (mode == IDLE && !flinging && ph != v) {
+            if (mode == IDLE && !flinging && ph != v && !(ph > total() && v >= total())) {
                 ph = v
                 // Keep precise time for hit testing; coalesce ticks that move less than 0.5 px.
                 if (lastDrawnPlayhead == Long.MIN_VALUE || abs((ph - lastDrawnPlayhead) * pxPerMs) >= 0.5f) {
@@ -258,7 +259,7 @@ class StudioTimeline(context: Context) : View(context) {
     }
     override fun computeScroll() {
         if (!flinging) return
-        if (scroller.computeScrollOffset()) { ph = (scroller.currX / pxPerMs).toLong().coerceIn(0, total()); onSeek(ph, false); postInvalidateOnAnimation() }
+        if (scroller.computeScrollOffset()) { ph = (scroller.currX / pxPerMs).toLong().coerceIn(0, reach()); onSeek(ph, false); postInvalidateOnAnimation() }
         else { flinging = false; onSeek(ph, true) }
     }
     /** Whether the row [li] belongs to a group that is muted or hidden. */
@@ -270,7 +271,9 @@ class StudioTimeline(context: Context) : View(context) {
     private var moveIndex = -1; private var moveX = 0f
 
     /** Zoomed in far enough to see single frames: rest the line on a whole frame (30 per second). */
-    private fun frameSnap(t: Long): Long = if (pxPerMs * 33.3f >= 6 * d) (Math.round(t / 33.333) * 33.333).toLong().coerceIn(0, total()) else t
+    private fun frameSnap(t: Long): Long = if (pxPerMs * 33.3f >= 6 * d) (Math.round(t / 33.333) * 33.333).toLong().coerceIn(0, reach()) else t
+    /** How far the line can go: the end of the video, or further when a sound or layer runs past it. */
+    private fun reach(): Long { var m = clipOffsets.total; lanes.forEach { l -> l.forEach { b -> if (b.at + b.len > m) m = b.at + b.len } }; return m }
     private fun total() = clipOffsets.total
     private fun x(t: Long) = cx() + (t - ph) * pxPerMs
     private fun startOf(i: Int) = clipOffsets.startOf(i)
@@ -342,7 +345,7 @@ class StudioTimeline(context: Context) : View(context) {
                 velocity?.addMovement(e)
                 val drag = ((e.x - downX) / pxPerMs).toLong()
                 when (mode) {
-                    SCRUB -> if (moved && e.pointerCount == 1) { phF = (phF - (e.x - lastX) / pxPerMs).coerceIn(0.0, total().toDouble()); ph = phF.toLong(); onSeek(ph, false); invalidate() }
+                    SCRUB -> if (moved && e.pointerCount == 1) { phF = (phF - (e.x - lastX) / pxPerMs).coerceIn(0.0, reach().toDouble()); ph = phF.toLong(); onSeek(ph, false); invalidate() }
                     BAR -> if (moved) { var at = (barAt + drag).coerceIn(0, (total() - barLen).coerceAtLeast(0))
                         val s0 = snap(at, true, selectedBar); if (s0 != at) at = s0 else { val s1 = snap(at + barLen, true, selectedBar); if (s1 != at + barLen) at = s1 - barLen }
                         onBar(selectedBar, at.coerceAtLeast(0), barLen, 0, false); invalidate() }
@@ -367,7 +370,7 @@ class StudioTimeline(context: Context) : View(context) {
                     SCRUB -> if (moved) {
                         velocity?.computeCurrentVelocity(1000); val vx = velocity?.xVelocity ?: 0f
                         if (abs(vx) > 700 * d && e.actionMasked == MotionEvent.ACTION_UP) { flinging = true
-                            scroller.fling((ph * pxPerMs).toInt(), 0, (-vx).toInt(), 0, 0, (total() * pxPerMs).toInt(), 0, 0); postInvalidateOnAnimation() }
+                            scroller.fling((ph * pxPerMs).toInt(), 0, (-vx).toInt(), 0, 0, (reach() * pxPerMs).toInt(), 0, 0); postInvalidateOnAnimation() }
                         else { ph = frameSnap(snap(ph, false)); onSeek(ph, true) } }
                     BAR, BAR_L, BAR_R -> findBar(selectedBar)?.let { b -> if (moved) onBar(selectedBar, b.at, b.len, if (was == BAR_L) b.at - barAt else 0, true) }
                     TRIM_L, TRIM_R -> clips.getOrNull(selected)?.let { onTrim(selected, it.from, it.to, true) }

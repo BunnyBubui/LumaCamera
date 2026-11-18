@@ -84,7 +84,7 @@ class VideoEditorActivity : ComponentActivity() {
         private const val STICKER = "M12 3a9 9 0 1 0 0.01 0 M8.5 14q3.5 3 7 0 M9 9.5v1 M15 9.5v1"
         private const val ADD = "M12 5v14 M5 12h14"
         private const val FULL_ICON = "M4 9V4h5 M20 9V4h-5 M4 15v5h5 M20 15v5h-5"
-        private const val TURN_ICON = "M4 7h10a6 6 0 0 1 0 12H8 M7 4L4 7l3 3"
+        private const val TURN_ICON = "M9 7h6a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1z M4 12a8 8 0 0 1 3-6 M4 6v3h3 M20 12a8 8 0 0 1-3 6 M20 18v-3h-3"
         private const val LAYERS = "M12 3l9 5-9 5-9-5z M3 12.5l9 5 9-5 M3 17l9 5 9-5"
         private const val LAYER_TOOL = 13
         private const val COLOR_TOOL = 14
@@ -674,8 +674,9 @@ class VideoEditorActivity : ComponentActivity() {
         paintHistory()
         exportButton = EditorKit.primary(this, "ส่งออก") { export() }
         barRow.addView(exportButton, FrameLayout.LayoutParams(-2, dp(48), Gravity.END))
-        barRow.addView(saveLabel, FrameLayout.LayoutParams(-2, -2, Gravity.START or Gravity.CENTER_VERTICAL).apply { leftMargin = dp(52) })
         root.addView(bar, -1, -2)
+        // Under the buttons, so the "saved" note is never hidden by them.
+        saveLabel?.setPadding(0, 0, 0, 0); root.addView(saveLabel, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.CENTER_HORIZONTAL })
 
         stage = FrameLayout(this).apply { clipChildren = true }
         texture = TextureView(this)
@@ -713,7 +714,7 @@ class VideoEditorActivity : ComponentActivity() {
             { if (player?.isPlaying == true) togglePlay(); val o = order(); val i = o.indexOf(playIndex)
                 if (i in 0 until o.size - 1) jumpTo(o[i + 1], clipFrom(o[i + 1]), true) else jumpTo(playIndex, (clipTo(playIndex) - 40).coerceAtLeast(clipFrom(playIndex)), true) },
             { if (player?.isPlaying == true) togglePlay(); val (k, at) = locate(totalOut()); jumpTo(k, (at - 40).coerceAtLeast(clipFrom(k)), true) })
-        transport.addView(View(this), LinearLayout.LayoutParams(dp(58), 1))   // as wide as the menu button on the other side, so play stays in the middle
+        transport.addView(EditorKit.round(this, FULL_ICON, "เต็มจอ") { setFull(true) }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { rightMargin = dp(14) })   // full screen on the left; the menu button is as wide on the right, so play stays in the middle
         transport.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
         transport.addView(back, LinearLayout.LayoutParams(dp(48), dp(48)).apply { rightMargin = dp(14) })
         transport.addView(FrameLayout(this).apply { background = glass(28, 0x40ffffff); isClickable = true; contentDescription = "เล่นหรือหยุด"; glassTouch(); setOnClickListener { togglePlay() }
@@ -722,7 +723,6 @@ class VideoEditorActivity : ComponentActivity() {
         transport.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
         // Marker flag, frame grid, save picture and freeze frame live in one menu button at the right, where the fold button used to be.
         moreButton = EditorKit.round(this, "M5 12h.01 M12 12h.01 M19 12h.01", "เมนูเพิ่มเติม") { moreMenu() }
-        transport.addView(EditorKit.round(this, FULL_ICON, "เต็มจอ") { setFull(true) }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { rightMargin = dp(6) })
         transport.addView(moreButton, LinearLayout.LayoutParams(dp(44), dp(44)))
         root.addView(transport, -1, -2)
         timeline = StudioTimeline(this).apply { contentDescription = "ไทม์ไลน์ ลากเพื่อเลื่อนเวลา แตะคลิปเพื่อเลือก ลากขอบคลิปที่เลือกเพื่อตัด กดค้างแล้วลากเพื่อสลับลำดับ" }
@@ -1688,7 +1688,7 @@ class VideoEditorActivity : ComponentActivity() {
         bar.addView(btn(Icons.CLOSE, "ออกจากเต็มจอ") { setFull(false) }, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(24), dp(16), 0) })
         bar.addView(btn(TURN_ICON, "สลับแนวตั้งแนวนอน") {
             requestedOrientation = if (landscape()) android.content.pm.ActivityInfo.SCREEN_ORIENTATION_PORTRAIT else android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE },
-            FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP or Gravity.START).apply { setMargins(dp(16), dp(24), 0, 0) })
+            FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(24) + dp(48) + dp(10), dp(16), 0) })
         (window.decorView as FrameLayout).addView(bar, FrameLayout.LayoutParams(-1, -1)); fullBar = bar
     }
     private fun syncFullPlay() { window.decorView.postDelayed({ fullPlay?.path = if (player?.isPlaying == true) "M8 6v12 M16 6v12" else "M9 6.5v11l9-5.5z" }, 120) }
