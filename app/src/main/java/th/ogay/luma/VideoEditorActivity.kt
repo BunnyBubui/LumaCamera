@@ -1171,7 +1171,7 @@ class VideoEditorActivity : ComponentActivity() {
         arrived()
         runCatching { if (resume) np.start() else if (np.isPlaying) np.pause() }
         autoPlay = false
-        playIcon.path = if (resume) "M8 6v12 M16 6v12" else "M9 6.5v11l9-5.5z"
+        setPlayIcon(if (resume) "M8 6v12 M16 6v12" else "M9 6.5v11l9-5.5z")
         showTime()
         postPreviewTick()
         handler.postDelayed({ preloadNext() }, 60L)
@@ -1180,7 +1180,7 @@ class VideoEditorActivity : ComponentActivity() {
     private fun startIfAsked(mp: MediaPlayer) {
         if (!autoPlay) return
         autoPlay = false; val sp = if (playIndex == 0) speed else extras.getOrNull(playIndex - 1)?.speed ?: 1f
-        if (sp != 1f) runCatching { mp.playbackParams = mp.playbackParams.setSpeed(sp) }; mp.start(); musicPlayer?.runCatching { start() }; playIcon.path = "M8 6v12 M16 6v12"
+        if (sp != 1f) runCatching { mp.playbackParams = mp.playbackParams.setSpeed(sp) }; mp.start(); musicPlayer?.runCatching { start() }; setPlayIcon("M8 6v12 M16 6v12")
     }
     // ---- Overlapping change: the next clip plays on a second picture over this one, and takes over when the change is done ----
     private class LapPlan(val before: Long, val after: Long)
@@ -1673,7 +1673,7 @@ class VideoEditorActivity : ComponentActivity() {
     private fun setFull(on: Boolean) {
         if (fullScreen == on) return
         fullScreen = on
-        if (!on) { fullBar?.let { (it.parent as? android.view.ViewGroup)?.removeView(it) }; fullBar = null; requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        if (!on) { fullBar?.let { (it.parent as? android.view.ViewGroup)?.removeView(it) }; fullBar = null; fullPlay = null; requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
             androidx.core.view.WindowCompat.getInsetsController(window, window.decorView).show(androidx.core.view.WindowInsetsCompat.Type.systemBars()) }
         else androidx.core.view.WindowCompat.getInsetsController(window, window.decorView).apply { hide(androidx.core.view.WindowInsetsCompat.Type.systemBars()); systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE }
         if (::trim.isInitialized) pendingSeek = trim.playhead
@@ -1692,6 +1692,8 @@ class VideoEditorActivity : ComponentActivity() {
             FrameLayout.LayoutParams(dp(48), dp(48), Gravity.TOP or Gravity.END).apply { setMargins(0, dp(24) + dp(48) + dp(10), dp(16), 0) })
         (window.decorView as FrameLayout).addView(bar, FrameLayout.LayoutParams(-1, -1)); fullBar = bar
     }
+    /** The play button's icon, on the page and on the full-screen view. */
+    private fun setPlayIcon(p: String) { if (::playIcon.isInitialized) playIcon.path = p; fullPlay?.path = p }
     private fun syncFullPlay() { window.decorView.postDelayed({ fullPlay?.path = if (player?.isPlaying == true) "M8 6v12 M16 6v12" else "M9 6.5v11l9-5.5z" }, 120) }
     override fun onConfigurationChanged(c: android.content.res.Configuration) {
         super.onConfigurationChanged(c)
@@ -1721,7 +1723,7 @@ class VideoEditorActivity : ComponentActivity() {
         removePreviewTick(); cancelPendingCut(); dropNext(); prepared = false; cancelLap()
         player?.runCatching { release() }; player = null
         musicPlayer?.runCatching { pause() }
-        if (::playIcon.isInitialized) playIcon.path = "M9 6.5v11l9-5.5z"
+        setPlayIcon("M9 6.5v11l9-5.5z")
     }
     private fun prepareMusic() {
         musicPlayer?.runCatching { release() }; musicPlayer = null
@@ -1737,13 +1739,13 @@ class VideoEditorActivity : ComponentActivity() {
     private fun togglePlay() {
         val p = player ?: return; if (!prepared) return
         cancelPendingCut(); cancelLap(); dropNext()
-        if (p.isPlaying) { autoPlay = false; cancelOut(); cancelLap(); p.pause(); musicPlayer?.pause(); syncLayerSound(false); playIcon.path = "M9 6.5v11l9-5.5z" }
+        if (p.isPlaying) { autoPlay = false; cancelOut(); cancelLap(); p.pause(); musicPlayer?.pause(); syncLayerSound(false); setPlayIcon("M9 6.5v11l9-5.5z") }
         else {
             if (playIndex == 0 && p.currentPosition >= end - 60) p.seekTo(start.toInt())
             extras.getOrNull(playIndex - 1)?.let { if (p.currentPosition >= it.to - 60) p.seekTo(it.from.toInt()) }
             runCatching { p.playbackParams = p.playbackParams.setSpeed(if (playIndex == 0) speed else extras.getOrNull(playIndex - 1)?.speed ?: 1f) }
             p.start(); musicPlayer?.let { mp -> runCatching { mp.seekTo(((p.currentPosition - start).coerceAtLeast(0) % max(1, mp.duration)).toInt()); mp.start() } }
-            playIcon.path = "M8 6v12 M16 6v12"
+            setPlayIcon("M8 6v12 M16 6v12")
         }
     }
     private fun seek(ms: Long) {
