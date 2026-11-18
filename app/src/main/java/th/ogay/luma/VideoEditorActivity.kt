@@ -833,6 +833,7 @@ class VideoEditorActivity : ComponentActivity() {
     private var nextAttached = false
     private var pendingCut = -1
     private var pendingCutResume = false
+    private var pausedHandoffTarget = -1
 
     private val cutTimeout = Runnable {
         val target = pendingCut
@@ -963,6 +964,13 @@ class VideoEditorActivity : ComponentActivity() {
                 if (view === texture) {
                     surface?.release()
                     surface = created
+                    if (pausedHandoffTarget >= 0) {
+                        playIndex = pausedHandoffTarget
+                        pausedHandoffTarget = -1
+                        pendingSeek = clipFrom(playIndex)
+                        autoPlay = false
+                        showClipOnBar()
+                    }
                     openPlayer()
                 } else {
                     surface2?.release()
@@ -980,10 +988,23 @@ class VideoEditorActivity : ComponentActivity() {
                     surface?.release()
                     surface = null
                 } else {
+                    val waitingCut = pendingCut >= 0
+                    val overlapTarget = lapNext
                     cancelLap()
-                    dropNext()
                     surface2?.release()
                     surface2 = null
+                    if (waitingCut) {
+                        // A disappeared destination surface must immediately enter fallback.
+                        handler.post(cutTimeout)
+                    } else {
+                        dropNext()
+                        if (overlapTarget >= 0) {
+                            autoPlay = true
+                            handler.post {
+                                if (!isDestroyed && surface != null) playClip(overlapTarget)
+                            }
+                        }
+                    }
                 }
                 return true
             }
@@ -4209,8 +4230,20 @@ class VideoEditorActivity : ComponentActivity() {
     private fun cancelExport() { ExportJob.cancel() }
 
     // ---------- Lifecycle ----------
-    override fun onPause() { cancelLap(); dropNext(); player?.let { if (it.isPlaying) togglePlay() }; layerPlay.values.forEach { lp -> lp.mp.runCatching { if (isPlaying) pause() } }; if (prog != null) th.ogay.luma.ai.AiPace.watching = false; super.onPause(); if (::trim.isInitialized && overlay == null) saveProject() }
-    override fun onResume() { super.onResume(); if (prog != null) th.ogay.luma.ai.AiPace.watching = true }
+    override fun onPause() { pausedHandoffTarget = when { pendingCut >= 0 -> pendingCut; lapCommitRequested && lapNext >= 0 -> lapNext; else -> -1 }; cancelLap(); dropNext(); player?.let { if (it.isPlaying) togglePlay() }; layerPlay.values.forEach { lp -> lp.mp.runCatching { if (isPlaying) pause() } }; if (prog != null) th.ogay.luma.ai.AiPace.watching = false; super.onPause(); if (::trim.isInitialized && overlay == null) saveProject() }
+    override fun onResume() {
+        super.onResume()
+        if (prog != null) th.ogay.luma.ai.AiPace.watching = true
+        if (pausedHandoffTarget >= 0 && surface != null && ::trim.isInitialized) {
+            playIndex = pausedHandoffTarget
+            pausedHandoffTarget = -1
+            pendingSeek = clipFrom(playIndex)
+            autoPlay = false
+            showClipOnBar()
+            openPlayer()
+            showTime()
+        }
+    }
     override fun onDestroy() { releaseLayerSound(); dropNext(); (speech as? StudioSpeech)?.stop(); speech = null; TaskNotice.stop(this); if (translating) { translateStopped = true; LlamaTranslator.cancel() }; if (hearingModels) { ModelStore.unlisten(modelEvents); hearingModels = false }; fxEq?.runCatching { release() }; fxEq = null; recorder?.runCatching { stop() }; recorder?.runCatching { release() }; recorder = null; handler.removeCallbacksAndMessages(null); releasePlayer(); musicPlayer?.runCatching { release() }; releaseLayerSound(); super.onDestroy() }
     override fun onSaveInstanceState(out: Bundle) {
         super.onSaveInstanceState(out); writeState(out)
