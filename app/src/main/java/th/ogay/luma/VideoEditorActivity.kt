@@ -1086,6 +1086,7 @@ class VideoEditorActivity : ComponentActivity() {
         applySound()
         arrived()
         runCatching { if (resume) np.start() else if (np.isPlaying) np.pause() }
+        autoPlay = false
         playIcon.path = if (resume) "M8 6v12 M16 6v12" else "M9 6.5v11l9-5.5z"
         showTime()
         postPreviewTick()
@@ -1526,7 +1527,7 @@ class VideoEditorActivity : ComponentActivity() {
     private fun togglePlay() {
         val p = player ?: return; if (!prepared) return
         cancelPendingCut(); cancelLap(); dropNext()
-        if (p.isPlaying) { cancelOut(); cancelLap(); p.pause(); musicPlayer?.pause(); syncLayerSound(false); playIcon.path = "M9 6.5v11l9-5.5z" }
+        if (p.isPlaying) { autoPlay = false; cancelOut(); cancelLap(); p.pause(); musicPlayer?.pause(); syncLayerSound(false); playIcon.path = "M9 6.5v11l9-5.5z" }
         else {
             if (playIndex == 0 && p.currentPosition >= end - 60) p.seekTo(start.toInt())
             extras.getOrNull(playIndex - 1)?.let { if (p.currentPosition >= it.to - 60) p.seekTo(it.from.toInt()) }
