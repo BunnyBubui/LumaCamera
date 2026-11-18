@@ -139,7 +139,7 @@ class StudioPreviewMetricsTest {
         assertEquals(3L, m.snapshot().reportedDroppedDecoderFrames)
         assertEquals(1L, m.snapshot().events.getValue(StudioPreviewMetrics.Event.FIRST_FRAME_REPORTED))
         assertFalse(m.snapshot().events.containsKey(StudioPreviewMetrics.Event.VISIBLE_BLACK_FRAME_OBSERVED))
-        assertTrue(m.debugReport(mapOf("device" to "test")).contains("p50"))
+        assertTrue(m.debugReport(mapOf("device" to "test")).contains("reported_decoder_drops=3"))
     }
 
     @Test fun parallelCallbacksDoNotLoseCountersOrTokens() {
