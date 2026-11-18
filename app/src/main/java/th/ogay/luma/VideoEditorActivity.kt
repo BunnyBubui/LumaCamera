@@ -274,6 +274,7 @@ class VideoEditorActivity : ComponentActivity() {
     }
     /** Shows clip [k] at [at] ms of its source, without the transition animation: used while scrubbing and picking on the timeline. */
     private fun jumpTo(k: Int, at: Long, exact: Boolean = true) {
+        cancelOut(); cancelLap(); dropNext()
         if (k != playIndex || player == null) { playIndex = k.coerceIn(0, extras.size); pendingSeek = at; showClipOnBar(); trim.playhead = at.coerceIn(trim.start, trim.end); openPlayer() }
         else {
             trim.playhead = at.coerceIn(trim.start, trim.end)
@@ -918,7 +919,7 @@ class VideoEditorActivity : ComponentActivity() {
     private fun warmNextIfNearEnd(pos: Long, endMs: Long) {
         if (pendingCut >= 0 || lapNext >= 0 || extras.isEmpty() || pos < endMs - 200L) return
         val k = nextOf(playIndex)
-        if (k != playIndex && lapPlan(playIndex, k) == null && !canContinueInto(k)) warmNext(k)
+        if (k != playIndex && (Glass.reduced(this) || lapPlan(playIndex, k) == null) && !canContinueInto(k)) warmNext(k)
     }
 
     /** Callbacks follow the *view instance*, not its current primary/standby role. */
@@ -1463,7 +1464,7 @@ class VideoEditorActivity : ComponentActivity() {
     private fun clearMotion() { texture.scaleX = if (mirror) -1f else 1f; texture.scaleY = 1f; texture.translationX = 0f }
 
     private fun releasePlayer() {
-        handler.removeCallbacks(tick); prepared = false; cancelLap()
+        handler.removeCallbacks(tick); cancelPendingCut(); dropNext(); prepared = false; cancelLap()
         player?.runCatching { release() }; player = null
         musicPlayer?.runCatching { pause() }
         if (::playIcon.isInitialized) playIcon.path = "M9 6.5v11l9-5.5z"
@@ -1481,6 +1482,7 @@ class VideoEditorActivity : ComponentActivity() {
     }
     private fun togglePlay() {
         val p = player ?: return; if (!prepared) return
+        cancelPendingCut(); cancelLap(); dropNext()
         if (p.isPlaying) { cancelOut(); cancelLap(); p.pause(); musicPlayer?.pause(); syncLayerSound(false); playIcon.path = "M9 6.5v11l9-5.5z" }
         else {
             if (playIndex == 0 && p.currentPosition >= end - 60) p.seekTo(start.toInt())
@@ -1491,7 +1493,7 @@ class VideoEditorActivity : ComponentActivity() {
         }
     }
     private fun seek(ms: Long) {
-        cancelOut(); cancelLap(); trim.playhead = ms
+        cancelOut(); cancelLap(); dropNext(); trim.playhead = ms
         val p = player ?: return
         if (prepared) { if (android.os.Build.VERSION.SDK_INT >= 26) p.seekTo(ms, MediaPlayer.SEEK_CLOSEST) else p.seekTo(ms.toInt()) }
         showTime()
@@ -4163,7 +4165,7 @@ class VideoEditorActivity : ComponentActivity() {
     private fun cancelExport() { ExportJob.cancel() }
 
     // ---------- Lifecycle ----------
-    override fun onPause() { player?.let { if (it.isPlaying) togglePlay() }; layerPlay.values.forEach { lp -> lp.mp.runCatching { if (isPlaying) pause() } }; if (prog != null) th.ogay.luma.ai.AiPace.watching = false; super.onPause(); if (::trim.isInitialized && overlay == null) saveProject() }
+    override fun onPause() { cancelLap(); dropNext(); player?.let { if (it.isPlaying) togglePlay() }; layerPlay.values.forEach { lp -> lp.mp.runCatching { if (isPlaying) pause() } }; if (prog != null) th.ogay.luma.ai.AiPace.watching = false; super.onPause(); if (::trim.isInitialized && overlay == null) saveProject() }
     override fun onResume() { super.onResume(); if (prog != null) th.ogay.luma.ai.AiPace.watching = true }
     override fun onDestroy() { releaseLayerSound(); dropNext(); (speech as? StudioSpeech)?.stop(); speech = null; TaskNotice.stop(this); if (translating) { translateStopped = true; LlamaTranslator.cancel() }; if (hearingModels) { ModelStore.unlisten(modelEvents); hearingModels = false }; fxEq?.runCatching { release() }; fxEq = null; recorder?.runCatching { stop() }; recorder?.runCatching { release() }; recorder = null; handler.removeCallbacksAndMessages(null); releasePlayer(); musicPlayer?.runCatching { release() }; releaseLayerSound(); super.onDestroy() }
     override fun onSaveInstanceState(out: Bundle) {
