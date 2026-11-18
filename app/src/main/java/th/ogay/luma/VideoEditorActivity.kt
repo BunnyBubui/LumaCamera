@@ -2408,18 +2408,13 @@ class VideoEditorActivity : ComponentActivity() {
         if (extras.isNotEmpty()) { notice("โหมดนี้ใช้กับวิดีโอที่มีคลิปเดียว ลบคลิปที่เพิ่มก่อน"); return }
         analysing = true; val run = ++gamingRun
         val cancel = th.ogay.luma.autoedit.analysis.CancelToken()
-        val sheet = screenSheet(); val bar = ModelBar(this); val label = text("เริ่มวิเคราะห์", 14f, Glass.TEXT2, true)
-        sheet.open { col, sh ->
-            col.addView(text("วิเคราะห์ไฮไลต์เกม", 18f, Glass.TEXT, true).apply { setPadding(0, dp(4), 0, dp(10)) }, -1, -2)
-            col.addView(label, -1, -2); col.addView(bar, LinearLayout.LayoutParams(-1, dp(6)).apply { topMargin = dp(10) })
-            col.addView(GlassDialog.actions(this, "ยกเลิก" to { cancel.cancel(); gamingRun++; analysing = false; sh.close() }))
-        }
+        val page = AnalysisPage(this, firstFrame, "วิเคราะห์ไฮไลต์เกม") { cancel.cancel(); gamingRun++; analysing = false }
         val uri = source; val durUs = duration * 1000; val w = videoW; val h = videoH; val from = start * 1000; val to = end * 1000
         // Its own thread: the shared single-thread reader also loads thumbnails and waveforms, and must not be held for a minute.
         Thread {
             try {
                 val src = th.ogay.luma.autoedit.analysis.AndroidAnalysisSource(this, uri, "main", durUs, w, h, 0, cancelled = { cancel.cancelled },
-                    report = { f, what -> runOnUiThread { if (run == gamingRun) { bar.fraction = f; label.text = what + " " + (f * 100).toInt() + "%" } } })
+                    report = { f, what -> runOnUiThread { if (run == gamingRun) page.set(f, what) } })
                 val pipeline = th.ogay.luma.autoedit.analysis.AnalysisPipeline(listOf(th.ogay.luma.autoedit.analysis.SceneAnalyzer(), th.ogay.luma.autoedit.analysis.AudioEventAnalyzer(), th.ogay.luma.autoedit.analysis.HudAnalyzer()))
                 val result = pipeline.run(src, cancel)
                 val events = result.events.filter { it.sourceEndUs > from && it.sourceStartUs < to }
@@ -2428,10 +2423,10 @@ class VideoEditorActivity : ComponentActivity() {
                 // The EDL goes through the motion director so the review shows what Phase 4 would add; only the cuts are applied for now.
                 runOnUiThread {
                     if (run != gamingRun) return@runOnUiThread
-                    analysing = false; sheet.close { gamingReview(proposal, events.size, result.diagnostics) }
+                    analysing = false; page.remove(); gamingReview(proposal, events.size, result.diagnostics)
                 }
             } catch (e: th.ogay.luma.autoedit.analysis.AnalysisCancelled) { runOnUiThread { if (run == gamingRun) analysing = false }
-            } catch (e: Throwable) { runOnUiThread { if (run == gamingRun) { analysing = false; sheet.close(); notice("วิเคราะห์ไม่สำเร็จ ${e.message ?: ""}") } } }
+            } catch (e: Throwable) { runOnUiThread { if (run == gamingRun) { analysing = false; page.remove(); notice("วิเคราะห์ไม่สำเร็จ ${e.message ?: ""}") } } }
         }.start()
     }
     /** The proposed highlights as a checklist; nothing changes until "ใช้ที่เลือก". */

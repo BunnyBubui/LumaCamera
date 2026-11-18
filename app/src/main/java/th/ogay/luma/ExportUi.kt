@@ -647,3 +647,31 @@ class AsrClock(private val c: android.content.Context, private val modelId: Stri
     /** Remembers the pace for next time (only when this run was long enough to measure it). */
     fun finish() { measured()?.takeIf { doneMs >= 20_000 }?.let { prefs.edit().putFloat("asr_rate_$modelId", (0.5 * prior + 0.5 * it).toFloat().coerceIn(0.05f, 5f)).apply() } }
 }
+
+/** A full-screen progress page for work that is not an export (reading a game video): the same ring, backdrop and buttons as the export page. */
+class AnalysisPage(private val a: Activity, thumb: Bitmap?, title: String, onCancel: () -> Unit) {
+    private val layer = FrameLayout(a).apply { setBackgroundColor(Glass.alpha(Glass.BG, 0xf2)); isClickable = true; alpha = 0f }
+    private val ring = ExportProgress.Ring(a)
+    private val percent = a.text("0%", 40f, Glass.TEXT, true).apply { gravity = Gravity.CENTER }
+    private val what = a.text("เริ่มวิเคราะห์", 14f, Glass.TEXT2).apply { gravity = Gravity.CENTER }
+    init {
+        val back = ExportProgress.Backdrop(a).apply { mode = ExportProgress.Backdrop.AI }
+        layer.addView(back, -1, -1)
+        val col = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL; setPadding(a.dp(28), 0, a.dp(28), 0) }
+        val frame = FrameLayout(a)
+        frame.addView(ImageView(a).apply { scaleType = ImageView.ScaleType.CENTER_CROP; setImageBitmap(thumb); setBackgroundColor(0x22ffffff); clipToOutline = true
+            outlineProvider = object : android.view.ViewOutlineProvider() { override fun getOutline(v: View, o: android.graphics.Outline) = o.setRoundRect(0, 0, v.width, v.height, a.dp(18).toFloat()) } },
+            FrameLayout.LayoutParams(a.dp(132), a.dp(176), Gravity.CENTER))
+        frame.addView(ring, FrameLayout.LayoutParams(a.dp(150), a.dp(194), Gravity.CENTER))
+        col.addView(frame, a.dp(160), a.dp(200))
+        col.addView(a.text(title, 18f, Glass.TEXT, true).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(-2, -2).apply { topMargin = a.dp(12) })
+        col.addView(percent, LinearLayout.LayoutParams(-2, -2).apply { topMargin = a.dp(4) })
+        col.addView(what, -1, -2)
+        col.addView(EditorKit.chip(a, "ยกเลิก", Icons.CLOSE) { onCancel(); remove() }, LinearLayout.LayoutParams(-2, a.dp(44)).apply { topMargin = a.dp(20) })
+        layer.addView(col, FrameLayout.LayoutParams(-1, -2, Gravity.CENTER))
+        (a.window.decorView as FrameLayout).addView(layer, -1, -1)
+        layer.animate().alpha(1f).setDuration(220).start()
+    }
+    fun set(f: Float, text: String) { ring.progress = f; percent.text = "${(f * 100).toInt()}%"; what.text = text }
+    fun remove() { layer.animate().alpha(0f).setDuration(200).withEndAction { (layer.parent as? FrameLayout)?.removeView(layer) }.start() }
+}
