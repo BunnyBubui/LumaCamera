@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "build_sha": "",
+  "device": {
+    "kind": "unknown",
+    "model": "",
+    "api_level": null
+  },
+  "cases": [
+    {
+      "id": "same_file_split",
+      "status": "not_run",
+      "evidence": "",
+      "notes": ""
+    },
+    {
+      "id": "different_file_join",
+      "status": "not_run",
+      "evidence": "",
+      "notes": ""
+    },
+    {
+      "id": "mixed_fps_24_30_60",
+      "status": "not_run",
+      "evidence": "",
+      "notes": ""
+    },
+    {
+      "id": "portrait_landscape_codec",
+      "status": "not_run",
+      "evidence": "",
+      "notes": ""
+    },
+    {
+      "id": "overlap_with_handles",
+      "status": "not_run",
+      "evidence": "",
+      "notes": ""
+    },
+    {
+      "id": "overlap_without_handles",
+      "status": "not_run",
+      "evidence": "",
+      "notes": ""
+    },
+    {
+      "id": "rapid_scrub_pause_resume",
+      "status": "not_run",
+      "evidence": "",
+      "notes": ""
+    },
+    {
+      "id": "audio_crossfade",
+      "status": "not_run",
+      "evidence": "",
+      "notes": ""
+    },
+    {
+      "id": "look_lut_effects",
+      "status": "not_run",
+      "evidence": "",
+      "notes": ""
+    },
+    {
+      "id": "long_timeline_repeated_joins",
+      "status": "not_run",
+      "evidence": "",
+      "notes": ""
+    },
+    {
+      "id": "export_preview_parity",
+      "status": "not_run",
+      "evidence": "",
+      "notes": ""
+    },
+    {
+      "id": "ten_minute_loop",
+      "status": "not_run",
+      "evidence": "",
+      "notes": ""
+    }
+  ],
+  "metrics": {
+    "preview_1080p30": {
+      "render_source": "unavailable",
+      "rendered_frames": null,
+      "on_time_frames": null,
+      "seam_gap_us": [],
+      "black_join_frames": null,
+      "av_sync_offset_ms": []
+    },
+    "soak": {
+      "elapsed_ms": null,
+      "crashes": null
+    }
+  }
+}
