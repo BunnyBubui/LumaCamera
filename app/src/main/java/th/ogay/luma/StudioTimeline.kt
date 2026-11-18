@@ -33,7 +33,17 @@ class StudioTimeline(context: Context) : View(context) {
     class Bar(val id: Int, val at: Long, val len: Long, val color: Int, val label: String, val movable: Boolean = true,
         val peaks: FloatArray? = null, val peakFrom: Long = 0L, val loop: Long = 0L, val marks: List<Long> = emptyList())
 
+    /**
+     * The Activity replaces the Clip list in refreshTimeline(). Cache its prefix offsets so
+     * scrolling, snapping, hit testing and draw traversal do not keep summing clip durations.
+     */
     var clips: List<Clip> = emptyList()
+        set(value) {
+            field = value
+            clipOffsets = StudioClipOffsets(LongArray(value.size) { value[it].len })
+            postInvalidateOnAnimation()
+        }
+    private var clipOffsets = StudioClipOffsets(LongArray(0))
     var lanes: List<List<Bar>> = emptyList()
     var selected = 0
     /** One entry per clip: null for the first, "" for a plain cut, otherwise the name of the change into that clip. */
@@ -71,10 +81,19 @@ class StudioTimeline(context: Context) : View(context) {
     private val addBox = RectF()
 
     private var ph = 0L
+    private var lastDrawnPlayhead = Long.MIN_VALUE
     /** Where the middle line is. While a finger is down the view owns it, so playback ticks cannot fight the drag. */
     var playhead: Long
         get() = ph
-        set(v) { if (mode == IDLE && !flinging && ph != v) { ph = v; invalidate() } }
+        set(v) {
+            if (mode == IDLE && !flinging && ph != v) {
+                ph = v
+                // Keep precise time for hit testing; coalesce ticks that move less than 0.5 px.
+                if (lastDrawnPlayhead == Long.MIN_VALUE || abs((ph - lastDrawnPlayhead) * pxPerMs) >= 0.5f) {
+                    postInvalidateOnAnimation()
+                }
+            }
+        }
 
     private val d = resources.displayMetrics.density
     private var pxPerMs = 64f * d / 1000f
@@ -87,7 +106,11 @@ class StudioTimeline(context: Context) : View(context) {
     private val iconStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xff101014.toInt(); style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND }
     private val clipPath = Path(); private val rect = RectF(); private val src = Rect(); private val dst = RectF()
 
-    private companion object { const val IDLE = 0; const val SCRUB = 1; const val TRIM_L = 2; const val TRIM_R = 3; const val MOVE = 4; const val ZOOM = 5; const val BAR = 6; const val BAR_L = 7; const val BAR_R = 8 }
+    private companion object {
+        const val IDLE = 0; const val SCRUB = 1; const val TRIM_L = 2; const val TRIM_R = 3
+        const val MOVE = 4; const val ZOOM = 5; const val BAR = 6; const val BAR_L = 7; const val BAR_R = 8
+        val RULER_STEPS = longArrayOf(100, 200, 500, 1000, 2000, 5000, 10_000, 30_000, 60_000, 300_000, 600_000)
+    }
     private val scroller = android.widget.OverScroller(context)
     private var velocity: android.view.VelocityTracker? = null
     private var flinging = false
@@ -101,7 +124,11 @@ class StudioTimeline(context: Context) : View(context) {
     private fun snap(t: Long, withPlayhead: Boolean, skipBar: Int = -3): Long {
         val reach = (7 * d / pxPerMs).toLong(); var best = -1L; var gap = reach + 1
         fun offer(c: Long) { val g = abs(c - t); if (g < gap) { gap = g; best = c } }
-        var at = 0L; offer(0); clips.forEach { at += it.len; offer(at) }
+        offer(0)
+        // Only the containing clip's two boundaries can be nearest.
+        val near = clipOffsets.clipAt(t)
+        if (near >= 0) { offer(clipOffsets.startOf(near)); offer(clipOffsets.startOf(near + 1)) }
+        else offer(total())
         lanes.forEach { l -> l.forEach { if (it.id != skipBar && it.id >= 0) { offer(it.at); offer(it.at + it.len) } } }
         marks.forEach { offer(it) }
         if (withPlayhead) offer(ph)
@@ -119,10 +146,18 @@ class StudioTimeline(context: Context) : View(context) {
     private var trimFrom = 0L; private var trimTo = 0L; private var trimLen = 0L; private var trimPh = 0L
     private var moveIndex = -1; private var moveX = 0f
 
-    private fun total() = clips.sumOf { it.len }
+    private fun total() = clipOffsets.total
     private fun x(t: Long) = width / 2f + (t - ph) * pxPerMs
-    private fun startOf(i: Int): Long { var t = 0L; for (k in 0 until i) t += clips[k].len; return t }
-    private fun clipAt(px: Float): Int { var t = 0L; clips.forEachIndexed { i, c -> if (px >= x(t) && px < x(t + c.len)) return i; t += c.len }; return -1 }
+    private fun startOf(i: Int) = clipOffsets.startOf(i)
+    private fun clipAt(px: Float): Int {
+        // Retain original screen-space comparison and exact cut-boundary behavior.
+        var low = 0; var high = clips.size
+        while (low < high) {
+            val mid = (low + high) ushr 1
+            if (px >= x(startOf(mid + 1))) low = mid + 1 else high = mid
+        }
+        return if (low < clips.size && px >= x(startOf(low))) low else -1
+    }
     private fun seamHalf(i: Int) = 13f * d
     private fun seamAt(px: Float, py: Float): Int? {
         if (seams.size != clips.size || py > rulerH + clipH + 6 * d) return null
@@ -225,17 +260,23 @@ class StudioTimeline(context: Context) : View(context) {
     override fun onDraw(c: Canvas) {
         val w = width.toFloat(); val all = total()
         // Ruler: the step grows until two marks are a comfortable distance apart.
-        val step = longArrayOf(100, 200, 500, 1000, 2000, 5000, 10_000, 30_000, 60_000, 300_000, 600_000).firstOrNull { it * pxPerMs >= 58 * d } ?: 600_000L
+        val step = RULER_STEPS.firstOrNull { it * pxPerMs >= 58 * d } ?: 600_000L
         var t = (floor((ph - w / 2 / pxPerMs) / step.toDouble()).toLong() * step).coerceAtLeast(0)
         paint.color = 0x55ffffff
         while (t <= all && x(t) < w) { val px = x(t); c.drawRect(px, rulerH - 5 * d, px + d, rulerH - 1 * d, paint); c.drawText(label(t, step < 1000), px + 3 * d, rulerH - 5 * d, textPaint); t += step }
         marks.forEach { m -> val mx = x(m); if (mx > -8 * d && mx < w + 8 * d) { clipPath.reset(); clipPath.moveTo(mx - 4 * d, rulerH - 9 * d); clipPath.lineTo(mx + 4 * d, rulerH - 9 * d); clipPath.lineTo(mx, rulerH - 1 * d); clipPath.close(); c.drawPath(clipPath, accent)
             paint.color = Glass.ACCENT; paint.alpha = 120; c.drawRect(mx - 0.5f * d, rulerH, mx + 0.5f * d, rulerH + clipH, paint); paint.alpha = 255 } }
         // Clips.
-        var at = 0L; val top = rulerH; val bottom = rulerH + clipH; val r = 9 * d
-        clips.forEachIndexed { i, clip ->
-            val x0 = x(at) + 1 * d; val x1 = x(at + clip.len) - 1 * d; at += clip.len
-            if (x1 < 0 || x0 > w || x1 <= x0) return@forEachIndexed
+        val top = rulerH; val bottom = rulerH + clipH; val r = 9 * d
+        // Skip offscreen clips in long projects (the viewport is already clipped by the View).
+        val visibleFromMs = (ph - w / 2f / pxPerMs).toLong().coerceAtLeast(0L)
+        var i = clipOffsets.clipAt(visibleFromMs).let { if (it < 0) clips.size else it }
+        while (i < clips.size) {
+            val clip = clips[i]
+            val at = startOf(i)
+            val x0 = x(at) + 1 * d; val x1 = x(at + clip.len) - 1 * d
+            if (x0 > w) break
+            if (x1 < 0 || x1 <= x0) { i++; continue }
             rect.set(x0, top, x1, bottom); clipPath.reset(); clipPath.addRoundRect(rect, r, r, Path.Direction.CW)
             c.save(); c.clipPath(clipPath)
             paint.color = Glass.PANEL; paint.alpha = 255; c.drawRect(rect, paint)
@@ -280,6 +321,7 @@ class StudioTimeline(context: Context) : View(context) {
                     c.save(); val k = (hw * 1.4f) / 24f; c.translate(sx - 12 * k, cy - 12 * k); c.scale(k, k)
                     iconStroke.strokeWidth = 2f; c.drawPath(iconPath(data), iconStroke); c.restore() }
             }
+            i++
         }
         addRect(addBox)
         if (addBox.right > 0 && addBox.left < w) {
@@ -309,7 +351,9 @@ class StudioTimeline(context: Context) : View(context) {
                 } else if (x1 - x0 > 40 * d) { textPaint.color = 0xe6000000.toInt(); textPaint.textSize = 9f * d; textPaint.isFakeBoldText = true
                     c.drawText(b.label, x0.coerceAtLeast(0f) + 6 * d, mid + 3.2f * d, textPaint); textPaint.color = 0x99ffffff.toInt(); textPaint.textSize = 9.5f * d; textPaint.isFakeBoldText = false }
                 paint.color = Color.WHITE
-                b.marks.forEach { m -> val mx = x0 + m * pxPerMs; c.save(); c.rotate(45f, mx, mid); c.drawRect(mx - 3 * d, mid - 3 * d, mx + 3 * d, mid + 3 * d, paint); c.restore() }
+                b.marks.forEach { m -> val mx = x0 + m * pxPerMs; if (mx >= -3 * d && mx <= w + 3 * d) {
+                    c.save(); c.rotate(45f, mx, mid); c.drawRect(mx - 3 * d, mid - 3 * d, mx + 3 * d, mid + 3 * d, paint); c.restore()
+                } }
                 c.restore()
                 if (b.id == selectedBar) { c.drawRoundRect(x0, y0, x1, y1, 5 * d, 5 * d, barStroke)
                     if (b.movable && x1 - x0 > 44 * d) { paint.color = Color.WHITE; c.drawRoundRect(x0 + 3 * d, y0 + 4 * d, x0 + 5.5f * d, y1 - 4 * d, d, d, paint); c.drawRoundRect(x1 - 5.5f * d, y0 + 4 * d, x1 - 3 * d, y1 - 4 * d, d, d, paint) } }
@@ -318,6 +362,7 @@ class StudioTimeline(context: Context) : View(context) {
         // Playhead.
         paint.color = Color.WHITE; c.drawRoundRect(w / 2 - 1 * d, 2 * d, w / 2 + 1 * d, height - 1 * d, d, d, paint)
         clipPath.reset(); clipPath.moveTo(w / 2 - 5 * d, 0f); clipPath.lineTo(w / 2 + 5 * d, 0f); clipPath.lineTo(w / 2, 7 * d); clipPath.close(); c.drawPath(clipPath, paint)
+        lastDrawnPlayhead = ph
     }
 }
 
@@ -352,5 +397,35 @@ class LaneWindow(context: Context) : android.widget.FrameLayout(context) {
     override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
         super.onLayout(changed, l, t, r, b)
         child?.let { it.translationY = it.translationY.coerceIn(-range().toFloat(), 0f) }
+    }
+}
+
+/**
+ * Pure millisecond clip-offset index. Rebuilt only when clips change, never in onDraw.
+ * A zero-duration clip has no selectable interval; a boundary belongs to the next clip.
+ */
+internal class StudioClipOffsets(lengthsMs: LongArray) {
+    private val starts = LongArray(lengthsMs.size + 1)
+
+    init {
+        for (i in lengthsMs.indices) {
+            val length = lengthsMs[i].coerceAtLeast(0L)
+            starts[i + 1] = if (length > Long.MAX_VALUE - starts[i]) Long.MAX_VALUE else starts[i] + length
+        }
+    }
+
+    val total: Long get() = starts[starts.lastIndex]
+
+    fun startOf(index: Int): Long = starts[index.coerceIn(0, starts.lastIndex)]
+
+    /** Index containing [timeMs], or -1 outside [0, total). */
+    fun clipAt(timeMs: Long): Int {
+        if (timeMs < 0L || timeMs >= total) return -1
+        var low = 0; var high = starts.lastIndex
+        while (low < high) {
+            val mid = (low + high) ushr 1
+            if (starts[mid + 1] <= timeMs) low = mid + 1 else high = mid
+        }
+        return if (low < starts.lastIndex && starts[low] <= timeMs && timeMs < starts[low + 1]) low else -1
     }
 }
