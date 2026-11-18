@@ -11,7 +11,10 @@ object PointCurve {
     const val SLOTS = 9
     private const val OFF = -1f
 
-    fun identity() = FloatArray(SLOTS) { if (it % 2 == 0) it / 8f else OFF }
+    /** A straight line through three points (start, middle, end): the starting shape of every curve. */
+    fun identity() = FloatArray(SLOTS) { if (it == 0 || it == 4 || it == 8) it / 8f else OFF }
+    /** Three points all at height [y]. */
+    fun three(y: Float) = FloatArray(SLOTS) { if (it == 0 || it == 4 || it == 8) y else OFF }
     /** [sets] curves one after the other, each a straight line. */
     fun identitySets(sets: Int) = FloatArray(SLOTS * sets) { identity()[it % SLOTS] }
     fun fromFive(f: FloatArray, at: Int = 0) = FloatArray(SLOTS) { if (it % 2 == 0) f[at + it / 2] else OFF }

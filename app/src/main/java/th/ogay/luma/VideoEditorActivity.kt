@@ -72,7 +72,9 @@ class VideoEditorActivity : ComponentActivity() {
         private val CROPS = listOf("ต้นฉบับ" to 0f, "1:1" to 1f, "4:5" to 4f / 5, "16:9" to 16f / 9, "9:16" to 9f / 16, "2.39:1" to 2.39f,
             "3:4" to 3f / 4, "4:3" to 4f / 3, "2:3" to 2f / 3, "3:2" to 3f / 2, "21:9" to 21f / 9, "1.85:1" to 1.85f, "กำหนดเอง" to -1f)
         /** The order the crop shapes are shown in (numbers point into [CROPS], whose order is kept for saved projects). */
-        private val CROP_ORDER = listOf(0, 12, 1, 2, 6, 8, 4, 3, 7, 9, 10, 5, 11)
+        private val CROP_ORDER = listOf(12, 0, 1, 2, 6, 8, 4, 3, 7, 9, 10, 5, 11)
+        /** Tools made of plain rows of buttons: their card is as tall as the rows. */
+        private val FIT_TOOLS = setOf(0, 3, 5, 8, 11)
         private val PLACES = listOf("บน", "กลาง", "ล่าง")
         private val TEXT_COLORS = intArrayOf(Color.WHITE, Color.BLACK, Glass.ACCENT, 0xffffd60a.toInt(), 0xff0a84ff.toInt())
         private val TRANSITIONS = listOf("ตัดตรง", "จางดำ", "แฟลชขาว", "ซูมเข้า", "เลื่อน", "ปาด", "เบลอ", "ซ้อนทับ")
@@ -327,6 +329,8 @@ class VideoEditorActivity : ComponentActivity() {
     private lateinit var texture: TextureView; private lateinit var texture2: TextureView; private var surface2: Surface? = null
     private lateinit var mask: CropMask
     private lateinit var frameGrid: FrameGridView
+    /** Holds the added pictures, videos, text and stickers; it is exactly the kept frame and cuts off whatever sticks out of it. */
+    private lateinit var overlayHost: FrameLayout
     private lateinit var captionView: TextView
     private lateinit var playIcon: IconView
     private lateinit var timeLabel: TextView
@@ -645,6 +649,8 @@ class VideoEditorActivity : ComponentActivity() {
         mask = CropMask(this); stage.addView(mask, -1, -1)
         captionView = text("", 20f, Glass.TEXT, true).apply { gravity = Gravity.CENTER; maxLines = 3; setShadowLayer(6f, 0f, 2f, 0x99000000.toInt()); importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
         stage.addView(captionView, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
+        overlayHost = FrameLayout(this).apply { clipChildren = true; clipToPadding = true; clipToOutline = false }
+        stage.addView(overlayHost, FrameLayout.LayoutParams(1, 1, Gravity.TOP or Gravity.START))
         // Covers the picture for a moment when the preview moves to the next clip (fade or flash transitions).
         dip = View(this).apply { alpha = 0f; isClickable = false; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
         stage.addView(dip, -1, -1)
@@ -1697,6 +1703,8 @@ class VideoEditorActivity : ComponentActivity() {
         val w = (ew * k).toInt(); val h = (eh * k).toInt()
         val video = RectF((stage.width - w) / 2f, (stage.height - h) / 2f, (stage.width + w) / 2f, (stage.height + h) / 2f)
         val visible = cropRect(video); mask.set(video, visible); this.visible.set(visible); frameGrid.box.set(visible); frameGrid.invalidate()
+        (overlayHost.layoutParams as FrameLayout.LayoutParams).let { lp -> val w = visible.width().toInt().coerceAtLeast(1); val h = visible.height().toInt().coerceAtLeast(1)
+            if (lp.width != w || lp.height != h || lp.leftMargin != visible.left.toInt() || lp.topMargin != visible.top.toInt()) { lp.width = w; lp.height = h; lp.leftMargin = visible.left.toInt(); lp.topMargin = visible.top.toInt(); overlayHost.layoutParams = lp } }
         val extra = extras.getOrNull(playIndex - 1)
         if (extra == null) {
             val tw = (videoW * k).toInt(); val th = (videoH * k).toInt()
@@ -2664,7 +2672,7 @@ class VideoEditorActivity : ComponentActivity() {
         private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 2.4f * resources.displayMetrics.density }
         private val dot = Paint(Paint.ANTI_ALIAS_FLAG); private val grid = Paint().apply { color = 0x26ffffff }
         private var drag = -1
-        init { contentDescription = "เส้นโค้ง ลากจุดขึ้นลง"; isClickable = true }
+        init { contentDescription = "เส้นโค้ง ลากจุดขึ้นลงหรือไปทางข้าง"; isClickable = true }
         private fun x(i: Float) = 10 * d + i * (width - 20 * d); private fun y(v: Float) = height - 8 * d - v * (height - 16 * d)
         override fun onDraw(c: Canvas) {
             for (k in 0..4) { val gx = x(k / 4f); c.drawLine(gx, y(0f), gx, y(1f), grid); val gy = y(k / 4f); c.drawLine(x(0f), gy, x(1f), gy, grid) }
@@ -2678,7 +2686,17 @@ class VideoEditorActivity : ComponentActivity() {
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> { parent?.requestDisallowInterceptTouchEvent(true)
                     drag = PointCurve.slotsOf(points, at).minByOrNull { abs(x(it / 8f) - e.x) } ?: -1; selected = drag; invalidate() }
-                MotionEvent.ACTION_MOVE -> if (drag >= 0) { points[at + drag] = ((height - 8 * d - e.y) / (height - 16 * d)).coerceIn(0f, 1f); invalidate(); onChange() }
+                MotionEvent.ACTION_MOVE -> if (drag >= 0) {
+                    val y = ((height - 8 * d - e.y) / (height - 16 * d)).coerceIn(0f, 1f)
+                    // A middle point also slides sideways: to the nearest free place between its two neighbours.
+                    if (drag in 1..7) {
+                        val slots = PointCurve.slotsOf(points, at); val k = slots.indexOf(drag)
+                        if (k > 0 && k < slots.size - 1) {
+                            val want = (((e.x - 10 * d) / (width - 20 * d)) * 8f).roundToInt().coerceIn(slots[k - 1] + 1, slots[k + 1] - 1)
+                            if (want != drag) { points[at + want] = y; points[at + drag] = -1f; drag = want; selected = want; Glass.tick(this) }
+                        }
+                    }
+                    points[at + drag] = y; invalidate(); onChange() }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { drag = -1; invalidate() }
             }
             return true
@@ -2710,7 +2728,7 @@ class VideoEditorActivity : ComponentActivity() {
                 background = if (on) glass(14, Glass.ACCENT_SOFT) else null
                 addView(IconView(this@VideoEditorActivity, icon, 2f).apply { tint = if (on) Glass.ACCENT else Color.WHITE }, LinearLayout.LayoutParams(dp(20), dp(20)).apply { gravity = Gravity.CENTER_HORIZONTAL })
                 addView(text(n, 10.5f, if (on) Glass.ACCENT else Glass.TEXT2, true).apply { gravity = Gravity.CENTER; textAlignment = View.TEXT_ALIGNMENT_CENTER; setPadding(0, dp(3), 0, 0) }, LinearLayout.LayoutParams(-1, -2))
-                setOnClickListener { colourTab = i; showTool(COLOR_TOOL, false) } }, LinearLayout.LayoutParams(dp(62), dp(50)).apply { setMargins(dp(2), 0, dp(2), 0) }) }
+                setOnClickListener { colourTab = i; softSwap = true; showTool(COLOR_TOOL, false) } }, LinearLayout.LayoutParams(dp(62), dp(50)).apply { setMargins(dp(2), 0, dp(2), 0) }) }
         col.addView(tabs, -1, -2)
         val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(4), 0, 0) }
         col.addView(body, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -2937,7 +2955,7 @@ class VideoEditorActivity : ComponentActivity() {
         toolsFull = want
         if (!landscape() && collapsed) tools.layoutParams.height = want
         else if (tools.layoutParams.height != want) {
-            if (!animate || Glass.reduced(this)) { tools.layoutParams.height = want; tools.requestLayout() }
+            if (Glass.reduced(this) || (!animate && toolCard.visibility != View.VISIBLE)) { tools.layoutParams.height = want; tools.requestLayout() }
             else android.animation.ValueAnimator.ofInt(tools.layoutParams.height, want).apply { duration = 260; interpolator = Glass.EASE
                 addUpdateListener { tools.layoutParams.height = it.animatedValue as Int; tools.requestLayout() } }.start()
         }
@@ -2980,8 +2998,21 @@ class VideoEditorActivity : ComponentActivity() {
             16 -> voiceTools(col)
             else -> layerTools(col)
         }
+        // Simple tools (one or two rows of buttons) take the height their content needs, so the card does not hold a block of empty space.
+        if (i in FIT_TOOLS && !landscape()) {
+            val w = if (tools.width > 0) tools.width else resources.displayMetrics.widthPixels - dp(32)
+            col.measure(View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
+            val fit = (col.measuredHeight + dp(14)).coerceAtLeast(dp(84))
+            if (fit < want) { toolsFull = fit
+                if (collapsed || Glass.reduced(this) || toolCard.visibility != View.VISIBLE) { tools.layoutParams.height = fit; tools.requestLayout() }
+                else android.animation.ValueAnimator.ofInt(tools.layoutParams.height, fit).apply { duration = 260; interpolator = Glass.EASE; addUpdateListener { tools.layoutParams.height = it.animatedValue as Int; tools.requestLayout() } }.start() }
+        }
         EditorKit.swap(tools, col, dir)
+        // A tab inside a tool (speed: fixed or curve, colour: its five tabs) changes the content without a slide: fade it in so it does not snap.
+        if (softSwap && !Glass.reduced(this)) { col.alpha = 0f; col.translationY = dp(10).toFloat(); col.animate().alpha(1f).translationY(0f).setInterpolator(Glass.EASE).setDuration(260).start() }
+        softSwap = false
     }
+    private var softSwap = false
     /** Speed as one slider, like the photo adjustments: 0.1× (slow) through 1× to 500× (fast). */
     private var speedTab = 0
     /** Speed of the clip on screen: a steady speed (any value, or set by the length the clip should take) or a speed curve. */
@@ -2998,7 +3029,7 @@ class VideoEditorActivity : ComponentActivity() {
         val tabs = LinearLayout(this).apply { gravity = Gravity.CENTER }
         listOf("ความเร็วคงที่", "เส้นโค้งความเร็ว").forEachIndexed { i, n -> val on = i == speedTab
             tabs.addView(text(n, 12.5f, if (on) Glass.ACCENT else Color.WHITE, on).apply { gravity = Gravity.CENTER; background = glass(16, if (on) Glass.ACCENT_SOFT else 0x1fffffff); setPadding(dp(14), 0, dp(14), 0)
-                isClickable = true; glassTouch(); contentDescription = n; setOnClickListener { if (i == 1 && e == null && cutValid()) notice("เอาการตัดช่วงกลางออกก่อน") else { speedTab = i; showTool(2, false) } } }, LinearLayout.LayoutParams(-2, dp(32)).apply { setMargins(dp(3), 0, dp(3), 0) }) }
+                isClickable = true; glassTouch(); contentDescription = n; setOnClickListener { if (i == 1 && e == null && cutValid()) notice("เอาการตัดช่วงกลางออกก่อน") else { softSwap = true; speedTab = i; showTool(2, false) } } }, LinearLayout.LayoutParams(-2, dp(32)).apply { setMargins(dp(3), 0, dp(3), 0) }) }
         col.addView(tabs, -1, -2)
         if (speedTab == 0) {
             val slider = GlassSlider(this).apply { values = SPEEDS.map { speedName(it) }; index = SPEEDS.indices.minByOrNull { abs(SPEEDS[it] - base()) } ?: 10
@@ -3028,7 +3059,7 @@ class VideoEditorActivity : ComponentActivity() {
                 "บูลเล็ต" to floatArrayOf(0.85f, 0.85f, 0.05f, 0.85f, 0.85f), "ค่อย ๆ เร็วขึ้น" to floatArrayOf(0.35f, 0.45f, 0.55f, 0.7f, 0.85f),
                 "ค่อย ๆ ช้าลง" to floatArrayOf(0.85f, 0.7f, 0.55f, 0.45f, 0.35f), "จางเข้าออก" to floatArrayOf(0.25f, 0.5f, 0.6f, 0.5f, 0.25f))
             val now = presets.indexOfFirst { curve()?.contentEquals(PointCurve.fromFive(it.second)) == true }
-            val points = curve()?.copyOf() ?: PointCurve.fromFive(floatArrayOf(0.5f, 0.5f, 0.5f, 0.5f, 0.5f))
+            val points = curve()?.copyOf() ?: PointCurve.three(0.5f)
             val edit = CurveEdit(this).apply { this.points = points; at = 0; color = Glass.ACCENT; contentDescription = "เส้นโค้งความเร็ว ลากจุดขึ้นเพื่อเร็วขึ้น ลงเพื่อช้าลง"
                 onChange = { setCurve(points.copyOf()); head.text = "คลิป ${order().indexOf(playIndex) + 1} ยาว ${clock(lenOf(playIndex))} เส้นโค้ง" } }
             val bar = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(10), 0, dp(10), 0) }
@@ -3771,7 +3802,7 @@ class VideoEditorActivity : ComponentActivity() {
     }
 
     private fun rebuildStickers() {
-        stickerViews.forEach { stage.removeView(it) }; stickerViews.clear()
+        stickerViews.forEach { overlayHost.removeView(it) }; stickerViews.clear()
         stickers.forEachIndexed { i, k ->
             val v = text(k.text, 20f).apply { gravity = Gravity.CENTER; includeFontPadding = false; contentDescription = "สติกเกอร์ ${k.text} ลากเพื่อย้าย แตะเพื่อปรับขนาด" }
             var dx = 0f; var dy = 0f; var moved = false
@@ -3790,7 +3821,7 @@ class VideoEditorActivity : ComponentActivity() {
                 }
                 true
             }
-            stage.addView(v, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START)); stickerViews += v
+            overlayHost.addView(v, FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.START)); stickerViews += v
         }
         stage.post { placeStickers() }
     }
@@ -3800,7 +3831,7 @@ class VideoEditorActivity : ComponentActivity() {
         stickerViews.forEachIndexed { i, v ->
             val k = stickers.getOrNull(i) ?: return@forEachIndexed
             v.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, (if (k.big) VideoEdit.STICKER_BIG else VideoEdit.STICKER) * visible.height() * 0.8f)
-            v.post { v.translationX = visible.left + k.x * visible.width() - v.width / 2f; v.translationY = visible.top + k.y * visible.height() - v.height / 2f }
+            v.post { v.translationX = k.x * visible.width() - v.width / 2f; v.translationY = k.y * visible.height() - v.height / 2f }
         }
     }
     // ---------- Layers ----------
@@ -3905,7 +3936,7 @@ class VideoEditorActivity : ComponentActivity() {
         val keep = layers.mapIndexed { i, l -> playKey(i, l) }.toSet()
         layerPlay.keys.filter { it !in keep }.forEach { k -> layerPlay.remove(k)?.release() }
         layerPlay.values.forEach { it.view = null }
-        layerViews.forEach { stage.removeView(it) }; layerViews.clear()
+        layerViews.forEach { overlayHost.removeView(it) }; layerViews.clear()
         layers.forEachIndexed { i, l ->
             if (!l.visual) return@forEachIndexed
             val v = ImageView(this).apply { scaleType = ImageView.ScaleType.CENTER_CROP; setImageBitmap(layerThumbs[l.source]?.let { b -> if (l.matte.active) VideoLayers.matted(b, l.matte) else b }); setBackgroundColor(if (l.matte.active) 0 else 0x33ffffff); tag = i
@@ -3947,7 +3978,7 @@ class VideoEditorActivity : ComponentActivity() {
                 setOnTouchListener { _, e -> v.dispatchTouchEvent(e) }
                 tag = i; videoTex[i] = tv
             } else v.also { videoTex.remove(i) }
-            stage.addView(shown, FrameLayout.LayoutParams(1, 1, Gravity.TOP or Gravity.START)); layerViews += shown
+            overlayHost.addView(shown, FrameLayout.LayoutParams(1, 1, Gravity.TOP or Gravity.START)); layerViews += shown
         }
         stage.post { placeLayers(); syncLayerSound(player?.isPlaying == true) }
     }
@@ -3960,12 +3991,12 @@ class VideoEditorActivity : ComponentActivity() {
             val p = l.pose(now.coerceIn(l.at, l.end))
             val w = (p[2] * visible.width()).toInt().coerceAtLeast(dp(12)); val h = (w / l.aspect).toInt().coerceAtLeast(dp(12))
             (v.layoutParams as FrameLayout.LayoutParams).let { if (it.width != w || it.height != h) { it.width = w; it.height = h; v.layoutParams = it } }
-            v.translationX = visible.left + p[0] * visible.width() - w / 2f; v.translationY = visible.top + p[1] * visible.height() - h / 2f
+            v.translationX = p[0] * visible.width() - w / 2f; v.translationY = p[1] * visible.height() - h / 2f
             v.rotation = l.turn
             val inTime = now in l.at until l.end; val picked = tool == LAYER_TOOL && i == layerPick
             // The picked layer never disappears completely while it is being edited, even when faded or outside its time.
-            v.alpha = when { inTime -> if (picked) p[3].coerceAtLeast(0.25f) else p[3]; picked -> 0.4f; else -> 0f }
-            v.isEnabled = (inTime || picked) && !l.locked
+            v.alpha = when { inTime -> if (picked) p[3].coerceAtLeast(0.25f) else p[3]; else -> 0f }   // before it starts and after it ends a layer is gone, also while it is picked
+            v.isEnabled = inTime && !l.locked
             if (l.hidden) { v.alpha = if (picked) 0.2f else 0f; v.isEnabled = false }
         }
     }
