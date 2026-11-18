@@ -85,8 +85,8 @@ class StudioTimeline(context: Context) : View(context) {
     fun lanesStart(): Int = lanesTop().toInt()
     private val expW get() = 138f * d
     /** The strip at the left edge that opens the closed column: from under the ruler down to the last lane. */
-    private fun tabTop() = rulerH + 4 * d
-    private fun tabBottom() = maxOf(lanesBottom, tabTop() + 64 * d).coerceAtMost(maxOf(height.toFloat() - 4 * d, tabTop() + 64 * d))
+    private fun tabTop() = rulerH + 2 * d
+    private fun tabBottom() = maxOf(height.toFloat() - 2 * d, tabTop() + 64 * d)
     private val stripW get() = 46 * d
     /** Keeps the phone's back swipe away from that strip, so swiping right on it opens the column instead of going back. */
     private fun updateExclusion() {
@@ -202,7 +202,7 @@ class StudioTimeline(context: Context) : View(context) {
             // Closed: a tall tab along the left edge with an arrow, saying "swipe right (or tap) to open the track list".
             val t0 = tabTop(); val t1 = tabBottom()
             paint.color = 0x38ffffff; c.drawRoundRect(-12 * d, t0, 26 * d, t1, 10 * d, 10 * d, paint)
-            iconStroke.color = 0xe6ffffff.toInt(); iconStroke.strokeWidth = 2f * d; val m = t0 + 24 * d; val ax = 14 * d
+            iconStroke.color = 0xe6ffffff.toInt(); iconStroke.strokeWidth = 2f * d; val m = (t0 + t1) / 2f; val ax = 14 * d
             c.drawLine(ax - 2.5f * d, m - 6 * d, ax + 2.5f * d, m, iconStroke); c.drawLine(ax + 2.5f * d, m, ax - 2.5f * d, m + 6 * d, iconStroke); iconStroke.color = 0xff101014.toInt()
             return
         }
@@ -255,7 +255,7 @@ class StudioTimeline(context: Context) : View(context) {
     }
     private val tabBox = RectF()
     /** The small tab on the right edge of the open column, in this view's coordinates. */
-    private fun tabRect(): RectF { val hw = headW(); val t0 = lanesTop() - clipH - 4 * d + 6 * d; tabBox.set(hw - 4 * d, t0, hw + 11 * d, minOf(height.toFloat() - 6 * d, t0 + 40 * d)); return tabBox }
+    private fun tabRect(): RectF { val hw = headW(); tabBox.set(hw - 4 * d, tabTop(), hw + 11 * d, tabBottom()); return tabBox }
     var selected = 0
     /** One entry per clip: null for the first, "" for a plain cut, otherwise the name of the change into that clip. */
     var seams: List<String?> = emptyList(); set(v) { field = v; invalidate() }

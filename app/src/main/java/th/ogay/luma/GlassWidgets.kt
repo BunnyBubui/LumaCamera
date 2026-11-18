@@ -70,7 +70,9 @@ class CenterStrip(context: Context, private val gapDp: Int = 4) : FrameLayout(co
         (track.layoutParams as LayoutParams).let { it.width = max(x, 1); track.layoutParams = it }
         selected = sel.coerceIn(0, max(0, list.size - 1)); live = selected
         markSelected()
-        post { jump() }
+        // A strip that is not laid out yet stays hidden until it has been moved to its place, so the items never show at the left edge for a frame.
+        if (width > 0) { settle?.cancel(); track.animate().cancel(); track.alpha = 1f; jump() }
+        else { track.animate().cancel(); track.alpha = 0f; post { jump(); track.animate().alpha(1f).setDuration(120).start() } }
     }
 
     private fun center(i: Int): Float {

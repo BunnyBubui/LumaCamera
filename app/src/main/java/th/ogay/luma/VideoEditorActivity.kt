@@ -74,7 +74,7 @@ class VideoEditorActivity : ComponentActivity() {
         /** The order the crop shapes are shown in (numbers point into [CROPS], whose order is kept for saved projects). */
         private val CROP_ORDER = listOf(12, 0, 1, 2, 6, 8, 4, 3, 7, 9, 10, 5, 11)
         /** Tools made of plain rows of buttons: their card is as tall as the rows. */
-        private val FIT_TOOLS = setOf(0, 3, 5, 8, 11)
+        private val FIT_TOOLS = setOf(0, 3, 4, 5, 8, 11, 12, 16)
         private val PLACES = listOf("บน", "กลาง", "ล่าง")
         private val TEXT_COLORS = intArrayOf(Color.WHITE, Color.BLACK, Glass.ACCENT, 0xffffd60a.toInt(), 0xff0a84ff.toInt())
         private val TRANSITIONS = listOf("ตัดตรง", "จางดำ", "แฟลชขาว", "ซูมเข้า", "เลื่อน", "ปาด", "เบลอ", "ซ้อนทับ")
@@ -716,6 +716,8 @@ class VideoEditorActivity : ComponentActivity() {
         if (projectName.isEmpty()) projectName = "โปรเจกต์ " + android.text.format.DateFormat.format("d MMM HH:mm", System.currentTimeMillis())
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         installRoot(root)
+        // The tool card follows the tab bar whenever the page moves (the keyboard shrinks the page), so it floats above the keyboard.
+        root.viewTreeObserver.addOnGlobalLayoutListener { placeCard() }
         // The caption field sits low on the screen: the page shrinks above the keyboard instead of hiding under it.
         androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
             val b = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars() or androidx.core.view.WindowInsetsCompat.Type.displayCutout() or androidx.core.view.WindowInsetsCompat.Type.ime())
@@ -2872,6 +2874,8 @@ class VideoEditorActivity : ComponentActivity() {
         texture.setRenderEffect(if (look != null) RenderEffect.createChainEffect(blur, look) else blur)
     }
     /** Puts the whole look (filter, adjustments and grade) on the preview: through one colour table when the grade is used, else as a colour matrix. */
+    /** One paint that is reused for every change of look: a new one each time made the picture blink while a filter was being chosen. */
+    private val lookPaint = Paint()
     private fun paintLook() {
         val graded = grade.active() && !comparing
         if (graded && android.os.Build.VERSION.SDK_INT >= 33) {
@@ -2880,7 +2884,7 @@ class VideoEditorActivity : ComponentActivity() {
         } else {
             if (android.os.Build.VERSION.SDK_INT >= 31) texture.setRenderEffect(null)
             lastCube = if (graded) gradeCube(17) else null
-            texture.setLayerPaint(if (!looked() || comparing) null else Paint().apply { colorFilter = ColorMatrixColorFilter(colour()) })
+            texture.setLayerPaint(if (!looked() || comparing) null else lookPaint.apply { colorFilter = ColorMatrixColorFilter(colour()) })
         }
     }
     /** Brightness spread of the picture on screen, after the look: red, green and blue, dark on the left, bright on the right. */
@@ -3210,8 +3214,13 @@ class VideoEditorActivity : ComponentActivity() {
         val save = GlassMenu.Option("บันทึกภาพนิ่ง", "M4 7h3l2-2h6l2 2h3v12H4z M12 10a3 3 0 1 0 0 6 3 3 0 0 0 0-6")
         val freeze = GlassMenu.Option("ค้างเฟรม", "M8 5v14 M16 5v14 M4 12h2 M18 12h2")
         val meterOpt = GlassMenu.Option("มิเตอร์เสียง", "M5 20V10 M10 20V4 M15 20v-8 M20 20V7", when (meterSide) { 0 -> "ซ่อนอยู่"; 2 -> "แสดงที่ฝั่งซ้าย"; else -> "แสดงที่ฝั่งขวา" } + "  ▾  ตั้งค่า")
-        toolMenu.show(moreButton, "เมนูเพิ่มเติม", listOf(flag, grid, save, freeze, meterOpt), -1) { i ->
+        val laneNow = laneDp().toInt(); val laneIdx = when { laneNow <= 24 -> 0; laneNow <= 30 -> 1; else -> 2 }
+        val rowsOpt = GlassMenu.Option("ขนาดแถวบนไทม์ไลน์", "M4 6h16v4H4z M4 14h16v4H4z", listOf("เล็ก", "กลาง", "ใหญ่")[laneIdx] + "  ▾  เลือกขนาด")
+        toolMenu.show(moreButton, "เมนูเพิ่มเติม", listOf(flag, grid, save, freeze, meterOpt, rowsOpt), -1) { i ->
             when (i) {
+                5 -> moreButton.post { toolMenu.show(moreButton, "ขนาดแถวบนไทม์ไลน์", listOf(
+                    GlassMenu.Option("แถวเล็ก", "M4 10h16 M4 14h16"), GlassMenu.Option("แถวกลาง", "M4 8h16 M4 12h16 M4 16h16"), GlassMenu.Option("แถวใหญ่", "M4 5h16v6H4z M4 13h16v6H4z")), laneIdx) { k ->
+                    val v = listOf(24, 30, 40)[k]; getSharedPreferences("camera", MODE_PRIVATE).edit().putInt("lane_dp", v).apply(); timeline.laneDp = v.toFloat(); laneCount = -1; refreshTimeline() } }
                 0 -> { if (near != null) markers.remove(near) else { markers += now; markers.sort() }; Glass.tick(timeline); refreshTimeline() }
                 1 -> moreButton.post { toolMenu.show(moreButton, "เส้นกริดและกรอบภาพ", FrameGridView.NAMES.mapIndexed { k, n -> GlassMenu.Option(n, FrameGridView.ICONS[k]) }, frameGrid.mode) { k ->
                     frameGrid.mode = k; getSharedPreferences("camera", 0).edit().putInt("studio_frame_grid", k).apply() } }
@@ -3234,7 +3243,7 @@ class VideoEditorActivity : ComponentActivity() {
         tool = i; toolBar.select(TOOL_IDS.indexOf(i).coerceAtLeast(0), animate)
         // The layer lanes need room; the preview gives way smoothly.
         if (i != COLOR_TOOL) { handler.removeCallbacks(histTick); hist = null }
-        val want = dp(when (i) { LAYER_TOOL -> 312; COLOR_TOOL -> 286; 9 -> 260; 2 -> if (speedTab == 1) 276 else 178; 4 -> 236; 3 -> 150; 5 -> 196; 12, 15, 16 -> 220; else -> 124 })
+        val want = dp(when (i) { LAYER_TOOL -> layerWantDp(); COLOR_TOOL -> 286; 9 -> 260; 2 -> if (speedTab == 1) 276 else 178; 4 -> 236; 3 -> 150; 5 -> 196; 12, 15, 16 -> 220; else -> 124 })
         toolsFull = want
         if (!landscape() && collapsed) tools.layoutParams.height = want
         else if (tools.layoutParams.height != want) {
@@ -3282,7 +3291,7 @@ class VideoEditorActivity : ComponentActivity() {
             else -> layerTools(col)
         }
         // Simple tools (one or two rows of buttons) take the height their content needs, so the card does not hold a block of empty space.
-        if (i in FIT_TOOLS && !landscape()) {
+        if ((i in FIT_TOOLS || (i == COLOR_TOOL && colourTab != 2)) && !landscape()) {
             val w = if (tools.width > 0) tools.width else resources.displayMetrics.widthPixels - dp(32)
             col.measure(View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
             val fit = (col.measuredHeight + dp(14)).coerceAtLeast(dp(84))
@@ -3479,25 +3488,33 @@ class VideoEditorActivity : ComponentActivity() {
         // Families first, the same ones as the film mode of the camera; the strip shows the films of the chosen family.
         if (filmGroup.isEmpty()) filmGroup = film?.group ?: Films.groups.first()
         val tabs = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(10), 0, dp(10), 0) }
-        Films.groups.forEach { g -> val on = g == filmGroup
+        // Choosing another family only swaps the strip below; the panel, the tabs and the picture stay put.
+        val stripBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        fun fillTabs() { tabs.removeAllViews(); Films.groups.forEach { g -> val on = g == filmGroup
             tabs.addView(LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; background = if (on) GradientDrawable().apply { cornerRadius = dp(16).toFloat(); setColor(0x33ff9f45); setStroke(dp(1), Glass.ACCENT) } else glass(16, 0x1fffffff)
                 setPadding(dp(10), 0, dp(12), 0); isClickable = true; glassTouch(); contentDescription = "กลุ่ม $g"
                 addView(IconView(this@VideoEditorActivity, Films.groupIcon(g), 1.9f).apply { tint = if (on) Glass.ACCENT else Color.WHITE }, dp(18), dp(18))
                 addView(text(g, 12f, if (on) Glass.ACCENT else Color.WHITE, on).apply { setPadding(dp(6), 0, 0, 0) })
-                setOnClickListener { filmGroup = g; showTool(5, false) } }, LinearLayout.LayoutParams(-2, dp(34)).apply { rightMargin = dp(6) }) }
+                setOnClickListener { if (filmGroup != g) { filmGroup = g; fillTabs(); stripBox.removeAllViews(); filmStrip(stripBox, listOf<Film?>(null) + Films.inGroup(filmGroup)) } } }, LinearLayout.LayoutParams(-2, dp(34)).apply { rightMargin = dp(6) }) } }
+        fillTabs()
         col.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(tabs) }, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(4) })
-        filmStrip(col, listOf<Film?>(null) + Films.inGroup(filmGroup))
+        col.addView(stripBox, -1, -2)
+        filmStrip(stripBox, listOf<Film?>(null) + Films.inGroup(filmGroup))
     }
     private fun filmStrip(col: LinearLayout, looks: List<Film?>) {
         val cards = looks.map { EditorKit.FilmCard(this, firstFrame, it) }
         val strength = GlassSlider(this).apply { values = (0..100).map { "$it%" }; index = (filmStrength * 100).toInt(); grad = intArrayOf(0xff8e8e93.toInt(), Glass.ACCENT); contentDescription = "ความเข้มฟิลเตอร์" }
-        fun mark(k: Int) { cards.forEachIndexed { j, c -> c.lit(j == k) }; strength.animate().alpha(if (looks[k] == null) 0f else 1f).setDuration(180).start(); strength.isEnabled = looks[k] != null }
-        val start = looks.indexOfFirst { it?.id == film?.id }.coerceAtLeast(0)
-        col.addView(EditorKit.strip(this, cards.map { it to 70 }, start, 88, { k -> mark(k); if (film?.id != looks[k]?.id) { film = looks[k]; applyLook() } }) { k -> film = looks[k]; mark(k); applyLook() },
-            LinearLayout.LayoutParams(-1, dp(92)))
-        strength.onChange = { i -> filmStrength = i / 100f; applyLook() }
+        fun mark(k: Int) { cards.forEachIndexed { j, c -> c.lit(j == k) }; val shown = if (k >= 0) looks[k] != null else film != null; strength.animate().alpha(if (shown) 1f else 0f).setDuration(180).start(); strength.isEnabled = shown }
+        val found = looks.indexOfFirst { it?.id == film?.id }; val start = found.coerceAtLeast(0)
+        // The strip reports its first position by itself when it is laid out; that must not change the chosen filter.
+        var quiet = true
+        val stripView = EditorKit.strip(this, cards.map { it to 70 }, start, 88, { k -> if (!quiet) { mark(k); if (film?.id != looks[k]?.id) { film = looks[k]; paintLook() } } }) { k -> film = looks[k]; mark(k); paintLook() }
+        stripView.post { quiet = false }
+        col.addView(stripView, LinearLayout.LayoutParams(-1, dp(92)))
+        strength.onChange = { i -> filmStrength = i / 100f; paintLook() }
         col.addView(strength, LinearLayout.LayoutParams(-1, dp(32)).apply { setMargins(dp(12), 0, dp(12), 0) })
-        mark(start)
+        // When the chosen filter belongs to another family, none of the cards in this one is lit.
+        mark(if (found >= 0) start else -1)
     }
 
     private val CUT_IN = "M6 4v16 M10 8l4 4-4 4 M18 4v16"
@@ -4069,11 +4086,6 @@ class VideoEditorActivity : ComponentActivity() {
             pendingKind = if (k == 0) VideoLayer.IMAGE else VideoLayer.VIDEO
             pickFromGallery.launch(Intent(this, GalleryActivity::class.java).putExtra(GalleryActivity.EXTRA_PICK, if (k == 0) "image" else "video")) } }.also { (it as LinearLayout).gravity = Gravity.CENTER },
             LinearLayout.LayoutParams(dp(150), dp(38)).apply { gravity = Gravity.CENTER_HORIZONTAL; topMargin = dp(4); bottomMargin = dp(6) })
-        // Row height of the lanes: small, medium or large (all rows stay equal); the timeline resizes at once.
-        val sizes = listOf(24 to "แถวเล็ก", 30 to "แถวกลาง", 40 to "แถวใหญ่")
-        // Same chip size as the other panels (42 dp, equal widths) so the top edge is not cut.
-        col.addView(LinearLayout(this).apply { gravity = Gravity.CENTER; clipChildren = false; clipToPadding = false; setPadding(0, dp(2), 0, dp(2)); sizes.forEach { (v, n) -> addView(EditorKit.chip(this@VideoEditorActivity, n, "M4 7h16 M4 12h16 M4 17h16", laneDp().toInt() == v) {
-            getSharedPreferences("camera", MODE_PRIVATE).edit().putInt("lane_dp", v).apply(); timeline.laneDp = v.toFloat(); laneCount = -1; refreshTimeline(); showTool(LAYER_TOOL, false) }, LinearLayout.LayoutParams(0, dp(42), 1f).apply { setMargins(dp(3), 0, dp(3), dp(4)) }) } }, -1, -2)
         val l = layers.getOrNull(layerPick)
         if (l == null || !l.visual || !barActive) {
             tip(col, "เพิ่มภาพหรือวิดีโอซ้อนบนคลิป แตะแถบบนไทม์ไลน์หรือแตะบนภาพเพื่อปรับเลเยอร์นั้น", Icons.PLUS, TAP, BAR, top = 24)
@@ -4134,7 +4146,7 @@ class VideoEditorActivity : ComponentActivity() {
     }
     private fun clampedLayers(): List<VideoLayer> { val total = totalOut()
         return layers.filter { !it.hidden }.mapNotNull { l -> val at = l.at.coerceIn(0, (total - 200).coerceAtLeast(0)); val len = l.length.coerceAtMost(total - at); if (len < 200) null else l.copy(at = at, length = len) } }
-    private fun layerName(l: VideoLayer) = if (l.kind == VideoLayer.TEXT) VideoLayers.shapeOf(l.text).let { k -> if (k >= 0) "รูปทรง" + VideoLayers.SHAPES[k] else l.text.replace('\n', ' ') } else when (l.kind) { VideoLayer.VIDEO -> "วิดีโอ"; VideoLayer.IMAGE -> "รูป"; else -> "เสียง" } + " " + clock(l.length)
+    private fun layerName(l: VideoLayer) = if (l.kind == VideoLayer.TEXT) VideoLayers.shapeOf(l.text).let { k -> if (k >= 0) "รูปทรง" + VideoLayers.SHAPES[k] else l.text.replace('\n', ' ') } else when (l.kind) { VideoLayer.VIDEO -> "วิดีโอ"; VideoLayer.IMAGE -> "รูป"; else -> "เสียง" }
     /** Changes where a layer is, how big or how solid. With keyframes the change is written as a keyframe at the playhead; without, it changes the whole layer. */
     private fun posed(l: VideoLayer, x: Float? = null, y: Float? = null, size: Float? = null, opacity: Float? = null): VideoLayer {
         if (l.keys.isEmpty()) return l.copy(x = x ?: l.x, y = y ?: l.y, size = size ?: l.size, opacity = opacity ?: l.opacity)
@@ -4364,8 +4376,9 @@ class VideoEditorActivity : ComponentActivity() {
         class Act(val icon: String, val label: String, val on: Boolean, val f: () -> Unit) : View(this@VideoEditorActivity)
         fun act(icon: String, label: String, on: Boolean = false, f: () -> Unit): View = Act(icon, label, on, f)
         // Everything that used to be a row of buttons is folded into a few dropdowns, side by side.
-        val drops = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(dp(8), dp(2), dp(8), dp(4)) }
-        box.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(drops) }, LinearLayout.LayoutParams(-1, -2))
+        // The controls are split into pages, one per tab: place, adjust, animation, cut-out and tools.
+        val pages = Array(5) { LinearLayout(this).apply { orientation = LinearLayout.VERTICAL } }
+        val chips0 = ArrayList<View>(); val chips2 = ArrayList<View>(); val chips4 = ArrayList<View>(); val anims = ArrayList<View>(); val cutChips = ArrayList<View>()
         // Move and size the picked picture with buttons: one step each tap, the same step again while the button is held.
         if (l.visual) {
             val pad = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(dp(8), 0, dp(8), dp(6)) }
@@ -4385,10 +4398,7 @@ class VideoEditorActivity : ComponentActivity() {
             step("M6 9l6 6 6-6", "ย้ายลง") { k -> posed(k, y = (at(k)[1] + 0.01f).coerceIn(0f, 1f)) }
             step("M5 12h14", "เล็กลง") { k -> posed(k, size = (at(k)[2] * 0.97f).coerceIn(0.03f, 1f)) }
             step("M5 12h14 M12 5v14", "ใหญ่ขึ้น") { k -> posed(k, size = (at(k)[2] / 0.97f).coerceIn(0.03f, 1f)) }
-            box.addView(pad, LinearLayout.LayoutParams(-1, -2))
-        }
-        fun drop(label: String, icon: String, options: List<GlassMenu.Option>, run: (Int) -> Unit) {
-            drops.addView(dropButton(label) { v -> menu.show(v, label, options, -1) { n -> run(n) } }.also { if (label == "เครื่องมือ") anchor = it }, LinearLayout.LayoutParams(-2, dp(38)).apply { setMargins(dp(3), 0, dp(3), 0) })
+            pages[0].addView(pad, LinearLayout.LayoutParams(-1, -2))
         }
         if (l.visual) {
             actions += act("M3 4h18v16H3z M13 12h6v6h-6z", "จัดวางด่วน") { layoutMenu(anchor, i) }
@@ -4426,16 +4436,19 @@ class VideoEditorActivity : ComponentActivity() {
             layerPick = layers.size - 1; rebuildLayers(); refreshTimeline(); showTool(tool, false) }
         actions += act("M5 7h14 M9 7V4h6v3 M7 7l1 13h8l1-13", "ลบ") { layers.removeAt(i); layerPick = (i - 1).coerceAtLeast(if (layers.isEmpty()) -1 else 0); rebuildLayers(); barActive = false; refreshTimeline(); showTool(tool, false) }
         val infos = actions.filterIsInstance<Act>()
-        drop("เครื่องมือ", "", infos.map { GlassMenu.Option(it.label, it.icon, if (it.on) "เปิดอยู่" else "") }) { n -> infos[n].f() }
+        infos.forEach { a -> val chip = EditorKit.chip(this, a.label, a.icon, a.on) { a.f() }
+            when { a.label == "จัดวางด่วน" -> chips0 += chip; a.label == "ล็อก" || a.label == "ปลดล็อก" || a.label == "ทำสำเนา" || a.label == "ลบ" -> chips4 += chip; else -> chips2 += chip } }
         val sliders = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        fun slider(name: String, steps: List<Int>, now: Int, show: (Int) -> String, set: (Int) -> Unit) {
+        val fades = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val cutBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        fun slider(name: String, steps: List<Int>, now: Int, show: (Int) -> String, into: LinearLayout = sliders, set: (Int) -> Unit) {
             val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), 0, dp(10), 0) }
             val at = steps.indices.minByOrNull { abs(steps[it] - now) } ?: 0
             val label = text("$name ${show(steps[at])}", 12f, Glass.TEXT2, true).apply { minWidth = dp(112) }
             row.addView(label)
             row.addView(GlassSlider(this).apply { values = steps.map(show); index = at; contentDescription = name
                 onChange = { k -> label.text = "$name ${show(steps[k])}"; set(steps[k]) } }, LinearLayout.LayoutParams(0, dp(40), 1f))
-            sliders.addView(row, -1, -2)
+            into.addView(row, -1, -2)
         }
         val seconds: (Int) -> String = { if (it == 0) "ไม่มี" else String.format(Locale.US, "%.1f วิ", it / 1000f) }
         if (l.visual) {
@@ -4445,8 +4458,8 @@ class VideoEditorActivity : ComponentActivity() {
             slider("หมุน", (-180..180 step 5).toList(), l.turn.roundToInt(), { "$it°" }) { v -> layers[i] = layers[i].copy(turn = v.toFloat()); refresh() }
         }
         // Fading applies to the picture and to the sound of a layer alike.
-        slider("ค่อย ๆ เข้า", (0..3000 step 100).toList(), l.fadeIn.toInt(), seconds) { v -> layers[i] = layers[i].copy(fadeIn = v.toLong()); refresh() }
-        slider("ค่อย ๆ ออก", (0..3000 step 100).toList(), l.fadeOut.toInt(), seconds) { v -> layers[i] = layers[i].copy(fadeOut = v.toLong()); refresh() }
+        slider("ค่อย ๆ เข้า", (0..3000 step 100).toList(), l.fadeIn.toInt(), seconds, fades) { v -> layers[i] = layers[i].copy(fadeIn = v.toLong()); refresh() }
+        slider("ค่อย ๆ ออก", (0..3000 step 100).toList(), l.fadeOut.toInt(), seconds, fades) { v -> layers[i] = layers[i].copy(fadeOut = v.toLong()); refresh() }
         if (l.visual) {
             val presets = ArrayList<Pair<String, () -> Unit>>()
             fun chip(name: String, f: () -> Unit) { presets += name to { f(); refresh(); layerControls(box) } }
@@ -4464,7 +4477,11 @@ class VideoEditorActivity : ComponentActivity() {
             animate("เข้า-ออก: ขยาย") { p, _ -> floatArrayOf(p[0], p[1], p[2] * 0.6f, 0f) }
             animate("เข้า-ออก: เลื่อนข้าง") { p, first -> floatArrayOf(if (first) -0.3f else 1.3f, p[1], p[2], 1f) }
             if (l.keys.isNotEmpty()) chip("ล้างแอนิเมชัน") { val cur = layers[i]; val p = cur.rawPose(outNow().coerceIn(cur.at, cur.end)); layers[i] = cur.copy(keys = "", x = p[0], y = p[1], size = p[2], opacity = p[3]) }
-            drop("ตำแหน่งและแอนิเมชัน", "", presets.map { (n, _) -> GlassMenu.Option(n, if (n.startsWith("เข้า-ออก")) "M4 18c6 0 10-12 16-12" else if (n.startsWith("ล้าง")) Icons.CLOSE else "M3 4h18v16H3z M8 8h8v8H8z") }) { n -> presets[n].second() }
+            val posNames = setOf("กลางภาพ", "เต็มจอ", "มุมขวาบน", "มุมซ้ายล่าง")
+            presets.forEach { (n, f) -> val anim = n !in posNames
+                val icon = if (n.startsWith("เข้า-ออก")) "M4 18c6 0 10-12 16-12" else if (n.startsWith("ล้าง")) Icons.CLOSE else "M3 4h18v16H3z M8 8h8v8H8z"
+                val chip = EditorKit.chip(this, n.removePrefix("เข้า-ออก: "), icon) { f() }
+                if (anim) anims += chip else chips0.add(0, chip) }
         }
         if (l.kind == VideoLayer.IMAGE || l.kind == VideoLayer.VIDEO) {
             // Cut-outs: a chroma key for green or blue screens, a shape mask with a soft edge, and rounded corners.
@@ -4474,15 +4491,50 @@ class VideoEditorActivity : ComponentActivity() {
             chip("คีย์สีน้ำเงิน", l.key == BLUE_KEY) { layers[i] = layers[i].copy(key = if (layers[i].key == BLUE_KEY) 0 else BLUE_KEY) }
             chip("มาสก์วงรี", l.shape == StudioMatte.ELLIPSE) { layers[i] = layers[i].copy(shape = if (layers[i].shape == StudioMatte.ELLIPSE) 0 else StudioMatte.ELLIPSE) }
             chip("มาสก์สี่เหลี่ยม", l.shape == StudioMatte.ROUNDED) { layers[i] = layers[i].copy(shape = if (layers[i].shape == StudioMatte.ROUNDED) 0 else StudioMatte.ROUNDED) }
-            drop("ตัดพื้นหลัง", "", cuts.map { (n, on, _) -> GlassMenu.Option(n, if (n.startsWith("คีย์")) "M4 4h16v16H4z M8 12l3 3 5-6" else "M12 4a8 6 0 1 0 0 12 8 6 0 0 0 0-12z", if (on) "เปิดอยู่" else "") }) { n -> cuts[n].third() }
+            cuts.forEach { (n, on, f) -> cutChips += EditorKit.chip(this, n, if (n.startsWith("คีย์")) "M4 4h16v16H4z M8 12l3 3 5-6" else "M12 4a8 6 0 1 0 0 12 8 6 0 0 0 0-12z", on) { f() } }
             // Changing a cut-out redraws the picture, so it happens when the finger lifts rather than on every step.
-            fun matteSlider(name: String, now: Float, set: (Float) -> VideoLayer) = slider(name, (0..100 step 5).toList(), (now * 100).roundToInt(), { "$it%" }) { v -> layers[i] = set(v / 100f); handler.removeCallbacks(rematte); handler.postDelayed(rematte, 250) }
+            fun matteSlider(name: String, now: Float, set: (Float) -> VideoLayer) = slider(name, (0..100 step 5).toList(), (now * 100).roundToInt(), { "$it%" }, cutBox) { v -> layers[i] = set(v / 100f); handler.removeCallbacks(rematte); handler.postDelayed(rematte, 250) }
             if (l.key != 0) matteSlider("ความไวคีย์", l.keyTol) { layers[i].copy(keyTol = it) }
             if (l.shape != 0) matteSlider("ขอบนุ่ม", l.feather) { layers[i].copy(feather = it) }
             matteSlider("มุมโค้ง", l.round) { layers[i].copy(round = it) }
         }
-        box.addView(keepScroll(android.widget.ScrollView(this).apply { isVerticalScrollBarEnabled = false; addView(sliders) }), LinearLayout.LayoutParams(-1, 0, 1f))
+        fun rowOf(into: Int, views: List<View>) { if (views.isNotEmpty()) pages[into].addView(EditorKit.row(this, views), LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(4) }) }
+        fun label(into: Int, words: String) = pages[into].addView(text(words, 11.5f, Glass.TEXT3, true).apply { setPadding(dp(18), dp(6), 0, dp(2)) }, -1, -2)
+        rowOf(0, chips0)
+        if (l.visual) pages[1].addView(sliders, -1, -2)
+        rowOf(2, chips2)
+        if (anims.isNotEmpty()) { label(2, "เอฟเฟกต์ตอนเข้าและออก"); rowOf(2, anims) }
+        pages[2].addView(fades, -1, -2)
+        rowOf(3, cutChips); pages[3].addView(cutBox, -1, -2)
+        rowOf(4, chips4)
+        val tabs = ArrayList<Triple<Int, String, String>>()
+        if (l.visual) tabs += Triple(0, "ตำแหน่ง", "M12 3v18 M3 12h18 M12 3l-2.5 2.5 M12 3l2.5 2.5 M12 21l-2.5-2.5 M12 21l2.5-2.5 M3 12l2.5-2.5 M3 12l2.5 2.5 M21 12l-2.5-2.5 M21 12l-2.5 2.5")
+        tabs += Triple(1, "ปรับ", EditorKit.ADJUST)
+        tabs += Triple(2, "แอนิเมชัน", "M4 18c6 0 10-12 16-12 M4 18h.01 M20 6h.01")
+        if (l.kind == VideoLayer.IMAGE || l.kind == VideoLayer.VIDEO) tabs += Triple(3, "ตัดพื้นหลัง", "M4 4h16v16H4z M8 12l3 3 5-6")
+        tabs += Triple(4, "เครื่องมือ", "M14 6l4 4-9 9H5v-4z M13 7l4 4")
+        layerTab = layerTabFor(l)
+        val tabRow = LinearLayout(this).apply { gravity = Gravity.CENTER }
+        tabs.forEach { (id, n, icon) -> val on = id == layerTab
+            tabRow.addView(LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; isClickable = true; glassTouch(); contentDescription = n
+                background = if (on) glass(14, Glass.ACCENT_SOFT) else null
+                addView(IconView(this@VideoEditorActivity, icon, 2f).apply { tint = if (on) Glass.ACCENT else Color.WHITE }, LinearLayout.LayoutParams(dp(20), dp(20)).apply { gravity = Gravity.CENTER_HORIZONTAL })
+                addView(text(n, 10.5f, if (on) Glass.ACCENT else Glass.TEXT2, true).apply { gravity = Gravity.CENTER; setPadding(0, dp(3), 0, 0); maxLines = 1 }, LinearLayout.LayoutParams(-1, -2))
+                setOnClickListener { layerTab = id; softSwap = true; showTool(tool, false) } }, LinearLayout.LayoutParams(0, dp(50), 1f).apply { setMargins(dp(2), 0, dp(2), 0) }) }
+        box.addView(tabRow, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(8), dp(2), dp(8), dp(2)) })
+        anchor = tabRow
+        box.addView(android.widget.ScrollView(this).apply { isVerticalScrollBarEnabled = false; overScrollMode = View.OVER_SCROLL_NEVER; addView(pages[layerTab]) }, LinearLayout.LayoutParams(-1, 0, 1f))
     }
+    /** Which tab of the layer panel shows: the last one used, or the first one when this layer has no such tab. */
+    private var layerTab = 0
+    private fun layerTabFor(l: VideoLayer?): Int = if (l == null) 0 else when {
+        layerTab == 3 && l.kind != VideoLayer.IMAGE && l.kind != VideoLayer.VIDEO -> 0
+        layerTab == 0 && !l.visual -> 1
+        else -> layerTab }
+    /** Height in dp that the layer panel needs: the add button, the tabs and the page that is open. */
+    private fun layerWantDp(): Int { val l = layers.getOrNull(layerPick)
+        if (l == null || !l.visual || !barActive) return 128
+        return when (layerTabFor(l)) { 0 -> 224; 1 -> 246; 2 -> 300; 3 -> 284; else -> 170 } }
 
     // ---------- Undo, redo and the saved project ----------
     private var projectId = ""; private var projectName = ""
