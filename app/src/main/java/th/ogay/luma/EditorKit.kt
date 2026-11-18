@@ -6,6 +6,7 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.ColorMatrix
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
@@ -126,10 +127,46 @@ object EditorKit {
     fun actions(c: Context, items: List<View>): LinearLayout = LinearLayout(c).apply {
         gravity = Gravity.CENTER; items.forEach { addView(it, LinearLayout.LayoutParams(-2, -2)) }
     }
-    /** Like [actions] but in one row that scrolls sideways when the buttons do not fit the width. */
-    fun actionRow(c: Context, items: List<View>): View = android.widget.HorizontalScrollView(c).apply {
-        isHorizontalScrollBarEnabled = false; isFillViewport = true; clipToPadding = false; setPadding(c.dp(6), 0, c.dp(6), 0)
-        addView(LinearLayout(c).apply { gravity = Gravity.CENTER; items.forEach { addView(it, LinearLayout.LayoutParams(-2, -2)) } }, -1, -2)
+    /**
+     * Buttons in one row you slide along: the button in the middle is full size, the others shrink and fade, and when the
+     * finger lifts the nearest button settles in the middle. A tap on a button also brings it to the middle.
+     */
+    fun actionRow(c: Context, items: List<View>): View = SnapRow(c, items)
+    private class SnapRow(c: Context, items: List<View>) : HorizontalScrollView(c) {
+        private val row = LinearLayout(c).apply { gravity = Gravity.CENTER_VERTICAL; items.forEach { addView(it, LinearLayout.LayoutParams(-2, -2)) } }
+        private var downX = 0f; private var moved = false; private var lastX = -1; private val slop = android.view.ViewConfiguration.get(c).scaledTouchSlop
+        init { isHorizontalScrollBarEnabled = false; clipToPadding = false; overScrollMode = View.OVER_SCROLL_NEVER; addView(row, FrameLayout.LayoutParams(-2, -2)) }
+        private fun centreOf(v: View) = v.left + v.width / 2
+        private fun settle() {
+            if (row.childCount == 0) return
+            val mid = scrollX + width / 2
+            val near = (0 until row.childCount).minByOrNull { Math.abs(centreOf(row.getChildAt(it)) - mid) } ?: return
+            smoothScrollTo(centreOf(row.getChildAt(near)) - width / 2, 0)
+        }
+        private val watch = object : Runnable { override fun run() { if (scrollX == lastX) settle() else { lastX = scrollX; postDelayed(this, 70) } } }
+        override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
+            super.onLayout(changed, l, t, r, b)
+            if (row.childCount == 0 || width == 0) return
+            val first = row.getChildAt(0); val last = row.getChildAt(row.childCount - 1)
+            val ps = Math.max(0, (width - first.width) / 2); val pe = Math.max(0, (width - last.width) / 2)
+            if (row.paddingLeft != ps || row.paddingRight != pe) { row.setPadding(ps, 0, pe, 0); post { scrollTo(0, 0); shade() } }
+        }
+        private fun shade() {
+            val mid = scrollX + width / 2f; val reach = Math.max(1f, width / 2f)
+            for (i in 0 until row.childCount) { val v = row.getChildAt(i); val d = Math.min(1f, Math.abs(centreOf(v) - mid) / reach)
+                v.scaleX = 1f - 0.2f * d; v.scaleY = 1f - 0.2f * d; v.alpha = 1f - 0.45f * d }
+        }
+        override fun onScrollChanged(l: Int, t: Int, ol: Int, ot: Int) { super.onScrollChanged(l, t, ol, ot); shade() }
+        override fun dispatchTouchEvent(e: MotionEvent): Boolean {
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> { downX = e.x; moved = false; removeCallbacks(watch) }
+                MotionEvent.ACTION_MOVE -> if (Math.abs(e.x - downX) > slop) moved = true
+                MotionEvent.ACTION_UP -> {
+                    if (!moved) { val x = e.x + scrollX; (0 until row.childCount).map { row.getChildAt(it) }.firstOrNull { x >= it.left && x < it.right }?.let { smoothScrollTo(centreOf(it) - width / 2, 0) } }
+                    else { lastX = -1; postDelayed(watch, 70) } }
+            }
+            return super.dispatchTouchEvent(e)
+        }
     }
     /** Accent round button with an icon (save, export). */
     fun roundAccent(c: Context, icon: String, desc: String, click: () -> Unit) = FrameLayout(c).apply {
@@ -262,13 +299,47 @@ object EditorKit {
             }
             place(animate && !first)
         }
-        private fun place(animate: Boolean) {
-            if (width == 0 || selected < 0) return
-            val t = tabs[selected]; val ic = t.getChildAt(0)
+        /** Called when the bar is swiped up (-1) or down (1) instead of along. */
+        var onSwipeY: ((Int) -> Unit)? = null
+        private var downX = 0f; private var downY = 0f; private var mode = 0   // 0 undecided, 1 along (drag to choose), 2 up or down
+        private var hover = -1; private var lastX = 0f; private var edge = 0
+        private val slop = android.view.ViewConfiguration.get(c).scaledTouchSlop
+        private fun tabAt(x: Float): Int { val ix = x + (scroller?.scrollX ?: 0); return tabs.indexOfFirst { ix >= it.left && ix < it.right }.let { if (it >= 0) it else if (ix < 0) 0 else tabs.size - 1 } }
+        private fun hoverAt(x: Float) { val i = tabAt(x); if (i != hover) { hover = i; Glass.tick(this); place(true, i) } }
+        private val edgeScroll = object : Runnable { override fun run() {
+            if (mode != 1 || edge == 0) return
+            scroller?.scrollBy(edge * context.dp(9), 0); hoverAt(lastX); postOnAnimation(this) } }
+        override fun onInterceptTouchEvent(e: MotionEvent): Boolean {
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> { downX = e.x; downY = e.y; mode = 0; hover = -1; edge = 0 }
+                MotionEvent.ACTION_MOVE -> if (mode == 0) {
+                    val dx = e.x - downX; val dy = e.y - downY
+                    if (Math.abs(dx) > slop || Math.abs(dy) > slop) { mode = if (Math.abs(dy) > Math.abs(dx) * 1.2f) 2 else 1; parent?.requestDisallowInterceptTouchEvent(true); if (mode == 1) { lastX = e.x; hoverAt(e.x) }; return true }
+                }
+            }
+            return false
+        }
+        override fun onTouchEvent(e: MotionEvent): Boolean {
+            when (e.actionMasked) {
+                MotionEvent.ACTION_MOVE -> if (mode == 1) {
+                    lastX = e.x; hoverAt(e.x)
+                    val z = context.dp(52); val ne = if (e.x < z) -1 else if (e.x > width - z) 1 else 0
+                    if (ne != edge) { edge = ne; if (ne != 0) postOnAnimation(edgeScroll) }
+                }
+                MotionEvent.ACTION_UP -> { edge = 0; val m = mode; mode = 0
+                    if (m == 1) { val h = hover; hover = -1; if (h >= 0 && h != selected) pick(h) else place(true) }
+                    else if (m == 2) { val dy = e.y - downY; if (Math.abs(dy) > context.dp(24)) onSwipeY?.invoke(if (dy < 0) -1 else 1) } }
+                MotionEvent.ACTION_CANCEL -> { edge = 0; if (mode == 1) place(true); mode = 0; hover = -1 }
+            }
+            return true
+        }
+        private fun place(animate: Boolean, at: Int = selected) {
+            if (width == 0 || at < 0) return
+            val t = tabs[at]; val ic = t.getChildAt(0)
             val x = t.left + (t.width - context.dp(52)) / 2f; val y = t.top + ic.top + ic.height / 2f - context.dp(16)
             pill.translationY = y
             if (animate && !Glass.reduced(context)) pill.animate().translationX(x).setInterpolator(Glass.SPRING).setDuration(460).start() else { pill.animate().cancel(); pill.translationX = x }
-            scroller?.let { s -> val to = (t.left + t.width / 2 - s.width / 2).coerceAtLeast(0); if (animate) s.smoothScrollTo(to, 0) else s.scrollTo(to, 0) }
+            if (at == selected && mode == 0) scroller?.let { s -> val to = (t.left + t.width / 2 - s.width / 2).coerceAtLeast(0); if (animate) s.smoothScrollTo(to, 0) else s.scrollTo(to, 0) }
         }
         override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) { super.onLayout(changed, l, t, r, b); if (changed) place(false) }
         /** A scrolling row shows six and a half tabs on any screen, so the half tab says there is more. */

@@ -350,6 +350,11 @@ class VideoEditorActivity : ComponentActivity() {
     private var tickCount = 0
     private val tick = object : Runnable { override fun run() {
         val p = player ?: return
+        // A player that stopped on its own in the middle of a change (pausing clears both, so it was not the user): go on to the next clip.
+        if (prepared && !switching && !p.isPlaying && (outFor != -1 || lapNext >= 0)) {
+            if (lapNext >= 0) finishLap() else { val nk = nextOf(playIndex); cancelOut(); autoPlay = true; playClip(nk) }
+            handler.postDelayed(this, 33); return
+        }
         if (prepared && p.isPlaying) {
             val pos = p.currentPosition.toLong()
             followCurve(p, pos)
@@ -652,17 +657,14 @@ class VideoEditorActivity : ComponentActivity() {
         // Start and end of the whole video.
         transport.addView(EditorKit.round(this, "M7 5v14 M18 6l-8 6 8 6z", "ไปต้นวิดีโอ") { if (player?.isPlaying == true) togglePlay(); val (k, at) = locate(0L); jumpTo(k, at, true) }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { leftMargin = dp(6) })
         transport.addView(EditorKit.round(this, "M17 5v14 M6 6l8 6-8 6z", "ไปท้ายวิดีโอ") { if (player?.isPlaying == true) togglePlay(); val (k, at) = locate(totalOut()); jumpTo(k, (at - 40).coerceAtLeast(clipFrom(k)), true) }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { leftMargin = dp(6) })
-        timeLabel = text("", 13f, Glass.TEXT2).apply { setPadding(dp(12), 0, 0, 0) }
-        transport.addView(timeLabel, LinearLayout.LayoutParams(0, -2, 1f))
-        timeLabel.maxLines = 2
+        timeLabel = text("", 12.5f, Glass.TEXT2).apply { setPadding(dp(16), dp(2), dp(16), 0); maxLines = 1; gravity = Gravity.START }
+        transport.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
         transport.addView(EditorKit.round(this, "M7 4v16 M7 5h10l-2.5 3.5L17 12H7", "ปักหรือถอนมาร์กเกอร์ตรงหัวอ่าน") {
             val now = outNow(); val near = markers.firstOrNull { abs(it - now) <= 150 }
             if (near != null) markers.remove(near) else { markers += now; markers.sort() }
             Glass.tick(timeline); refreshTimeline() }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { rightMargin = dp(6) })
-        // Folds the tool panel away so the picture and the timeline get its room; any tool tab opens it again.
-        collapseIcon = IconView(this, "M6 9l6 6 6-6", 2f)
-        transport.addView(FrameLayout(this).apply { background = glass(22, 0x40ffffff); isClickable = true; contentDescription = "ย่อหรือขยายแถบเครื่องมือ"; glassTouch(); setOnClickListener { if (landscape()) { Glass.tick(it); setCollapsed(!collapsed) } else toggleTools() }
-            addView(collapseIcon, FrameLayout.LayoutParams(dp(20), dp(20), Gravity.CENTER)) }, LinearLayout.LayoutParams(dp(44), dp(44)))
+        collapseIcon = IconView(this, "M6 9l6 6 6-6", 2f)   // kept only so landscape's fold state has an icon to set; not shown
+        transport.addView(View(this), LinearLayout.LayoutParams(dp(6), 1))
         root.addView(transport, -1, -2)
         timeline = StudioTimeline(this).apply { contentDescription = "ไทม์ไลน์ ลากเพื่อเลื่อนเวลา แตะคลิปเพื่อเลือก ลากขอบคลิปที่เลือกเพื่อตัด กดค้างแล้วลากเพื่อสลับลำดับ" }
         timeline.onSeek = { t, done -> if (player?.isPlaying == true) togglePlay(); val (k, at) = locate(t); jumpTo(k, at, done) }
@@ -722,6 +724,7 @@ class VideoEditorActivity : ComponentActivity() {
             EditorKit.ADJUST to "ปรับแต่งภาพ", Icons.FILM to "ฟิลเตอร์", EditorKit.TEXT to "ข้อความ", "M4 6h16v10H8l-4 4z M8 10h8 M8 13h5" to "คำบรรยาย",
             STICKER to "สติกเกอร์", LAYERS to "เลเยอร์", JOIN to "ทรานซิชัน", Icons.SOUND to "เสียง", "M12 4a3 3 0 0 0-3 3v5a3 3 0 0 0 6 0V7a3 3 0 0 0-3-3z M6 11a6 6 0 0 0 12 0 M12 17v3" to "อัดเสียง")) { val folded = collapsed; val before = tool; if (landscape()) setCollapsed(false); showTool(TOOL_IDS[it]); if (!landscape()) { if (folded) showCard() else if (before == tool) hideCard() } }
         root.addView(toolBar, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(4), 0, dp(4), dp(8)) })
+        toolBar.onSwipeY = { d -> if (!landscape()) { Glass.tick(toolBar); if (d < 0 && collapsed) showCard() else if (d > 0 && !collapsed) hideCard() } }
         rootBox = root; topBar = bar; transportRow = transport
         collapsed = state?.getBoolean("collapsed", true) ?: true
         arrange()
@@ -886,7 +889,7 @@ class VideoEditorActivity : ComponentActivity() {
         handler.removeCallbacks(tick)
         val old = player; player = null; old?.runCatching { setOnCompletionListener(null); release() }
         val s = surface
-        if (s == null) { np.runCatching { release() }; return }
+        if (s == null) { np.runCatching { release() }; return }   // no picture to show on: the preview waits for the surface to come back
         runCatching { np.setSurface(s); np.setOnCompletionListener { onClipEnd() } }
         player = np; prepared = true
         playIndex = nk; showClipOnBar(); trim.playhead = (clipFrom(nk) + (plan?.after ?: 0L)).coerceIn(trim.start, trim.end)
@@ -931,7 +934,9 @@ class VideoEditorActivity : ComponentActivity() {
         }
     }
     private fun onClipEnd() { if (lapNext >= 0) { finishLap(); return }
-        if (playIndex == 0 && extras.isEmpty()) player?.seekTo(start.toInt()) else playClip(nextOf(playIndex)) }
+        // A clip that ran to the end of its file has already stopped by now, so "was it playing" would read no and the next clip would
+        // open and sit still. Reaching the end means it was playing, so the next one starts by itself.
+        if (playIndex == 0 && extras.isEmpty()) player?.seekTo(start.toInt()) else { autoPlay = true; playClip(nextOf(playIndex)) } }
 
     private fun openPlayer() {
         val s = surface ?: return
@@ -1058,11 +1063,11 @@ class VideoEditorActivity : ComponentActivity() {
     private fun fullH() = toolsFull.takeIf { it > 0 } ?: dp(124)
     /** Puts the card just above the play row (so the timeline and the tabs stay clear). */
     private fun placeCard() {
-        if (!::toolCard.isInitialized || landscape()) return
+        if (!::toolCard.isInitialized || !::toolBar.isInitialized || landscape()) return
         val decor = window.decorView as FrameLayout
-        val a = IntArray(2); val b = IntArray(2); transportRow.getLocationInWindow(a); decor.getLocationInWindow(b)
+        val a = IntArray(2); val b = IntArray(2); toolBar.getLocationInWindow(a); decor.getLocationInWindow(b)
         val lp = toolCard.layoutParams as? FrameLayout.LayoutParams ?: return
-        val bottom = decor.height - (a[1] - b[1]) + dp(8)
+        val bottom = decor.height - (a[1] - b[1]) + dp(2)   // the card sits straight on the tab bar, at the bottom of the screen
         if (lp.bottomMargin != bottom) { lp.bottomMargin = bottom; toolCard.requestLayout() }
     }
     private fun showCard() {
@@ -1153,7 +1158,7 @@ class VideoEditorActivity : ComponentActivity() {
      * right (the tools scroll there, because the screen is short).
      */
     private fun arrange() {
-        val parts = listOf<View>(topBar, stage, transportRow, timelineScroll, trim, grabber, tools, toolBar)
+        val parts = listOf<View>(topBar, stage, transportRow, timelineScroll, timeLabel, trim, grabber, tools, toolBar)
         parts.forEach { (it.parent as? android.view.ViewGroup)?.removeView(it) }
         (toolCard.parent as? android.view.ViewGroup)?.removeView(toolCard)
         rootBox.removeAllViews(); toolsHolder = null
@@ -1164,6 +1169,7 @@ class VideoEditorActivity : ComponentActivity() {
             rootBox.addView(stage, LinearLayout.LayoutParams(-1, 0, 1f))
             rootBox.addView(transportRow, -1, -2)
             rootBox.addView(timelineScroll, LinearLayout.LayoutParams(-1, timelineScroll.layoutParams?.height ?: dp(68)).apply { topMargin = dp(2) })
+            rootBox.addView(timeLabel, LinearLayout.LayoutParams(-1, -2))
             rootBox.addView(trim, LinearLayout.LayoutParams(-1, 0))
             toolCard.removeAllViews()
             toolCard.addView(grabber, LinearLayout.LayoutParams(-1, dp(20)))
@@ -1176,6 +1182,7 @@ class VideoEditorActivity : ComponentActivity() {
             left.addView(stage, LinearLayout.LayoutParams(-1, 0, 1f))
             left.addView(transportRow, -1, -2)
             left.addView(timelineScroll, LinearLayout.LayoutParams(-1, timelineScroll.layoutParams?.height ?: dp(68)).apply { topMargin = dp(2) })
+            left.addView(timeLabel, LinearLayout.LayoutParams(-1, -2))
             left.addView(trim, LinearLayout.LayoutParams(-1, 0))
             val right = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
             right.addView(topBar, -1, -2)
@@ -1255,10 +1262,8 @@ class VideoEditorActivity : ComponentActivity() {
         val now = android.os.SystemClock.uptimeMillis()
         if (player?.isPlaying == true && ::timeline.isInitialized && timeline.clips.isNotEmpty() && now - lastFullTimeline < 500) { timeline.playhead = outNow(); timeline.invalidate() }
         else { lastFullTimeline = now; refreshTimeline() }
-        val length = ((end - start) / speed).toLong()
-        val more = extras.sumOf { it.len }
-        timeLabel.text = (if (playIndex > 0) "คลิป ${playIndex + 1}/${extras.size + 1}   ${clock(trim.playhead - trim.start)} / ${clock(trim.end - trim.start)}" else "${clock(trim.playhead - start)} / ${clock(end - start)}") +
-            (if (extras.isNotEmpty()) "   รวม ${clock(length + more)}" else if (speed != 1f) "   ได้คลิป ${clock(length)}" else "") + (if (split >= 0 && extras.isEmpty() && layers.isEmpty()) "   แยกเป็น 2 คลิป" else "")
+        // Where the playhead is on the whole timeline (every clip together), and how long the whole timeline is.
+        timeLabel.text = "${clock(outNow())} / ${clock(totalOut())}"
         if (layers.isNotEmpty()) { placeLayers(); lanes?.playhead = outNow() }
     }
 
@@ -2565,6 +2570,17 @@ class VideoEditorActivity : ComponentActivity() {
                 grad = intArrayOf(0xff64d2ff.toInt(), Color.WHITE, Glass.ACCENT); contentDescription = "ความเร็ววิดีโอ"
                 onChange = { k -> setCurve(null); setBase(SPEEDS[k]); head.text = "คลิป ${order().indexOf(playIndex) + 1} ยาว ${clock(lenOf(playIndex))} ${speedName(SPEEDS[k])}" } }
             col.addView(slider, LinearLayout.LayoutParams(-1, dp(44)).apply { setMargins(dp(12), dp(2), dp(12), 0) })
+            // The speed as a change: from ×1.0 to the chosen speed, and below it how long the clip comes out.
+            val to = text(speedX(base()), 22f, Glass.ACCENT, true).apply { gravity = Gravity.CENTER }
+            val left = text(clockMin(lenOf(playIndex)) + " นาที", 12f, Glass.TEXT2).apply { gravity = Gravity.CENTER }
+            fun lengths() { to.text = speedX(base()); left.text = "เหลือ ${clockMin(lenOf(playIndex))} นาที จากเดิม ${clockMin(src)} นาที" }
+            lengths()
+            col.addView(LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(0, dp(6), 0, 0)
+                addView(text("x1.0", 22f, Glass.TEXT2, true), LinearLayout.LayoutParams(-2, -2))
+                addView(IconView(this@VideoEditorActivity, "M5 12h14 M13 6l6 6-6 6", 2.2f).apply { tint = Glass.TEXT2 }, LinearLayout.LayoutParams(dp(26), dp(26)).apply { setMargins(dp(14), 0, dp(14), 0) })
+                addView(to, LinearLayout.LayoutParams(-2, -2)) }, -1, -2)
+            col.addView(left, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(2) })
+            val prior = slider.onChange; slider.onChange = { k -> prior(k); lengths() }
             val sp = allSpeeds()
             if (hasAudio && sp.any { it !in SOUND_MIN..SOUND_MAX }) col.addView(text("ต่ำกว่า 0.25× หรือเกิน 4× ไม่มีเสียงคลิป", 11f, Glass.TEXT3).apply { gravity = Gravity.CENTER; setPadding(dp(16), dp(4), dp(16), 0) }, -1, -2)
             if (e == null && speed < 1f && mainCurve == null) col.addView(EditorKit.chip(this, if (smooth) "สโลว์ลื่น (Optical flow) เปิด" else "สโลว์ลื่น (Optical flow) ปิด", SMOOTH, smooth) {
@@ -2593,6 +2609,10 @@ class VideoEditorActivity : ComponentActivity() {
                 addView(text("เร็วขึ้น 8×", 10.5f, Glass.TEXT3).apply { gravity = Gravity.END }, LinearLayout.LayoutParams(0, -2, 1f)) }, -1, -2)
         }
     }
+    /** "x0.5" style name for the speed readout. */
+    private fun speedX(s: Float) = "x" + (if (s >= 10f) String.format(Locale.US, "%.0f", s) else String.format(Locale.US, "%.2f", s).trimEnd('0').let { if (it.endsWith(".")) it + "0" else it })
+    /** Minutes and seconds ("2:05") for a length. */
+    private fun clockMin(ms: Long) = String.format(Locale.US, "%d:%02d", ms / 60000, ms / 1000 % 60)
     private fun speedName(s: Float) = (if (s == s.toInt().toFloat()) "${s.toInt()}" else if (s >= 10) String.format(Locale.US, "%.1f", s) else String.format(Locale.US, "%.2f", s).trimEnd('0').trimEnd('.')) + "×"
     private fun setRange(s: Long, e: Long) {
         if (e - s < 100) { notice("ช่วงสั้นเกินไป"); return }
