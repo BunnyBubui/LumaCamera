@@ -729,7 +729,7 @@ class VideoEditorActivity : ComponentActivity() {
         timeline.onSeek = { t, done -> if (player?.isPlaying == true) togglePlay(); val (k, at) = locate(t); jumpTo(k, at, done) }
         timeline.onPickBar = { id -> if (id >= 0) pickBar(id) }
         timeline.onGroup = { key, which -> toggleGroup(key, which) }
-        timeline.headFrac = if (getSharedPreferences("camera", MODE_PRIVATE).getBoolean("lane_head_open", true)) 1f else 0f
+        timeline.headFrac = if (getSharedPreferences("camera", MODE_PRIVATE).getBoolean("lane_head_open", false)) 1f else 0f
         timeline.onHeadOpen = { open -> getSharedPreferences("camera", MODE_PRIVATE).edit().putBoolean("lane_head_open", open).apply() }
         timeline.onAdd = { pickClip.launch(arrayOf("video/*")) }
         timeline.onSeam = { i -> seamSheet(i) }

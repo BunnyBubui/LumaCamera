@@ -366,7 +366,7 @@ object EditorKit {
         }
         override fun onInterceptTouchEvent(e: MotionEvent): Boolean {
             when (e.actionMasked) {
-                MotionEvent.ACTION_DOWN -> { downX = e.x; downY = e.y; mode = 0; hover = -1; startScroll = scroller?.scrollX ?: 0; scroller?.animate()?.cancel() }
+                MotionEvent.ACTION_DOWN -> { settle?.let { removeCallbacks(it) }; settle = null; scroller?.let { it.fling(0) }; downX = e.x; downY = e.y; mode = 0; hover = -1; startScroll = scroller?.scrollX ?: 0; scroller?.animate()?.cancel() }
                 MotionEvent.ACTION_MOVE -> if (mode == 0) {
                     val dx = e.x - downX; val dy = e.y - downY
                     if (Math.abs(dx) > slop || Math.abs(dy) > slop) { mode = if (Math.abs(dy) > Math.abs(dx) * 1.2f) 2 else 1; parent?.requestDisallowInterceptTouchEvent(true); return true }
@@ -374,14 +374,31 @@ object EditorKit {
             }
             return false
         }
+        private var velo: android.view.VelocityTracker? = null
+        private var settle: Runnable? = null
+        /** The row keeps gliding after the finger lifts; once it stops, the tab nearest the middle is chosen and the row eases onto it. */
+        private fun flingThenSettle(v: Int) {
+            val sv = scroller ?: return; sv.fling(v)
+            var last = -1; var still = 0
+            settle?.let { removeCallbacks(it) }
+            val r = object : Runnable { override fun run() {
+                val x = sv.scrollX; if (x == last) still++ else still = 0; last = x
+                val i = nearestToCentre(); if (i != hover) { hover = i; Glass.tick(this@ToolBar); place(true, i) }
+                if (still < 3) postOnAnimation(this)
+                else { hover = -1; sv.smoothScrollTo(centreScroll(i).coerceAtLeast(0), 0); if (i != selected) pick(i) else place(true); settle = null } } }
+            settle = r; postOnAnimation(r)
+        }
         override fun onTouchEvent(e: MotionEvent): Boolean {
+            if (velo == null) velo = android.view.VelocityTracker.obtain(); velo?.addMovement(e)
             when (e.actionMasked) {
                 MotionEvent.ACTION_MOVE -> if (mode == 1 && scroller != null) {
                     scroller.scrollTo((startScroll - (e.x - downX)).toInt().coerceAtLeast(0), 0)
                     val i = nearestToCentre(); if (i != hover) { hover = i; Glass.tick(this); place(true, i) }   // the tab in the middle lights up as the row passes
                 }
                 MotionEvent.ACTION_UP -> { val m = mode; mode = 0
-                    if (m == 1) { val i = nearestToCentre(); hover = -1; scroller?.smoothScrollTo(centreScroll(i).coerceAtLeast(0), 0); if (i != selected) pick(i) else place(true) }
+                    velo?.computeCurrentVelocity(1000); val vx = velo?.xVelocity ?: 0f; velo?.recycle(); velo = null
+                    if (m == 1 && scroller != null && Math.abs(vx) > context.dp(500)) { flingThenSettle(-vx.toInt()) }
+                    else if (m == 1) { val i = nearestToCentre(); hover = -1; scroller?.smoothScrollTo(centreScroll(i).coerceAtLeast(0), 0); if (i != selected) pick(i) else place(true) }
                     else if (m == 2) { val dy = e.y - downY; if (Math.abs(dy) > context.dp(24)) onSwipeY?.invoke(if (dy < 0) -1 else 1) } }
                 MotionEvent.ACTION_CANCEL -> { if (mode == 1) place(true); mode = 0; hover = -1 }
             }
