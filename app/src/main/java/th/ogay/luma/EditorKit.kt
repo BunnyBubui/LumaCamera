@@ -353,53 +353,24 @@ object EditorKit {
         }
         /** Called when the bar is swiped up (-1) or down (1) instead of along. */
         var onSwipeY: ((Int) -> Unit)? = null
-        private var downX = 0f; private var downY = 0f; private var mode = 0   // 0 undecided, 1 along (the row follows the finger), 2 up or down
-        private var hover = -1; private var startScroll = 0
+        private var downX = 0f; private var downY = 0f; private var mode = 0   // 0 undecided, 1 along (the row scrolls by itself), 2 up or down
         private val slop = android.view.ViewConfiguration.get(c).scaledTouchSlop
-        /** The tab whose middle is nearest the middle of the bar. */
-        private fun nearestToCentre(): Int { val mid = (scroller?.scrollX ?: 0) + width / 2; return tabs.indices.minByOrNull { Math.abs(tabs[it].left + inner.paddingLeft + tabs[it].width / 2 - mid) } ?: 0 }
-        private fun centreScroll(i: Int) = tabs[i].left + inner.paddingLeft + tabs[i].width / 2 - width / 2
-        override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
-            super.onSizeChanged(w, h, ow, oh)
-            if (w != ow && selected >= 0) post { place(false) }
-        }
         override fun onInterceptTouchEvent(e: MotionEvent): Boolean {
             when (e.actionMasked) {
-                MotionEvent.ACTION_DOWN -> { settle?.let { removeCallbacks(it) }; settle = null; scroller?.let { it.fling(0) }; downX = e.x; downY = e.y; mode = 0; hover = -1; startScroll = scroller?.scrollX ?: 0; scroller?.animate()?.cancel() }
+                MotionEvent.ACTION_DOWN -> { downX = e.x; downY = e.y; mode = 0 }
                 MotionEvent.ACTION_MOVE -> if (mode == 0) {
                     val dx = e.x - downX; val dy = e.y - downY
-                    if (Math.abs(dx) > slop || Math.abs(dy) > slop) { mode = if (Math.abs(dy) > Math.abs(dx) * 1.2f) 2 else 1; parent?.requestDisallowInterceptTouchEvent(true); return true }
+                    if (Math.abs(dy) > slop && Math.abs(dy) > Math.abs(dx) * 1.2f) { mode = 2; parent?.requestDisallowInterceptTouchEvent(true); return true }
+                    else if (Math.abs(dx) > slop) mode = 1
                 }
             }
             return false
         }
-        private var velo: android.view.VelocityTracker? = null
-        private var settle: Runnable? = null
-        /** The row keeps gliding after the finger lifts; once it stops, the tab nearest the middle is chosen and the row eases onto it. */
-        private fun flingThenSettle(v: Int) {
-            val sv = scroller ?: return; sv.fling(v)
-            var last = -1; var still = 0
-            settle?.let { removeCallbacks(it) }
-            val r = object : Runnable { override fun run() {
-                val x = sv.scrollX; if (x == last) still++ else still = 0; last = x
-                val i = nearestToCentre(); if (i != hover) { hover = i; Glass.tick(this@ToolBar); place(true, i) }
-                if (still < 3) postOnAnimation(this)
-                else { hover = -1; sv.smoothScrollTo(centreScroll(i).coerceAtLeast(0), 0); if (i != selected) pick(i) else place(true); settle = null } } }
-            settle = r; postOnAnimation(r)
-        }
         override fun onTouchEvent(e: MotionEvent): Boolean {
-            if (velo == null) velo = android.view.VelocityTracker.obtain(); velo?.addMovement(e)
             when (e.actionMasked) {
-                MotionEvent.ACTION_MOVE -> if (mode == 1 && scroller != null) {
-                    scroller.scrollTo((startScroll - (e.x - downX)).toInt().coerceAtLeast(0), 0)
-                    val i = nearestToCentre(); if (i != hover) { hover = i; Glass.tick(this); place(true, i) }   // the tab in the middle lights up as the row passes
-                }
                 MotionEvent.ACTION_UP -> { val m = mode; mode = 0
-                    velo?.computeCurrentVelocity(1000); val vx = velo?.xVelocity ?: 0f; velo?.recycle(); velo = null
-                    if (m == 1 && scroller != null && Math.abs(vx) > context.dp(500)) { flingThenSettle(-vx.toInt()) }
-                    else if (m == 1) { val i = nearestToCentre(); hover = -1; scroller?.smoothScrollTo(centreScroll(i).coerceAtLeast(0), 0); if (i != selected) pick(i) else place(true) }
-                    else if (m == 2) { val dy = e.y - downY; if (Math.abs(dy) > context.dp(24)) onSwipeY?.invoke(if (dy < 0) -1 else 1) } }
-                MotionEvent.ACTION_CANCEL -> { if (mode == 1) place(true); mode = 0; hover = -1 }
+                    if (m == 2) { val dy = e.y - downY; if (Math.abs(dy) > context.dp(24)) onSwipeY?.invoke(if (dy < 0) -1 else 1) } }
+                MotionEvent.ACTION_CANCEL -> mode = 0
             }
             return true
         }
@@ -409,16 +380,12 @@ object EditorKit {
             val x = t.left + (t.width - context.dp(52)) / 2f; val y = t.top + ic.top + ic.height / 2f - context.dp(16)
             pill.translationY = y
             if (animate && !Glass.reduced(context)) pill.animate().translationX(x).setInterpolator(Glass.SPRING).setDuration(460).start() else { pill.animate().cancel(); pill.translationX = x }
-            if (at == selected && mode == 0) scroller?.let { s -> val to = (t.left + inner.paddingLeft + t.width / 2 - s.width / 2).coerceAtLeast(0); if (animate) s.smoothScrollTo(to, 0) else s.scrollTo(to, 0) }
+            if (at == selected && mode == 0) scroller?.let { s -> val to = (t.left + t.width / 2 - s.width / 2).coerceAtLeast(0); if (animate) s.smoothScrollTo(to, 0) else s.scrollTo(to, 0) }
         }
         override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) { super.onLayout(changed, l, t, r, b); if (changed) place(false) }
         /** A scrolling row shows six and a half tabs on any screen, so the half tab says there is more. */
         override fun onMeasure(widthSpec: Int, heightSpec: Int) {
             // Each tab is at least a share of the width and always as wide as its whole name, so a label is never cut.
-            // Room at both ends so the first and the last tab can also stand in the middle. Set here, before measuring:
-            // set later (during layout) the row kept its old width and the last tabs were cut off.
-            if (scroller != null && tabs.isNotEmpty()) { val w = MeasureSpec.getSize(widthSpec)
-                val pad = Math.max(0, w / 2 - context.dp(24)); if (inner.paddingLeft != pad) inner.setPadding(pad, 0, pad, 0) }
             if (scrolls) { val each = (MeasureSpec.getSize(widthSpec) / 6.5f).toInt().coerceAtLeast(context.dp(48))
                 tabs.forEach { t -> val tv = t.getChildAt(1) as TextView; tv.minWidth = Math.ceil(tv.paint.measureText(tv.text.toString()).toDouble()).toInt() + context.dp(2)
                     t.minimumWidth = maxOf(each, tv.minWidth + context.dp(18)) } }

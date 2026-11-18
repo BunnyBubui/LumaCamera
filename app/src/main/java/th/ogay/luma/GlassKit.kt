@@ -360,12 +360,9 @@ fun Context.glass(radiusDp: Int, fill: Int = Glass.FILL): GlassDrawable =
 /** Touch-following glass: grows slightly, leans toward the finger and lights up under it; releases when the finger starts scrolling. */
 /** [extra] sees every event first; when it returns true the event is consumed (no click). */
 fun View.glassTouch(extra: ((MotionEvent) -> Boolean)? = null) {
-    setTag(GLASS_FX_TAG, true)
     var sx = 0f; var sy = 0f; var active = false
     val slop = 10 * resources.displayMetrics.density
-    var hold: Runnable? = null
     fun release(v: View) {
-        hold?.let { v.removeCallbacks(it) }
         if (!active) return; active = false
         val reduced = Glass.reduced(context)
         v.animate().scaleX(1f).scaleY(1f).translationX(0f).translationY(0f).setInterpolator(Glass.SPRING).setDuration(if (reduced) 0 else 560).start()
@@ -378,18 +375,15 @@ fun View.glassTouch(extra: ((MotionEvent) -> Boolean)? = null) {
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 active = true; sx = e.rawX; sy = e.rawY
-                if (!Glass.reduced(context)) {
-                    v.animate().scaleX(1.04f).scaleY(1.04f).setInterpolator(Glass.EASE).setDuration(150).start()
-                    // Held still, the button swells a little more.
-                    hold = Runnable { if (active) v.animate().scaleX(1.07f).scaleY(1.07f).setInterpolator(Glass.SPRING).setDuration(320).start() }.also { v.postDelayed(it, 380) }
-                }
+                if (!Glass.reduced(context)) v.animate().scaleX(0.97f).scaleY(0.97f).setInterpolator(Glass.EASE).setDuration(140).start()
                 g?.let { it.touchX = e.x; it.touchY = e.y; it.touchAlpha = 1f }
             }
             MotionEvent.ACTION_MOVE -> if (active) {
                 if (hypot(e.rawX - sx, e.rawY - sy) > slop) release(v)
                 else if (!Glass.reduced(context)) {
-                    v.translationX = (e.x / v.width.coerceAtLeast(1) - 0.5f) * min(7 * resources.displayMetrics.density, v.width * 0.1f)
-                    v.translationY = (e.y / v.height.coerceAtLeast(1) - 0.5f) * min(6 * resources.displayMetrics.density, v.height * 0.1f)
+                    // The press shrinks the view, so a small lean stays inside its own bounds and is never clipped by the parent.
+                    v.translationX = (e.x / v.width.coerceAtLeast(1) - 0.5f) * min(4 * resources.displayMetrics.density, v.width * 0.02f)
+                    v.translationY = (e.y / v.height.coerceAtLeast(1) - 0.5f) * min(3 * resources.displayMetrics.density, v.height * 0.02f)
                     g?.let { it.touchX = e.x; it.touchY = e.y; it.invalidateSelf() }
                 }
             }

@@ -263,6 +263,25 @@ class VideoEditorActivity : ComponentActivity() {
         } else { val lock = !ids.all { layers[it].locked }; ids.forEach { layers[it] = layers[it].copy(locked = lock) }; rebuildLayers(); placeLayers() }
         refreshTimeline()
     }
+    /** The small menu behind a track's pencil button: mute (or hide) and lock, each showing whether it is on now. */
+    private fun editLane(key: Int, r: RectF) {
+        val g = timeline.groups.firstOrNull { it.key == key } ?: return
+        val audio = g.audio
+        val offLabel = if (audio) (if (g.off) "เปิดเสียง" else "ปิดเสียง") else (if (g.off) "แสดงบนภาพ" else "ซ่อนจากภาพ")
+        val offIcon = if (audio) (if (g.off) "M4 9v6h4l5 4V5L8 9z M16.5 8.5a5 5 0 0 1 0 7" else "M4 9v6h4l5 4V5L8 9z M17 9l5 6 M22 9l-5 6") else (if (g.off) "M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6" else "M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z M4 4l16 16")
+        val offNote = if (g.off) (if (audio) "ปิดเสียงอยู่" else "ซ่อนอยู่") else ""
+        val opts = ArrayList<GlassMenu.Option>(); val acts = ArrayList<Int>()
+        opts += GlassMenu.Option(offLabel, offIcon, offNote); acts += 0
+        if (g.canLock) { opts += GlassMenu.Option(if (g.locked) "ปลดล็อกไทม์ไลน์" else "ล็อกไทม์ไลน์", if (g.locked) "M6 11h12v9H6z M8.5 11V8a3.5 3.5 0 0 1 6.8-1.2" else "M6 11h12v9H6z M8.5 11V8a3.5 3.5 0 0 1 7 0v3", if (g.locked) "ล็อกอยู่ ลากและแก้ไม่ได้" else ""); acts += 1 }
+        val loc = IntArray(2); timeline.getLocationInWindow(loc)
+        val host = window.decorView as FrameLayout; val hl = IntArray(2); host.getLocationInWindow(hl)
+        val anchor = View(this)
+        host.addView(anchor, FrameLayout.LayoutParams(r.width().toInt(), r.height().toInt()))
+        val l = (loc[0] - hl[0] + r.left).toInt(); val t = (loc[1] - hl[1] + r.top).toInt()
+        anchor.layout(l, t, l + r.width().toInt(), t + r.height().toInt())
+        toolMenu.show(anchor, g.name, opts, -1) { i -> toggleGroup(key, acts[i]) }
+        anchor.post { host.removeView(anchor) }
+    }
     private fun refreshTimeline() {
         if (!::timeline.isInitialized) return
         val list = ArrayList<StudioTimeline.Clip>(extras.size + 1)
@@ -729,6 +748,7 @@ class VideoEditorActivity : ComponentActivity() {
         timeline.onSeek = { t, done -> if (player?.isPlaying == true) togglePlay(); val (k, at) = locate(t); jumpTo(k, at, done) }
         timeline.onPickBar = { id -> if (id >= 0) pickBar(id) }
         timeline.onGroup = { key, which -> toggleGroup(key, which) }
+        timeline.onEdit = { key, r -> editLane(key, r) }
         timeline.headFrac = if (getSharedPreferences("camera", MODE_PRIVATE).getBoolean("lane_head_open", false)) 1f else 0f
         timeline.onHeadOpen = { open -> getSharedPreferences("camera", MODE_PRIVATE).edit().putBoolean("lane_head_open", open).apply() }
         timeline.onAdd = { pickClip.launch(arrayOf("video/*")) }

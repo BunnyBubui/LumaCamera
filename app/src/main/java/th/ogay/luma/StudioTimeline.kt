@@ -14,6 +14,7 @@ import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
 import kotlin.math.abs
+import kotlin.math.sin
 import kotlin.math.floor
 
 /**
@@ -54,6 +55,8 @@ class StudioTimeline(context: Context) : View(context) {
     var groups: List<Group> = emptyList(); set(v) { field = v; layoutRows(); invalidate() }
     /** [group key, 0 = mute or hide / 1 = lock] was tapped in a header. */
     var onGroup: (Int, Int) -> Unit = { _, _ -> }
+    /** The edit button of the row with this key was tapped; the rectangle is the button, in this view's own coordinates. */
+    var onEdit: (Int, RectF) -> Unit = { _, _ -> }
     var onHeadOpen: (Boolean) -> Unit = {}
     /** How far the headers are open: 0 = hidden (a small tab at the left edge), 1 = open. Follows the finger, then settles with a little bounce. */
     var headFrac = 1f; set(v) { field = v; invalidate() }
@@ -75,7 +78,7 @@ class StudioTimeline(context: Context) : View(context) {
     fun neededHeight(): Int = (maxOf(lanesBottom, lanesTop()) + 4 * d).toInt()
     /** Height the lane rows start at, in px. */
     fun lanesStart(): Int = lanesTop().toInt()
-    private val expW get() = 118f * d
+    private val expW get() = 138f * d
     /** Hidden (0) until the person swipes in from the left edge of the lanes (or taps the small tab there). */
     private fun headW() = if (groups.isEmpty() || headFrac < 0.01f) 0f else expW * headFrac
     private fun cx() = headW() + (width - headW()) / 2f
@@ -93,13 +96,14 @@ class StudioTimeline(context: Context) : View(context) {
         if (to > 0.5f) bubble(-1, -1)
         onHeadOpen(to > 0.5f); performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
     }
-    /** Middle of a row's button: [which] 0 = mute or hide, 1 = lock. Buttons sit at the right end of the row. */
-    private fun btnX(which: Int, canLock: Boolean): Float { val hw = expW; return if (which == 1 || !canLock) hw - 17 * d else hw - 17 * d - 25 * d }
+    /** Middle of the edit button of a row (at its right end). */
+    private fun editX(): Float = expW - 4 * d - 15 * d
     private fun rowMid(gi: Int): Float = groupTop[gi] + (if (groups[gi].key == 0) clipH else groupH[gi] - 4 * d) / 2f
     private val tmp = RectF()
+    private var tabHit = false
     private fun headTouch(e: MotionEvent) {
         when (e.actionMasked) {
-            MotionEvent.ACTION_DOWN -> { hx = e.x; hy = e.y; hFrac0 = headFrac; hDrag = false; headAnim?.cancel()
+            MotionEvent.ACTION_DOWN -> { hx = e.x; hy = e.y; hFrac0 = headFrac; hDrag = false; headAnim?.cancel(); tabHit = headFrac > 0.5f && e.x > headW() - 6 * d
                 velocity?.recycle(); velocity = android.view.VelocityTracker.obtain().also { it.addMovement(e) } }
             MotionEvent.ACTION_MOVE -> { velocity?.addMovement(e); val dx = e.x - hx
                 if (!hDrag && abs(dx) > 8 * d && abs(dx) > abs(e.y - hy)) { hDrag = true; parent?.requestDisallowInterceptTouchEvent(true) }
@@ -109,10 +113,11 @@ class StudioTimeline(context: Context) : View(context) {
                 if (hDrag) settleHead(if (abs(vx) > 450 * d) (if (vx > 0) 1f else 0f) else if (headFrac > 0.5f) 1f else 0f)
                 else if (e.actionMasked == MotionEvent.ACTION_UP) {
                     if (headFrac < 0.5f) { settleHead(1f); return }   // a tap on the small tab opens the column
+                    if (tabHit) { settleHead(0f); return }                // a tap on the tab at the column's edge closes it
                     val gi = groups.indices.firstOrNull { e.y >= groupTop[it] && e.y < groupTop[it] + groupH[it] } ?: return
                     val g = groups[gi]; val my = rowMid(gi)
-                    for (w in 0..1) { if (w == 1 && !g.canLock) continue
-                        if (abs(e.x - btnX(w, g.canLock)) < 13 * d && abs(e.y - my) < 18 * d) { bubble(gi, w); performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK); onGroup(g.key, w); return } }
+                    if (abs(e.x - editX()) < 18 * d && abs(e.y - my) < 20 * d) { bubble(gi, 0); performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                        onEdit(g.key, RectF(editX() - 15 * d, my - 15 * d, editX() + 15 * d, my + 15 * d)); return }
                     bubble(gi, -1)
                 }
             }
@@ -162,9 +167,8 @@ class StudioTimeline(context: Context) : View(context) {
         c.translate(shift, 0f)
         groups.forEachIndexed { gi, g ->
             val top = groupTop[gi]; val rowH = if (g.key == 0) clipH else groupH[gi] - 4 * d
-            // Each row swells in after the one above it, overshoots a little and settles: the bubble.
-            val sIn = if (popAll) backOut(((pop * 1.25f) - gi * 0.13f) / 0.55f) else 1f
-            val s = minOf(sIn, backOut(f * 1.15f))
+            // Each row swells in after the one above it, overshoots a little and settles; closing runs the same the other way.
+            val s = backOut((f * 1.6f - gi * 0.12f) / 0.7f)
             if (s <= 0.02f) return@forEachIndexed
             val rowPop = popOf(gi, -1)
             val l = 4 * d; val r = expW - 4 * d; val my = top + rowH / 2f
@@ -174,30 +178,36 @@ class StudioTimeline(context: Context) : View(context) {
             paint.color = if (g.off || g.locked) 0x29ff9f45 else 0x17ffffff
             c.drawRoundRect(left, my - hh, right, my + hh, rad, rad, paint)
             val a = ((s - 0.5f) / 0.5f).coerceIn(0f, 1f); if (a <= 0f) return@forEachIndexed
-            // Colour of the type, the same as its bars.
             paint.color = withA(g.color, a * (if (g.off) 0.45f else 1f)); c.drawRoundRect(left + 4 * d, my - hh + 5 * d, left + 7 * d, my + hh - 5 * d, 1.5f * d, 1.5f * d, paint)
-            val iconC = withA(if (g.off) 0x80ffffff.toInt() else Color.WHITE, a)
-            drawIcon(c, g.icon, left + 20 * d, my, 15 * d, iconC)
-            if (g.off && g.audio) slash(c, left + 20 * d, my, 7 * d, withA(Glass.ACCENT, a))
-            val btns = if (g.canLock) 2 else 1
-            textPaint.color = withA(if (g.off) 0x80ffffff.toInt() else Color.WHITE, a); textPaint.textSize = 10.5f * d; textPaint.isFakeBoldText = true
-            val nameX = left + 31 * d; val nameMax = (btnX(0, g.canLock) - 13 * d) - nameX - 3 * d
-            c.drawText(fitName(g.name, nameMax), nameX, my + 3.6f * d, textPaint)
-            textPaint.isFakeBoldText = false; textPaint.textSize = 9.5f * d; textPaint.color = 0x99ffffff.toInt()
-            for (w in 0 until btns) {
-                val which = if (btns == 1) 0 else w
-                val bx = btnX(which, g.canLock); val on = if (which == 0) g.off else g.locked
-                val bp = popOf(gi, which); val br = (10.5f * d) * (1f + bp * 0.32f) * (0.6f + 0.4f * a)
-                paint.color = withA(if (on) 0x40ff9f45 else 0x14ffffff, a); c.drawCircle(bx, my, br, paint)
-                val ic = if (which == 0) (if (g.audio) SND else if (g.off) EYE_OFF else EYE) else if (g.locked) LOCK_ON else LOCK_OFF
-                val col = withA(if (on) Glass.ACCENT else 0xccffffff.toInt(), a)
-                drawIcon(c, ic, bx, my, 13 * d * (1f + bp * 0.25f), col, 2f)
-                if (which == 0 && g.audio && on) slash(c, bx, my, 6 * d, col)
-            }
+            val dim = g.off
+            drawIcon(c, g.icon, left + 20 * d, my, 15 * d, withA(if (dim) 0x80ffffff.toInt() else Color.WHITE, a))
+            // What is switched on, shown next to the name: sound off or hidden, locked.
+            val nameX = left + 31 * d
+            val badges = (if (g.off) 1 else 0) + (if (g.locked) 1 else 0)
+            val nameMax = (editX() - 15 * d) - nameX - 3 * d - badges * 14 * d
+            textPaint.color = withA(if (dim) 0x80ffffff.toInt() else Color.WHITE, a); textPaint.textSize = 10.5f * d; textPaint.isFakeBoldText = true
+            val shown = fitName(g.name, nameMax); c.drawText(shown, nameX, my + 3.6f * d, textPaint)
+            var bx = nameX + textPaint.measureText(shown) + 9 * d
+            textPaint.isFakeBoldText = false
+            if (g.off) { val ic = if (g.audio) SND else EYE_OFF; paint.color = withA(0x33ff9f45, a); c.drawCircle(bx, my, 6.5f * d, paint); drawIcon(c, ic, bx, my, 10 * d, withA(Glass.ACCENT, a), 2.2f)
+                if (g.audio) slash(c, bx, my, 4 * d, withA(Glass.ACCENT, a)); bx += 14 * d }
+            if (g.locked) { paint.color = withA(0x33ff9f45, a); c.drawCircle(bx, my, 6.5f * d, paint); drawIcon(c, LOCK_ON, bx, my, 10 * d, withA(Glass.ACCENT, a), 2.2f) }
+            // The edit button: a pencil; it opens a small menu with mute (or hide) and lock.
+            val ex = editX(); val bp = popOf(gi, 0); val br = 11.5f * d * (1f + bp * 0.28f) * (0.6f + 0.4f * a)
+            paint.color = withA(if (g.off || g.locked) 0x40ff9f45 else 0x1fffffff, a); c.drawCircle(ex, my, br, paint)
+            drawIcon(c, PENCIL, ex, my, 13 * d * (1f + bp * 0.2f), withA(if (g.off || g.locked) Glass.ACCENT else 0xe6ffffff.toInt(), a), 2f)
         }
         c.restore()
+        // A tab on the column's right edge says "this slides: swipe left (or tap) to close". It nudges once when the column has opened.
+        if (f > 0.9f) { val tr = tabRect(); val nudge = if (popAll) (sin(pop * 3.0 * Math.PI) * (1f - pop) * 4 * d).toFloat() else 0f
+            paint.color = 0x4dffffff; c.drawRoundRect(tr.left + nudge, tr.top, tr.right + nudge, tr.bottom, 7 * d, 7 * d, paint)
+            iconStroke.color = 0xd9ffffff.toInt(); iconStroke.strokeWidth = 1.6f * d; val m = tr.centerY(); val cxp = tr.centerX() + nudge + d
+            c.drawLine(cxp + 1.5f * d, m - 4 * d, cxp - 1.5f * d, m, iconStroke); c.drawLine(cxp - 1.5f * d, m, cxp + 1.5f * d, m + 4 * d, iconStroke); iconStroke.color = 0xff101014.toInt() }
         paint.alpha = 255
     }
+    private val tabBox = RectF()
+    /** The small tab on the right edge of the open column, in this view's coordinates. */
+    private fun tabRect(): RectF { val hw = headW(); val t0 = lanesTop() - clipH - 4 * d + 6 * d; tabBox.set(hw - 4 * d, t0, hw + 11 * d, minOf(height.toFloat() - 6 * d, t0 + 40 * d)); return tabBox }
     var selected = 0
     /** One entry per clip: null for the first, "" for a plain cut, otherwise the name of the change into that clip. */
     var seams: List<String?> = emptyList(); set(v) { field = v; invalidate() }
@@ -260,6 +270,7 @@ class StudioTimeline(context: Context) : View(context) {
     private val clipPath = Path(); private val rect = RectF(); private val src = Rect(); private val dst = RectF()
 
     private companion object {
+        const val PENCIL = "M4 20h4L19 9l-4-4L4 16z M13.5 6.5l4 4"
         const val SND = "M4 9v6h4l5 4V5L8 9z M16.5 8.5a5 5 0 0 1 0 7"
         const val EYE = "M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6"
         const val EYE_OFF = "M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z M4 4l16 16"
@@ -354,7 +365,7 @@ class StudioTimeline(context: Context) : View(context) {
     })
 
     override fun onTouchEvent(e: MotionEvent): Boolean {
-        if (e.actionMasked == MotionEvent.ACTION_DOWN) { inHead = groups.isNotEmpty() && ((e.x < headW() && e.y > rulerH) || (headFrac < 0.01f && e.x < 24 * d && e.y > rulerH + 2 * d)) }
+        if (e.actionMasked == MotionEvent.ACTION_DOWN) { inHead = groups.isNotEmpty() && ((e.x < headW() && e.y > rulerH) || (headFrac > 0.5f && e.x < headW() + 12 * d && tabRect().contains(e.x, e.y)) || (headFrac < 0.01f && e.x < 24 * d && e.y > rulerH + 2 * d)) }
         if (inHead) { headTouch(e); if (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL) inHead = false; return true }
         scale.onTouchEvent(e)
         if (mode != ZOOM) gestures.onTouchEvent(e)
