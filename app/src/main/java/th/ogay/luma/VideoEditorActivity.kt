@@ -1029,7 +1029,21 @@ class VideoEditorActivity : ComponentActivity() {
     }
     // ---- Overlapping change: the next clip plays on a second picture over this one, and takes over when the change is done ----
     private class LapPlan(val before: Long, val after: Long)
-    private var lapNext = -1; private var lapPlayer: MediaPlayer? = null; private var lapPlanNow: LapPlan? = null
+    private var lapNext = -1
+    private var lapPlayer: MediaPlayer? = null
+    private var lapPlanNow: LapPlan? = null
+    private var lapToken = 0L
+    private var lapFrameReady = false
+    private var lapCommitRequested = false
+    private val lapTimeout = Runnable {
+        if (lapNext >= 0 && !lapFrameReady && !isDestroyed) {
+            val target = lapNext
+            // Some codecs/devices never deliver the callback: never wait unboundedly.
+            cancelLap()
+            autoPlay = true
+            playClip(target)
+        }
+    }
     /** How the change from clip [from] into clip [to] overlaps: ms of [to] shown before the cut and ms of [from] shown after it; null when it does not (or cannot) overlap. Same rules as the export. */
     private fun lapPlan(from: Int, to: Int): LapPlan? {
         if (extras.isEmpty() || to == from || to == order().first() || kindFor(to) != VideoEdit.OVERLAP) return null
@@ -1044,54 +1058,119 @@ class VideoEditorActivity : ComponentActivity() {
         return if (before + after < 50) null else LapPlan(before, after)
     }
     private fun clipSoundLevel(k: Int) = if (keepSound && !isMuted(k) && recorder == null) clipVolume(k).coerceAtMost(1f) else 0f
-    /** Called every tick while a clip plays; true while the overlapping change owns the end of this clip. */
+    /** Called each UI tick; Phase 3 may provide the monotonic transition sample here. */
     private fun lapTick(pos: Long, endMs: Long): Boolean {
+        warmNextIfNearEnd(pos, endMs)
         val running = lapPlanNow
         if (lapNext >= 0 && running != null) {
-            val k = ((pos - (endMs - running.before)).toFloat() / (running.before + running.after).coerceAtLeast(1)).coerceIn(0f, 1f)
-            texture2.alpha = k
-            val a = clipSoundLevel(playIndex) * (1 - k); val b = clipSoundLevel(lapNext) * k
-            player?.runCatching { setVolume(a, a) }; lapPlayer?.runCatching { setVolume(b, b) }
-            if (pos >= endMs + running.after - 20) finishLap()
+            if (!lapFrameReady) {
+                if (pos >= endMs + running.after - 20L) lapCommitRequested = true
+                return true // Keep the old, already-rendered picture visible.
+            }
+            val progress = ((pos - (endMs - running.before)).toFloat() /
+                (running.before + running.after).coerceAtLeast(1L)).coerceIn(0f, 1f)
+            standbyMix(progress)
+            val a = clipSoundLevel(playIndex) * (1f - progress)
+            val b = clipSoundLevel(lapNext) * progress
+            player?.runCatching { setVolume(a, a) }
+            lapPlayer?.runCatching { setVolume(b, b) }
+            if (pos >= endMs + running.after - 20L) finishLap()
             return true
         }
-        val nk = nextOf(playIndex); val plan = lapPlan(playIndex, nk) ?: return false
+        val nk = nextOf(playIndex)
+        val plan = lapPlan(playIndex, nk) ?: return false
         if (pos < endMs - maxOf(plan.before, 40L)) return false
         return startLap(nk, plan)
     }
+
     private fun startLap(nk: Int, plan: LapPlan): Boolean {
-        val np = nextPlayer; val s2 = surface2
-        if (np == null || !nextReady || nextFor != nk || nextLead != plan.before || s2 == null || Glass.reduced(this)) return false
-        nextPlayer = null; nextFor = -1; nextReady = false
-        layoutTexture2(nk); lookOnTexture2()
-        runCatching { np.setOnSeekCompleteListener(null); np.setOnPreparedListener(null); np.setOnErrorListener(null); np.setSurface(s2); np.setVolume(0f, 0f); np.start() }
-            .onFailure { np.runCatching { release() }; return false }
-        lapPlayer = np; lapNext = nk; lapPlanNow = plan; texture2.alpha = 0f
+        val np = nextPlayer
+        val standby = surface2
+        if (np == null || !nextHandoff.canAttach(nextToken) || nextFor != nk ||
+            nextLead != plan.before || standby == null || Glass.reduced(this)) return false
+        layoutTexture2(nk)
+        lookOnTexture2()
+        val token = nextToken
+        if (!nextHandoff.beginRendering(token, android.os.SystemClock.uptimeMillis())) return false
+        nextPlayer = null
+        nextFor = -1
+        nextAttached = false
+        val ok = runCatching {
+            np.setOnSeekCompleteListener(null)
+            np.setOnPreparedListener(null)
+            np.setOnErrorListener(null)
+            np.setSurface(standby)
+            np.setVolume(0f, 0f)
+            np.start()
+        }.isSuccess
+        if (!ok) {
+            np.runCatching { release() }
+            nextHandoff.reset()
+            return false
+        }
+        lapPlayer = np
+        lapNext = nk
+        lapPlanNow = plan
+        lapToken = token
+        lapFrameReady = false
+        lapCommitRequested = false
+        texture.alpha = 1f
+        texture2.alpha = 0f
+        handler.removeCallbacks(lapTimeout)
+        handler.postDelayed(lapTimeout, 1_100L)
         return true
     }
+
     private fun finishLap() {
-        val np = lapPlayer ?: return; val nk = lapNext; val plan = lapPlanNow
-        lapNext = -1; lapPlayer = null; lapPlanNow = null
+        val np = lapPlayer ?: return
+        if (!lapFrameReady) {
+            lapCommitRequested = true
+            return
+        }
+        val nk = lapNext
+        val plan = lapPlanNow
+        handler.removeCallbacks(lapTimeout)
+        lapNext = -1
+        lapPlayer = null
+        lapPlanNow = null
+        lapCommitRequested = false
+        lapFrameReady = false
+        nextHandoff.reset()
         handler.removeCallbacks(tick)
-        val old = player; player = null; old?.runCatching { setOnCompletionListener(null); release() }
-        val s = surface
-        if (s == null) { np.runCatching { release() }; return }
-        runCatching { np.setSurface(s); np.setOnCompletionListener { onClipEnd() } }
-        player = np; prepared = true
-        playIndex = nk; showClipOnBar(); trim.playhead = (clipFrom(nk) + (plan?.after ?: 0L)).coerceIn(trim.start, trim.end)
-        applySound(); layoutVideo(); arrived(); showTime()
-        // The first picture stays over the new one for a moment, until the new one has drawn its first frame.
-        texture2.alpha = 1f; handler.postDelayed({ if (lapNext < 0) texture2.alpha = 0f }, 160)
-        handler.post(tick); handler.postDelayed({ preloadNext() }, 60)
+        val old = player
+        old?.runCatching { setOnCompletionListener(null); release() }
+        player = np
+        prepared = true
+        playIndex = nk
+        curveSpeedSet = 0f
+        np.setOnCompletionListener { onClipEnd() }
+        promoteStandby()
+        showClipOnBar()
+        trim.playhead = (clipFrom(nk) + (plan?.after ?: 0L)).coerceIn(trim.start, trim.end)
+        layoutVideo()
+        applySound()
+        arrived()
+        showTime()
+        handler.post(tick)
+        handler.postDelayed({ preloadNext() }, 60L)
     }
-    /** Stops an overlapping change that is running (the preview was paused, moved, or closed). */
+
+    /** Cancels the outgoing overlap and restores the existing visible/output surface. */
     private fun cancelLap() {
+        handler.removeCallbacks(lapTimeout)
         if (lapNext < 0 && lapPlayer == null) return
-        lapNext = -1; lapPlanNow = null
-        lapPlayer?.runCatching { release() }; lapPlayer = null
+        lapNext = -1
+        lapPlanNow = null
+        lapCommitRequested = false
+        lapFrameReady = false
+        lapPlayer?.runCatching { release() }
+        lapPlayer = null
+        nextHandoff.reset()
+        if (::texture.isInitialized) texture.alpha = 1f
         if (::texture2.isInitialized) texture2.alpha = 0f
         applySound()
     }
+
     /** Sizes and turns the second picture for clip [k], like [layoutVideo] does for the first. */
     private fun layoutTexture2(k: Int) {
         val pad = dp(8); val aw = stage.width - 2 * pad; val ah = stage.height - 2 * pad
