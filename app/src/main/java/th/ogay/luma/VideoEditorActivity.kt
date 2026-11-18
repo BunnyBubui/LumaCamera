@@ -1198,73 +1198,120 @@ class VideoEditorActivity : ComponentActivity() {
             texture2.setLayerPaint(if (!looked() || comparing) null else Paint().apply { colorFilter = ColorMatrixColorFilter(colour()) })
         }
     }
-    private fun onClipEnd() { if (lapNext >= 0) { finishLap(); return }
-        if (playIndex == 0 && extras.isEmpty()) player?.seekTo(start.toInt()) else playClip(nextOf(playIndex)) }
+    private fun onClipEnd() {
+        if (pendingCut >= 0) return // Still holding the last rendered frame until standby is ready.
+        if (lapNext >= 0) { finishLap(); return }
+        if (playIndex == 0 && extras.isEmpty()) {
+            player?.runCatching { seekTo(start.toInt()); start() }
+        } else {
+            // A MediaPlayer completion callback arrives after isPlaying has become false.
+            autoPlay = true
+            playClip(nextOf(playIndex))
+        }
+    }
 
     private fun openPlayer() {
-        val s = surface ?: return
+        val targetSurface = surface ?: return
         if (playIndex > extras.size) playIndex = 0
-        // The clip that was opened ahead is the one wanted, at the place wanted: it takes the screen and plays at once.
-        val np = nextPlayer
-        if (np != null && nextReady && nextFor == playIndex && pendingSeek < 0 && nextUri == clipUri(playIndex) && nextFrom == clipFrom(playIndex) && nextLead == 0L) {
-            nextPlayer = null; nextFor = -1; nextReady = false
-            handler.removeCallbacks(tick); fxEq?.runCatching { release() }; fxEq = null
-            val old = player; player = null; old?.runCatching { release() }
-            val ok = runCatching { np.setOnSeekCompleteListener(null); np.setOnPreparedListener(null); np.setOnErrorListener(null); np.setSurface(s); np.setOnCompletionListener { onClipEnd() } }.isSuccess
-            if (ok) {
-                player = np; prepared = true; applySound(); layoutVideo(); arrived(); startIfAsked(np)
-                handler.post(tick); handler.postDelayed({ preloadNext() }, 60)
-                return
-            }
-            np.runCatching { release() }
-        }
-        releasePlayer(); fxEq?.runCatching { release() }; fxEq = null
-        val clip = if (playIndex == 0) source else extras[playIndex - 1].uri
-        player = MediaPlayer().apply {
-            runCatching {
-                setDataSource(this@VideoEditorActivity, clip); setSurface(s); isLooping = false
-                setOnPreparedListener { mp ->
-                    prepared = true; applySound()
-                    // The exact frame where the clip starts, not the key frame before it (which showed a moment of the part that was cut off).
-                    val from = clipFrom(playIndex); if (from > 0) exactSeek(mp, from)
-                    if (pendingSeek >= 0) { seekTo(pendingSeek.toInt()); pendingSeek = -1 }; applySound(); layoutVideo(); arrived()
-                    startIfAsked(mp)
-                    handler.postDelayed({ preloadNext() }, 60)
+        // Cold-path fallback: seek before autoplay. Normal clip joins use standby handoff,
+        // so they do not release the old rendered output before the next frame is available.
+        releasePlayer()
+        fxEq?.runCatching { release() }
+        fxEq = null
+        val clipIndex = playIndex
+        val clip = clipUri(clipIndex)
+        val mp = MediaPlayer()
+        player = mp
+        runCatching {
+            mp.setDataSource(this@VideoEditorActivity, clip)
+            mp.setSurface(targetSurface)
+            mp.isLooping = false
+            mp.setOnPreparedListener { readyMp ->
+                if (player === readyMp) {
+                    prepared = true
+                    val ready: () -> Unit = {
+                        if (player === readyMp && !isDestroyed) {
+                            applySound()
+                            layoutVideo()
+                            arrived()
+                            startIfAsked(readyMp)
+                            handler.postDelayed({ preloadNext() }, 60L)
+                        }
+                    }
+                    val seekAt = (if (pendingSeek >= 0L) pendingSeek else clipFrom(clipIndex)).coerceAtLeast(0L)
+                    pendingSeek = -1L
+                    if (seekAt > 0L) {
+                        readyMp.setOnSeekCompleteListener { seeking ->
+                            if (player === seeking) {
+                                val queued = pendingSeek
+                                if (queued >= 0L) {
+                                    pendingSeek = -1L
+                                    exactSeek(seeking, queued)
+                                } else {
+                                    seeking.setOnSeekCompleteListener(null)
+                                    ready()
+                                }
+                            }
+                        }
+                        exactSeek(readyMp, seekAt)
+                    } else ready()
                 }
-                setOnCompletionListener { onClipEnd() }
-                prepareAsync()
-            }.onFailure { notice("เล่นพรีวิวไม่ได้ ${it.localizedMessage}") }
-        }
-        handler.removeCallbacks(tick); handler.post(tick)
+            }
+            mp.setOnCompletionListener { if (player === it) onClipEnd() }
+            mp.setOnErrorListener { failing, _, _ ->
+                if (player === failing) { prepared = false; notice("เล่นพรีวิวไม่ได้") }
+                true
+            }
+            mp.prepareAsync()
+        }.onFailure { notice("เล่นพรีวิวไม่ได้ ${it.localizedMessage}") }
+        handler.removeCallbacks(tick)
+        handler.post(tick)
     }
-    /** Moves the preview to clip [k] and keeps playing, with the chosen transition drawn over the change. */
+
+    /** Move to another clip. Prefer a pre-decoded, rendered standby buffer at a join. */
     private fun playClip(k: Int, play: Boolean = true) {
+        if (pendingCut >= 0) return
         if (play && player?.isPlaying == true && continueInto(k)) return
         val wasPlaying = play && (player?.isPlaying == true || autoPlay)
         autoPlay = wasPlaying
-        // Back at the start after the last clip: the music starts again too.
         if (k == order().first()) musicPlayer?.runCatching { seekTo(0) }
+        if (play && wasPlaying && beginCut(k, wasPlaying)) return
         switching = true
-        val go = Runnable { playIndex = k; switching = false; showClipOnBar(); trim.playhead = trim.start; openPlayer(); showTime() }
-        // The way out was already drawn over the end of the clip that just played (see startOut), so the next clip takes over at once.
-        go.run()
+        playIndex = k
+        switching = false
+        showClipOnBar()
+        trim.playhead = trim.start
+        openPlayer()
+        showTime()
     }
-    /**
-     * Two clips cut from the same file that follow each other (a split) need no new player: the one playing simply goes on, and the
-     * editor takes it as the next clip. Opening a player at the cut is what made the preview stop for a moment at every join.
-     */
-    private fun continueInto(k: Int): Boolean {
-        if (!prepared || k == playIndex || k == order().first() || clipUri(k) != clipUri(playIndex)) return false
-        val curEnd = if (playIndex == 0) end else extras[playIndex - 1].to
-        if (abs(clipFrom(k) - curEnd) > 60) return false
-        fun sp(i: Int) = if (i == 0) speed else extras[i - 1].speed
-        fun curve(i: Int) = if (i == 0) mainCurve else extras[i - 1].curve
-        if (sp(k) != 1f || sp(playIndex) != 1f || curve(k) != null || curve(playIndex) != null) return false
+
+    /** Only exact, hard-cut split boundaries can reuse the same decoding stream. */
+    private fun canContinueInto(k: Int): Boolean {
+        if (k == playIndex || k == order().first() || clipUri(k) != clipUri(playIndex) ||
+            kindFor(k) != 0) return false
+        val currentEnd = if (playIndex == 0) end else extras.getOrNull(playIndex - 1)?.to ?: return false
+        if (abs(clipFrom(k) - currentEnd) > 1L) return false
+        if (clipSpeed(k) != 1f || clipSpeed(playIndex) != 1f) return false
+        val currentCurve = if (playIndex == 0) mainCurve else extras.getOrNull(playIndex - 1)?.curve
+        val nextCurve = if (k == 0) mainCurve else extras.getOrNull(k - 1)?.curve
+        if (currentCurve != null || nextCurve != null) return false
         if ((playIndex == 0 || k == 0) && cutValid()) return false
-        playIndex = k; showClipOnBar(); applySound(); arrived(); showTime()
-        handler.postDelayed({ preloadNext() }, 60)
         return true
     }
+
+    private fun continueInto(k: Int): Boolean {
+        if (!prepared || !canContinueInto(k)) return false
+        dropNext()
+        playIndex = k
+        curveSpeedSet = 0f
+        showClipOnBar()
+        applySound()
+        arrived()
+        showTime()
+        handler.postDelayed({ preloadNext() }, 60L)
+        return true
+    }
+
     /** Starts the way out of the clip being played, [ms] before its end, when the change into clip [k] has a part on the first clip's end. */
     private fun maybeOut(pos: Long, endMs: Long) {
         val nk = nextOf(playIndex); if (nk == playIndex || outFor == nk || kindFor(nk) == 0) return
