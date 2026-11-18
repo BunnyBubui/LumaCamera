@@ -19,7 +19,7 @@ class FrameGridView(c: Context) : View(c) {
     val box = RectF()
     private val line = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = 0xb3ffffff.toInt(); strokeWidth = 1.2f * c.resources.displayMetrics.density; setShadowLayer(3f, 0f, 1f, 0x99000000.toInt()) }
     private val dim = Paint().apply { color = 0x88000000.toInt() }
-    init { setLayerType(LAYER_TYPE_SOFTWARE, null); isClickable = false; importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }
+    init { isClickable = false; importantForAccessibility = IMPORTANT_FOR_ACCESSIBILITY_NO }
     private fun v(f: Float, c: Canvas) { val x = box.left + box.width() * f; c.drawLine(x, box.top, x, box.bottom, line) }
     private fun h(f: Float, c: Canvas) { val y = box.top + box.height() * f; c.drawLine(box.left, y, box.right, y, line) }
     override fun onDraw(c: Canvas) {

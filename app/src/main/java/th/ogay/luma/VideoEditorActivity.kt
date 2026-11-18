@@ -272,29 +272,29 @@ class VideoEditorActivity : ComponentActivity() {
         // Lanes by type, each with its own header: pictures, text, sound clips and music. Only the types that have something are shown.
         val lanes = ArrayList<MutableList<StudioTimeline.Bar>>(); val groups = ArrayList<StudioTimeline.Group>()
         val total = list.sumOf { it.len }
-        groups += StudioTimeline.Group(0, "วิดีโอ", Icons.FILM, isMuted(0) && extras.indices.all { isMuted(it + 1) }, false, false, true, 0)
+        groups += StudioTimeline.Group(0, "วิดีโอ", Icons.FILM, isMuted(0) && extras.indices.all { isMuted(it + 1) }, false, false, true, 0, Glass.ACCENT)
         fun barOf(i: Int): StudioTimeline.Bar { val l = layers[i]
             val pk = if (l.kind == VideoLayer.SOUND) AudioPeaks.get(l.source) ?: run { AudioPeaks.load(this, l.source, luma.readIo) { runOnUiThread { if (!isDestroyed) refreshTimeline() } }; null } else null
             return StudioTimeline.Bar(i, l.at, l.length, when (l.kind) { VideoLayer.VIDEO -> 0xff4dc3ff.toInt(); VideoLayer.IMAGE -> 0xffff6fb5.toInt(); VideoLayer.TEXT -> 0xffffd60a.toInt(); else -> 0xffa78bfa.toInt() },
                 (if (l.hidden) "(ซ่อน) " else "") + layerName(l), !l.locked, pk, l.from, 0L, l.keyList.map { it.t }) }
-        fun addGroup(key: Int, name: String, icon: String, audio: Boolean, off: Boolean, locked: Boolean, bars: List<StudioTimeline.Bar>) {
+        fun addGroup(key: Int, name: String, icon: String, audio: Boolean, off: Boolean, locked: Boolean, bars: List<StudioTimeline.Bar>, color: Int) {
             if (bars.isEmpty()) return
             val rowOf = StudioMath.pack(bars.map { it.at to (it.at + it.len) }, 4); val rows = (rowOf.maxOrNull() ?: 0) + 1
             repeat(rows) { lanes += mutableListOf<StudioTimeline.Bar>() }; val base = lanes.size - rows
             bars.forEachIndexed { i, b -> lanes[base + rowOf[i]] += b }
-            groups += StudioTimeline.Group(key, name, icon, off, locked, true, audio, rows)
+            groups += StudioTimeline.Group(key, name, icon, off, locked, true, audio, rows, color)
         }
         val all = layers.indices
         val pic = all.filter { layers[it].kind == VideoLayer.IMAGE || layers[it].kind == VideoLayer.VIDEO }
         val txt = all.filter { layers[it].kind == VideoLayer.TEXT }
         val snd = all.filter { layers[it].kind == VideoLayer.SOUND && !layers[it].music }
         val mus = all.filter { layers[it].kind == VideoLayer.SOUND && layers[it].music }
-        addGroup(1, "ภาพ", LAYERS, false, pic.all { layers[it].hidden }, pic.all { layers[it].locked }, pic.map { barOf(it) })
-        addGroup(2, "ข้อความ", "M5 6h14 M12 6v13 M9 19h6", false, txt.all { layers[it].hidden }, txt.all { layers[it].locked }, txt.map { barOf(it) })
-        addGroup(3, "เสียงคลิป", Icons.SOUND, true, snd.all { layers[it].hidden }, snd.all { layers[it].locked }, snd.map { barOf(it) })
+        addGroup(1, "ภาพ", LAYERS, false, pic.all { layers[it].hidden }, pic.all { layers[it].locked }, pic.map { barOf(it) }, 0xffff6fb5.toInt())
+        addGroup(2, "ข้อความ", "M5 6h14 M12 6v13 M9 19h6", false, txt.all { layers[it].hidden }, txt.all { layers[it].locked }, txt.map { barOf(it) }, 0xffffd60a.toInt())
+        addGroup(3, "เสียงคลิป", Icons.SOUND, true, snd.all { layers[it].hidden }, snd.all { layers[it].locked }, snd.map { barOf(it) }, 0xffa78bfa.toInt())
         val musicBar = music?.let { m -> val pk = AudioPeaks.get(m); if (pk == null) AudioPeaks.load(this, m, luma.readIo) { runOnUiThread { if (!isDestroyed) refreshTimeline() } }
             StudioTimeline.Bar(-1, 0, total, 0xff34d399.toInt(), musicName, false, pk, 0L, (pk?.size ?: 0).toLong() * AudioPeaks.STEP_MS) }
-        addGroup(4, "เพลง", "M9 18V6l10-2v12 M9 18a3 3 0 1 1-3-3 M19 16a3 3 0 1 1-3-3", true, musicOff(), mus.isNotEmpty() && mus.all { layers[it].locked }, listOfNotNull(musicBar) + mus.map { barOf(it) })
+        addGroup(4, "เพลง", "M9 18V6l10-2v12 M9 18a3 3 0 1 1-3-3 M19 16a3 3 0 1 1-3-3", true, musicOff(), mus.isNotEmpty() && mus.all { layers[it].locked }, listOfNotNull(musicBar) + mus.map { barOf(it) }, 0xff34d399.toInt())
         timeline.groups = groups
         timeline.clips = list; timeline.lanes = lanes; timeline.selected = if (barActive) -1 else seq.indexOf(playIndex).coerceAtLeast(0); timeline.seams = if (extras.isEmpty()) emptyList() else seamLabels(); timeline.seamIcons = if (extras.isEmpty()) emptyList() else order().map { k -> TRANSITION_ICONS.getOrNull(kindFor(k)) }; timeline.seamSpans = if (extras.isEmpty()) emptyList() else order().map { k -> VideoEdit.joinOutMs(joinMsOf(k)) to VideoEdit.joinInMs(joinMsOf(k)) }; timeline.marks = markers
         timeline.selectedBar = if (barActive && layerPick in layers.indices) layerPick else -2
@@ -1397,7 +1397,8 @@ class VideoEditorActivity : ComponentActivity() {
                     }
                     val seekAt = (if (pendingSeek >= 0L) pendingSeek else clipFrom(clipIndex)).coerceAtLeast(0L)
                     pendingSeek = -1L
-                    if (seekAt > 0L) {
+                    // Seek even to 0: a MediaPlayer that was only prepared draws nothing, so the preview stayed black until play.
+                    if (seekAt >= 0L) {
                         readyMp.setOnSeekCompleteListener { seeking ->
                             if (player === seeking) {
                                 val queued = pendingSeek
@@ -4157,10 +4158,10 @@ class VideoEditorActivity : ComponentActivity() {
             fun step(icon: String, label: String, f: (VideoLayer) -> VideoLayer) {
                 val b = EditorKit.round(this, icon, label) { }
                 var rep: Runnable? = null
-                fun once() { val k = layers.getOrNull(i) ?: return; layers[i] = f(k); placeLayers(); refreshTimeline() }
+                fun once() { val k = layers.getOrNull(i) ?: return; layers[i] = f(k); placeLayers() }
                 b.setOnTouchListener { v, e -> when (e.actionMasked) {
                     MotionEvent.ACTION_DOWN -> { v.isPressed = true; once(); rep = object : Runnable { override fun run() { once(); v.postDelayed(this, 70) } }; v.postDelayed(rep!!, 380) }
-                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { v.isPressed = false; rep?.let { v.removeCallbacks(it) }; rep = null } }; true }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { v.isPressed = false; rep?.let { v.removeCallbacks(it) }; rep = null; refreshTimeline() } }; true }
                 pad.addView(b, LinearLayout.LayoutParams(dp(42), dp(42)).apply { marginStart = dp(3); marginEnd = dp(3) })
             }
             fun at(k: VideoLayer) = k.rawPose(outNow().coerceIn(k.at, k.end))

@@ -361,8 +361,7 @@ object EditorKit {
         private fun centreScroll(i: Int) = tabs[i].left + inner.paddingLeft + tabs[i].width / 2 - width / 2
         override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
             super.onSizeChanged(w, h, ow, oh)
-            // Room at both ends so the first and the last tab can also stand in the middle.
-            if (scroller != null && tabs.isNotEmpty()) { val pad = Math.max(0, (w - context.dp(66)) / 2); if (inner.paddingLeft != pad) { inner.setPadding(pad, 0, pad, 0); post { select(selected.coerceAtLeast(0), false) } } }
+            if (w != ow && selected >= 0) post { place(false) }
         }
         override fun onInterceptTouchEvent(e: MotionEvent): Boolean {
             when (e.actionMasked) {
@@ -416,6 +415,10 @@ object EditorKit {
         /** A scrolling row shows six and a half tabs on any screen, so the half tab says there is more. */
         override fun onMeasure(widthSpec: Int, heightSpec: Int) {
             // Each tab is at least a share of the width and always as wide as its whole name, so a label is never cut.
+            // Room at both ends so the first and the last tab can also stand in the middle. Set here, before measuring:
+            // set later (during layout) the row kept its old width and the last tabs were cut off.
+            if (scroller != null && tabs.isNotEmpty()) { val w = MeasureSpec.getSize(widthSpec)
+                val pad = Math.max(0, w / 2 - context.dp(24)); if (inner.paddingLeft != pad) inner.setPadding(pad, 0, pad, 0) }
             if (scrolls) { val each = (MeasureSpec.getSize(widthSpec) / 6.5f).toInt().coerceAtLeast(context.dp(48))
                 tabs.forEach { t -> val tv = t.getChildAt(1) as TextView; tv.minWidth = Math.ceil(tv.paint.measureText(tv.text.toString()).toDouble()).toInt() + context.dp(2)
                     t.minimumWidth = maxOf(each, tv.minWidth + context.dp(18)) } }
