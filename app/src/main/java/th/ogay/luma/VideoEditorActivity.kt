@@ -801,6 +801,17 @@ class VideoEditorActivity : ComponentActivity() {
     // Phase 1 integration: report nextHandoff.state transitions and uptimeMillis here.
     // Phase 4 integration: replace only the UI tick scheduler, not MediaPlayer frame decoding.
     // Phase 5 integration: clipUri(k) is the single original/proxy preview URI selection point.
+    // Optional adapters for AI-1 metrics, AI-3 transition clock and AI-5 preview source.
+    // Their defaults keep existing editor behavior and do not depend on sibling PRs.
+    private var previewEventSink: ((String, Long) -> Unit)? = null
+    private var transitionSample: ((Int, Int, Long, Long, Long) -> Float)? = null
+    private var previewSourceSelector: ((Int, Uri) -> Uri)? = null
+    private fun previewEvent(name: String) {
+        previewEventSink?.invoke(name, android.os.SystemClock.elapsedRealtimeNanos())
+    }
+    private fun previewClipUri(k: Int): Uri =
+        previewSourceSelector?.invoke(k, clipUri(k)) ?: clipUri(k)
+
     private val nextHandoff = StudioClipHandoff()
     private var nextToken = 0L
     private var nextLead = 0L
@@ -818,6 +829,7 @@ class VideoEditorActivity : ComponentActivity() {
             val resume = pendingCutResume
             // A broken/unsupported surface must not leave the editor waiting forever.
             // This is a cold-player fallback and can hitch; device QA must measure it.
+            previewEvent("cut_timeout_fallback")
             dropNext()
             playIndex = target
             pendingSeek = -1L
@@ -856,7 +868,7 @@ class VideoEditorActivity : ComponentActivity() {
         if (isDestroyed || surface == null || extras.isEmpty()) { dropNext(); return }
         val k = nextOf(playIndex)
         if (k == playIndex || canContinueInto(k)) { dropNext(); return }
-        val uri = clipUri(k)
+        val uri = previewClipUri(k)
         val from = clipFrom(k)
         // Overlap needs source handles. A non-overlap cut starts at exactly 'from'.
         val lead = if (Glass.reduced(this)) 0L else lapPlan(playIndex, k)?.before ?: 0L
@@ -874,12 +886,16 @@ class VideoEditorActivity : ComponentActivity() {
         runCatching {
             mp.setDataSource(this, uri)
             mp.setOnSeekCompleteListener {
-                if (nextPlayer === it && nextHandoff.seekCompleted(token) && pendingCut == k) warmNext(k)
+                if (nextPlayer === it && nextHandoff.seekCompleted(token)) {
+                    previewEvent("standby_seek_complete")
+                    if (pendingCut == k) warmNext(k)
+                }
             }
             mp.setOnPreparedListener {
                 if (nextPlayer === it) {
                     val seekAt = (from - lead).coerceAtLeast(0L)
                     if (nextHandoff.prepared(token, seekAt > 0L)) {
+                        previewEvent("standby_prepared")
                         if (seekAt > 0L) exactSeek(it, seekAt)
                         else if (pendingCut == k) warmNext(k)
                     }
@@ -907,6 +923,9 @@ class VideoEditorActivity : ComponentActivity() {
         lookOnTexture2()
         val now = android.os.SystemClock.uptimeMillis()
         if (!nextHandoff.beginRendering(nextToken, now)) return false
+        // Keep an almost transparent hardware layer so TextureView updates are not culled.
+        texture2.alpha = 0.001f
+        previewEvent("standby_render_requested")
         val ok = runCatching {
             mp.setSurface(targetSurface)
             mp.setVolume(0f, 0f)
@@ -967,6 +986,7 @@ class VideoEditorActivity : ComponentActivity() {
     private fun onStandbyFrameRendered() {
         if (lapPlayer != null) {
             if (!lapFrameReady && nextHandoff.firstFrameRendered(lapToken)) {
+                previewEvent("overlap_first_frame")
                 lapFrameReady = true
                 handler.removeCallbacks(lapTimeout)
                 if (lapCommitRequested) finishLap()
@@ -974,8 +994,12 @@ class VideoEditorActivity : ComponentActivity() {
             return
         }
         if (nextAttached && nextPlayer != null && nextHandoff.firstFrameRendered(nextToken)) {
+            previewEvent("standby_first_frame")
             if (pendingCut >= 0) finishCut()
-            else nextPlayer?.runCatching { if (isPlaying) pause() }
+            else {
+                nextPlayer?.runCatching { if (isPlaying) pause() }
+                texture2.alpha = 0f
+            }
         }
     }
 
@@ -1008,10 +1032,11 @@ class VideoEditorActivity : ComponentActivity() {
 
     private fun beginCut(k: Int, resume: Boolean): Boolean {
         if (lapNext >= 0 || pendingSeek >= 0L) return false
-        if (nextPlayer == null || nextFor != k || nextUri != clipUri(k) ||
+        if (nextPlayer == null || nextFor != k || nextUri != previewClipUri(k) ||
             nextFrom != clipFrom(k) || nextLead != 0L) return false
         pendingCut = k
         pendingCutResume = resume
+        previewEvent("cut_requested")
         handler.removeCallbacks(cutTimeout)
         handler.postDelayed(cutTimeout, 1_100L)
         if (nextHandoff.canShow(nextToken)) finishCut()
@@ -1024,6 +1049,7 @@ class VideoEditorActivity : ComponentActivity() {
         val k = pendingCut
         if (k < 0 || !nextHandoff.canShow(nextToken)) return
         val resume = pendingCutResume
+        previewEvent("cut_frame_confirmed")
         cancelPendingCut()
         nextPlayer = null
         nextFor = -1
@@ -1100,8 +1126,10 @@ class VideoEditorActivity : ComponentActivity() {
                 if (pos >= endMs + running.after - 20L) lapCommitRequested = true
                 return true // Keep the old, already-rendered picture visible.
             }
-            val progress = ((pos - (endMs - running.before)).toFloat() /
-                (running.before + running.after).coerceAtLeast(1L)).coerceIn(0f, 1f)
+            val sampled = transitionSample?.invoke(playIndex, lapNext, pos, endMs - running.before, endMs + running.after)
+                ?: ((pos - (endMs - running.before)).toFloat() /
+                    (running.before + running.after).coerceAtLeast(1L))
+            val progress = if (sampled.isFinite()) sampled.coerceIn(0f, 1f) else 0f
             standbyMix(progress)
             val a = clipSoundLevel(playIndex) * (1f - progress)
             val b = clipSoundLevel(lapNext) * progress
@@ -1148,7 +1176,7 @@ class VideoEditorActivity : ComponentActivity() {
         lapFrameReady = false
         lapCommitRequested = false
         texture.alpha = 1f
-        texture2.alpha = 0f
+        texture2.alpha = 0.001f
         handler.removeCallbacks(lapTimeout)
         handler.postDelayed(lapTimeout, 1_100L)
         return true
@@ -1252,7 +1280,7 @@ class VideoEditorActivity : ComponentActivity() {
         fxEq?.runCatching { release() }
         fxEq = null
         val clipIndex = playIndex
-        val clip = clipUri(clipIndex)
+        val clip = previewClipUri(clipIndex)
         val mp = MediaPlayer()
         player = mp
         runCatching {
