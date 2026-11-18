@@ -626,12 +626,7 @@ class VideoEditorActivity : ComponentActivity() {
         // The second picture of an overlapping change: the clip that arrives is drawn here, over the first, while both play.
         texture2 = TextureView(this).apply { alpha = 0f; isClickable = false; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
         stage.addView(texture2, FrameLayout.LayoutParams(0, 0, Gravity.CENTER))
-        texture2.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
-            override fun onSurfaceTextureAvailable(s: SurfaceTexture, w: Int, h: Int) { surface2 = Surface(s) }
-            override fun onSurfaceTextureSizeChanged(s: SurfaceTexture, w: Int, h: Int) {}
-            override fun onSurfaceTextureDestroyed(s: SurfaceTexture): Boolean { cancelLap(); surface2?.release(); surface2 = null; return true }
-            override fun onSurfaceTextureUpdated(s: SurfaceTexture) {}
-        }
+        installPreviewSurfaceListener(texture2)
         fxView = FxView(this).also { stage.addView(it, -1, -1) }
         mask = CropMask(this); stage.addView(mask, -1, -1)
         captionView = text("", 20f, Glass.TEXT, true).apply { gravity = Gravity.CENTER; maxLines = 3; setShadowLayer(6f, 0f, 2f, 0x99000000.toInt()); importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
@@ -728,12 +723,7 @@ class VideoEditorActivity : ComponentActivity() {
             val frames = frames(10)
             runOnUiThread { if (!isDestroyed) { mainFrames = frames; if (playIndex == 0) trim.frames = frames; firstFrame = frames.firstOrNull(); if (named) saveProject(); if (tool == 5) showTool(5, false) } }
         }
-        texture.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
-            override fun onSurfaceTextureAvailable(s: SurfaceTexture, w: Int, h: Int) { surface = Surface(s); openPlayer() }
-            override fun onSurfaceTextureSizeChanged(s: SurfaceTexture, w: Int, h: Int) {}
-            override fun onSurfaceTextureDestroyed(s: SurfaceTexture): Boolean { releasePlayer(); dropNext(); surface?.release(); surface = null; return true }
-            override fun onSurfaceTextureUpdated(s: SurfaceTexture) {}
-        }
+        installPreviewSurfaceListener(texture)
         applyLook(); showTool(tool, false); showTime()
         if (music != null) prepareMusic()
         // Undo starts watching only after the saved clips are back, or their return would count as an edit.
@@ -929,6 +919,44 @@ class VideoEditorActivity : ComponentActivity() {
         if (pendingCut >= 0 || lapNext >= 0 || extras.isEmpty() || pos < endMs - 200L) return
         val k = nextOf(playIndex)
         if (k != playIndex && lapPlan(playIndex, k) == null && !canContinueInto(k)) warmNext(k)
+    }
+
+    /** Callbacks follow the *view instance*, not its current primary/standby role. */
+    private fun installPreviewSurfaceListener(view: TextureView) {
+        view.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+            override fun onSurfaceTextureAvailable(s: SurfaceTexture, w: Int, h: Int) {
+                val created = Surface(s)
+                if (view === texture) {
+                    surface?.release()
+                    surface = created
+                    openPlayer()
+                } else {
+                    surface2?.release()
+                    surface2 = created
+                }
+            }
+            override fun onSurfaceTextureSizeChanged(s: SurfaceTexture, w: Int, h: Int) {
+                if (view === texture && ::stage.isInitialized) layoutVideo()
+            }
+            override fun onSurfaceTextureDestroyed(s: SurfaceTexture): Boolean {
+                if (view === texture) {
+                    releasePlayer()
+                    dropNext()
+                    surface?.release()
+                    surface = null
+                } else {
+                    cancelLap()
+                    dropNext()
+                    surface2?.release()
+                    surface2 = null
+                }
+                return true
+            }
+            override fun onSurfaceTextureUpdated(s: SurfaceTexture) {
+                // The MediaPlayer info event can fire before this texture receives a buffer.
+                if (view === texture2) onStandbyFrameRendered()
+            }
+        }
     }
 
     private fun onStandbyFrameRendered() {
