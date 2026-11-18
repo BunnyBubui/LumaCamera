@@ -44,7 +44,117 @@ class StudioTimeline(context: Context) : View(context) {
             postInvalidateOnAnimation()
         }
     private var clipOffsets = StudioClipOffsets(LongArray(0))
-    var lanes: List<List<Bar>> = emptyList()
+    /** One row of bars per entry; [groups] says which rows belong to which type (picture, text, sound clip, music). */
+    var lanes: List<List<Bar>> = emptyList(); set(v) { field = v; layoutRows(); invalidate() }
+    /**
+     * A type of lane with its own header on the left, like the track headers of a desktop editor. [key] 0 is the row of clips itself
+     * (no rows of its own). [off] = muted (sound) or hidden (picture, text); [rows] is how many rows of bars it holds.
+     */
+    class Group(val key: Int, val name: String, val icon: String, val off: Boolean, val locked: Boolean, val canLock: Boolean, val audio: Boolean, val rows: Int)
+    var groups: List<Group> = emptyList(); set(v) { field = v; layoutRows(); invalidate() }
+    /** [group key, 0 = mute or hide / 1 = lock] was tapped in a header. */
+    var onGroup: (Int, Int) -> Unit = { _, _ -> }
+    var onHeadOpen: (Boolean) -> Unit = {}
+    /** How far the headers are open: 0 = only the round icons, 1 = icons with names and buttons. Follows the finger, then settles with a little bounce. */
+    var headFrac = 1f; set(v) { field = v; invalidate() }
+    private val groupTop = ArrayList<Float>(); private val groupH = ArrayList<Float>(); private val rowY = ArrayList<Float>()
+    private val minGroupH get() = 50f * d
+    private fun layoutRows() {
+        groupTop.clear(); groupH.clear(); rowY.clear()
+        var y = lanesTop(); var row = 0
+        groups.forEachIndexed { gi, g ->
+            if (gi == 0 && g.key == 0) { groupTop += rulerH; groupH += clipH; return@forEachIndexed }
+            groupTop += y; val h = maxOf(g.rows * laneH, minGroupH); groupH += h
+            repeat(g.rows) { k -> rowY += y + k * laneH; row++ }
+            y += h
+        }
+        while (rowY.size < lanes.size) rowY += (rowY.lastOrNull()?.plus(laneH) ?: lanesTop())
+        lanesBottom = y
+    }
+    private var lanesBottom = 0f
+    /** Height the whole timeline needs, in px. */
+    fun neededHeight(): Int = (maxOf(lanesBottom, lanesTop()) + 4 * d).toInt()
+    /** Height the lane rows start at, in px. */
+    fun lanesStart(): Int = lanesTop().toInt()
+    private val collW get() = 40f * d
+    private val expW get() = 100f * d
+    private fun headW() = if (groups.isEmpty()) 0f else (collW + (expW - collW) * headFrac).coerceAtLeast(30f * d)
+    private fun cx() = headW() + (width - headW()) / 2f
+    private var inHead = false; private var hx = 0f; private var hy = 0f; private var hFrac0 = 1f; private var hDrag = false
+    private var headAnim: android.animation.ValueAnimator? = null
+    private var pop = 1f; private var popGroup = -2
+    private var popAnim: android.animation.ValueAnimator? = null
+    private fun bubble(target: Int) { popGroup = target; popAnim?.cancel()
+        popAnim = android.animation.ValueAnimator.ofFloat(0f, 1f).apply { duration = 560; addUpdateListener { pop = it.animatedValue as Float; invalidate() }; start() } }
+    private fun settleHead(to: Float) {
+        headAnim?.cancel(); val from = headFrac
+        headAnim = android.animation.ValueAnimator.ofFloat(0f, 1f).apply { duration = 420; interpolator = android.view.animation.OvershootInterpolator(1.1f)
+            addUpdateListener { headFrac = from + (to - from) * (it.animatedValue as Float) }; start() }
+        bubble(-1); onHeadOpen(to > 0.5f); performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+    }
+    private fun toggleRect(gi: Int, which: Int, out: RectF): RectF { val top = groupTop[gi] + 3 * d + 27 * d; val l = 8 * d + which * 34 * d; out.set(l, top, l + 30 * d, top + 16 * d); return out }
+    private val tmp = RectF()
+    private fun headTouch(e: MotionEvent) {
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> { hx = e.x; hy = e.y; hFrac0 = headFrac; hDrag = false; headAnim?.cancel()
+                velocity?.recycle(); velocity = android.view.VelocityTracker.obtain().also { it.addMovement(e) } }
+            MotionEvent.ACTION_MOVE -> { velocity?.addMovement(e); val dx = e.x - hx
+                if (!hDrag && abs(dx) > 8 * d && abs(dx) > abs(e.y - hy)) { hDrag = true; parent?.requestDisallowInterceptTouchEvent(true) }
+                if (hDrag) headFrac = (hFrac0 + dx / (expW - collW)).coerceIn(0f, 1f) }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                velocity?.computeCurrentVelocity(1000); val vx = velocity?.xVelocity ?: 0f; velocity?.recycle(); velocity = null
+                if (hDrag) settleHead(if (abs(vx) > 500 * d) (if (vx > 0) 1f else 0f) else if (headFrac > 0.5f) 1f else 0f)
+                else if (e.actionMasked == MotionEvent.ACTION_UP) {
+                    val gi = groups.indices.firstOrNull { e.y >= groupTop[it] && e.y < groupTop[it] + groupH[it] } ?: return
+                    val g = groups[gi]
+                    if (headFrac > 0.6f) for (w in 0..1) { if (w == 1 && !g.canLock) continue
+                        val r = toggleRect(gi, w, tmp); r.inset(-4 * d, -6 * d)
+                        if (r.contains(e.x, e.y)) { bubble(gi); performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK); onGroup(g.key, w); return } }
+                    if (headFrac < 0.4f) settleHead(1f) else { bubble(gi); performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) }
+                }
+            }
+        }
+    }
+    private fun lerp(a: Float, b: Float, t: Float) = a + (b - a) * t
+    private fun drawIcon(c: Canvas, data: String, cxp: Float, cyp: Float, size: Float, color: Int, wpx: Float = 1.8f) {
+        iconStroke.color = color; iconStroke.strokeWidth = wpx; val k = size / 24f
+        c.save(); c.translate(cxp - size / 2, cyp - size / 2); c.scale(k, k); iconStroke.strokeWidth = wpx; c.drawPath(iconPath(data), iconStroke); c.restore(); iconStroke.color = 0xff101014.toInt()
+    }
+    private fun drawHeader(c: Canvas) {
+        val hw = headW(); val f = headFrac.coerceIn(0f, 1f)
+        paint.color = 0xf5101014.toInt(); paint.alpha = 245; c.drawRect(0f, rulerH, hw, height.toFloat(), paint)
+        paint.color = 0x22ffffff; c.drawRect(hw - d, rulerH, hw, height.toFloat(), paint)
+        groups.forEachIndexed { gi, g ->
+            val top = groupTop[gi]; val h = groupH[gi]
+            val p = if (popGroup == -1 || popGroup == gi) kotlin.math.sin(Math.PI * ((pop - (if (popGroup == -1) gi * 0.08f else 0f)) / 0.6f).coerceIn(0f, 1f)).toFloat() else 0f
+            val l = 4 * d; val r = hw - 4 * d; val bt = top + 3 * d
+            val bb = bt + lerp(30 * d, (h - 6 * d).coerceAtLeast(30 * d), f)
+            val grow = p * 2.5f * d
+            paint.color = if (g.off || g.locked) 0x33ff9f45 else 0x1fffffff; paint.alpha = 255
+            c.drawRoundRect(l - grow, bt - grow, r + grow, bb + grow, lerp(15 * d, 11 * d, f), lerp(15 * d, 11 * d, f), paint)
+            val tint = if (g.off) Glass.ACCENT else Color.WHITE
+            val iy = bt + 15 * d; val ix = lerp((l + r) / 2f, l + 17 * d, f)
+            drawIcon(c, g.icon, ix, iy, 16 * d * (1f + p * 0.28f), tint)
+            if (g.off && g.audio) { iconStroke.color = tint; iconStroke.strokeWidth = 1.8f * d; c.drawLine(ix - 8 * d, iy - 8 * d, ix + 8 * d, iy + 8 * d, iconStroke); iconStroke.color = 0xff101014.toInt() }
+            if (f > 0.35f) {
+                val a = ((f - 0.35f) / 0.65f).coerceIn(0f, 1f)
+                textPaint.color = Color.WHITE; textPaint.alpha = (a * 255).toInt(); textPaint.textSize = 11f * d; textPaint.isFakeBoldText = true
+                c.drawText(g.name, l + 30 * d, iy + 4 * d, textPaint)
+                textPaint.isFakeBoldText = false; textPaint.textSize = 9.5f * d; textPaint.color = 0x99ffffff.toInt()
+                for (w in 0..1) {
+                    if (w == 1 && !g.canLock) continue
+                    val rr = toggleRect(gi, w, tmp); val on = if (w == 0) g.off else g.locked
+                    paint.color = if (on) 0x4dff9f45 else 0x24ffffff; paint.alpha = (a * 255).toInt()
+                    c.drawRoundRect(rr, 8 * d, 8 * d, paint)
+                    val ic = if (w == 0) (if (g.audio) SND else if (g.off) EYE_OFF else EYE) else if (g.locked) LOCK_ON else LOCK_OFF
+                    val col = (if (on) Glass.ACCENT else Color.WHITE).let { (it and 0x00ffffff) or ((a * 255).toInt() shl 24) }
+                    drawIcon(c, ic, rr.centerX(), rr.centerY(), 12 * d, col, 1.9f)
+                    if (w == 0 && g.audio && on) { iconStroke.color = col; iconStroke.strokeWidth = 1.9f * d; c.drawLine(rr.centerX() - 6 * d, rr.centerY() - 6 * d, rr.centerX() + 6 * d, rr.centerY() + 6 * d, iconStroke); iconStroke.color = 0xff101014.toInt() }
+                }
+                paint.alpha = 255
+            }
+        }
+    }
     var selected = 0
     /** One entry per clip: null for the first, "" for a plain cut, otherwise the name of the change into that clip. */
     var seams: List<String?> = emptyList(); set(v) { field = v; invalidate() }
@@ -107,6 +217,11 @@ class StudioTimeline(context: Context) : View(context) {
     private val clipPath = Path(); private val rect = RectF(); private val src = Rect(); private val dst = RectF()
 
     private companion object {
+        const val SND = "M4 9v6h4l5 4V5L8 9z M16.5 8.5a5 5 0 0 1 0 7"
+        const val EYE = "M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6"
+        const val EYE_OFF = "M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z M4 4l16 16"
+        const val LOCK_ON = "M6 11h12v9H6z M8.5 11V8a3.5 3.5 0 0 1 7 0v3"
+        const val LOCK_OFF = "M6 11h12v9H6z M8.5 11V8a3.5 3.5 0 0 1 6.8-1.2"
         const val IDLE = 0; const val SCRUB = 1; const val TRIM_L = 2; const val TRIM_R = 3
         const val MOVE = 4; const val ZOOM = 5; const val BAR = 6; const val BAR_L = 7; const val BAR_R = 8
         val RULER_STEPS = longArrayOf(100, 200, 500, 1000, 2000, 5000, 10_000, 30_000, 60_000, 300_000, 600_000)
@@ -117,7 +232,8 @@ class StudioTimeline(context: Context) : View(context) {
     private var barAt = 0L; private var barLen = 0L; private var lastSnap = -1L
     private val barStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; style = Paint.Style.STROKE; strokeWidth = 2f * d }
     private fun lanesTop() = rulerH + clipH + 4 * d
-    private fun barAt(px: Float, py: Float): Bar? { val li = ((py - lanesTop()) / laneH).toInt(); if (py < lanesTop()) return null
+    private fun barAt(px: Float, py: Float): Bar? { if (py < lanesTop() || px < headW()) return null
+        val li = rowY.indexOfLast { py >= it }.takeIf { it >= 0 && py < rowY[it] + laneH } ?: return null
         return lanes.getOrNull(li)?.lastOrNull { px >= x(it.at) - 6 * d && px <= x(it.at + it.len) + 6 * d } }
     private fun findBar(id: Int): Bar? { lanes.forEach { l -> l.forEach { if (it.id == id) return it } }; return null }
     /** Pulls [t] onto a nearby edge (a clip boundary, a bar edge, the playhead) and ticks once when it catches. */
@@ -141,13 +257,15 @@ class StudioTimeline(context: Context) : View(context) {
         if (scroller.computeScrollOffset()) { ph = (scroller.currX / pxPerMs).toLong().coerceIn(0, total()); onSeek(ph, false); postInvalidateOnAnimation() }
         else { flinging = false; onSeek(ph, true) }
     }
+    /** Whether the row [li] belongs to a group that is muted or hidden. */
+    private fun rowOff(li: Int): Boolean { var n = 0; groups.forEach { g -> if (g.key == 0) return@forEach; if (li < n + g.rows) return g.off; n += g.rows }; return false }
     private var mode = IDLE
     private var downX = 0f; private var lastX = 0f; private var moved = false
     private var trimFrom = 0L; private var trimTo = 0L; private var trimLen = 0L; private var trimPh = 0L
     private var moveIndex = -1; private var moveX = 0f
 
     private fun total() = clipOffsets.total
-    private fun x(t: Long) = width / 2f + (t - ph) * pxPerMs
+    private fun x(t: Long) = cx() + (t - ph) * pxPerMs
     private fun startOf(i: Int) = clipOffsets.startOf(i)
     private fun clipAt(px: Float): Int {
         // Retain original screen-space comparison and exact cut-boundary behavior.
@@ -188,6 +306,8 @@ class StudioTimeline(context: Context) : View(context) {
     })
 
     override fun onTouchEvent(e: MotionEvent): Boolean {
+        if (e.actionMasked == MotionEvent.ACTION_DOWN) { inHead = e.x < headW() && e.y > rulerH && groups.isNotEmpty() }
+        if (inHead) { headTouch(e); if (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL) inHead = false; return true }
         scale.onTouchEvent(e)
         if (mode != ZOOM) gestures.onTouchEvent(e)
         when (e.actionMasked) {
@@ -261,7 +381,7 @@ class StudioTimeline(context: Context) : View(context) {
         val w = width.toFloat(); val all = total()
         // Ruler: the step grows until two marks are a comfortable distance apart.
         val step = RULER_STEPS.firstOrNull { it * pxPerMs >= 58 * d } ?: 600_000L
-        var t = (floor((ph - w / 2 / pxPerMs) / step.toDouble()).toLong() * step).coerceAtLeast(0)
+        var t = (floor((ph - cx() / pxPerMs) / step.toDouble()).toLong() * step).coerceAtLeast(0)
         paint.color = 0x55ffffff
         while (t <= all && x(t) < w) { val px = x(t); c.drawRect(px, rulerH - 5 * d, px + d, rulerH - 1 * d, paint); c.drawText(label(t, step < 1000), px + 3 * d, rulerH - 5 * d, textPaint); t += step }
         marks.forEach { m -> val mx = x(m); if (mx > -8 * d && mx < w + 8 * d) { clipPath.reset(); clipPath.moveTo(mx - 4 * d, rulerH - 9 * d); clipPath.lineTo(mx + 4 * d, rulerH - 9 * d); clipPath.lineTo(mx, rulerH - 1 * d); clipPath.close(); c.drawPath(clipPath, accent)
@@ -269,7 +389,7 @@ class StudioTimeline(context: Context) : View(context) {
         // Clips.
         val top = rulerH; val bottom = rulerH + clipH; val r = 9 * d
         // Skip offscreen clips in long projects (the viewport is already clipped by the View).
-        val visibleFromMs = (ph - w / 2f / pxPerMs).toLong().coerceAtLeast(0L)
+        val visibleFromMs = (ph - cx() / pxPerMs).toLong().coerceAtLeast(0L)
         var i = clipOffsets.clipAt(visibleFromMs).let { if (it < 0) clips.size else it }
         while (i < clips.size) {
             val clip = clips[i]
@@ -332,10 +452,10 @@ class StudioTimeline(context: Context) : View(context) {
         if (moveIndex >= 0) { accent.alpha = 200; c.drawRoundRect(moveX - 2 * d, top - 3 * d, moveX + 2 * d, bottom + 3 * d, 2 * d, 2 * d, accent); accent.alpha = 255 }
         // Lanes: music and layers as bars at their place in time, with the waveform of a sound and a dot for each keyframe.
         lanes.forEachIndexed { li, bars ->
-            val y0 = lanesTop() + li * laneH; val y1 = y0 + laneH - 4 * d; val mid = (y0 + y1) / 2
+            val y0 = rowY.getOrElse(li) { lanesTop() + li * laneH }; val y1 = y0 + laneH - 4 * d; val mid = (y0 + y1) / 2
             bars.forEach { b ->
                 val x0 = x(b.at); val x1 = x(b.at + b.len).coerceAtLeast(x0 + 6 * d); if (x1 < 0 || x0 > w) return@forEach
-                paint.color = b.color; paint.alpha = if (selectedBar < -1 || selectedBar == b.id) 235 else 150
+                paint.color = b.color; paint.alpha = if (rowOff(li)) 70 else if (selectedBar < -1 || selectedBar == b.id) 235 else 150
                 c.drawRoundRect(x0, y0, x1, y1, 5 * d, 5 * d, paint); paint.alpha = 255
                 c.save(); c.clipRect(x0, y0, x1, y1)
                 val pk = b.peaks
@@ -359,9 +479,10 @@ class StudioTimeline(context: Context) : View(context) {
                     if (b.movable && x1 - x0 > 44 * d) { paint.color = Color.WHITE; c.drawRoundRect(x0 + 3 * d, y0 + 4 * d, x0 + 5.5f * d, y1 - 4 * d, d, d, paint); c.drawRoundRect(x1 - 5.5f * d, y0 + 4 * d, x1 - 3 * d, y1 - 4 * d, d, d, paint) } }
             }
         }
+        drawHeader(c)
         // Playhead.
-        paint.color = Color.WHITE; c.drawRoundRect(w / 2 - 1 * d, 2 * d, w / 2 + 1 * d, height - 1 * d, d, d, paint)
-        clipPath.reset(); clipPath.moveTo(w / 2 - 5 * d, 0f); clipPath.lineTo(w / 2 + 5 * d, 0f); clipPath.lineTo(w / 2, 7 * d); clipPath.close(); c.drawPath(clipPath, paint)
+        paint.color = Color.WHITE; val mx0 = cx(); c.drawRoundRect(mx0 - 1 * d, 2 * d, mx0 + 1 * d, height - 1 * d, d, d, paint)
+        clipPath.reset(); clipPath.moveTo(mx0 - 5 * d, 0f); clipPath.lineTo(mx0 + 5 * d, 0f); clipPath.lineTo(mx0, 7 * d); clipPath.close(); c.drawPath(clipPath, paint)
         lastDrawnPlayhead = ph
     }
 }

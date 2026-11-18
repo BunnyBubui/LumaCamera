@@ -236,30 +236,68 @@ class VideoEditorActivity : ComponentActivity() {
     /** Every speed the video plays at (each step of a curve counts); sound is kept only when all stay between 0.25× and 4×. */
     private fun allSpeeds(): List<Float> = StudioMath.partSpeeds(speed, if (cutValid()) null else mainCurve).toList() + extras.flatMap { StudioMath.partSpeeds(it.speed, it.curve).toList() }
     private fun mainLen() = if (mainCurve != null && !cutValid()) StudioMath.outLen(end - start, speed, mainCurve) else ((end - start - cutMs()) / speed).toLong()
+    /** Height of the timeline: all rows when they fit, otherwise a window of about two types that scrolls. Slides to the new height. */
+    private fun fitTimeline(animate: Boolean) {
+        timeline.post {
+            val full = timeline.neededHeight(); val cap = timeline.lanesStart() + dp(112); val win = minOf(full, cap)
+            val fromFull = timeline.layoutParams.height; val fromWin = timelineScroll.layoutParams.height
+            fun set(f: Int, w: Int) { timeline.layoutParams = timeline.layoutParams.apply { height = f }; timelineScroll.layoutParams = timelineScroll.layoutParams.apply { height = w } }
+            if (!animate || Glass.reduced(this) || fromFull <= 0 || timelineScroll.visibility != View.VISIBLE) set(full, win)
+            else android.animation.ValueAnimator.ofFloat(0f, 1f).apply { duration = 300; interpolator = Glass.EASE
+                addUpdateListener { val t = it.animatedValue as Float; set((fromFull + (full - fromFull) * t).toInt(), (fromWin + (win - fromWin) * t).toInt()) }; start() }
+        }
+    }
+    private var musicBefore = 1f
+    private fun musicOff() = (music == null || musicVolume <= 0f) && layers.none { it.kind == VideoLayer.SOUND && it.music && !it.hidden }
+    /** A header button on the timeline: [which] 0 = mute (sound) or hide (picture, text), 1 = lock. Acts on every layer of that type. */
+    private fun toggleGroup(key: Int, which: Int) {
+        val ids = layers.indices.filter { i -> val l = layers[i]; when (key) { 1 -> l.kind == VideoLayer.IMAGE || l.kind == VideoLayer.VIDEO; 2 -> l.kind == VideoLayer.TEXT; 3 -> l.kind == VideoLayer.SOUND && !l.music; else -> l.kind == VideoLayer.SOUND && l.music } }
+        if (key == 0) { if (which == 0) { val on = !(isMuted(0) && extras.indices.all { isMuted(it + 1) }); setMuted(0, on); extras.indices.forEach { setMuted(it + 1, on) } } }
+        else if (which == 0) {
+            val off = if (key == 4) musicOff() else ids.all { layers[it].hidden }
+            ids.forEach { layers[it] = layers[it].copy(hidden = !off) }
+            if (key == 4 && music != null) { if (!off) { musicBefore = musicVolume.takeIf { it > 0f } ?: 1f; musicVolume = 0f } else musicVolume = musicBefore; applySound() }
+            rebuildLayers(); placeLayers(); syncLayerSound(player?.isPlaying == true)
+        } else { val lock = !ids.all { layers[it].locked }; ids.forEach { layers[it] = layers[it].copy(locked = lock) }; rebuildLayers(); placeLayers() }
+        refreshTimeline()
+    }
     private fun refreshTimeline() {
         if (!::timeline.isInitialized) return
         val list = ArrayList<StudioTimeline.Clip>(extras.size + 1)
         val seq = order()
         seq.forEach { k -> if (k == 0) list += StudioTimeline.Clip(mainLen().coerceAtLeast(1), start, end, duration, ((end - start).toFloat() / mainLen().coerceAtLeast(1)).coerceAtLeast(0.0001f), mainFrames.ifEmpty { listOfNotNull(firstFrame) }, extras.isNotEmpty())
             else extras[k - 1].let { e -> ensureFrames(e); list += StudioTimeline.Clip(e.len.coerceAtLeast(1), e.from, e.to, e.duration, ((e.to - e.from).toFloat() / e.len.coerceAtLeast(1)).coerceAtLeast(0.0001f), framesOf(e), true) } }
-        // Lanes: the music first, then each layer on the first lane where it does not sit on top of another (four lanes at most).
-        val lanes = ArrayList<MutableList<StudioTimeline.Bar>>()
-        music?.let { m -> val pk = AudioPeaks.get(m); if (pk == null) AudioPeaks.load(this, m, luma.readIo) { runOnUiThread { if (!isDestroyed) refreshTimeline() } }
-            lanes += mutableListOf(StudioTimeline.Bar(-1, 0, list.sumOf { it.len }, 0xff34d399.toInt(), musicName, false, pk, 0L, (pk?.size ?: 0).toLong() * AudioPeaks.STEP_MS)) }
-        val firstLayerLane = lanes.size
-        val laneOf = StudioMath.pack(layers.map { it.at to it.end }, 12 - firstLayerLane)
-        layers.forEachIndexed { i, l ->
+        // Lanes by type, each with its own header: pictures, text, sound clips and music. Only the types that have something are shown.
+        val lanes = ArrayList<MutableList<StudioTimeline.Bar>>(); val groups = ArrayList<StudioTimeline.Group>()
+        val total = list.sumOf { it.len }
+        groups += StudioTimeline.Group(0, "วิดีโอ", Icons.FILM, isMuted(0) && extras.indices.all { isMuted(it + 1) }, false, false, true, 0)
+        fun barOf(i: Int): StudioTimeline.Bar { val l = layers[i]
             val pk = if (l.kind == VideoLayer.SOUND) AudioPeaks.get(l.source) ?: run { AudioPeaks.load(this, l.source, luma.readIo) { runOnUiThread { if (!isDestroyed) refreshTimeline() } }; null } else null
-            val bar = StudioTimeline.Bar(i, l.at, l.length, when (l.kind) { VideoLayer.VIDEO -> 0xff4dc3ff.toInt(); VideoLayer.IMAGE -> 0xffff6fb5.toInt(); VideoLayer.TEXT -> 0xffffd60a.toInt(); else -> 0xffa78bfa.toInt() },
-                (if (l.hidden) "(ซ่อน) " else "") + layerName(l), !l.locked, pk, l.from, 0L, l.keyList.map { it.t })
-            val at = firstLayerLane + laneOf[i]
-            while (lanes.size <= at) lanes += mutableListOf<StudioTimeline.Bar>()
-            lanes[at] += bar
+            return StudioTimeline.Bar(i, l.at, l.length, when (l.kind) { VideoLayer.VIDEO -> 0xff4dc3ff.toInt(); VideoLayer.IMAGE -> 0xffff6fb5.toInt(); VideoLayer.TEXT -> 0xffffd60a.toInt(); else -> 0xffa78bfa.toInt() },
+                (if (l.hidden) "(ซ่อน) " else "") + layerName(l), !l.locked, pk, l.from, 0L, l.keyList.map { it.t }) }
+        fun addGroup(key: Int, name: String, icon: String, audio: Boolean, off: Boolean, locked: Boolean, bars: List<StudioTimeline.Bar>) {
+            if (bars.isEmpty()) return
+            val rowOf = StudioMath.pack(bars.map { it.at to (it.at + it.len) }, 4); val rows = (rowOf.maxOrNull() ?: 0) + 1
+            repeat(rows) { lanes += mutableListOf<StudioTimeline.Bar>() }; val base = lanes.size - rows
+            bars.forEachIndexed { i, b -> lanes[base + rowOf[i]] += b }
+            groups += StudioTimeline.Group(key, name, icon, off, locked, true, audio, rows)
         }
+        val all = layers.indices
+        val pic = all.filter { layers[it].kind == VideoLayer.IMAGE || layers[it].kind == VideoLayer.VIDEO }
+        val txt = all.filter { layers[it].kind == VideoLayer.TEXT }
+        val snd = all.filter { layers[it].kind == VideoLayer.SOUND && !layers[it].music }
+        val mus = all.filter { layers[it].kind == VideoLayer.SOUND && layers[it].music }
+        addGroup(1, "ภาพ", LAYERS, false, pic.all { layers[it].hidden }, pic.all { layers[it].locked }, pic.map { barOf(it) })
+        addGroup(2, "ข้อความ", "M5 6h14 M12 6v13 M9 19h6", false, txt.all { layers[it].hidden }, txt.all { layers[it].locked }, txt.map { barOf(it) })
+        addGroup(3, "เสียงคลิป", Icons.SOUND, true, snd.all { layers[it].hidden }, snd.all { layers[it].locked }, snd.map { barOf(it) })
+        val musicBar = music?.let { m -> val pk = AudioPeaks.get(m); if (pk == null) AudioPeaks.load(this, m, luma.readIo) { runOnUiThread { if (!isDestroyed) refreshTimeline() } }
+            StudioTimeline.Bar(-1, 0, total, 0xff34d399.toInt(), musicName, false, pk, 0L, (pk?.size ?: 0).toLong() * AudioPeaks.STEP_MS) }
+        addGroup(4, "เพลง", "M9 18V6l10-2v12 M9 18a3 3 0 1 1-3-3 M19 16a3 3 0 1 1-3-3", true, musicOff(), mus.isNotEmpty() && mus.all { layers[it].locked }, listOfNotNull(musicBar) + mus.map { barOf(it) })
+        timeline.groups = groups
         timeline.clips = list; timeline.lanes = lanes; timeline.selected = if (barActive) -1 else seq.indexOf(playIndex).coerceAtLeast(0); timeline.seams = if (extras.isEmpty()) emptyList() else seamLabels(); timeline.seamIcons = if (extras.isEmpty()) emptyList() else order().map { k -> TRANSITION_ICONS.getOrNull(kindFor(k)) }; timeline.seamSpans = if (extras.isEmpty()) emptyList() else order().map { k -> VideoEdit.joinOutMs(joinMsOf(k)) to VideoEdit.joinInMs(joinMsOf(k)) }; timeline.marks = markers
         timeline.selectedBar = if (barActive && layerPick in layers.indices) layerPick else -2
-        if (lanes.size != laneCount) { laneCount = lanes.size; val full = dp(68) + (laneDp() * resources.displayMetrics.density * lanes.size).toInt(); timeline.layoutParams = timeline.layoutParams.apply { height = full }
-            timelineScroll.layoutParams = timelineScroll.layoutParams.apply { height = minOf(full, dp(68) + (laneDp() * resources.displayMetrics.density * 3).toInt()) } }
+        val sig = groups.size * 1000 + lanes.size
+        if (sig != laneCount) { laneCount = sig; fitTimeline(true) }
         timeline.playhead = outNow()
         timeline.invalidate()
     }
@@ -687,6 +725,9 @@ class VideoEditorActivity : ComponentActivity() {
         timeline = StudioTimeline(this).apply { contentDescription = "ไทม์ไลน์ ลากเพื่อเลื่อนเวลา แตะคลิปเพื่อเลือก ลากขอบคลิปที่เลือกเพื่อตัด กดค้างแล้วลากเพื่อสลับลำดับ" }
         timeline.onSeek = { t, done -> if (player?.isPlaying == true) togglePlay(); val (k, at) = locate(t); jumpTo(k, at, done) }
         timeline.onPickBar = { id -> if (id >= 0) pickBar(id) }
+        timeline.onGroup = { key, which -> toggleGroup(key, which) }
+        timeline.headFrac = if (getSharedPreferences("camera", MODE_PRIVATE).getBoolean("lane_head_open", true)) 1f else 0f
+        timeline.onHeadOpen = { open -> getSharedPreferences("camera", MODE_PRIVATE).edit().putBoolean("lane_head_open", open).apply() }
         timeline.onAdd = { pickClip.launch(arrayOf("video/*")) }
         timeline.onSeam = { i -> seamSheet(i) }
         timeline.onBar = { id, at, len, shift, done -> layers.getOrNull(id)?.let { cur ->
