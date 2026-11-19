@@ -4021,6 +4021,14 @@ class VideoEditorActivity : ComponentActivity() {
     private fun joinOf(k: Int) = if (k == 0) mainJoin else extras.getOrNull(k - 1)?.join ?: -1
     private fun joinMsOf(k: Int) = if (k == 0) mainJoinMs else extras.getOrNull(k - 1)?.joinMs ?: 0L
     private fun kindFor(k: Int) = joinOf(k).let { if (it < 0) transition else it }
+    /** Why the overlapping change cannot be drawn between clip [from] and clip [to] (the join then stays a plain cut), or null when it can. */
+    private fun overlapProblem(from: Int, to: Int): String? {
+        if (kindFor(to) != VideoEdit.OVERLAP) return null
+        if (cutValid()) return "ซ้อนทับใช้ไม่ได้กับคลิปที่ตัดช่วงกลาง จึงตัดตรงแทน"
+        if (clipSpeed(from) != 1f || clipSpeed(to) != 1f || (if (from == 0) mainCurve else extras.getOrNull(from - 1)?.curve) != null || (if (to == 0) mainCurve else extras.getOrNull(to - 1)?.curve) != null)
+            return "ซ้อนทับใช้ไม่ได้กับคลิปที่ปรับความเร็ว จึงตัดตรงแทน"
+        return if (lapPlan(from, to) == null) "ซ้อนทับต้องมีฟุตเทจเกินท้ายคลิปแรกและก่อนหัวคลิปที่สอง คลิปนี้ไม่มี จึงตัดตรงแทน" else null
+    }
     private fun setJoin(k: Int, kind: Int, ms: Long) { if (k == 0) { mainJoin = kind; mainJoinMs = ms } else extras.getOrNull(k - 1)?.let { it.join = kind; it.joinMs = ms } }
     /** Label for each seam of the timeline: null on the first clip, "" for a plain cut, otherwise the name of the change. */
     private fun seamLabels(): List<String?> = order().mapIndexed { i, k -> if (i == 0) null else if (kindFor(k) == 0) "" else TRANSITIONS[kindFor(k)] }
@@ -4032,7 +4040,8 @@ class VideoEditorActivity : ComponentActivity() {
             col.addView(text("ทรานซิชันก่อนคลิป ${i + 1}", 17f, Glass.TEXT, true).apply { setPadding(0, dp(4), 0, dp(10)) }, -1, -2)
             var kind = kindFor(k); var ms = VideoEdit.joinLength(joinMsOf(k)); var at = VideoEdit.joinAlign(joinMsOf(k))
             val holder = LinearLayout(this)
-            fun apply() { setJoin(k, kind, VideoEdit.joinPack(ms, at)); refreshTimeline() }
+            fun apply() { setJoin(k, kind, VideoEdit.joinPack(ms, at)); refreshTimeline()
+                if (kind == VideoEdit.OVERLAP) order().getOrNull(i - 1)?.let { prev -> overlapProblem(prev, k)?.let { notice(it) } } }
             fun build() {
                 holder.removeAllViews()
                 holder.addView(dropButton(TRANSITIONS[kind]) { v -> menu.show(v, "ทรานซิชัน", TRANSITIONS.mapIndexed { n, name -> GlassMenu.Option(name, TRANSITION_ICONS[n]) }, kind) { n -> kind = n; apply(); build() } }, LinearLayout.LayoutParams(-2, dp(40)))
