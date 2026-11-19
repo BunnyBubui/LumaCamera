@@ -419,18 +419,23 @@ class VideoEditorActivity : ComponentActivity() {
         levelMeter.labelsOnRight = meterSide == 2
     }
     /** The loudness of everything that is sounding now, from the waveforms and the volume of each sound (an estimate, not the final mix). */
-    private fun audioLevel(pos: Long): Float {
-        var m = 0f; val step = AudioPeaks.STEP_MS
+    /** Loudness now, left and right: each sound adds its own left/right envelope (a file without stereo data counts the same on both). */
+    private fun audioLevels(pos: Long): FloatArray {
+        val m = FloatArray(2); val step = AudioPeaks.STEP_MS
+        fun add(u: Uri, at: Long, gain: Float) {
+            val sd = AudioPeaks.sides(u); val pk = if (sd == null) AudioPeaks.get(u) else null
+            val n = sd?.get(0)?.size ?: pk?.size ?: return; if (n == 0) return
+            val i = (at / step).toInt().coerceIn(0, n - 1)
+            if (sd != null) { m[0] += sd[0][i] * gain; m[1] += sd[1][i] * gain } else { m[0] += pk!![i] * gain; m[1] += pk[i] * gain } }
         val k = playIndex
-        if (!isMuted(k)) { val u = clipUri(k); val pk = AudioPeaks.get(u)
-            if (pk == null) AudioPeaks.load(this, u, luma.readIo) { }
-            else if (pk.isNotEmpty()) m += pk[(pos / step).toInt().coerceIn(0, pk.size - 1)] * (if (k == 0) volume else extras.getOrNull(k - 1)?.volume ?: 1f) }
+        if (!isMuted(k)) { val u = clipUri(k)
+            if (AudioPeaks.get(u) == null) AudioPeaks.load(this, u, luma.readIo) { }
+            else add(u, pos, if (k == 0) volume else extras.getOrNull(k - 1)?.volume ?: 1f) }
         val t = outNow()
-        layers.forEach { l -> if (l.kind == VideoLayer.SOUND && !l.hidden && t >= l.at && t < l.at + l.length) AudioPeaks.get(l.source)?.let { pk ->
-            if (pk.isNotEmpty()) m += pk[(((t - l.at) + l.from) / step).toInt().coerceIn(0, pk.size - 1)] * l.volume } }
-        val mu = music
-        if (mu != null && musicVolume > 0f) AudioPeaks.get(mu)?.let { pk -> val mp = musicPlayer
-            if (pk.isNotEmpty() && mp != null) runCatching { m += pk[((mp.currentPosition / step) % pk.size).coerceIn(0, pk.size - 1)] * musicVolume } }
+        layers.forEach { l -> if (l.kind == VideoLayer.SOUND && !l.hidden && t >= l.at && t < l.at + l.length) add(l.source, (t - l.at) + l.from, l.volume) }
+        val mu = music; val mp = musicPlayer
+        if (mu != null && musicVolume > 0f && mp != null) runCatching { val len = (AudioPeaks.sides(mu)?.get(0)?.size ?: AudioPeaks.get(mu)?.size ?: 0) * step.toLong()
+            if (len > 0) add(mu, mp.currentPosition.toLong() % len, musicVolume) }
         return m
     }
     private lateinit var trim: TrimBar
@@ -480,7 +485,7 @@ class VideoEditorActivity : ComponentActivity() {
             } else if (playIndex > 0 && !switching) extras.getOrNull(playIndex - 1)?.let { e ->
                 if (lapTick(pos, e.to)) trim.playhead = pos.coerceIn(e.from, e.to)
                 else if (pos >= e.to - 30) { if (!stopAtEnd()) playClip(nextOf(playIndex)) } else { maybeOut(pos, e.to); trim.playhead = pos.coerceIn(e.from, e.to) } }
-            showTime(); syncLayerSound(true); showMotion(pos); levelMeter.push(audioLevel(pos))
+            showTime(); syncLayerSound(true); showMotion(pos); audioLevels(pos).let { levelMeter.push(it[0], it[1]) }
             if (++tickCount % 15 == 0) preloadNext()
         } else if (prepared && ++tickCount % 4 == 0) syncLayerSound(false)
         postPreviewTick(33L)
@@ -730,19 +735,19 @@ class VideoEditorActivity : ComponentActivity() {
 
         val bar = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(10), dp(14), dp(6)) }
         // Close at the left edge, export at the right, undo and redo exactly in the middle of the bar.
-        val barRow = FrameLayout(this); bar.addView(barRow, LinearLayout.LayoutParams(-1, dp(48)))
-        barRow.addView(EditorKit.round(this, Icons.CLOSE, "ปิดตัวตัดต่อ") { leave() }, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.START))
+        val barRow = FrameLayout(this); bar.addView(barRow, LinearLayout.LayoutParams(-1, dp(42)))
+        barRow.addView(EditorKit.round(this, Icons.CLOSE, "ปิดตัวตัดต่อ") { leave() }, FrameLayout.LayoutParams(dp(42), dp(42), Gravity.START))
         // Quiet status that appears for a moment each time the project has been saved on its own.
         saveLabel = text("", 12f, Glass.TEXT3).apply { alpha = 0f; setPadding(dp(10), 0, 0, 0); importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
         undoButton = EditorKit.round(this, "M9 14L4 9l5-5 M4 9h10a6 6 0 0 1 0 12h-3", "ย้อนกลับ") { stepHistory(true) }
         redoButton = EditorKit.round(this, "M15 14l5-5-5-5 M20 9H10a6 6 0 0 0 0 12h3", "ทำซ้ำ") { stepHistory(false) }
         val history = LinearLayout(this).apply { gravity = Gravity.CENTER }
-        history.addView(undoButton, LinearLayout.LayoutParams(dp(48), dp(48)).apply { rightMargin = dp(8) })
-        history.addView(redoButton, LinearLayout.LayoutParams(dp(48), dp(48)))
-        barRow.addView(history, FrameLayout.LayoutParams(-2, dp(48), Gravity.CENTER))
+        history.addView(undoButton, LinearLayout.LayoutParams(dp(42), dp(42)).apply { rightMargin = dp(8) })
+        history.addView(redoButton, LinearLayout.LayoutParams(dp(42), dp(42)))
+        barRow.addView(history, FrameLayout.LayoutParams(-2, dp(42), Gravity.CENTER))
         paintHistory()
         exportButton = EditorKit.primary(this, "ส่งออก") { export() }
-        barRow.addView(exportButton, FrameLayout.LayoutParams(-2, dp(48), Gravity.END))
+        barRow.addView(exportButton, FrameLayout.LayoutParams(-2, dp(42), Gravity.END))
         root.addView(bar, -1, -2)
         // Under the buttons, so the "saved" note is never hidden by them.
         saveLabel?.setPadding(0, 0, 0, 0); root.addView(saveLabel, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.CENTER_HORIZONTAL })
@@ -760,7 +765,7 @@ class VideoEditorActivity : ComponentActivity() {
         captionView = text("", 20f, Glass.TEXT, true).apply { gravity = Gravity.CENTER; maxLines = 3; setShadowLayer(6f, 0f, 2f, 0x99000000.toInt()); importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
         stage.addView(captionView, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
         levelMeter = StudioLevelMeter(this).apply { importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO; isClickable = false }
-        stage.addView(levelMeter, FrameLayout.LayoutParams(dp(40), -1))
+        stage.addView(levelMeter, FrameLayout.LayoutParams(dp(56), -1))
         applyMeter()
         overlayHost = FrameLayout(this).apply { clipChildren = true; clipToPadding = true; clipToOutline = false }
         stage.addView(overlayHost, FrameLayout.LayoutParams(1, 1, Gravity.TOP or Gravity.START))
@@ -794,10 +799,10 @@ class VideoEditorActivity : ComponentActivity() {
             { if (player?.isPlaying == true) togglePlay(); val (k, at) = locate(totalOut()); jumpTo(k, (at - 40).coerceAtLeast(clipFrom(k)), true) })
         transport.addView(EditorKit.round(this, FULL_ICON, "เต็มจอ") { setFull(true) }, LinearLayout.LayoutParams(dp(44), dp(44)).apply { rightMargin = dp(14) })   // full screen on the left; the menu button is as wide on the right, so play stays in the middle
         transport.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
-        transport.addView(back, LinearLayout.LayoutParams(dp(48), dp(48)).apply { rightMargin = dp(14) })
+        transport.addView(back, LinearLayout.LayoutParams(dp(42), dp(42)).apply { rightMargin = dp(14) })
         transport.addView(FrameLayout(this).apply { background = glass(28, 0x40ffffff); isClickable = true; contentDescription = "เล่นหรือหยุด"; glassTouch(); setOnClickListener { togglePlay() }
-            addView(playIcon, FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER)) }, dp(56), dp(56))
-        transport.addView(fwd, LinearLayout.LayoutParams(dp(48), dp(48)).apply { leftMargin = dp(14) })
+            addView(playIcon, FrameLayout.LayoutParams(dp(24), dp(24), Gravity.CENTER)) }, dp(50), dp(50))
+        transport.addView(fwd, LinearLayout.LayoutParams(dp(42), dp(42)).apply { leftMargin = dp(14) })
         transport.addView(View(this), LinearLayout.LayoutParams(0, 1, 1f))
         // Marker flag, frame grid, save picture and freeze frame live in one menu button at the right, where the fold button used to be.
         moreButton = EditorKit.round(this, "M5 12h.01 M12 12h.01 M19 12h.01", "เมนูเพิ่มเติม") { moreMenu() }

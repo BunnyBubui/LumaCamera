@@ -213,13 +213,15 @@ class GalleryActivity : ComponentActivity() {
         val kind = albumKind; val albumsTab = section == 1 && kind == null
         favouritesOnly = kind == "fav"
         luma.readIo.execute {
-            val shot = id?.let { luma.shots.get(it) }
+            val shot = runCatching { id?.let { luma.shots.get(it) } }.getOrNull()
             val granted = mediaGranted()
             // Everything the app may read, or only Lumora's own pictures before access is given (and in the Lumora album).
-            val useDevice = kind != "lumora" && granted
-            val items = if (useDevice) deviceItems() else lumaItems()
-            val lumora = if (!albumsTab) emptyList() else if (useDevice) lumaItems() else items
-            val favourites = if (albumsTab && granted) favouriteCount() else 0
+            // A read that fails must not leave the page blank (the picker once showed nothing at all): it falls back to a shorter list.
+            val deviceList = if (kind != "lumora" && granted) runCatching { deviceItems() }.getOrNull() else null
+            val useDevice = deviceList != null
+            val items: List<Item> = deviceList ?: runCatching { lumaItems() }.getOrDefault(emptyList())
+            val lumora: List<Item> = if (!albumsTab) emptyList() else if (useDevice) runCatching { lumaItems() }.getOrDefault(emptyList()) else items
+            val favourites = if (albumsTab && granted) runCatching { favouriteCount() }.getOrDefault(0) else 0
             runOnUiThread {
                 if (version == readVersion && !isDestroyed) {
                     device = useDevice; lastItems = items

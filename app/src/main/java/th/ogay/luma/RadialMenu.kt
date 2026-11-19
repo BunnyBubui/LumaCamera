@@ -106,17 +106,20 @@ class RadialMenu(c: Context) : FrameLayout(c) {
         // Sliding out past the ring still counts for the nearest button (so the finger does not have to stop exactly on it); the reach is generous.
         return if (gap < itemR * 2.2f || (dist > hubR * 1.8f && gap < ringR)) best else -1
     }
+    /** Sizes one button. A button still flying out must keep its flight: stopping its animation to resize it would freeze it half way, so the move to its spot is given again with the size. */
+    private fun grow(i: Int, k: Float, ms: Long) { val (sx, sy) = spot(i)
+        cells[i].animate().cancel(); cells[i].animate().x(sx - itemR).y(sy - itemR).alpha(1f).scaleX(k).scaleY(k).setStartDelay(0).setInterpolator(ease).setDuration(ms).start() }
     private fun point(i: Int) {
         if (i == target) return
         val old = target; target = i
         // The chosen button grows and turns orange with a dark symbol; the one left goes back to its small dark self.
-        if (old >= 0) { cells[old].background = circle(0xf0282830.toInt(), 0x33ffffff); icons[old].tint = Color.WHITE; cells[old].animate().cancel(); cells[old].animate().scaleX(1f).scaleY(1f).setInterpolator(ease).setDuration(220).start() }
+        if (old >= 0) { cells[old].background = circle(0xf0282830.toInt(), 0x33ffffff); icons[old].tint = Color.WHITE; grow(old, 1f, 220) }
         if (i < 0) { white.animate().cancel(); white.animate().alpha(0f).scaleX(1f).scaleY(1f).x(cx - white.layoutParams.width / 2f).y(cy - white.layoutParams.height / 2f).setDuration(140).start()
             caption.animate().alpha(0f).setDuration(100).start(); return }
         Glass.tick(this)
         val (sx, sy) = spot(i)
         cells[i].background = circle(Glass.ACCENT, 0xffffffff.toInt()); icons[i].tint = Glass.ON_ACCENT
-        cells[i].animate().cancel(); cells[i].animate().scaleX(1.32f).scaleY(1.32f).setInterpolator(ease).setDuration(300).start()
+        grow(i, 1.32f, 300)
         white.animate().cancel()
         // The white ring starts from where it was (or the hub) and bounces to the button, a little bigger than it.
         white.animate().alpha(1f).scaleX(1.32f).scaleY(1.32f).x(sx - white.layoutParams.width / 2f).y(sy - white.layoutParams.height / 2f).setInterpolator(ease).setDuration(380).start()
