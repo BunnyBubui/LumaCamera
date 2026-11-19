@@ -189,6 +189,8 @@ fun Activity.showStudioSettings(rawAvailable: Boolean, closed: () -> Unit = {}, 
         listOf("FRAME M6.5 16.5h5", "FRAME M12.5 16.5h5", "FRAME M6.5 7.5h5", "FRAME M12.5 7.5h5").map { it.replace("FRAME", "M3.5 4.5h17v15h-17z") })
     field("โฟลเดอร์ใน Pictures", Icons.FOLDER, "folder", "Lumora") { it.replace(Regex("[^\\p{L}\\p{N} _-]"), "").take(40).ifBlank { "Lumora" } }
     toggle("บันทึก GPS", Icons.PIN, "gps", note = "ใช้ตำแหน่งล่าสุดของระบบ เมื่อได้รับสิทธิ์เท่านั้น")
+    section("ตัดต่อวิดีโอ")
+    row("ปุ่มลัดตัดต่อ", EditorKit.SCISSORS, "เลือกปุ่มลัดบนวงล้อในตัวตัดต่อ ได้สูงสุด 8 ปุ่มต่อแบบ", IconView(this, Icons.CHEVRON_RIGHT, 2f).apply { tint = Glass.TEXT3; layoutParams = LinearLayout.LayoutParams(dp(18), dp(18)) }) { RingPrefs.open(this) }
     section("เกี่ยวกับ")
     row("คืนค่าเริ่มต้นของโหมดถ่าย", Icons.RESET, "สัดส่วน ฟิลเตอร์ ตั้งเวลา ครอปเลนส์ ค่า f และรูปแบบไฟล์ของทุกโหมด") {
         AlertDialog.Builder(this).setTitle("คืนค่าเริ่มต้นของทุกโหมด?").setMessage("เฉพาะค่าที่ปรับในโหมดถ่าย ส่วนค่าอื่นไม่เปลี่ยน")

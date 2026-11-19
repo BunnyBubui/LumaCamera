@@ -43,10 +43,12 @@ class SettingsPage(private val a: Activity, title: String, private val changed: 
         column.addView(ScrollView(a).apply { isVerticalScrollBarEnabled = false; addView(body) }, LinearLayout.LayoutParams(-1, 0, 1f))
     }
 
-    fun section(title: String) {
-        body.addView(a.text(title, 13f, Glass.TEXT2, true).apply { setPadding(a.dp(16), a.dp(18), 0, a.dp(8)) }, -1, -2)
+    fun section(title: String): android.widget.TextView {
+        val head = a.text(title, 13f, Glass.TEXT2, true).apply { setPadding(a.dp(16), a.dp(18), 0, a.dp(8)) }
+        body.addView(head, -1, -2)
         group = LinearLayout(a).apply { orientation = LinearLayout.VERTICAL; background = a.glass(22) }
         body.addView(group, -1, -2)
+        return head
     }
     fun row(title: String, icon: String, note: String = "", end: View? = null, click: ((View) -> Unit)? = null): LinearLayout {
         val r = LinearLayout(a).apply {

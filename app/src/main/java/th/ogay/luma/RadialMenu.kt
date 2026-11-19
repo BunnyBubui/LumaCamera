@@ -43,7 +43,7 @@ class RadialMenu(c: Context) : FrameLayout(c) {
     private val cells = ArrayList<FrameLayout>(); private val icons = ArrayList<IconView>()
 
     init {
-        clipChildren = false; clipToPadding = false; visibility = GONE; elevation = 24 * d
+        clipChildren = false; clipToPadding = false; visibility = GONE; elevation = 4 * d   // lower than the tool card, so the card covers the ring
         addView(disc, LayoutParams((2 * discR).toInt(), (2 * discR).toInt())); disc.x = cx - discR; disc.y = cy - discR
         addView(white, LayoutParams((2 * itemR + 8 * d).toInt(), (2 * itemR + 8 * d).toInt()))
         addView(hub, LayoutParams((2 * hubR).toInt(), (2 * hubR).toInt()))

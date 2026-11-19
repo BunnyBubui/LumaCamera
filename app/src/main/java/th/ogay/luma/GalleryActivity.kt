@@ -1480,6 +1480,8 @@ class GalleryActivity : ComponentActivity() {
             toggle("เล่นวิดีโออัตโนมัติ", Icons.VIDEO, "video_autoplay", false, "เริ่มเล่นทันทีที่เปิดหรือปัดมาที่วิดีโอ ปิดไว้จะเล่นเมื่อแตะปุ่มเล่น ปัดดูได้ลื่นกว่า")
             choose("แสงสะท้อนรอบวิดีโอ", Icons.VIDEO, Ambient.KEY_VIDEO, Ambient.LABELS, Ambient.LABELS.indices.toList(), Ambient.video(this@GalleryActivity), notes = listOf("ไม่มีแสงรอบวิดีโอ", "นุ่มมาก เบาเครื่องและแบตเตอรี่", "นุ่ม สมดุล", "คมขึ้น ตามภาพที่เล่นถี่ขึ้น", "คมและละเอียดที่สุด อัปเดตถี่ที่สุด กินแบตเตอรี่มากสุด"))
             choose("เสียงเมื่อเริ่มเล่น", Icons.SOUND, "video_sound_i", listOf("เปิดเสียงทุกครั้ง", "ปิดเสียงทุกครั้ง"), listOf(1, 0), 1, notes = listOf("ได้ยินเสียงทันที", "แตะปุ่มลำโพงเพื่อเปิดเสียง"))
+            section("ตัดต่อวิดีโอ")
+            action("ปุ่มลัดตัดต่อ", EditorKit.SCISSORS, "เลือกปุ่มลัดบนวงล้อในตัวตัดต่อ ได้สูงสุด 8 ปุ่มต่อแบบ") { RingPrefs.open(this@GalleryActivity) }
             section("การลบ")
             toggle("ถามก่อนลบภาพของ Lumora", TRASH, "gallery_ask_delete", true, "ภาพจากแอปอื่น ระบบจะถามเองเสมอ")
             section("AI")

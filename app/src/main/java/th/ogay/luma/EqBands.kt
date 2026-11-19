@@ -79,11 +79,13 @@ object EqBands {
         }
         override fun onTouchEvent(e: MotionEvent): Boolean {
             when (e.actionMasked) {
-                MotionEvent.ACTION_DOWN -> { downX = e.x; downY = e.y; mode = 0; return true }
+                // The panel scrolls up and down and the strip scrolls sideways, and both would take the drag first. So they are kept out from the
+                // touch down; once the finger moves sideways, they get the touch back and the strip scrolls.
+                MotionEvent.ACTION_DOWN -> { downX = e.x; downY = e.y; mode = 0; parents(true); return true }
                 MotionEvent.ACTION_MOVE -> {
                     if (mode == 0) { val dx = abs(e.x - downX); val dy = abs(e.y - downY)
-                        if (dy > slop && dy > dx) { mode = 2; var p = parent; while (p != null) { p.requestDisallowInterceptTouchEvent(true); p = p.parent } }
-                        else if (dx > slop) mode = 1 }
+                        if (dy > slop && dy >= dx) mode = 2
+                        else if (dx > slop) { mode = 1; parents(false) } }
                     if (mode == 2) set(valueAt(e.y))
                 }
                 MotionEvent.ACTION_UP -> { if (mode == 0) set(valueAt(e.y)); mode = 0; performClick() }
@@ -91,6 +93,7 @@ object EqBands {
             }
             return true
         }
+        private fun parents(block: Boolean) { var p = parent; while (p != null) { p.requestDisallowInterceptTouchEvent(block); p = p.parent } }
         private fun set(v: Float) { if (db[i] != v) { db[i] = v; Glass.tick(this); invalidate(); changed() } }
     }
 }

@@ -1421,7 +1421,7 @@ class VideoEditorActivity : ComponentActivity() {
             val tw = (videoW * fit).toInt(); val th = (videoH * fit).toInt()
             (texture2.layoutParams as FrameLayout.LayoutParams).let { it.width = tw; it.height = th; texture2.layoutParams = it }
             texture2.rotation = turns * 90f; texture2.scaleX = if (mirror) -1f else 1f; texture2.scaleY = 1f; texture2.translationX = sx2; texture2.translationY = sy2
-            texture2.clipBounds = if (turns % 2 == 1 || (sx2 == 0f && sy2 == 0f)) null else shiftWindow(tw, th, sx2, sy2, visible, mirror)
+            texture2.clipBounds = if (turns % 2 == 1 || (sx2 == 0f && sy2 == 0f && !enlarged())) null else shiftWindow(tw, th, sx2, sy2, visible, mirror)
         } else {
             val f = max(visible.width() / extra.w, visible.height() / extra.h)
             val tw = (extra.w * f).toInt(); val th = (extra.h * f).toInt()
@@ -1991,14 +1991,17 @@ class VideoEditorActivity : ComponentActivity() {
     /** Size of the frame (the picture area before any crop) that fits the stage: the clip's own shape, or the crop shape once the clip is turned a quarter. */
     private fun frameFit(aw: Int, ah: Int): Pair<Float, Float> {
         val side = turns % 2 == 1
-        val ratio = if (side) (cropRatio().takeIf { it > 0f } ?: (videoW.toFloat() / videoH)) else videoW.toFloat() / videoH
+        val ratio = if (side || enlarged()) (cropRatio().takeIf { it > 0f } ?: (videoW.toFloat() / videoH)) else videoW.toFloat() / videoH
         return if (aw.toFloat() / ah > ratio) (ah * ratio) to ah.toFloat() else aw.toFloat() to (aw / ratio)
     }
     /** Scale of the main picture on the stage: it fits whole inside the frame, turned or not. */
     private fun mainScale(aw: Int, ah: Int): Float {
         val (fw, fh) = frameFit(aw, ah)
-        return if (turns % 2 == 1) min(fw / videoH, fh / videoW) else min(aw.toFloat() / videoW, ah.toFloat() / videoH)
+        return if (turns % 2 == 1) min(fw / videoH, fh / videoW) else if (enlarged()) max(fw / videoW, fh / videoH) else min(aw.toFloat() / videoW, ah.toFloat() / videoH)
     }
+    /** An applied crop fills the picture area: the frame grows to the stage and the clip covers it (as the export does). While a new shape is only being tried, the whole clip shows with the cut-off part dimmed. */
+    private fun enlarged() = turns % 2 == 0 && cropRatio() > 0f && cropApplied()
+    private fun cropApplied() = tool != 3 || !(cropIndex != cropDone || (CROPS[cropIndex].second < 0f && customCrop != cropDoneCustom))
     /** Horizontal shift of the picture on screen for the clip on screen, in px (the transitions move the picture from here). */
     private var shiftX = 0f
     /** The part of a picture that stays visible once it has moved by [sx], [sy] px inside the frame, in the picture's own pixels. */
@@ -2017,7 +2020,7 @@ class VideoEditorActivity : ComponentActivity() {
         val w = fw.toInt(); val h = fh.toInt()
         val video = RectF((stage.width - w) / 2f, (stage.height - h) / 2f, (stage.width + w) / 2f, (stage.height + h) / 2f)
         // A quarter turn turns only the picture inside the frame; the frame itself changes only with the crop.
-        val visible = if (side) RectF(video) else cropRect(video); mask.set(video, visible); this.visible.set(visible); frameGrid.box.set(visible); frameGrid.invalidate()
+        val visible = if (side || enlarged()) RectF(video) else cropRect(video); mask.set(video, visible); this.visible.set(visible); frameGrid.box.set(visible); frameGrid.invalidate()
         (overlayHost.layoutParams as FrameLayout.LayoutParams).let { lp -> val w = visible.width().toInt().coerceAtLeast(1); val h = visible.height().toInt().coerceAtLeast(1)
             if (lp.width != w || lp.height != h || lp.leftMargin != visible.left.toInt() || lp.topMargin != visible.top.toInt()) { lp.width = w; lp.height = h; lp.leftMargin = visible.left.toInt(); lp.topMargin = visible.top.toInt(); overlayHost.layoutParams = lp } }
         val extra = extras.getOrNull(playIndex - 1)
@@ -2027,7 +2030,7 @@ class VideoEditorActivity : ComponentActivity() {
             (texture.layoutParams as FrameLayout.LayoutParams).let { if (it.width != tw || it.height != th) { it.width = tw; it.height = th; texture.layoutParams = it } }
             texture.rotation = turns * 90f; texture.scaleX = if (mirror) -1f else 1f
             // Moved inside the frame: the part that leaves the frame is cut off (a turned picture is not cut, only moved).
-            texture.clipBounds = if (side || (sx == 0f && sy == 0f)) null else shiftWindow(tw, th, sx, sy, visible, mirror)
+            texture.clipBounds = if (side || (sx == 0f && sy == 0f && !enlarged())) null else shiftWindow(tw, th, sx, sy, visible, mirror)
         } else {
             // An added clip fills the kept frame and is cut at the sides, as the export does.
             val f = max(visible.width() / extra.w, visible.height() / extra.h)
@@ -3217,26 +3220,42 @@ class VideoEditorActivity : ComponentActivity() {
     // ---------- Shortcut ring over the empty space above the play row ----------
     private var radial: RadialMenu? = null; private var radialKind = 0
     /** Shows the ring's hub while a clip or a layer bar is picked; its buttons are the main edits for that kind of thing. */
+    /** Runs one ring button on the picked layer bar ([bar]) or on the clip on screen. */
+    private fun ringRun(id: String, bar: Boolean) {
+        when (id) {
+            "split" -> if (bar) splitLayer(layerPick, outNow()) else splitAtPlayhead()
+            "start" -> if (bar) trimLayer(layerPick, outNow(), true) else trimClip(true)
+            "end" -> if (bar) trimLayer(layerPick, outNow(), false) else trimClip(false)
+            "dup" -> if (bar) duplicateBar() else duplicateClip()
+            "del" -> if (bar) deleteBar() else { deleteClip(); return }
+            "silence" -> cutSilence()
+            "scenes" -> findScenes()
+            "markers" -> splitAtMarkers()
+            "reverse" -> reverseClip()
+            "detach" -> detachSound()
+            "full" -> { val e = extras.getOrNull(playIndex - 1); if (e != null) { e.from = 0; e.to = e.duration; showClipOnBar() } else { setRange(0, duration); cutFrom = -1; cutTo = -1 }; showTime() }
+            "mirror" -> { val ex = extras.getOrNull(playIndex - 1); if (ex != null) ex.mirror = !ex.mirror else mirror = !mirror; layoutVideo() }
+            "flag" -> { val now = outNow(); val near = markers.firstOrNull { abs(it - now) <= 150 }; if (near != null) markers.remove(near) else { markers += now; markers.sort() }; refreshTimeline() }
+            "freeze" -> freezeFrame()
+            "still" -> saveFrame()
+            "go_layer" -> { showTool(LAYER_TOOL); if (collapsed) showCard(); return }
+            "go_sound" -> { showTool(9); if (collapsed) showCard(); return }
+            "go_speed" -> { showTool(2); if (collapsed) showCard(); return }
+            "go_crop" -> { showTool(3); if (collapsed) showCard(); return }
+        }
+        showTool(tool, false)
+    }
     private fun syncRadial() {
         if (!::transportRow.isInitialized) return
         val bar = barActive && layers.getOrNull(layerPick) != null
         val clip = !barActive && pickedClip >= 0 && pickedClip == playIndex
         if (landscape() || (!bar && !clip)) { radialKind = 0; radial?.dismiss(); return }
         val r = radial ?: RadialMenu(this).also { radial = it; (window.decorView as FrameLayout).addView(it, FrameLayout.LayoutParams(it.size, it.size, Gravity.TOP or Gravity.START)) }
-        val del = "M5 7h14 M9 7V4h6v3 M7 7l1 13h8l1-13"; val dup = "M8 8h11v11H8z M5 16V5h11"
-        val kind = if (bar) 1 else 2
-        if (kind != radialKind) { radialKind = kind; r.items = if (bar) listOf(
-            RadialMenu.Item(EditorKit.SPLIT, "แบ่งแยก") { splitLayer(layerPick, outNow()); showTool(tool, false) },
-            RadialMenu.Item(EditorKit.START, "เริ่มที่นี่") { trimLayer(layerPick, outNow(), true); showTool(tool, false) },
-            RadialMenu.Item(EditorKit.END, "จบที่นี่") { trimLayer(layerPick, outNow(), false); showTool(tool, false) },
-            RadialMenu.Item(dup, "ทำสำเนา") { duplicateBar(); showTool(tool, false) },
-            RadialMenu.Item(del, "ลบ") { deleteBar(); showTool(tool, false) })
-        else listOf(
-            RadialMenu.Item(EditorKit.SPLIT, "แบ่งแยก") { splitAtPlayhead() },
-            RadialMenu.Item(EditorKit.START, "เริ่มที่นี่") { trimClip(true) },
-            RadialMenu.Item(EditorKit.END, "จบที่นี่") { trimClip(false) },
-            RadialMenu.Item(dup, "ทำสำเนา") { duplicateClip(); showTool(tool, false) },
-            RadialMenu.Item(del, "ลบ") { deleteClip() }) }
+        val cat = if (bar) (if (layers[layerPick].visual) RingPrefs.VISUAL else RingPrefs.SOUND) else RingPrefs.CLIP
+        val kind = cat + 1
+        if (kind != radialKind) { radialKind = kind
+            val prefs = getSharedPreferences("camera", MODE_PRIVATE)
+            r.items = RingPrefs.chosen(prefs, cat).mapNotNull { id -> RingPrefs.find(cat, id) }.map { act -> RadialMenu.Item(act.icon, act.name) { ringRun(act.id, bar) } } }
         placeRadial(); r.reveal()
     }
     /** The hub sits in the free space just above the play row, in the middle. */
@@ -3291,8 +3310,10 @@ class VideoEditorActivity : ComponentActivity() {
         val meterOpt = GlassMenu.Option("มิเตอร์เสียง", "M5 20V10 M10 20V4 M15 20v-8 M20 20V7", when (meterSide) { 0 -> "ซ่อนอยู่"; 2 -> "แสดงที่ฝั่งซ้าย"; else -> "แสดงที่ฝั่งขวา" } + "  ▾  ตั้งค่า")
         val laneNow = laneDp().toInt(); val laneIdx = when { laneNow <= 24 -> 0; laneNow <= 30 -> 1; else -> 2 }
         val rowsOpt = GlassMenu.Option("ขนาดแถวบนไทม์ไลน์", "M4 6h16v4H4z M4 14h16v4H4z", listOf("เล็ก", "กลาง", "ใหญ่")[laneIdx] + "  ▾  เลือกขนาด")
-        toolMenu.show(moreButton, "เมนูเพิ่มเติม", listOf(flag, grid, save, freeze, meterOpt, rowsOpt), -1) { i ->
+        val ringOpt = GlassMenu.Option("ตั้งค่าปุ่มลัดตัดต่อ", EditorKit.SCISSORS, "เลือกปุ่มบนวงล้อ ได้สูงสุด 8 ปุ่ม")
+        toolMenu.show(moreButton, "เมนูเพิ่มเติม", listOf(flag, grid, save, freeze, meterOpt, rowsOpt, ringOpt), -1) { i ->
             when (i) {
+                6 -> RingPrefs.open(this) { radialKind = 0; syncRadial() }
                 5 -> moreButton.post { toolMenu.show(moreButton, "ขนาดแถวบนไทม์ไลน์", listOf(
                     GlassMenu.Option("แถวเล็ก", "M4 10h16 M4 14h16"), GlassMenu.Option("แถวกลาง", "M4 8h16 M4 12h16 M4 16h16"), GlassMenu.Option("แถวใหญ่", "M4 5h16v6H4z M4 13h16v6H4z")), laneIdx) { k ->
                     val v = listOf(24, 30, 40)[k]; getSharedPreferences("camera", MODE_PRIVATE).edit().putInt("lane_dp", v).apply(); timeline.laneDp = v.toFloat(); laneCount = -1; refreshTimeline() } }
@@ -3316,7 +3337,9 @@ class VideoEditorActivity : ComponentActivity() {
         val dir = if (animate) TOOL_IDS.indexOf(i).compareTo(TOOL_IDS.indexOf(tool)) else 0
         if (tool != i) toolScroll.clear()
         if (i == 3 && tool != 3) { cropDone = cropIndex; cropDoneCustom = customCrop }
-        tool = i; toolBar.select(TOOL_IDS.indexOf(i).coerceAtLeast(1), animate)
+        val leavingCrop = tool == 3 && i != 3
+        if (leavingCrop) { cropDone = cropIndex; cropDoneCustom = customCrop }   // a shape left chosen counts as applied
+        tool = i; if (leavingCrop) layoutVideo(); toolBar.select(TOOL_IDS.indexOf(i).coerceAtLeast(1), animate)
         // The layer lanes need room; the preview gives way smoothly.
         if (i != COLOR_TOOL) { handler.removeCallbacks(histTick); hist = null }
         val want = dp(when (i) { LAYER_TOOL -> layerWantDp(); COLOR_TOOL -> 286; 9 -> 260; 2 -> if (speedTab == 1) 276 else 178; 4 -> 236; 3 -> 150; 5 -> 196; 12, 15, 16 -> 220; else -> 124 })
@@ -3560,7 +3583,7 @@ class VideoEditorActivity : ComponentActivity() {
         val bar = LinearLayout(this).apply { gravity = Gravity.CENTER; setPadding(dp(10), dp(4), dp(10), 0)
             addView(text("ยกเลิก", 14.5f, Glass.TEXT, true).apply { gravity = Gravity.CENTER; background = glass(22, 0x26ffffff); isClickable = true; contentDescription = "ยกเลิกการครอป"; glassTouch()
                 setOnClickListener { Glass.tick(this); cropIndex = cropDone; customCrop = cropDoneCustom; layoutVideo(); showTool(3, false) } }, LinearLayout.LayoutParams(0, dp(44), 1f).apply { rightMargin = dp(8) })
-            addView(EditorKit.primary(this@VideoEditorActivity, "ปรับใช้") { cropDone = cropIndex; cropDoneCustom = customCrop; showTool(3, false) }, LinearLayout.LayoutParams(0, dp(44), 1f)) }
+            addView(EditorKit.primary(this@VideoEditorActivity, "ปรับใช้") { cropDone = cropIndex; cropDoneCustom = customCrop; layoutVideo(); showTool(3, false) }, LinearLayout.LayoutParams(0, dp(44), 1f)) }
         fun syncBar() { val on = pending(); bar.visibility = if (on) View.VISIBLE else View.INVISIBLE
             if (on && !Glass.reduced(this)) { bar.alpha = 0f; bar.animate().alpha(1f).setDuration(160).start() } else bar.alpha = 1f }
         col.addView(EditorKit.strip(this, items.map { it to 64 }, CROP_ORDER.indexOf(cropIndex).coerceAtLeast(0), 60, { j -> items.forEachIndexed { q, v -> v.lit(q == j) } }, tapAgain = { j -> if (CROPS[CROP_ORDER[j]].second < 0f) askCustom() }) { j ->
