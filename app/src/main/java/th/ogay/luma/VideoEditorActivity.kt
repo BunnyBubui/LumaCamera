@@ -129,19 +129,21 @@ class VideoEditorActivity : ComponentActivity() {
         var volume = 1f; var curve: FloatArray? = null
         /** Slow camera move over this part ([ClipMotion]). */
         var motion = 0
+        /** Place in the frame: shares of its width and height (right and down are positive). */
+        var offX = 0f; var offY = 0f
         /** This part is flipped left to right (the main clip uses the editor's own flip). */
         var mirror = false
         /** The change into this part from the one before it: -1 follows the default, else 0..6 ([TRANSITIONS]); [joinMs] its length, 0 = usual. */
         var join = -1; var joinMs = 0L
         val len get() = StudioMath.outLen(to - from, speed, curve)
-        fun copy() = Extra(uri, duration, w, h, name, thumb).also { it.from = from; it.to = to; it.speed = speed; it.muted = muted; it.volume = volume; it.curve = curve?.copyOf(); it.motion = motion; it.mirror = mirror; it.join = join; it.joinMs = joinMs }
+        fun copy() = Extra(uri, duration, w, h, name, thumb).also { it.from = from; it.to = to; it.speed = speed; it.muted = muted; it.volume = volume; it.curve = curve?.copyOf(); it.motion = motion; it.offX = offX; it.offY = offY; it.mirror = mirror; it.join = join; it.joinMs = joinMs }
     }
     private var mainFrames: List<Bitmap> = emptyList()
     private val clipFrames = HashMap<String, List<Bitmap>>()
     private fun buildExtras(uris: List<String>, ranges: List<String>?, get: (String) -> Extra?): List<Extra> = uris.mapIndexedNotNull { i, u ->
         get(u)?.copy()?.also { e -> ranges?.getOrNull(i)?.split(",")?.takeIf { it.size >= 2 }?.let { r ->
             e.from = (r[0].toLongOrNull() ?: 0L).coerceIn(0, e.duration); e.to = (r[1].toLongOrNull() ?: e.duration).coerceIn(e.from, e.duration); e.speed = (r.getOrNull(2)?.toFloatOrNull() ?: 1f).coerceIn(0.001f, 5000f); e.muted = r.getOrNull(3) == "m"
-            e.volume = r.getOrNull(4)?.toFloatOrNull() ?: 1f; e.curve = PointCurve.upgrade(r.getOrNull(5)?.split(';')?.mapNotNull { it.toFloatOrNull() }?.toFloatArray(), 1); e.motion = r.getOrNull(6)?.toIntOrNull() ?: 0; e.join = r.getOrNull(7)?.toIntOrNull() ?: -1; e.joinMs = r.getOrNull(8)?.toLongOrNull() ?: 0L } } }
+            e.volume = r.getOrNull(4)?.toFloatOrNull() ?: 1f; e.curve = PointCurve.upgrade(r.getOrNull(5)?.split(';')?.mapNotNull { it.toFloatOrNull() }?.toFloatArray(), 1); e.motion = r.getOrNull(6)?.toIntOrNull() ?: 0; e.join = r.getOrNull(7)?.toIntOrNull() ?: -1; e.joinMs = r.getOrNull(8)?.toLongOrNull() ?: 0L; e.offX = r.getOrNull(9)?.toFloatOrNull() ?: 0f; e.offY = r.getOrNull(10)?.toFloatOrNull() ?: 0f } } }
     private var curveSpeedSet = 0f
     /** While a clip with a speed curve plays, the preview's speed follows the curve (the player itself goes from 0.1× to 8×). */
     private fun followCurve(p: MediaPlayer, pos: Long) {
@@ -808,7 +810,7 @@ class VideoEditorActivity : ComponentActivity() {
         timeline.onEdit = { key, r -> editLane(key, r) }
         timeline.onGroupMove = { key, before -> laneOrder.remove(key); val at = if (before == null) laneOrder.size else laneOrder.indexOf(before).coerceAtLeast(0); laneOrder.add(at, key); refreshTimeline() }
         // A tap on empty space picks nothing: no clip and no layer stays selected.
-        timeline.onClear = { val was = barActive; pickedClip = -1; barActive = false; layerPick = -1; if (tool == 0 || tool == 2 || tool == 9 || was) showTool(tool, false); placeLayers(); refreshTimeline() }
+        timeline.onClear = { val was = barActive; pickedClip = -1; barActive = false; layerPick = -1; if (tool == 0 || tool == 2 || tool == 9 || tool == LAYER_TOOL || was) showTool(tool, false); placeLayers(); refreshTimeline() }
         timeline.headFrac = if (getSharedPreferences("camera", MODE_PRIVATE).getBoolean("lane_head_open", false)) 1f else 0f
         timeline.onHeadOpen = { open -> getSharedPreferences("camera", MODE_PRIVATE).edit().putBoolean("lane_head_open", open).apply() }
         timeline.onAdd = { addClip() }
@@ -828,7 +830,7 @@ class VideoEditorActivity : ComponentActivity() {
             placeLayers(); refreshTimeline() } }
         timeline.onSelect = { i -> val k = order().getOrNull(i) ?: 0; val was = barActive; pickedClip = k; barActive = false
             if (k != playIndex) jumpTo(k, if (k == 0) start else extras[k - 1].from)
-            if (tool == 0 || tool == 2 || tool == 9 || was) showTool(tool, false); refreshTimeline() }
+            if (tool == 0 || tool == 2 || tool == 9 || tool == LAYER_TOOL || was) showTool(tool, false); refreshTimeline() }
         timeline.onTrim = { i, f, t, done -> val k = order().getOrNull(i) ?: 0
             if (k == 0) { start = f; end = t; if (split !in (f + 300)..(t - 300)) split = -1; if (cutValid() && (cutFrom < f + 100 || cutTo > t - 100)) { cutFrom = -1; cutTo = -1 } }
             else extras.getOrNull(k - 1)?.let { it.from = f; it.to = t }
@@ -1414,17 +1416,18 @@ class VideoEditorActivity : ComponentActivity() {
         val pad = dp(8); val aw = stage.width - 2 * pad; val ah = stage.height - 2 * pad
         val fit = mainScale(aw, ah)
         val extra = extras.getOrNull(k - 1)
+        val sx2 = offXOf(k) * visible.width(); val sy2 = offYOf(k) * visible.height()
         if (extra == null) {
             val tw = (videoW * fit).toInt(); val th = (videoH * fit).toInt()
             (texture2.layoutParams as FrameLayout.LayoutParams).let { it.width = tw; it.height = th; texture2.layoutParams = it }
-            texture2.rotation = turns * 90f; texture2.scaleX = if (mirror) -1f else 1f; texture2.scaleY = 1f; texture2.translationX = 0f; texture2.clipBounds = null
+            texture2.rotation = turns * 90f; texture2.scaleX = if (mirror) -1f else 1f; texture2.scaleY = 1f; texture2.translationX = sx2; texture2.translationY = sy2
+            texture2.clipBounds = if (turns % 2 == 1 || (sx2 == 0f && sy2 == 0f)) null else shiftWindow(tw, th, sx2, sy2, visible, mirror)
         } else {
             val f = max(visible.width() / extra.w, visible.height() / extra.h)
             val tw = (extra.w * f).toInt(); val th = (extra.h * f).toInt()
             (texture2.layoutParams as FrameLayout.LayoutParams).let { it.width = tw; it.height = th; texture2.layoutParams = it }
-            texture2.rotation = 0f; texture2.scaleX = if (extra.mirror) -1f else 1f; texture2.scaleY = 1f; texture2.translationX = 0f
-            val cx = (tw - visible.width()) / 2f; val cy = (th - visible.height()) / 2f
-            texture2.clipBounds = Rect(cx.toInt(), cy.toInt(), (cx + visible.width()).toInt(), (cy + visible.height()).toInt())
+            texture2.rotation = 0f; texture2.scaleX = if (extra.mirror) -1f else 1f; texture2.scaleY = 1f; texture2.translationX = sx2; texture2.translationY = sy2
+            texture2.clipBounds = shiftWindow(tw, th, sx2, sy2, visible, extra.mirror)
         }
     }
     private fun lookOnTexture2() {
@@ -1573,7 +1576,7 @@ class VideoEditorActivity : ComponentActivity() {
         when (kindFor(k)) {
             1, 2 -> { dip.setBackgroundColor(if (kindFor(k) == 2) Color.WHITE else Color.BLACK); dip.pivotX = 0f; dip.scaleX = 1f
                 dip.animate().cancel(); dip.animate().alpha(1f).setDuration(ms).start() }
-            4 -> texture.animate().translationX(-texture.width.toFloat()).setInterpolator(Glass.EASE).setDuration(ms).start()
+            4 -> texture.animate().translationX(shiftX - texture.width.toFloat()).setInterpolator(Glass.EASE).setDuration(ms).start()
             5 -> { dip.setBackgroundColor(Color.BLACK); dip.alpha = 1f; dip.pivotX = dip.width.toFloat(); dip.scaleX = 0f
                 dip.animate().cancel(); dip.animate().scaleX(1f).setDuration(ms).start() }
             6 -> if (android.os.Build.VERSION.SDK_INT >= 31) { blurIn = true; android.animation.ValueAnimator.ofFloat(0f, 1f).apply { duration = ms; addUpdateListener { blurPreview(it.animatedValue as Float) }; start() } }
@@ -1585,7 +1588,7 @@ class VideoEditorActivity : ComponentActivity() {
         if (outFor == -1) return
         outFor = -1
         dip.animate().cancel(); dip.alpha = 0f; dip.scaleX = 1f
-        texture.animate().cancel(); texture.translationX = 0f
+        texture.animate().cancel(); texture.translationX = shiftX
         if (blurIn) { blurIn = false; paintLook() }
     }
     // ---- A change between clips, drawn at the place where the playhead is parked (scrubbing, tapping on the timeline) ----
@@ -1600,7 +1603,7 @@ class VideoEditorActivity : ComponentActivity() {
         if (!::holdView.isInitialized || !prepared || player == null || !texture.isAvailable || texture.width < 8 || texture.alpha < 0.5f) return
         val bmp = runCatching { texture.getBitmap(texture.width / 2, texture.height / 2) }.getOrNull() ?: return
         (holdView.layoutParams as FrameLayout.LayoutParams).let { it.width = texture.width; it.height = texture.height; it.gravity = Gravity.CENTER; holdView.layoutParams = it }
-        holdView.animate().cancel(); holdView.rotation = texture.rotation; holdView.scaleX = texture.scaleX; holdView.scaleY = texture.scaleY; holdView.translationX = texture.translationX
+        holdView.animate().cancel(); holdView.rotation = texture.rotation; holdView.scaleX = texture.scaleX; holdView.scaleY = texture.scaleY; holdView.translationX = texture.translationX; holdView.translationY = texture.translationY
         holdView.clipBounds = texture.clipBounds
         holdView.setImageBitmap(bmp); holdView.alpha = 1f; holdView.visibility = View.VISIBLE; holdOn = true
         handler.removeCallbacks(holdOff); handler.postDelayed(holdOff, 1200)
@@ -1620,7 +1623,7 @@ class VideoEditorActivity : ComponentActivity() {
         if (!scrubFx) return
         scrubFx = false; handler.postDelayed(fxClipOff, 250)
         dip.animate().cancel(); dip.alpha = 0f; dip.scaleX = 1f
-        texture.animate().cancel(); texture.translationX = 0f
+        texture.animate().cancel(); texture.translationX = shiftX
         if (scrubPunch) { scrubPunch = false; texture.scaleY = 1f; texture.scaleX = if (if (playIndex == 0) mirror else extras.getOrNull(playIndex - 1)?.mirror == true) -1f else 1f }
         if (blurIn) { blurIn = false; paintLook() }
         stillUri = null; if (::stillView.isInitialized) stillView.visibility = View.GONE
@@ -1674,7 +1677,7 @@ class VideoEditorActivity : ComponentActivity() {
                     when (kin) {
                         1, 2 -> { dip.setBackgroundColor(if (kin == 2) Color.WHITE else Color.BLACK); dip.alpha = a }
                         3 -> { scrubPunch = true; val z = 1f + 0.12f * ease(a); texture.scaleY = z; texture.scaleX = if (playIndex == 0 && mirror || extras.getOrNull(playIndex - 1)?.mirror == true) -z else z }
-                        4 -> texture.translationX = texture.width * ease(a)
+                        4 -> texture.translationX = shiftX + texture.width * ease(a)
                         5 -> { dip.setBackgroundColor(Color.BLACK); dip.alpha = 1f; dip.pivotX = 0f; dip.scaleX = a }
                         6 -> { blurIn = true; blurPreview(a) }
                     }
@@ -1695,7 +1698,7 @@ class VideoEditorActivity : ComponentActivity() {
                 if (om > 0 && remain < om) { val a = (1f - remain / om).coerceIn(0f, 1f); scrubFx = true; fxClip(0)
                     when (kout) {
                         1, 2 -> { dip.setBackgroundColor(if (kout == 2) Color.WHITE else Color.BLACK); dip.alpha = a }
-                        4 -> texture.translationX = -texture.width * ease(a)
+                        4 -> texture.translationX = shiftX - texture.width * ease(a)
                         5 -> { dip.setBackgroundColor(Color.BLACK); dip.alpha = 1f; dip.pivotX = dip.width.toFloat(); dip.scaleX = a }
                         6 -> { blurIn = true; blurPreview(a) }
                     }
@@ -1716,9 +1719,9 @@ class VideoEditorActivity : ComponentActivity() {
             dip.pivotX = 0f; dip.animate().cancel()
             if (inMs > 0) dip.animate().scaleX(0f).setDuration(inMs).withEndAction { dip.alpha = 0f; dip.scaleX = 1f }.start() else { dip.alpha = 0f; dip.scaleX = 1f } }
         else if (dip.alpha > 0f) { dip.animate().cancel(); if (inMs > 0) dip.animate().alpha(0f).setDuration(inMs).start() else dip.alpha = 0f }
-        if (texture.translationX != 0f || (cameOut && kind == 4)) {
-            if (kind == 4 && inMs > 0) { texture.translationX = texture.width.toFloat(); texture.animate().translationX(0f).setInterpolator(Glass.EASE).setDuration(inMs).start() }
-            else { texture.animate().cancel(); texture.translationX = 0f } }
+        if (texture.translationX != shiftX || (cameOut && kind == 4)) {
+            if (kind == 4 && inMs > 0) { texture.translationX = shiftX + texture.width.toFloat(); texture.animate().translationX(shiftX).setInterpolator(Glass.EASE).setDuration(inMs).start() }
+            else { texture.animate().cancel(); texture.translationX = shiftX } }
         if (blurIn && android.os.Build.VERSION.SDK_INT >= 31) {
             blurIn = false
             if (inMs > 0 && kind == 6) { blurPreview(1f); android.animation.ValueAnimator.ofFloat(1f, 0f).apply { duration = inMs
@@ -1914,6 +1917,9 @@ class VideoEditorActivity : ComponentActivity() {
         arrange(); rootBox.post { layoutVideo(); refreshTimeline() }
     }
 
+    private fun offXOf(k: Int) = if (k == 0) mainOffX else extras.getOrNull(k - 1)?.offX ?: 0f
+    private fun offYOf(k: Int) = if (k == 0) mainOffY else extras.getOrNull(k - 1)?.offY ?: 0f
+    private fun setOff(k: Int, x: Float, y: Float) { if (k == 0) { mainOffX = x; mainOffY = y } else extras.getOrNull(k - 1)?.let { it.offX = x; it.offY = y } }
     private fun motionOf(k: Int) = if (k == 0) mainMotion else extras.getOrNull(k - 1)?.motion ?: 0
     /** Moves the preview picture like the export will: scale and sideways shift for how far the clip has played. */
     private fun showMotion(pos: Long) {
@@ -1925,10 +1931,10 @@ class VideoEditorActivity : ComponentActivity() {
         if (outFor != -1) return
         if ((kindFor(playIndex) == 3 || kindFor(playIndex) == 4) && pos - a < VideoEdit.joinInMs(joinMsOf(playIndex))) return
         val (sc, x) = ClipMotion.at(m, (pos - a).toFloat() / (b - a).coerceAtLeast(1))
-        texture.scaleX = base * sc; texture.scaleY = sc; texture.translationX = x * texture.width / 2f
+        texture.scaleX = base * sc; texture.scaleY = sc; texture.translationX = shiftX + x * texture.width / 2f
     }
     /** Takes the move off the preview (when a clip without one starts, or the move is turned off). */
-    private fun clearMotion() { texture.scaleX = if (mirror) -1f else 1f; texture.scaleY = 1f; texture.translationX = 0f }
+    private fun clearMotion() { texture.scaleX = if (mirror) -1f else 1f; texture.scaleY = 1f; texture.translationX = shiftX }
 
     private fun releasePlayer() {
         removePreviewTick(); cancelPendingCut(); dropNext(); prepared = false; cancelLap()
@@ -1993,6 +1999,14 @@ class VideoEditorActivity : ComponentActivity() {
         val (fw, fh) = frameFit(aw, ah)
         return if (turns % 2 == 1) min(fw / videoH, fh / videoW) else min(aw.toFloat() / videoW, ah.toFloat() / videoH)
     }
+    /** Horizontal shift of the picture on screen for the clip on screen, in px (the transitions move the picture from here). */
+    private var shiftX = 0f
+    /** The part of a picture that stays visible once it has moved by [sx], [sy] px inside the frame, in the picture's own pixels. */
+    private fun shiftWindow(tw: Int, th: Int, sx: Float, sy: Float, frame: RectF, flipped: Boolean): Rect {
+        val l = frame.left - (stage.width / 2f + sx - tw / 2f); val t = frame.top - (stage.height / 2f + sy - th / 2f)
+        val r = l + frame.width(); val b = t + frame.height()
+        return if (flipped) Rect((tw - r).toInt(), t.toInt(), (tw - l).toInt(), b.toInt()) else Rect(l.toInt(), t.toInt(), r.toInt(), b.toInt())
+    }
     private fun layoutVideo() {
         if (stage.width == 0) return
         val pad = dp(8)
@@ -2007,19 +2021,23 @@ class VideoEditorActivity : ComponentActivity() {
         (overlayHost.layoutParams as FrameLayout.LayoutParams).let { lp -> val w = visible.width().toInt().coerceAtLeast(1); val h = visible.height().toInt().coerceAtLeast(1)
             if (lp.width != w || lp.height != h || lp.leftMargin != visible.left.toInt() || lp.topMargin != visible.top.toInt()) { lp.width = w; lp.height = h; lp.leftMargin = visible.left.toInt(); lp.topMargin = visible.top.toInt(); overlayHost.layoutParams = lp } }
         val extra = extras.getOrNull(playIndex - 1)
+        val sx = offXOf(playIndex) * visible.width(); val sy = offYOf(playIndex) * visible.height()
         if (extra == null) {
             val tw = (videoW * k).toInt(); val th = (videoH * k).toInt()
             (texture.layoutParams as FrameLayout.LayoutParams).let { if (it.width != tw || it.height != th) { it.width = tw; it.height = th; texture.layoutParams = it } }
-            texture.rotation = turns * 90f; texture.scaleX = if (mirror) -1f else 1f; texture.clipBounds = null
+            texture.rotation = turns * 90f; texture.scaleX = if (mirror) -1f else 1f
+            // Moved inside the frame: the part that leaves the frame is cut off (a turned picture is not cut, only moved).
+            texture.clipBounds = if (side || (sx == 0f && sy == 0f)) null else shiftWindow(tw, th, sx, sy, visible, mirror)
         } else {
             // An added clip fills the kept frame and is cut at the sides, as the export does.
             val f = max(visible.width() / extra.w, visible.height() / extra.h)
             val tw = (extra.w * f).toInt(); val th = (extra.h * f).toInt()
             (texture.layoutParams as FrameLayout.LayoutParams).let { if (it.width != tw || it.height != th) { it.width = tw; it.height = th; texture.layoutParams = it } }
             texture.rotation = 0f; texture.scaleX = if (extra.mirror) -1f else 1f
-            val cx = (tw - visible.width()) / 2f; val cy = (th - visible.height()) / 2f
-            texture.clipBounds = Rect(cx.toInt(), cy.toInt(), (cx + visible.width()).toInt(), (cy + visible.height()).toInt())
+            texture.clipBounds = shiftWindow(tw, th, sx, sy, visible, extra.mirror)
         }
+        if (abs(texture.translationX - shiftX) < 1f) texture.translationX = sx   // at rest (not in the middle of a slide)
+        texture.translationY = sy; shiftX = sx
         placeStickers(); placeLayers()
         captionView.setTextSize(android.util.TypedValue.COMPLEX_UNIT_PX, (if (textBig) 0.11f else 0.07f) * visible.height())
         val widest = visible.width().toInt() - dp(16); if (captionView.maxWidth != widest) captionView.maxWidth = widest
@@ -2058,7 +2076,7 @@ class VideoEditorActivity : ComponentActivity() {
         if (extras.isEmpty()) { notice("วิดีโอต้องมีอย่างน้อยหนึ่งคลิป"); return }
         val idx = mainPos().coerceAtMost(extras.size - 1); val e = extras.removeAt(idx)
         mainAt = idx; cutFrom = -1; cutTo = -1; split = -1
-        switchSource(e.uri); start = e.from; end = e.to; speed = e.speed; mainMuted = e.muted; mainMotion = e.motion; mainJoin = e.join; mainJoinMs = e.joinMs; firstFrame = e.thumb ?: firstFrame
+        switchSource(e.uri); start = e.from; end = e.to; speed = e.speed; mainMuted = e.muted; mainMotion = e.motion; mainOffX = e.offX; mainOffY = e.offY; mainJoin = e.join; mainJoinMs = e.joinMs; firstFrame = e.thumb ?: firstFrame
         playIndex = 0; trim.split = -1; showClipOnBar(); trim.playhead = start; openPlayer(); showTime(); showTool(10, false)
         notice("ลบคลิปแล้ว")
     }
@@ -2453,7 +2471,7 @@ class VideoEditorActivity : ComponentActivity() {
                 ui.remove()
                 if (isDestroyed || stopped) return@runOnUiThread
                 if (e == null) { notice("ย้อนกลับไม่ได้ ${made.exceptionOrNull()?.message ?: "อ่านไฟล์ใหม่ไม่ได้"}"); return@runOnUiThread }
-                e.motion = motionOf(k); e.join = joinOf(k); e.joinMs = joinMsOf(k); extraCache[e.uri.toString()] = e.copy()
+                e.motion = motionOf(k); e.offX = offXOf(k); e.offY = offYOf(k); e.join = joinOf(k); e.joinMs = joinMsOf(k); extraCache[e.uri.toString()] = e.copy()
                 insertNear(k, e, before = false)
                 if (k == 0) deleteMain() else { extras.remove(extras[k - 1]); if (k - 1 < mainPos()) mainAt = mainPos() - 1 }
                 val at = extras.indexOf(e) + 1
@@ -2824,6 +2842,8 @@ class VideoEditorActivity : ComponentActivity() {
     private var lowCut = false; private var voice = false; private var duck = true; private var mainMuted = false
     /** Slow camera move over the first clip ([ClipMotion]). */
     private var mainMotion = 0
+    /** Place of the first clip in the frame (shares of the frame's width and height). */
+    private var mainOffX = 0f; private var mainOffY = 0f
     private var mainJoin = -1; private var mainJoinMs = 0L
     private var fxEq: android.media.audiofx.Equalizer? = null
     private fun audioSettings() = StudioAudio.Settings(eq.copyOf(), lowCut, voice)
@@ -3188,7 +3208,7 @@ class VideoEditorActivity : ComponentActivity() {
     private fun duplicateClip() { val e = extras.getOrNull(playIndex - 1)
         if (e != null) { extras.add(playIndex, e.copy()); if (playIndex - 1 < mainPos()) mainAt = mainPos() + 1 }
         else { extraCache.getOrPut(source.toString()) { Extra(source, duration, videoW, videoH, "คลิปแรก", firstFrame) }
-            extras.add(mainPos(), Extra(source, duration, videoW, videoH, "คลิปแรก", firstFrame).also { it.from = start; it.to = end; it.speed = speed; it.curve = mainCurve?.copyOf(); it.volume = volume }) }
+            extras.add(mainPos(), Extra(source, duration, videoW, videoH, "คลิปแรก", firstFrame).also { it.from = start; it.to = end; it.speed = speed; it.curve = mainCurve?.copyOf(); it.volume = volume; it.offX = mainOffX; it.offY = mainOffY }) }
         showTime() }
     private fun deleteClip() { val e = extras.getOrNull(playIndex - 1)
         if (e == null) deleteMain() else { val c = playIndex - 1; extras.removeAt(c); if (c < mainPos()) mainAt = mainPos() - 1
@@ -4164,6 +4184,25 @@ class VideoEditorActivity : ComponentActivity() {
     }
     private fun laneDp() = getSharedPreferences("camera", MODE_PRIVATE).getInt("lane_dp", 30).toFloat()
     /** Layers menu: one "+ เพิ่ม" button for a picture or a video on top, then the picked layer's controls. */
+    private fun clipPicked() = !barActive && pickedClip >= 0 && pickedClip == playIndex
+    /** Place of the picked video clip in the frame: it moves, its size stays as it was cut. */
+    private fun clipPlace(col: LinearLayout) {
+        val k = playIndex
+        col.addView(text("ตำแหน่งคลิป ${order().indexOf(k) + 1} ในกรอบ ขนาดคงเดิม", 12.5f, Glass.TEXT, true).apply { gravity = Gravity.CENTER; setPadding(dp(16), dp(4), dp(16), dp(2)) }, -1, -2)
+        val steps = (-100..100 step 5).map { "$it%" }
+        fun row(label: String, at: Float, set: (Float) -> Unit) {
+            val r = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(16), 0, dp(12), 0) }
+            r.addView(text(label, 12f, Glass.TEXT2, true), dp(72), -2)
+            val shown = text(steps[((at * 100).roundToInt() / 5 + 20).coerceIn(0, 40)], 12.5f, Glass.TEXT, true).apply { gravity = Gravity.END or Gravity.CENTER_VERTICAL; maxLines = 1 }
+            r.addView(GlassSlider(this).apply { values = steps; index = ((at * 100).roundToInt() / 5 + 20).coerceIn(0, 40); grad = intArrayOf(0xff8e8e93.toInt(), Glass.ACCENT); contentDescription = label
+                onChange = { i -> shown.text = steps[i.coerceIn(0, 40)]; set((i - 20) * 5 / 100f) } }, LinearLayout.LayoutParams(0, dp(40), 1f))
+            r.addView(shown, dp(52), -2); col.addView(r, -1, -2)
+        }
+        row("แนวนอน", offXOf(k)) { v -> setOff(k, v, offYOf(k)); layoutVideo() }
+        row("แนวตั้ง", offYOf(k)) { v -> setOff(k, offXOf(k), v); layoutVideo() }
+        col.addView(dropButton("คืนตำแหน่ง") { setOff(k, 0f, 0f); layoutVideo(); showTool(LAYER_TOOL, false) }.also { (it as LinearLayout).gravity = Gravity.CENTER },
+            LinearLayout.LayoutParams(dp(150), dp(36)).apply { gravity = Gravity.CENTER_HORIZONTAL; topMargin = dp(4) })
+    }
     private fun layerTools(col: LinearLayout) {
         col.gravity = Gravity.TOP; col.setPadding(dp(14), 0, dp(14), 0)
         col.addView(dropButton("+ เพิ่ม") { v -> menu.show(v, "เพิ่มเลเยอร์", listOf(GlassMenu.Option("ภาพ", ADD, "รูปซ้อนบนวิดีโอ"), GlassMenu.Option("วิดีโอ", Icons.VIDEO, "ภาพซ้อนภาพ")), -1) { k ->
@@ -4172,6 +4211,7 @@ class VideoEditorActivity : ComponentActivity() {
             LinearLayout.LayoutParams(dp(150), dp(38)).apply { gravity = Gravity.CENTER_HORIZONTAL; topMargin = dp(4); bottomMargin = dp(6) })
         val l = layers.getOrNull(layerPick)
         if (l == null || !l.visual || !barActive) {
+            if (clipPicked()) { clipPlace(col); return }
             tip(col, "เพิ่มภาพหรือวิดีโอซ้อนบนคลิป แตะแถบบนไทม์ไลน์หรือแตะบนภาพเพื่อปรับเลเยอร์นั้น", Icons.PLUS, TAP, BAR, top = 24)
             return
         }
@@ -4617,7 +4657,7 @@ class VideoEditorActivity : ComponentActivity() {
         else -> layerTab }
     /** Height in dp that the layer panel needs: the add button, the tabs and the page that is open. */
     private fun layerWantDp(): Int { val l = layers.getOrNull(layerPick)
-        if (l == null || !l.visual || !barActive) return 128
+        if (l == null || !l.visual || !barActive) return if (clipPicked()) 214 else 128
         return when (layerTabFor(l)) { 0 -> 224; 1 -> 246; 2 -> 300; 3 -> 284; else -> 170 } }
 
     // ---------- Undo, redo and the saved project ----------
@@ -4831,7 +4871,7 @@ class VideoEditorActivity : ComponentActivity() {
         return VideoEdit.composition(VideoEditSpec(f?.let { Uri.fromFile(it.file) } ?: source, at(from), at(to), vw, vh,
         speed * n, cropRatio(), caption, place, textColor, textBig, if (looked()) colour() else null, music, f == null && hasAudio && keepSound && allSpeeds().all { it in SOUND_MIN..SOUND_MAX },
         turns, mirror, volume, musicVolume, if (cut) at(cutFrom) else -1L, if (cut) at(cutTo) else -1L, textBox,
-        extras.map { VideoPart(it.uri, it.from, it.to, it.speed, it.muted, it.volume, it.curve, it.motion, it.join, it.joinMs, it.duration, it.mirror) }, if (extras.isEmpty()) 0 else transition, stickers.toList(), clampedLayers(), shrinkShort, shrinkFps, mainPos(), fx[0], fx[1], fx[2], mainMotion = mainMotion, mainJoin = mainJoin, mainJoinMs = mainJoinMs, mainSourceMs = if (f == null) duration else 0L, grade = if (grade.active()) gradeCube(33) else null, audio = audioSettings(), mainMuted = mainMuted, mainCurve = if (f == null) mainCurve else null, audioOnly = audioOnly, duck = duck, audioHz = if (audioOnly) soundHz else 0, audioMono = audioOnly && soundMono), applicationContext)
+        extras.map { VideoPart(it.uri, it.from, it.to, it.speed, it.muted, it.volume, it.curve, it.motion, it.join, it.joinMs, it.duration, it.mirror, it.offX, it.offY) }, if (extras.isEmpty()) 0 else transition, stickers.toList(), clampedLayers(), shrinkShort, shrinkFps, mainPos(), fx[0], fx[1], fx[2], mainMotion = mainMotion, mainOffX = mainOffX, mainOffY = mainOffY, mainJoin = mainJoin, mainJoinMs = mainJoinMs, mainSourceMs = if (f == null) duration else 0L, grade = if (grade.active()) gradeCube(33) else null, audio = audioSettings(), mainMuted = mainMuted, mainCurve = if (f == null) mainCurve else null, audioOnly = audioOnly, duck = duck, audioHz = if (audioOnly) soundHz else 0, audioMono = audioOnly && soundMono), applicationContext)
     }
 
     /** Export problems stay on screen until dismissed, so the reason can be read (and reported). */
@@ -4868,13 +4908,13 @@ class VideoEditorActivity : ComponentActivity() {
         out.putBoolean("sound", keepSound); out.putInt("tool", tool)
         out.putFloatArray("adjust", adjust); out.putFloatArray("fx", fx); out.putFloatArray("curves", grade.curves.copyOf()); out.putFloatArray("hsl", grade.hsl.copyOf()); out.putFloatArray("wheels", grade.wheels.copyOf()); out.putString("lutPath", lutPath); out.putString("lutName", lutName); out.putFloat("lutAmount", grade.lutAmount); out.putBoolean("lowCut", lowCut); out.putBoolean("voice", voice); out.putBoolean("duck", duck); out.putBoolean("mainMuted", mainMuted); out.putInt("turns", turns); out.putBoolean("mirror", mirror); out.putFloat("volume", volume); out.putFloat("musicVolume", musicVolume)
         out.putFloatArray("eq10", eq.copyOf()); out.putLong("cutFrom", cutFrom); out.putLong("cutTo", cutTo); out.putBoolean("textBox", textBox)
-        out.putStringArrayList("extras", ArrayList(extras.map { it.uri.toString() })); out.putStringArrayList("extraRanges", ArrayList(extras.map { "${it.from},${it.to},${it.speed}," + (if (it.muted) "m" else "") + ",${it.volume}," + (it.curve?.joinToString(";") ?: "") + ",${it.motion},${it.join},${it.joinMs}" })); out.putInt("mainMotion", mainMotion);
+        out.putStringArrayList("extras", ArrayList(extras.map { it.uri.toString() })); out.putStringArrayList("extraRanges", ArrayList(extras.map { "${it.from},${it.to},${it.speed}," + (if (it.muted) "m" else "") + ",${it.volume}," + (it.curve?.joinToString(";") ?: "") + ",${it.motion},${it.join},${it.joinMs},${it.offX},${it.offY}" })); out.putInt("mainMotion", mainMotion); out.putFloat("mainOffX", mainOffX); out.putFloat("mainOffY", mainOffY);
         mainCurve?.let { out.putFloatArray("mainCurve", it.copyOf()) }; out.putInt("mainAt", mainAt); out.putStringArrayList("markers", ArrayList(markers.map { it.toString() })); out.putInt("transition", transition); out.putInt("mainJoin", mainJoin); out.putLong("mainJoinMs", mainJoinMs)
         out.putStringArrayList("stickers", ArrayList(stickers.map { "${it.x}|${it.y}|${it.big}|${it.text}" }))
         out.putString("layers", VideoLayer.save(layers)); out.putInt("layerPick", layerPick); out.putBoolean("smooth", smooth)
     }
     private fun restore(s: Bundle) {
-        mainMotion = s.getInt("mainMotion", 0); mainJoin = s.getInt("mainJoin", -1); mainJoinMs = s.getLong("mainJoinMs", 0L)
+        mainMotion = s.getInt("mainMotion", 0); mainOffX = s.getFloat("mainOffX", 0f); mainOffY = s.getFloat("mainOffY", 0f); mainJoin = s.getInt("mainJoin", -1); mainJoinMs = s.getLong("mainJoinMs", 0L)
         s.getString("mainSource")?.let { Uri.parse(it) }?.takeIf { it != source }?.let { switchSource(it) }
         start = s.getLong("start").coerceIn(0, (duration - 300).coerceAtLeast(0)); end = s.getLong("end", duration).coerceIn(start, duration); customCrop = s.getFloat("customCrop", 1f); split = s.getLong("split", -1); speed = s.getFloat("speed", 1f); cropIndex = s.getInt("crop")
         caption = s.getString("caption") ?: ""; place = s.getInt("place", 2); textColor = s.getInt("textColor", Color.WHITE); textBig = s.getBoolean("big")
