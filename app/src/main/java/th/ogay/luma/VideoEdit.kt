@@ -300,6 +300,10 @@ object VideoEdit {
                 if (gap > 1000) b.addGap(gap)
                 b.addItem(items[j]); cursor = start + pieces[j].durationUs + (pre[j] + post[j]) * 1000
             }
+            // Both tracks run to the end of the video: when the first track stopped early, the export stopped drawing with it
+            // (the picture froze while the sound went on), because the compositor follows the first track's frames.
+            val whole = cutAt[n - 1] + pieces[n - 1].durationUs + post[n - 1] * 1000
+            if (whole - cursor > 1000) b.addGap(whole - cursor)
             b.build()
         }
         val whole = mutableListOf<Effect>()
