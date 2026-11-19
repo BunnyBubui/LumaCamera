@@ -14,15 +14,16 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
- * Sound shaping for the video editor's export, on 16-bit sound: a three-band equaliser (bass, middle, treble in dB),
+ * Sound shaping for the video editor's export, on 16-bit sound: a ten-band equaliser (31 Hz to 16 kHz, in dB),
  * a low cut that removes rumble and wind below about 100 Hz, a voice compressor that evens out loud and quiet speech,
  * a ceiling (limiter) that stops the result from clipping, and "ducking": the music turned down while a voice or
  * sound layer plays. The filters are standard second-order (biquad) filters.
  */
 @androidx.annotation.OptIn(markerClass = [UnstableApi::class])
 object StudioAudio {
-    class Settings(val bass: Float = 0f, val mid: Float = 0f, val treble: Float = 0f, val lowCut: Boolean = false, val voice: Boolean = false) {
-        val active get() = bass != 0f || mid != 0f || treble != 0f || lowCut || voice
+    /** [bands] are the levels in dB of the ten equaliser bands ([EqBands.HZ]); empty or all zero means flat. */
+    class Settings(val bands: FloatArray = FloatArray(EqBands.HZ.size), val lowCut: Boolean = false, val voice: Boolean = false) {
+        val active get() = bands.any { it != 0f } || lowCut || voice
     }
 
     /** One biquad filter; [a] and [b] are normalised so a0 = 1. Keeps its own memory per channel. */
@@ -50,9 +51,10 @@ object StudioAudio {
         override fun onConfigure(f: AudioProcessor.AudioFormat): AudioProcessor.AudioFormat {
             if (f.encoding != C.ENCODING_PCM_16BIT || f.channelCount > 8) return AudioProcessor.AudioFormat.NOT_SET
             val r = f.sampleRate
-            filters = listOfNotNull(if (s.lowCut) Biquad.highPass(r, 100.0) else null, if (s.bass != 0f) Biquad.lowShelf(r, 150.0, s.bass.toDouble()) else null,
-                if (s.mid != 0f) Biquad.peak(r, 1000.0, s.mid.toDouble()) else null, if (s.treble != 0f) Biquad.highShelf(r, 6000.0, s.treble.toDouble()) else null,
-                if (s.voice) Biquad.peak(r, 3000.0, 3.0, 1.2) else null)
+            // One peaking filter per moved band (an octave wide); a band above the highest frequency the sound can hold is left out.
+            val bands = s.bands.indices.mapNotNull { b -> val hz = EqBands.HZ.getOrNull(b) ?: return@mapNotNull null
+                if (s.bands[b] == 0f || hz >= r * 0.45f) null else Biquad.peak(r, hz.toDouble(), s.bands[b].toDouble(), 1.4) }
+            filters = listOfNotNull(if (s.lowCut) Biquad.highPass(r, 100.0) else null) + bands + listOfNotNull(if (s.voice) Biquad.peak(r, 3000.0, 3.0, 1.2) else null)
             attack = exp(-1.0 / (0.005 * r)); release = exp(-1.0 / (0.12 * r))
             return f
         }

@@ -223,8 +223,8 @@ class StudioTimeline(context: Context) : View(context) {
             val hh = rowH / 2f * (0.55f + 0.45f * s) + rowPop * 1.5f * d
             val left = l; val right = l + (r - l) * s + rowPop * 2f * d
             val rad = minOf(hh, 11 * d)
-            paint.color = if (g.off || g.locked) 0x29ff9f45 else 0x17ffffff
-            c.drawRoundRect(left, my - hh, right, my + hh, rad, rad, paint)
+            // No plate behind a plain track; only a switched-off or locked one gets an orange tint, because that tells its state.
+            if (g.off || g.locked) { paint.color = 0x29ff9f45; c.drawRoundRect(left, my - hh, right, my + hh, rad, rad, paint) }
             val a = ((s - 0.5f) / 0.5f).coerceIn(0f, 1f); if (a <= 0f) return@forEachIndexed
             paint.color = withA(g.color, a * (if (g.off) 0.45f else 1f)); c.drawRoundRect(left + 4 * d, my - hh + 5 * d, left + 7 * d, my + hh - 5 * d, 1.5f * d, 1.5f * d, paint)
             val dim = g.off
@@ -248,9 +248,9 @@ class StudioTimeline(context: Context) : View(context) {
         c.restore()
         // A tab on the column's right edge says "this slides: swipe left (or tap) to close". It nudges once when the column has opened.
         if (f > 0.9f) { val tr = tabRect(); val nudge = if (popAll) (sin(pop * 3.0 * Math.PI) * (1f - pop) * 4 * d).toFloat() else 0f
-            paint.color = 0x4dffffff; c.drawRoundRect(tr.left + nudge, tr.top, tr.right + nudge, tr.bottom, 7 * d, 7 * d, paint)
-            iconStroke.color = 0xd9ffffff.toInt(); iconStroke.strokeWidth = 1.6f * d; val m = tr.centerY(); val cxp = tr.centerX() + nudge + d
-            c.drawLine(cxp + 1.5f * d, m - 4 * d, cxp - 1.5f * d, m, iconStroke); c.drawLine(cxp - 1.5f * d, m, cxp + 1.5f * d, m + 4 * d, iconStroke); iconStroke.color = 0xff101014.toInt() }
+            // Only the arrow, the same size as the one on the closed tab (no strip behind it).
+            iconStroke.color = 0xe6ffffff.toInt(); iconStroke.strokeWidth = 2f * d; val m = tr.centerY(); val cxp = tr.centerX() + nudge
+            c.drawLine(cxp + 2.5f * d, m - 6 * d, cxp - 2.5f * d, m, iconStroke); c.drawLine(cxp - 2.5f * d, m, cxp + 2.5f * d, m + 6 * d, iconStroke); iconStroke.color = 0xff101014.toInt() }
         paint.alpha = 255
     }
     private val tabBox = RectF()

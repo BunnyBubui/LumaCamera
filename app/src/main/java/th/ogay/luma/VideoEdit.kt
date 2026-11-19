@@ -100,7 +100,7 @@ data class VideoSticker(val text: String, val x: Float, val y: Float, val big: B
 object VideoEdit {
     /** Sound louder or quieter for mono and stereo tracks. */
     private fun gain(v: Float): AudioProcessor = ChannelMixingAudioProcessor().apply { for (n in 1..2) putChannelMixingMatrix(ChannelMixingMatrix.create(n, n).scaleBy(v)) }
-    /** Picture height after the turn and the crop, the frame the caption and stickers are measured against. */
+    /** Picture height after the crop (the frame, not turned: videoW and videoH are the clip's own sides), the frame the caption and stickers are measured against. */
     private fun frameSize(s: VideoEditSpec): Pair<Int, Int> {
         if (s.crop <= 0f) return s.videoW to s.videoH
         val now = s.videoW.toFloat() / s.videoH
@@ -208,11 +208,15 @@ object VideoEdit {
         val multi = s.extras.isNotEmpty()
         val effects = mutableListOf<Effect>()
         if (s.turns % 4 != 0 || s.mirror) effects += ScaleAndRotateTransformation.Builder().setScale(if (s.mirror) -1f else 1f, 1f).setRotationDegrees(360f - (s.turns % 4) * 90f).build()
+        // A quarter turn turns only the picture: the frame keeps the shape the clip came in (or the chosen crop shape) and the
+        // turned picture sits inside it with black bars, so the file does not change size until the frame is changed.
+        val sideways = s.turns % 2 == 1
         // One clip: look and text belong to the clip. Several clips: they belong to the whole video (below), so they
         // run across the joins and every clip is brought to the first clip's frame.
         val table = s.grade ?: s.look?.let { EditorKit.cube(it) }
         if (!multi) table?.let { effects += SingleColorLut.createFromCube(it) }
-        if (s.crop > 0f) effects += Presentation.createForAspectRatio(s.crop, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP)
+        if (sideways) effects += Presentation.createForAspectRatio(if (s.crop > 0f) s.crop else s.videoW.toFloat() / s.videoH, Presentation.LAYOUT_SCALE_TO_FIT)
+        else if (s.crop > 0f) effects += Presentation.createForAspectRatio(s.crop, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP)
         val finishing = s.vignette > 0f || s.grain > 0f || s.sharpen > 0f
         if (!multi && finishing) effects += StudioFx(s.vignette, s.grain, s.sharpen)
         val texts = overlays(s)
