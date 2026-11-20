@@ -10,3 +10,4 @@ model/data/
 __pycache__/
 .kotlin/
 !app/lumora-debug.keystore
+artifacts/ai-device/

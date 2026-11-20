@@ -13,7 +13,7 @@ $ErrorActionPreference = 'Stop'
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $Gradle = Join-Path $ProjectRoot 'gradlew.bat'
 $ApkPath = Join-Path $ProjectRoot 'app\build\outputs\apk\debug\app-debug.apk'
-$AppId = 'th.ogay.luma.preview'
+$AppId = 'com.lumora'
 $LaunchActivity = 'th.ogay.luma.CameraActivity'
 
 function Resolve-Adb {

@@ -1,0 +1,8 @@
+# Starter-only launch smoke, preserves user data.
+# Add real UI assertions after inspecting the device through Maestro MCP.
+appId: com.lumora
+---
+- launchApp:
+    clearState: false
+- waitForAnimationToEnd
+- takeScreenshot: lumora-launch
