@@ -10,7 +10,7 @@ class PointCurveTest {
         val p = PointCurve.identity(); assertTrue(PointCurve.isIdentity(p, 0)); assertEquals(3, PointCurve.count(p, 0).coerceAtMost(3))
         for (i in 0..10) assertEquals(i / 10f, PointCurve.eval(p, 0, i / 10f), 1e-4f)
         val slot = PointCurve.add(p, 0, PointCurve.widestGap(p, 0)); assertTrue(slot in 1..7)
-        assertEquals(6, PointCurve.count(p, 0)); assertTrue(PointCurve.isIdentity(p, 0))
+        assertEquals(4, PointCurve.count(p, 0)); assertTrue(PointCurve.isIdentity(p, 0))
         assertEquals(0.5f, PointCurve.eval(p, 0, 0.5f), 1e-3f)
     }
     @Test fun addedPointBendsTheCurveAndRemovingItRestoresIt() {

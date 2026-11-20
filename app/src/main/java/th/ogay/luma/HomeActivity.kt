@@ -124,15 +124,17 @@ class HomeActivity : ComponentActivity() {
         projectRow = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL; setPadding(dp(18), dp(12), dp(16), dp(4)) }
         col.addView(projectRow, LinearLayout.LayoutParams(-1, -2))
         showProject(null, 0)
-        val grid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(6), dp(12), 0); minimumHeight = dp(190) }
-        val rowA = LinearLayout(this); val rowB = LinearLayout(this)
+        val grid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(12), dp(6), dp(12), 0); minimumHeight = dp(270) }
+        val rowA = LinearLayout(this); val rowB = LinearLayout(this); val rowC = LinearLayout(this)
         rowA.addView(tile(Icons.PHOTO, "ถ่ายภาพ", "กล้อง 9 โหมด", "ถ่ายภาพ กลับไปที่กล้อง", null) { returnMode(PhotoMode.PHOTO) }, LinearLayout.LayoutParams(0, -1, 1f).apply { rightMargin = dp(4) })
         rowA.addView(tile(Icons.LIBRARY, "แกลเลอรี", "รูปและวิดีโอ", "แกลเลอรี รูปและวิดีโอทั้งหมด", null) { startActivity(Intent(this, GalleryActivity::class.java).putExtra("from", "home")) }, LinearLayout.LayoutParams(0, -1, 1f).apply { leftMargin = dp(4) })
         rowB.addView(tile(Icons.FILM, "ฟิล์ม", "ลุคฟิล์มและเกรน", "ฟิล์ม โทนสีและเกรนฟิล์ม", null) { returnMode(PhotoMode.FILM) }, LinearLayout.LayoutParams(0, -1, 1f).apply { rightMargin = dp(4) })
         rowB.addView(tile(EditorKit.ADJUST, "ปรับแต่งด้วย AI", "ภาพหรือวิดีโอ", "ปรับแต่งภาพหรือวิดีโอด้วย AI", "AI" to { chooseAi() }) { chooseAi() }, LinearLayout.LayoutParams(0, -1, 1f).apply { leftMargin = dp(4) })
         grid.addView(rowA, LinearLayout.LayoutParams(-1, 0, 1f).apply { bottomMargin = dp(4) })
-        grid.addView(rowB, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = dp(4) })
-        col.addView(grid, LinearLayout.LayoutParams(-1, 0, 2f))
+        rowC.addView(tile(Icons.MIC, "แยกเสียง", "ลดเสียงรบกวนในคลิป", "แยกเสียง ลดเสียงรบกวนเสียงพูดในคลิป", "AI" to { startActivity(Intent(this, SeparateActivity::class.java)) }) { startActivity(Intent(this, SeparateActivity::class.java)) }, LinearLayout.LayoutParams(0, -1, 1f))
+        grid.addView(rowB, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = dp(4); bottomMargin = dp(4) })
+        grid.addView(rowC, LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = dp(4) })
+        col.addView(grid, LinearLayout.LayoutParams(-1, 0, 3f))
         loader.execute {
             val list = runCatching { StudioProjects.list(this) }.getOrDefault(emptyList())
             val shown = list.filter { !it.missing }.take(if (Device.low(this)) 3 else 6)

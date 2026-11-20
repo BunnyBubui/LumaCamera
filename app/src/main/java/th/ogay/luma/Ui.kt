@@ -84,11 +84,11 @@ fun Context.notice(message: String) {
     lastNotice?.get()?.let { (it.parent as? android.view.ViewGroup)?.removeView(it) }
     val box = android.widget.LinearLayout(act).apply {
         gravity = android.view.Gravity.CENTER_VERTICAL; background = act.accentFrame(22); setPadding(act.dp(18), act.dp(12), act.dp(18), act.dp(12)); alpha = 0f
-        isClickable = true; elevation = act.dp(6).toFloat(); contentDescription = message
+        isClickable = true; elevation = act.dp(80).toFloat(); contentDescription = message
         addView(act.text(message, 13.5f, Glass.TEXT, true).apply { maxLines = 4 }, android.widget.LinearLayout.LayoutParams(-2, -2))
     }
     root.addView(box, android.widget.FrameLayout.LayoutParams(-2, -2, android.view.Gravity.BOTTOM or android.view.Gravity.CENTER_HORIZONTAL).apply { bottomMargin = act.dp(112); leftMargin = act.dp(20); rightMargin = act.dp(20) })
-    lastNotice = java.lang.ref.WeakReference(box)
+    lastNotice = java.lang.ref.WeakReference(box); box.bringToFront()
     box.animate().alpha(1f).setDuration(180).start()
     val hold = (1800 + message.length * 45L).coerceAtMost(5000L)
     box.setOnClickListener { box.animate().cancel(); box.animate().alpha(0f).setDuration(140).withEndAction { (box.parent as? android.view.ViewGroup)?.removeView(box) }.start() }
@@ -188,6 +188,9 @@ fun androidx.camera.view.PreviewView.smallFrame(width: Int): android.graphics.Bi
  * Sound and haptic for every tap on anything clickable, in every screen. Buttons that already call
  * [Glass.tick] keep their own feedback (a tick in the last 150 ms means the button handled it).
  */
+/** Marks a view that handles its own press look. */
+const val GLASS_FX_TAG = 0x6c756d61
+
 object ClickFeedback {
     fun install(a: Activity) {
         val w = a.window; val inner = w.callback ?: return

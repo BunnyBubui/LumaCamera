@@ -6,7 +6,10 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.ColorMatrix
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
+import android.view.HapticFeedbackConstants
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
@@ -50,6 +53,18 @@ object EditorKit {
         tab.isSelected = on; ViewCompat.setStateDescription(tab, if (on) "เลือกอยู่" else null)
     }
 
+    /**
+     * A slider with its name and value on a line of their own above it, so the bar can run the whole width of the panel and be easy to hit.
+     * [grad] colours it; [changed] gets the step. The caller keeps nothing: the value text follows the bar.
+     */
+    fun labeledSlider(c: Context, label: String, values: List<String>, at: Int, grad: IntArray = intArrayOf(0xff8e8e93.toInt(), Glass.ACCENT), changed: (Int) -> Unit): LinearLayout = LinearLayout(c).apply {
+        orientation = LinearLayout.VERTICAL; setPadding(c.dp(16), c.dp(2), c.dp(16), 0)
+        val shown = c.text(values.getOrElse(at) { "" }, 13.5f, Glass.ACCENT, true).apply { gravity = Gravity.END }
+        addView(LinearLayout(c).apply { gravity = Gravity.CENTER_VERTICAL
+            addView(c.text(label, 13f, Glass.TEXT2, true).apply { maxLines = 1 }, LinearLayout.LayoutParams(0, -2, 1f)); addView(shown, LinearLayout.LayoutParams(-2, -2)) }, -1, -2)
+        addView(GlassSlider(c).apply { this.values = values; index = at.coerceIn(0, values.lastIndex); this.grad = grad; contentDescription = label
+            onChange = { i -> shown.text = values.getOrElse(i) { "" }; changed(i) } }, LinearLayout.LayoutParams(-1, c.dp(48)).apply { setMargins(-c.dp(12), 0, -c.dp(12), 0) })
+    }
     /** A glass chip with an optional icon; [on] fills it with the accent. */
     fun chip(c: Context, label: String, icon: String = "", on: Boolean = false, click: () -> Unit): LinearLayout = LinearLayout(c).apply {
         gravity = Gravity.CENTER; isClickable = true; contentDescription = label; minimumHeight = c.dp(48); setPadding(c.dp(14), 0, c.dp(14), 0)
@@ -72,6 +87,94 @@ object EditorKit {
     fun round(c: Context, icon: String, desc: String, click: () -> Unit) = FrameLayout(c).apply {
         background = c.glass(24, 0x40ffffff); contentDescription = desc; isClickable = true; glassTouch()
         addView(IconView(c, icon, 2.1f), FrameLayout.LayoutParams(c.dp(20), c.dp(20), Gravity.CENTER)); setOnClickListener { Glass.tick(this); click() }
+    }
+    /**
+     * Round transport button with two gestures. A tap calls [onTap]. Press and hold arms it (it swells and a hint appears), then slide
+     * towards [dir] (-1 left, 1 right): the button follows the finger, turns accent past the line, and letting go there calls [onFar].
+     */
+    fun jumpButton(c: Context, icon: String, desc: String, dir: Int, farLabel: String, onTap: () -> Unit, onFar: () -> Unit): View = FrameLayout(c).apply {
+        background = c.glass(24, 0x40ffffff); contentDescription = desc; isClickable = true; setTag(GLASS_FX_TAG, true)
+        val ic = IconView(c, icon, 2.1f); addView(ic, FrameLayout.LayoutParams(c.dp(20), c.dp(20), Gravity.CENTER))
+        val dm = c.resources.displayMetrics; val d = dm.density
+        val slop = c.dp(10).toFloat()
+        var downX = 0f; var down = false; var armed = false; var near = false; var moved = false
+        var layer: FrameLayout? = null; var thumb: FrameLayout? = null; var fill: View? = null; var endIcon: IconView? = null; var thumbIcon: IconView? = null
+        var travel = 0f
+        fun close(snapEnd: Boolean) {
+            val l = layer ?: return; layer = null
+            val t = thumb
+            if (snapEnd) t?.animate()?.translationX(travel * dir)?.setInterpolator(Glass.EASE)?.setDuration(130)?.start()
+            else t?.animate()?.translationX(0f)?.setInterpolator(Glass.SPRING)?.setDuration(320)?.start()
+            // The track folds back into the button while the handle slides home: one smooth motion, nothing blinks off.
+            l.animate().scaleX(0.35f).alpha(0f).setStartDelay(if (snapEnd) 150 else 120).setInterpolator(Glass.EASE).setDuration(240).withEndAction { (l.parent as? ViewGroup)?.removeView(l) }.start()
+            android.animation.ObjectAnimator.ofFloat(this@apply, View.ALPHA, 1f).apply { startDelay = 190; duration = 200; start() }
+        }
+        // The long press opens a slide track beside the button (drawn above everything, so nothing clips it): the button turns into
+        // the handle, and letting go at the far end of the track jumps to the very end of the timeline.
+        val arm = Runnable {
+            if (!down || moved) return@Runnable; armed = true; Glass.tick(this, HapticFeedbackConstants.LONG_PRESS)
+            val host = (context as? android.app.Activity)?.window?.decorView as? FrameLayout ?: return@Runnable
+            val l = IntArray(2); getLocationInWindow(l); val hl = IntArray(2); host.getLocationInWindow(hl)
+            val r = width / 2f; val pad = 4 * d; val cx = l[0] - hl[0] + r; val cy = l[1] - hl[1] + height / 2f
+            val room = if (dir > 0) host.width - cx - r - pad - 10 * d else cx - r - pad - 10 * d
+            travel = minOf(170 * d, room).coerceAtLeast(60 * d)
+            val left = if (dir > 0) cx - r - pad else cx - travel - r - pad
+            val trackW = travel + 2 * r + 2 * pad; val trackH = 2 * r + 2 * pad
+            val box = FrameLayout(c).apply { elevation = 12 * d; clipChildren = false; contentDescription = farLabel }
+            val track = View(c).apply { background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = trackH / 2; setColor(0xf2202024.toInt()); setStroke(c.dp(1), 0x33ffffff) } }
+            box.addView(track, FrameLayout.LayoutParams(trackW.toInt(), trackH.toInt()))
+            val f = View(c).apply { background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = trackH / 2; setColor(0x33ff9f45); setStroke(c.dp(2), Glass.ACCENT) } }
+            // The orange frame hugs the handle with the same gap on every side; only its length changes, so its ends stay round.
+            box.addView(f, FrameLayout.LayoutParams((2 * r + 2 * pad).toInt(), trackH.toInt(), if (dir > 0) Gravity.START else Gravity.END)); fill = f
+            // A row of small chevrons along the track says which way to slide; the end mark is where to let go.
+            val chev = View(c).apply { background = object : android.graphics.drawable.Drawable() {
+                val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeCap = Paint.Cap.ROUND; strokeWidth = 1.8f * d; color = 0x88ffffff.toInt() }
+                override fun draw(cv: Canvas) { val n = 4; val b0 = bounds; val gap = (travel - 2 * r - 6 * d) / n
+                    for (i in 0 until n) { val x = if (dir > 0) b0.left + pad + 2 * r + 8 * d + i * gap else b0.right - pad - 2 * r - 8 * d - i * gap; val m = b0.exactCenterY()
+                        p.alpha = 70 + i * 40; cv.drawLine(x - dir * 2.5f * d, m - 4 * d, x + dir * 2.5f * d, m, p); cv.drawLine(x + dir * 2.5f * d, m, x - dir * 2.5f * d, m + 4 * d, p) } }
+                override fun setAlpha(a: Int) {}; override fun setColorFilter(cf: android.graphics.ColorFilter?) {}; override fun getOpacity() = android.graphics.PixelFormat.TRANSLUCENT } }
+            box.addView(chev, FrameLayout.LayoutParams(trackW.toInt(), trackH.toInt()))
+            val e = IconView(c, icon, 2.1f).apply { tint = 0x99ffffff.toInt() }; endIcon = e
+            box.addView(e, FrameLayout.LayoutParams(c.dp(22), c.dp(22)).apply { leftMargin = (cx + dir * travel - 11 * d - left).toInt(); topMargin = (pad + r - 11 * d).toInt() })
+            val th = FrameLayout(c).apply { background = c.glass(24, 0xff3a3a40.toInt()); elevation = 4 * d }
+            val ti = IconView(c, icon, 2.1f); th.addView(ti, FrameLayout.LayoutParams(c.dp(20), c.dp(20), Gravity.CENTER)); thumbIcon = ti
+            box.addView(th, FrameLayout.LayoutParams((2 * r).toInt(), (2 * r).toInt()).apply { leftMargin = (cx - r - left).toInt(); topMargin = pad.toInt() }); thumb = th
+            host.addView(box, FrameLayout.LayoutParams(trackW.toInt(), trackH.toInt()).apply { leftMargin = left.toInt(); topMargin = (cy - trackH / 2).toInt() })
+            layer = box
+            this.alpha = 0f   // the handle in the track takes this button's place
+            box.pivotX = if (dir > 0) 0f else trackW; box.pivotY = trackH / 2f; box.scaleX = 0.35f; box.alpha = 0f
+            box.animate().scaleX(1f).alpha(1f).setInterpolator(Glass.SPRING).setDuration(380).start()
+        }
+        setOnTouchListener { v, e ->
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> { down = true; armed = false; near = false; moved = false; downX = e.rawX; parent?.requestDisallowInterceptTouchEvent(true)
+                    (background as? GlassDrawable)?.let { it.touchX = e.x; it.touchY = e.y; it.touchAlpha = 1f }
+                    if (!Glass.reduced(context)) animate().scaleX(0.96f).scaleY(0.96f).setInterpolator(Glass.EASE).setDuration(120).start()
+                    postDelayed(arm, 340) }
+                MotionEvent.ACTION_MOVE -> if (down) {
+                    if (!armed && Math.abs(e.rawX - downX) > slop) { moved = true; removeCallbacks(arm) }
+                    if (armed && thumb != null) {
+                        val t = (((e.rawX - downX) * dir) / travel).coerceIn(0f, 1f)
+                        thumb?.translationX = t * travel * dir
+                        fill?.let { f -> val w = (t * travel + width + 8 * c.resources.displayMetrics.density).toInt(); if (f.layoutParams.width != w) { f.layoutParams.width = w; f.requestLayout() } }
+                        val n = t >= 0.94f
+                        if (n != near) { near = n; Glass.tick(this); endIcon?.tint = if (n) Glass.ACCENT else 0x99ffffff.toInt(); thumbIcon?.tint = if (n) Glass.ACCENT else Glass.TEXT
+                            thumb?.animate()?.scaleX(if (n) 1.08f else 1f)?.scaleY(if (n) 1.08f else 1f)?.setInterpolator(Glass.SPRING)?.setDuration(240)?.start()
+                            endIcon?.animate()?.scaleX(if (n) 1.3f else 1f)?.scaleY(if (n) 1.3f else 1f)?.setInterpolator(Glass.SPRING)?.setDuration(240)?.start() }
+                    }
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> if (down) {
+                    down = false; removeCallbacks(arm)
+                    val fire = e.actionMasked == MotionEvent.ACTION_UP
+                    animate().scaleX(1f).scaleY(1f).setInterpolator(Glass.SPRING).setDuration(360).start()
+                    (background as? GlassDrawable)?.let { g -> android.animation.ValueAnimator.ofFloat(g.touchAlpha, 0f).apply { duration = 420; addUpdateListener { g.touchAlpha = it.animatedValue as Float }; start() } }
+                    val go = fire && armed && near
+                    if (armed) close(go) else this.alpha = 1f
+                    if (fire) { if (go) { Glass.tick(this, HapticFeedbackConstants.KEYBOARD_TAP); onFar() } else if (!armed && !moved) { Glass.tick(this, HapticFeedbackConstants.KEYBOARD_TAP); onTap() } }
+                }
+            }
+            true
+        }
     }
     /** Accent text button used for "บันทึก" / "ส่งออก". */
     fun primary(c: Context, label: String, click: () -> Unit) = c.text(label, 14.5f, Glass.ON_ACCENT, true).apply {
@@ -126,10 +229,46 @@ object EditorKit {
     fun actions(c: Context, items: List<View>): LinearLayout = LinearLayout(c).apply {
         gravity = Gravity.CENTER; items.forEach { addView(it, LinearLayout.LayoutParams(-2, -2)) }
     }
-    /** Like [actions] but in one row that scrolls sideways when the buttons do not fit the width. */
-    fun actionRow(c: Context, items: List<View>): View = android.widget.HorizontalScrollView(c).apply {
-        isHorizontalScrollBarEnabled = false; isFillViewport = true; clipToPadding = false; setPadding(c.dp(6), 0, c.dp(6), 0)
-        addView(LinearLayout(c).apply { gravity = Gravity.CENTER; items.forEach { addView(it, LinearLayout.LayoutParams(-2, -2)) } }, -1, -2)
+    /**
+     * Buttons in one row you slide along: the button in the middle is full size, the others shrink and fade, and when the
+     * finger lifts the nearest button settles in the middle. A tap on a button also brings it to the middle.
+     */
+    fun actionRow(c: Context, items: List<View>): View = SnapRow(c, items)
+    private class SnapRow(c: Context, items: List<View>) : HorizontalScrollView(c) {
+        private val row = LinearLayout(c).apply { gravity = Gravity.CENTER_VERTICAL; items.forEach { addView(it, LinearLayout.LayoutParams(-2, -2)) } }
+        private var downX = 0f; private var moved = false; private var lastX = -1; private val slop = android.view.ViewConfiguration.get(c).scaledTouchSlop
+        init { isHorizontalScrollBarEnabled = false; clipToPadding = false; overScrollMode = View.OVER_SCROLL_NEVER; addView(row, FrameLayout.LayoutParams(-2, -2)) }
+        private fun centreOf(v: View) = v.left + v.width / 2
+        private fun settle() {
+            if (row.childCount == 0) return
+            val mid = scrollX + width / 2
+            val near = (0 until row.childCount).minByOrNull { Math.abs(centreOf(row.getChildAt(it)) - mid) } ?: return
+            smoothScrollTo(centreOf(row.getChildAt(near)) - width / 2, 0)
+        }
+        private val watch = object : Runnable { override fun run() { if (scrollX == lastX) settle() else { lastX = scrollX; postDelayed(this, 70) } } }
+        override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
+            super.onLayout(changed, l, t, r, b)
+            if (row.childCount == 0 || width == 0) return
+            val first = row.getChildAt(0); val last = row.getChildAt(row.childCount - 1)
+            val ps = Math.max(0, (width - first.width) / 2); val pe = Math.max(0, (width - last.width) / 2)
+            if (row.paddingLeft != ps || row.paddingRight != pe) { row.setPadding(ps, 0, pe, 0); post { scrollTo(0, 0); shade() } }
+        }
+        private fun shade() {
+            val mid = scrollX + width / 2f; val reach = Math.max(1f, width / 2f)
+            for (i in 0 until row.childCount) { val v = row.getChildAt(i); val d = Math.min(1f, Math.abs(centreOf(v) - mid) / reach)
+                v.scaleX = 1f - 0.2f * d; v.scaleY = 1f - 0.2f * d; v.alpha = 1f - 0.45f * d }
+        }
+        override fun onScrollChanged(l: Int, t: Int, ol: Int, ot: Int) { super.onScrollChanged(l, t, ol, ot); shade() }
+        override fun dispatchTouchEvent(e: MotionEvent): Boolean {
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> { downX = e.x; moved = false; removeCallbacks(watch) }
+                MotionEvent.ACTION_MOVE -> if (Math.abs(e.x - downX) > slop) moved = true
+                MotionEvent.ACTION_UP -> {
+                    if (!moved) { val x = e.x + scrollX; (0 until row.childCount).map { row.getChildAt(it) }.firstOrNull { x >= it.left && x < it.right }?.let { smoothScrollTo(centreOf(it) - width / 2, 0) } }
+                    else { lastX = -1; postDelayed(watch, 70) } }
+            }
+            return super.dispatchTouchEvent(e)
+        }
     }
     /** Accent round button with an icon (save, export). */
     fun roundAccent(c: Context, icon: String, desc: String, click: () -> Unit) = FrameLayout(c).apply {
@@ -243,7 +382,7 @@ object EditorKit {
             orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; isClickable = true; isFocusable = true; contentDescription = name; minimumHeight = c.dp(60)
             addView(IconView(c, icon, 2f), LinearLayout.LayoutParams(c.dp(22), c.dp(22)))
             addView(c.text(name, 11.5f, Glass.TEXT2, true).apply { gravity = Gravity.CENTER; maxLines = 1; ellipsize = null; setPadding(0, c.dp(5), 0, 0) })
-            glassTouch(); setOnClickListener { if (i != selected) pick(i) }
+            glassTouch(); setOnClickListener { pick(i) }   // also the selected tab: it opens or folds the tool card
         } }
         init {
             clipChildren = false
@@ -262,13 +401,36 @@ object EditorKit {
             }
             place(animate && !first)
         }
-        private fun place(animate: Boolean) {
-            if (width == 0 || selected < 0) return
-            val t = tabs[selected]; val ic = t.getChildAt(0)
+        /** Called when the bar is swiped up (-1) or down (1) instead of along. */
+        var onSwipeY: ((Int) -> Unit)? = null
+        private var downX = 0f; private var downY = 0f; private var mode = 0   // 0 undecided, 1 along (the row scrolls by itself), 2 up or down
+        private val slop = android.view.ViewConfiguration.get(c).scaledTouchSlop
+        override fun onInterceptTouchEvent(e: MotionEvent): Boolean {
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> { downX = e.x; downY = e.y; mode = 0 }
+                MotionEvent.ACTION_MOVE -> if (mode == 0) {
+                    val dx = e.x - downX; val dy = e.y - downY
+                    if (Math.abs(dy) > slop && Math.abs(dy) > Math.abs(dx) * 1.2f) { mode = 2; parent?.requestDisallowInterceptTouchEvent(true); return true }
+                    else if (Math.abs(dx) > slop) mode = 1
+                }
+            }
+            return false
+        }
+        override fun onTouchEvent(e: MotionEvent): Boolean {
+            when (e.actionMasked) {
+                MotionEvent.ACTION_UP -> { val m = mode; mode = 0
+                    if (m == 2) { val dy = e.y - downY; if (Math.abs(dy) > context.dp(24)) onSwipeY?.invoke(if (dy < 0) -1 else 1) } }
+                MotionEvent.ACTION_CANCEL -> mode = 0
+            }
+            return true
+        }
+        private fun place(animate: Boolean, at: Int = selected) {
+            if (width == 0 || at < 0) return
+            val t = tabs[at]; val ic = t.getChildAt(0)
             val x = t.left + (t.width - context.dp(52)) / 2f; val y = t.top + ic.top + ic.height / 2f - context.dp(16)
             pill.translationY = y
             if (animate && !Glass.reduced(context)) pill.animate().translationX(x).setInterpolator(Glass.SPRING).setDuration(460).start() else { pill.animate().cancel(); pill.translationX = x }
-            scroller?.let { s -> val to = (t.left + t.width / 2 - s.width / 2).coerceAtLeast(0); if (animate) s.smoothScrollTo(to, 0) else s.scrollTo(to, 0) }
+            if (at == selected && mode == 0) scroller?.let { s -> val to = (t.left + t.width / 2 - s.width / 2).coerceAtLeast(0); if (animate) s.smoothScrollTo(to, 0) else s.scrollTo(to, 0) }
         }
         override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) { super.onLayout(changed, l, t, r, b); if (changed) place(false) }
         /** A scrolling row shows six and a half tabs on any screen, so the half tab says there is more. */

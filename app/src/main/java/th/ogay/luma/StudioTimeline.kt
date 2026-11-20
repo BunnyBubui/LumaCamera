@@ -14,6 +14,7 @@ import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
 import kotlin.math.abs
+import kotlin.math.sin
 import kotlin.math.floor
 
 /**
@@ -44,7 +45,217 @@ class StudioTimeline(context: Context) : View(context) {
             postInvalidateOnAnimation()
         }
     private var clipOffsets = StudioClipOffsets(LongArray(0))
-    var lanes: List<List<Bar>> = emptyList()
+    /** One row of bars per entry; [groups] says which rows belong to which type (picture, text, sound clip, music). */
+    var lanes: List<List<Bar>> = emptyList(); set(v) { field = v; layoutRows(); invalidate() }
+    /**
+     * A type of lane with its own header on the left, like the track headers of a desktop editor. [key] 0 is the row of clips itself
+     * (no rows of its own). [off] = muted (sound) or hidden (picture, text); [rows] is how many rows of bars it holds.
+     */
+    class Group(val key: Int, val name: String, val icon: String, val off: Boolean, val locked: Boolean, val canLock: Boolean, val audio: Boolean, val rows: Int, val color: Int = Color.WHITE)
+    var groups: List<Group> = emptyList(); set(v) { field = v; layoutRows(); invalidate() }
+    /** [group key, 0 = mute or hide / 1 = lock] was tapped in a header. */
+    var onGroup: (Int, Int) -> Unit = { _, _ -> }
+    /** The edit button of the row with this key was tapped; the rectangle is the button, in this view's own coordinates. */
+    var onEdit: (Int, RectF) -> Unit = { _, _ -> }
+    var onHeadOpen: (Boolean) -> Unit = {}
+    /** A track type (by key) was dragged to a new place: it now goes before the type with key [before], or last when that is null. */
+    var onGroupMove: (Int, Int?) -> Unit = { _, _ -> }
+    /** A tap on empty space: nothing should stay picked. */
+    var onClear: () -> Unit = {}
+    /** How far the headers are open: 0 = hidden (a small tab at the left edge), 1 = open. Follows the finger, then settles with a little bounce. */
+    var headFrac = 1f; set(v) { val was = field < 0.01f; field = v; if (was != (v < 0.01f)) updateExclusion(); invalidate() }
+    private val groupTop = ArrayList<Float>(); private val groupH = ArrayList<Float>(); private val rowY = ArrayList<Float>()
+    private fun layoutRows() {
+        groupTop.clear(); groupH.clear(); rowY.clear()
+        var y = lanesTop(); var row = 0
+        groups.forEachIndexed { gi, g ->
+            if (gi == 0 && g.key == 0) { groupTop += rulerH; groupH += clipH; return@forEachIndexed }
+            groupTop += y; val h = g.rows * laneH; groupH += h
+            repeat(g.rows) { k -> rowY += y + k * laneH; row++ }
+            y += h
+        }
+        while (rowY.size < lanes.size) rowY += (rowY.lastOrNull()?.plus(laneH) ?: lanesTop())
+        lanesBottom = y
+        updateExclusion()
+    }
+    private var lanesBottom = 0f
+    /** Height the whole timeline needs, in px. */
+    fun neededHeight(): Int = (maxOf(lanesBottom, lanesTop()) + 4 * d).toInt()
+    /** Height the lane rows start at, in px. */
+    fun lanesStart(): Int = lanesTop().toInt()
+    /** The open column: its old width plus a quarter of the screen, so names and buttons have room. */
+    private val expW get() = 138f * d + width * 0.25f
+    /** The strip at the left edge that opens the closed column: from under the ruler down to the last lane. */
+    private fun tabTop() = rulerH + 2 * d
+    private fun tabBottom() = maxOf(height.toFloat() - 2 * d, tabTop() + 64 * d)
+    private val stripW get() = 46 * d
+    /** Keeps the phone's back swipe away from that strip, so swiping right on it opens the column instead of going back. */
+    private fun updateExclusion() {
+        if (android.os.Build.VERSION.SDK_INT < 29) return
+        systemGestureExclusionRects = if (headFrac < 0.01f && groups.isNotEmpty()) { val t = tabTop().toInt(); listOf(Rect(0, t, stripW.toInt(), t + minOf((tabBottom() - tabTop()).toInt(), (190 * d).toInt()))) } else emptyList()
+    }
+    override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) { super.onSizeChanged(w, h, ow, oh); updateExclusion() }
+    /** Hidden (0) until the person swipes in from the left edge of the lanes (or taps the small tab there). */
+    private fun headW() = if (groups.isEmpty() || headFrac < 0.01f) 0f else expW * headFrac
+    private fun cx() = headW() + (width - headW()) / 2f
+    private var inHead = false; private var hx = 0f; private var hy = 0f; private var hFrac0 = 1f; private var hDrag = false
+    private var headAnim: android.animation.ValueAnimator? = null
+    /** Bubble pop: [popAll] when the column opens (each row in turn), otherwise one button ([popGroup], [popWhich]: 0 mute/hide, 1 lock, -1 the row). */
+    private var pop = 1f; private var popGroup = -2; private var popWhich = -1; private var popAll = false
+    private var popAnim: android.animation.ValueAnimator? = null
+    private fun bubble(gi: Int, which: Int) { popGroup = gi; popWhich = which; popAll = gi < 0; popAnim?.cancel()
+        popAnim = android.animation.ValueAnimator.ofFloat(0f, 1f).apply { duration = if (popAll) 700 else 420; addUpdateListener { pop = it.animatedValue as Float; invalidate() }; start() } }
+    private fun settleHead(to: Float) {
+        headAnim?.cancel(); val from = headFrac
+        headAnim = android.animation.ValueAnimator.ofFloat(0f, 1f).apply { duration = 460; interpolator = android.view.animation.OvershootInterpolator(1.3f)
+            addUpdateListener { headFrac = (from + (to - from) * (it.animatedValue as Float)).coerceAtLeast(0f) }; start() }
+        if (to > 0.5f) bubble(-1, -1)
+        onHeadOpen(to > 0.5f); performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+    }
+    /** Middle of the edit button of a row (at its right end). */
+    private fun editX(): Float = expW - 4 * d - 15 * d
+    private fun rowMid(gi: Int): Float = groupTop[gi] + (if (groups[gi].key == 0) clipH else groupH[gi] - 4 * d) / 2f
+    private val tmp = RectF()
+    private var tabHit = false
+    // Holding a track's name and dragging it up or down moves the whole track type (the video row stays on top).
+    private var reorder = -1; private var reorderCand = -1; private var reorderDy = 0f; private var reorderBefore: Int? = null; private var reorderNoop = true
+    private val reorderRun = Runnable { if (reorderCand >= 0 && !hDrag) { reorder = reorderCand; reorderDy = 0f; reorderNoop = true; parent?.requestDisallowInterceptTouchEvent(true); performHapticFeedback(HapticFeedbackConstants.LONG_PRESS); invalidate() } }
+    private fun reorderTarget() {
+        val g = reorder; val mid = groupTop[g] + groupH[g] / 2f + reorderDy
+        var j = -1
+        for (k in 1 until groups.size) { if (k != g && groupTop[k] + groupH[k] / 2f > mid) { j = k; break } }
+        reorderBefore = if (j < 0) null else groups[j].key
+        val next = groups.getOrNull(g + 1)?.key
+        reorderNoop = reorderBefore == next
+    }
+    private fun drawReorder(c: Canvas) {
+        val g = reorder; if (g < 0 || g >= groups.size) return
+        val ty = groupTop[g] + reorderDy; val hh = groupH[g] - 4 * d
+        // Where it would land: a line between two track types.
+        if (!reorderNoop) { val at = reorderBefore?.let { k -> groups.indexOfFirst { it.key == k } }
+            val ly = if (at == null || at < 0) lanesBottom - 2 * d else groupTop[at] - 2 * d
+            paint.color = Glass.ACCENT; c.drawRoundRect(4 * d, ly - 1.5f * d, width.toFloat() - 4 * d, ly + 1.5f * d, 1.5f * d, 1.5f * d, paint) }
+        paint.color = 0xf0303036.toInt(); tmp.set(4 * d, ty, headW().coerceAtLeast(expW) - 4 * d, ty + hh); c.drawRoundRect(tmp, 11 * d, 11 * d, paint)
+        c.drawRoundRect(tmp, 11 * d, 11 * d, stroke)
+        val gp = groups[g]; drawIcon(c, gp.icon, tmp.left + 20 * d, tmp.centerY(), 15 * d, Color.WHITE)
+        textPaint.color = Color.WHITE; textPaint.textSize = 10.5f * d; textPaint.isFakeBoldText = true; c.drawText(gp.name, tmp.left + 31 * d, tmp.centerY() + 3.6f * d, textPaint)
+        textPaint.color = 0x99ffffff.toInt(); textPaint.textSize = 9.5f * d; textPaint.isFakeBoldText = false
+    }
+    private fun headTouch(e: MotionEvent) {
+        when (e.actionMasked) {
+            MotionEvent.ACTION_DOWN -> { hx = e.x; hy = e.y; hFrac0 = headFrac; hDrag = false; headAnim?.cancel(); tabHit = headFrac > 0.5f && e.x > headW() - 6 * d
+                reorder = -1; removeCallbacks(reorderRun)
+                reorderCand = if (headFrac > 0.95f && e.x < headW() - 14 * d && abs(e.x - editX()) > 20 * d) groups.indices.firstOrNull { it > 0 && groups[it].key != 0 && e.y >= groupTop[it] && e.y < groupTop[it] + groupH[it] } ?: -1 else -1
+                if (reorderCand >= 0) postDelayed(reorderRun, 330)
+                velocity?.recycle(); velocity = android.view.VelocityTracker.obtain().also { it.addMovement(e) } }
+            MotionEvent.ACTION_MOVE -> { velocity?.addMovement(e); val dx = e.x - hx
+                if (reorder >= 0) { reorderDy = e.y - hy; reorderTarget(); invalidate(); return }
+                if (abs(dx) > 8 * d || abs(e.y - hy) > 8 * d) removeCallbacks(reorderRun)
+                if (!hDrag && abs(dx) > 8 * d && abs(dx) > abs(e.y - hy)) { hDrag = true; parent?.requestDisallowInterceptTouchEvent(true) }
+                if (hDrag) headFrac = (hFrac0 + dx / expW).coerceIn(0f, 1.06f) }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                removeCallbacks(reorderRun)
+                if (reorder >= 0) { val g = reorder; reorder = -1; val ok = e.actionMasked == MotionEvent.ACTION_UP && !reorderNoop
+                    if (ok) { performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK); onGroupMove(groups[g].key, reorderBefore) }
+                    velocity?.recycle(); velocity = null; invalidate(); return }
+                velocity?.computeCurrentVelocity(1000); val vx = velocity?.xVelocity ?: 0f; velocity?.recycle(); velocity = null
+                if (hDrag) settleHead(if (abs(vx) > 450 * d) (if (vx > 0) 1f else 0f) else if (headFrac > 0.5f) 1f else 0f)
+                else if (e.actionMasked == MotionEvent.ACTION_UP) {
+                    if (headFrac < 0.5f) { settleHead(1f); return }   // a tap on the small tab opens the column
+                    if (tabHit) { settleHead(0f); return }                // a tap on the tab at the column's edge closes it
+                    val gi = groups.indices.firstOrNull { e.y >= groupTop[it] && e.y < groupTop[it] + groupH[it] } ?: return
+                    val g = groups[gi]; val my = rowMid(gi)
+                    if (abs(e.x - editX()) < 18 * d && abs(e.y - my) < 20 * d) { bubble(gi, 0); performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                        onEdit(g.key, RectF(editX() - 15 * d, my - 15 * d, editX() + 15 * d, my + 15 * d)); return }
+                    bubble(gi, -1)
+                }
+            }
+        }
+    }
+    private fun withA(color: Int, a: Float): Int = (color and 0x00ffffff) or ((((color ushr 24) and 0xff) * a.coerceIn(0f, 1f)).toInt() shl 24)
+    private fun drawIcon(c: Canvas, data: String, cxp: Float, cyp: Float, size: Float, color: Int, wpx: Float = 1.9f) {
+        iconStroke.color = color; val k = size / 24f
+        c.save(); c.translate(cxp - size / 2, cyp - size / 2); c.scale(k, k); iconStroke.strokeWidth = wpx; c.drawPath(iconPath(data), iconStroke); c.restore(); iconStroke.color = 0xff101014.toInt()
+    }
+    private fun slash(c: Canvas, cxp: Float, cyp: Float, r: Float, color: Int) { iconStroke.color = color; iconStroke.strokeWidth = 1.7f * d; c.drawLine(cxp - r, cyp - r, cxp + r, cyp + r, iconStroke); iconStroke.color = 0xff101014.toInt() }
+    /** Ease with a small overshoot, for the bubble. */
+    private fun backOut(t: Float): Float { val u = t.coerceIn(0f, 1f) - 1f; return 1f + 2.6f * u * u * u + 1.6f * u * u }
+    private fun popOf(gi: Int, which: Int): Float {
+        if (popGroup == -2) return 0f
+        if (popAll) return 0f
+        if (popGroup != gi || popWhich != which) return 0f
+        return kotlin.math.sin(Math.PI * pop).toFloat()
+    }
+    private val headBg = Paint().apply { color = 0xff0d0d11.toInt() }
+    private val headShade = Paint()
+    private var shadeFor = -1f
+    private val nameOut = StringBuilder()
+    private fun fitName(text: String, maxW: Float): String {
+        if (maxW <= 0f) return ""
+        if (textPaint.measureText(text) <= maxW) return text
+        var n = text.length; while (n > 1 && textPaint.measureText(text, 0, n) + textPaint.measureText("…") > maxW) n--
+        nameOut.setLength(0); nameOut.append(text, 0, n).append('…'); return nameOut.toString()
+    }
+    private fun drawHeader(c: Canvas) {
+        if (groups.isEmpty()) return
+        val hw = headW(); val f = headFrac
+        if (hw <= 0f) {
+            // Closed: a tall tab along the left edge with an arrow, saying "swipe right (or tap) to open the track list".
+            val t0 = tabTop(); val t1 = tabBottom()
+            iconStroke.color = 0xe6ffffff.toInt(); iconStroke.strokeWidth = 2f * d; val m = (t0 + t1) / 2f; val ax = 14 * d
+            c.drawLine(ax - 2.5f * d, m - 6 * d, ax + 2.5f * d, m, iconStroke); c.drawLine(ax + 2.5f * d, m, ax - 2.5f * d, m + 6 * d, iconStroke); iconStroke.color = 0xff101014.toInt()
+            return
+        }
+        // Column background and a soft shadow on its right edge.
+        // No background plate any more: the names sit straight on the page, and a faint line under each row leads the eye across to its lane.
+        c.save(); c.clipRect(0f, 0f, hw, height.toFloat())
+        val shift = hw - expW   // while opening, the rows slide in from the left with the column edge
+        c.translate(shift, 0f)
+        groups.forEachIndexed { gi, g ->
+            val top = groupTop[gi]; val rowH = if (g.key == 0) clipH else groupH[gi] - 4 * d
+            // Each row swells in after the one above it, overshoots a little and settles; closing runs the same the other way.
+            val s = backOut((f * 1.6f - gi * 0.12f) / 0.7f)
+            if (s <= 0.02f) return@forEachIndexed
+            val rowPop = popOf(gi, -1)
+            val l = 4 * d; val r = expW - 4 * d; val my = top + rowH / 2f
+            val hh = rowH / 2f * (0.55f + 0.45f * s) + rowPop * 1.5f * d
+            val left = l; val right = l + (r - l) * s + rowPop * 2f * d
+            val rad = minOf(hh, 11 * d)
+            // No plate behind a plain track; only a switched-off or locked one gets an orange tint, because that tells its state.
+            if (g.off || g.locked) { paint.color = 0x29ff9f45; c.drawRoundRect(left, my - hh, right, my + hh, rad, rad, paint) }
+            val a = ((s - 0.5f) / 0.5f).coerceIn(0f, 1f); if (a <= 0f) return@forEachIndexed
+            guide.color = withA(0x24ffffff, a); guide.strokeWidth = 1f * d; c.drawLine(left, my + hh + 1.5f * d, right + 22 * d, my + hh + 1.5f * d, guide)
+            paint.color = withA(g.color, a * (if (g.off) 0.45f else 1f)); c.drawRoundRect(left + 4 * d, my - hh + 5 * d, left + 7 * d, my + hh - 5 * d, 1.5f * d, 1.5f * d, paint)
+            val dim = g.off
+            drawIcon(c, g.icon, left + 20 * d, my, 15 * d, withA(if (dim) 0x80ffffff.toInt() else Color.WHITE, a))
+            // What is switched on, shown next to the name: sound off or hidden, locked.
+            val nameX = left + 31 * d
+            val badges = (if (g.off) 1 else 0) + (if (g.locked) 1 else 0)
+            val nameMax = (editX() - 15 * d) - nameX - 3 * d - badges * 14 * d
+            textPaint.color = withA(if (dim) 0x80ffffff.toInt() else Color.WHITE, a); textPaint.textSize = 10.5f * d; textPaint.isFakeBoldText = true
+            val shown = fitName(g.name, nameMax); c.drawText(shown, nameX, my + 3.6f * d, textPaint)
+            var bx = nameX + textPaint.measureText(shown) + 9 * d
+            textPaint.isFakeBoldText = false
+            if (g.off) { val ic = if (g.audio) SND else EYE_OFF; paint.color = withA(0x33ff9f45, a); c.drawCircle(bx, my, 6.5f * d, paint); drawIcon(c, ic, bx, my, 10 * d, withA(Glass.ACCENT, a), 2.2f)
+                if (g.audio) slash(c, bx, my, 4 * d, withA(Glass.ACCENT, a)); bx += 14 * d }
+            if (g.locked) { paint.color = withA(0x33ff9f45, a); c.drawCircle(bx, my, 6.5f * d, paint); drawIcon(c, LOCK_ON, bx, my, 10 * d, withA(Glass.ACCENT, a), 2.2f) }
+            // The edit button: a pencil; it opens a small menu with mute (or hide) and lock.
+            val ex = editX(); val bp = popOf(gi, 0); val br = 11.5f * d * (1f + bp * 0.28f) * (0.6f + 0.4f * a)
+            paint.color = withA(if (g.off || g.locked) 0x40ff9f45 else 0x1fffffff, a); c.drawCircle(ex, my, br, paint)
+            drawIcon(c, PENCIL, ex, my, 13 * d * (1f + bp * 0.2f), withA(if (g.off || g.locked) Glass.ACCENT else 0xe6ffffff.toInt(), a), 2f)
+        }
+        c.restore()
+        // A tab on the column's right edge says "this slides: swipe left (or tap) to close". It nudges once when the column has opened.
+        if (f > 0.9f) { val tr = tabRect(); val nudge = if (popAll) (sin(pop * 3.0 * Math.PI) * (1f - pop) * 4 * d).toFloat() else 0f
+            // Only the arrow, the same size as the one on the closed tab (no strip behind it).
+            iconStroke.color = 0xe6ffffff.toInt(); iconStroke.strokeWidth = 2f * d; val m = tr.centerY(); val cxp = tr.centerX() + nudge
+            c.drawLine(cxp + 2.5f * d, m - 6 * d, cxp - 2.5f * d, m, iconStroke); c.drawLine(cxp - 2.5f * d, m, cxp + 2.5f * d, m + 6 * d, iconStroke); iconStroke.color = 0xff101014.toInt() }
+        paint.alpha = 255
+    }
+    private val guide = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
+    private val tabBox = RectF()
+    /** The small tab on the right edge of the open column, in this view's coordinates. */
+    private fun tabRect(): RectF { val hw = headW(); tabBox.set(hw + 6 * d, tabTop(), hw + 26 * d, tabBottom()); return tabBox }
     var selected = 0
     /** One entry per clip: null for the first, "" for a plain cut, otherwise the name of the change into that clip. */
     var seams: List<String?> = emptyList(); set(v) { field = v; invalidate() }
@@ -86,7 +297,7 @@ class StudioTimeline(context: Context) : View(context) {
     var playhead: Long
         get() = ph
         set(v) {
-            if (mode == IDLE && !flinging && ph != v) {
+            if (mode == IDLE && !flinging && ph != v && !(ph > total() && v >= total())) {
                 ph = v
                 // Keep precise time for hit testing; coalesce ticks that move less than 0.5 px.
                 if (lastDrawnPlayhead == Long.MIN_VALUE || abs((ph - lastDrawnPlayhead) * pxPerMs) >= 0.5f) {
@@ -107,17 +318,26 @@ class StudioTimeline(context: Context) : View(context) {
     private val clipPath = Path(); private val rect = RectF(); private val src = Rect(); private val dst = RectF()
 
     private companion object {
+        const val PENCIL = "M4 20h4L19 9l-4-4L4 16z M13.5 6.5l4 4"
+        const val SND = "M4 9v6h4l5 4V5L8 9z M16.5 8.5a5 5 0 0 1 0 7"
+        const val EYE = "M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6"
+        const val EYE_OFF = "M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z M4 4l16 16"
+        const val LOCK_ON = "M6 11h12v9H6z M8.5 11V8a3.5 3.5 0 0 1 7 0v3"
+        const val LOCK_OFF = "M6 11h12v9H6z M8.5 11V8a3.5 3.5 0 0 1 6.8-1.2"
         const val IDLE = 0; const val SCRUB = 1; const val TRIM_L = 2; const val TRIM_R = 3
         const val MOVE = 4; const val ZOOM = 5; const val BAR = 6; const val BAR_L = 7; const val BAR_R = 8
-        val RULER_STEPS = longArrayOf(100, 200, 500, 1000, 2000, 5000, 10_000, 30_000, 60_000, 300_000, 600_000)
+        val RULER_STEPS = longArrayOf(20, 50, 100, 200, 500, 1000, 2000, 5000, 10_000, 30_000, 60_000, 300_000, 600_000, 1_800_000, 3_600_000)
     }
     private val scroller = android.widget.OverScroller(context)
     private var velocity: android.view.VelocityTracker? = null
     private var flinging = false
     private var barAt = 0L; private var barLen = 0L; private var lastSnap = -1L
+    /** Where a dragged bar is caught right now (drawn as a line), or -1. */
+    private var snapAt = -1L
     private val barStroke = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; style = Paint.Style.STROKE; strokeWidth = 2f * d }
     private fun lanesTop() = rulerH + clipH + 4 * d
-    private fun barAt(px: Float, py: Float): Bar? { val li = ((py - lanesTop()) / laneH).toInt(); if (py < lanesTop()) return null
+    private fun barAt(px: Float, py: Float): Bar? { if (py < lanesTop() || px < headW()) return null
+        val li = rowY.indexOfLast { py >= it }.takeIf { it >= 0 && py < rowY[it] + laneH } ?: return null
         return lanes.getOrNull(li)?.lastOrNull { px >= x(it.at) - 6 * d && px <= x(it.at + it.len) + 6 * d } }
     private fun findBar(id: Int): Bar? { lanes.forEach { l -> l.forEach { if (it.id == id) return it } }; return null }
     /** Pulls [t] onto a nearby edge (a clip boundary, a bar edge, the playhead) and ticks once when it catches. */
@@ -132,22 +352,35 @@ class StudioTimeline(context: Context) : View(context) {
         lanes.forEach { l -> l.forEach { if (it.id != skipBar && it.id >= 0) { offer(it.at); offer(it.at + it.len) } } }
         marks.forEach { offer(it) }
         if (withPlayhead) offer(ph)
-        if (best < 0) { lastSnap = -1; return t }
+        if (best < 0) { lastSnap = -1; snapAt = -1; return t }
+        snapAt = best
         if (best != lastSnap) { lastSnap = best; performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) }
         return best
     }
     override fun computeScroll() {
         if (!flinging) return
-        if (scroller.computeScrollOffset()) { ph = (scroller.currX / pxPerMs).toLong().coerceIn(0, total()); onSeek(ph, false); postInvalidateOnAnimation() }
+        if (scroller.computeScrollOffset()) { ph = (scroller.currX / pxPerMs).toLong().coerceIn(0, reach()); onSeek(ph, false); postInvalidateOnAnimation() }
         else { flinging = false; onSeek(ph, true) }
     }
+    /** Whether the row [li] belongs to a group that is muted or hidden. */
+    private fun rowOff(li: Int): Boolean { var n = 0; groups.forEach { g -> if (g.key == 0) return@forEach; if (li < n + g.rows) return g.off; n += g.rows }; return false }
     private var mode = IDLE
+    /** How strongly the bar in hand is lifted (0..1), and how far the finger has moved it up or down. */
+    private var grab = 0f; private var grabDy = 0f; private var tDownY = 0f; private var grabAnim: android.animation.ValueAnimator? = null
+    private fun grabTo(t: Float) { grabAnim?.cancel(); if (Glass.reduced(context)) { grab = t; invalidate(); return }
+        grabAnim = android.animation.ValueAnimator.ofFloat(grab, t).apply { duration = if (t > grab) 200 else 320; interpolator = if (t > grab) Glass.SPRING else Glass.EASE
+            addUpdateListener { grab = it.animatedValue as Float; if (grab <= 0.001f) grabDy = 0f; invalidate() }; start() } }
+    private var phF = 0.0
     private var downX = 0f; private var lastX = 0f; private var moved = false
     private var trimFrom = 0L; private var trimTo = 0L; private var trimLen = 0L; private var trimPh = 0L
     private var moveIndex = -1; private var moveX = 0f
 
+    /** Zoomed in far enough to see single frames: rest the line on a whole frame (30 per second). */
+    private fun frameSnap(t: Long): Long = if (pxPerMs * 33.3f >= 6 * d) (Math.round(t / 33.333) * 33.333).toLong().coerceIn(0, reach()) else t
+    /** How far the line can go: the end of the video, or further when a sound or layer runs past it. */
+    private fun reach(): Long { var m = clipOffsets.total; lanes.forEach { l -> l.forEach { b -> if (b.at + b.len > m) m = b.at + b.len } }; return m }
     private fun total() = clipOffsets.total
-    private fun x(t: Long) = width / 2f + (t - ph) * pxPerMs
+    private fun x(t: Long) = cx() + (t - ph) * pxPerMs
     private fun startOf(i: Int) = clipOffsets.startOf(i)
     private fun clipAt(px: Float): Int {
         // Retain original screen-space comparison and exact cut-boundary behavior.
@@ -168,7 +401,7 @@ class StudioTimeline(context: Context) : View(context) {
 
     private val scale = ScaleGestureDetector(context, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
         override fun onScaleBegin(s: ScaleGestureDetector): Boolean { mode = ZOOM; return true }
-        override fun onScale(s: ScaleGestureDetector): Boolean { pxPerMs = (pxPerMs * s.scaleFactor).coerceIn(6f * d / 1000f, 900f * d / 1000f); invalidate(); return true }
+        override fun onScale(s: ScaleGestureDetector): Boolean { pxPerMs = (pxPerMs * s.scaleFactor).coerceIn(0.5f * d / 1000f, 2400f * d / 1000f); invalidate(); return true }
     })
     private val gestures = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
         override fun onDown(e: MotionEvent) = true
@@ -176,8 +409,8 @@ class StudioTimeline(context: Context) : View(context) {
             addRect(addBox)
             seamAt(e.x, e.y)?.let { onSeam(it); performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK); return true }
             if (inClipRow(e.y) && e.x >= addBox.left - 6 * d && e.x <= addBox.right + 6 * d) { onAdd(); performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) }
-            else if (inClipRow(e.y)) { val i = clipAt(e.x); if (i >= 0) { onSelect(i); performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) } }
-            else barAt(e.x, e.y)?.let { onPickBar(it.id); performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) }
+            else if (inClipRow(e.y)) { val i = clipAt(e.x); if (i >= 0) { onSelect(i); performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) } else onClear() }
+            else if (e.y >= lanesTop()) { val b = barAt(e.x, e.y); if (b != null) { onPickBar(b.id); performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) } else onClear() }
             return true
         }
         override fun onLongPress(e: MotionEvent) {
@@ -188,20 +421,22 @@ class StudioTimeline(context: Context) : View(context) {
     })
 
     override fun onTouchEvent(e: MotionEvent): Boolean {
+        if (e.actionMasked == MotionEvent.ACTION_DOWN) { inHead = groups.isNotEmpty() && ((e.x < headW() && e.y > rulerH) || (headFrac > 0.5f && e.x < headW() + 28 * d && tabRect().contains(e.x, e.y)) || (headFrac < 0.01f && e.x < stripW && e.y > rulerH + 2 * d && e.y < tabBottom())) }
+        if (inHead) { headTouch(e); if (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL) inHead = false; return true }
         scale.onTouchEvent(e)
         if (mode != ZOOM) gestures.onTouchEvent(e)
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 // On the lane rows a vertical drag scrolls the lanes (the parent scroller); everything else keeps the touch.
                 parent?.requestDisallowInterceptTouchEvent(e.y < lanesTop())
-                downX = e.x; lastX = e.x; moved = false; mode = SCRUB; lastSnap = -1
+                downX = e.x; tDownY = e.y; lastX = e.x; moved = false; mode = SCRUB; lastSnap = -1; phF = ph.toDouble()
                 scroller.forceFinished(true); flinging = false
                 velocity?.recycle(); velocity = android.view.VelocityTracker.obtain()
                 // The picked bar can be dragged along its lane, or stretched from either end.
                 barAt(e.x, e.y)?.takeIf { it.id == selectedBar && it.movable }?.let { b ->
                     val x0 = x(b.at); val x1 = x(b.at + b.len); val edge = 16 * d; val wide = x1 - x0 > 44 * d
                     mode = if (wide && e.x < x0 + edge) BAR_L else if (wide && e.x > x1 - edge) BAR_R else BAR
-                    barAt = b.at; barLen = b.len; parent?.requestDisallowInterceptTouchEvent(true)
+                    barAt = b.at; barLen = b.len; parent?.requestDisallowInterceptTouchEvent(true); grabTo(1f)
                 }
                 val c = clips.getOrNull(selected)
                 if (c != null && inClipRow(e.y)) {
@@ -212,14 +447,15 @@ class StudioTimeline(context: Context) : View(context) {
             }
             MotionEvent.ACTION_MOVE -> {
                 if (abs(e.x - downX) > 6 * d) { moved = true; parent?.requestDisallowInterceptTouchEvent(true) }
+                if (mode == BAR || mode == BAR_L || mode == BAR_R) grabDy = ((e.y - tDownY) * 0.35f).coerceIn(-9 * d, 9 * d)
                 velocity?.addMovement(e)
                 val drag = ((e.x - downX) / pxPerMs).toLong()
                 when (mode) {
-                    SCRUB -> if (moved && e.pointerCount == 1) { ph = (ph - ((e.x - lastX) / pxPerMs).toLong()).coerceIn(0, total()); onSeek(ph, false); invalidate() }
-                    BAR -> if (moved) { var at = (barAt + drag).coerceIn(0, (total() - barLen).coerceAtLeast(0))
+                    SCRUB -> if (moved && e.pointerCount == 1) { phF = (phF - (e.x - lastX) / pxPerMs).coerceIn(0.0, reach().toDouble()); ph = phF.toLong(); onSeek(ph, false); invalidate() }
+                    BAR -> if (moved) { var at = (barAt + drag).coerceAtLeast(0)
                         val s0 = snap(at, true, selectedBar); if (s0 != at) at = s0 else { val s1 = snap(at + barLen, true, selectedBar); if (s1 != at + barLen) at = s1 - barLen }
                         onBar(selectedBar, at.coerceAtLeast(0), barLen, 0, false); invalidate() }
-                    BAR_R -> { val endAt = snap((barAt + barLen + drag).coerceIn(barAt + 200, total().coerceAtLeast(barAt + 200)), true, selectedBar)
+                    BAR_R -> { val endAt = snap((barAt + barLen + drag).coerceAtLeast(barAt + 200), true, selectedBar)
                         onBar(selectedBar, barAt, (endAt - barAt).coerceAtLeast(200), 0, false); invalidate() }
                     BAR_L -> { val startAt = snap((barAt + drag).coerceIn(0, barAt + barLen - 200), true, selectedBar).coerceIn(0, barAt + barLen - 200)
                         onBar(selectedBar, startAt, barAt + barLen - startAt, startAt - barAt, false); invalidate() }
@@ -235,13 +471,14 @@ class StudioTimeline(context: Context) : View(context) {
                 lastX = e.x
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                val was = mode; mode = IDLE
+                val was = mode; mode = IDLE; snapAt = -1
+                if (was == BAR || was == BAR_L || was == BAR_R) grabTo(0f)
                 when (was) {
                     SCRUB -> if (moved) {
                         velocity?.computeCurrentVelocity(1000); val vx = velocity?.xVelocity ?: 0f
                         if (abs(vx) > 700 * d && e.actionMasked == MotionEvent.ACTION_UP) { flinging = true
-                            scroller.fling((ph * pxPerMs).toInt(), 0, (-vx).toInt(), 0, 0, (total() * pxPerMs).toInt(), 0, 0); postInvalidateOnAnimation() }
-                        else { ph = snap(ph, false); onSeek(ph, true) } }
+                            scroller.fling((ph * pxPerMs).toInt(), 0, (-vx).toInt(), 0, 0, (reach() * pxPerMs).toInt(), 0, 0); postInvalidateOnAnimation() }
+                        else { ph = frameSnap(snap(ph, false)); onSeek(ph, true) } }
                     BAR, BAR_L, BAR_R -> findBar(selectedBar)?.let { b -> if (moved) onBar(selectedBar, b.at, b.len, if (was == BAR_L) b.at - barAt else 0, true) }
                     TRIM_L, TRIM_R -> clips.getOrNull(selected)?.let { onTrim(selected, it.from, it.to, true) }
                     MOVE -> { val to = clipAt(moveX).let { if (it < 0) (if (moveX < x(0)) 0 else clips.size - 1) else it }
@@ -260,16 +497,18 @@ class StudioTimeline(context: Context) : View(context) {
     override fun onDraw(c: Canvas) {
         val w = width.toFloat(); val all = total()
         // Ruler: the step grows until two marks are a comfortable distance apart.
-        val step = RULER_STEPS.firstOrNull { it * pxPerMs >= 58 * d } ?: 600_000L
-        var t = (floor((ph - w / 2 / pxPerMs) / step.toDouble()).toLong() * step).coerceAtLeast(0)
+        val step = RULER_STEPS.firstOrNull { it * pxPerMs >= 58 * d } ?: 3_600_000L
+        var t = (floor((ph - cx() / pxPerMs) / step.toDouble()).toLong() * step).coerceAtLeast(0)
         paint.color = 0x55ffffff
+        // The same text paint is used by the track column (which leaves it faded while it opens or closes), so set it again here.
+        textPaint.color = 0x99ffffff.toInt(); textPaint.textSize = 9.5f * d; textPaint.isFakeBoldText = false
         while (t <= all && x(t) < w) { val px = x(t); c.drawRect(px, rulerH - 5 * d, px + d, rulerH - 1 * d, paint); c.drawText(label(t, step < 1000), px + 3 * d, rulerH - 5 * d, textPaint); t += step }
         marks.forEach { m -> val mx = x(m); if (mx > -8 * d && mx < w + 8 * d) { clipPath.reset(); clipPath.moveTo(mx - 4 * d, rulerH - 9 * d); clipPath.lineTo(mx + 4 * d, rulerH - 9 * d); clipPath.lineTo(mx, rulerH - 1 * d); clipPath.close(); c.drawPath(clipPath, accent)
             paint.color = Glass.ACCENT; paint.alpha = 120; c.drawRect(mx - 0.5f * d, rulerH, mx + 0.5f * d, rulerH + clipH, paint); paint.alpha = 255 } }
         // Clips.
         val top = rulerH; val bottom = rulerH + clipH; val r = 9 * d
         // Skip offscreen clips in long projects (the viewport is already clipped by the View).
-        val visibleFromMs = (ph - w / 2f / pxPerMs).toLong().coerceAtLeast(0L)
+        val visibleFromMs = (ph - cx() / pxPerMs).toLong().coerceAtLeast(0L)
         var i = clipOffsets.clipAt(visibleFromMs).let { if (it < 0) clips.size else it }
         while (i < clips.size) {
             val clip = clips[i]
@@ -332,36 +571,43 @@ class StudioTimeline(context: Context) : View(context) {
         if (moveIndex >= 0) { accent.alpha = 200; c.drawRoundRect(moveX - 2 * d, top - 3 * d, moveX + 2 * d, bottom + 3 * d, 2 * d, 2 * d, accent); accent.alpha = 255 }
         // Lanes: music and layers as bars at their place in time, with the waveform of a sound and a dot for each keyframe.
         lanes.forEachIndexed { li, bars ->
-            val y0 = lanesTop() + li * laneH; val y1 = y0 + laneH - 4 * d; val mid = (y0 + y1) / 2
+            val y0 = rowY.getOrElse(li) { lanesTop() + li * laneH }; val y1 = y0 + laneH - 4 * d; val mid = (y0 + y1) / 2
             bars.forEach { b ->
                 val x0 = x(b.at); val x1 = x(b.at + b.len).coerceAtLeast(x0 + 6 * d); if (x1 < 0 || x0 > w) return@forEach
-                paint.color = b.color; paint.alpha = if (selectedBar < -1 || selectedBar == b.id) 235 else 150
-                c.drawRoundRect(x0, y0, x1, y1, 5 * d, 5 * d, paint); paint.alpha = 255
-                c.save(); c.clipRect(x0, y0, x1, y1)
+                // A picked bar that is held lifts a little, grows taller and follows the finger up and down a few dp, then settles back.
+                val lift = if (b.id == selectedBar) grab else 0f; val by0 = y0 - 3 * d * lift + grabDy * lift; val by1 = y1 + 3 * d * lift + grabDy * lift; val bmid = (by0 + by1) / 2
+                if (lift > 0.01f) { paint.color = Color.BLACK; paint.alpha = (110 * lift).toInt().coerceIn(0, 255); c.drawRoundRect(x0 - 2 * d * lift, by0 + 2 * d * lift, x1 + 2 * d * lift, by1 + 5 * d * lift, 7 * d, 7 * d, paint); paint.alpha = 255 }
+                paint.color = b.color; paint.alpha = if (rowOff(li)) 70 else if (selectedBar < -1 || selectedBar == b.id) 235 else 150
+                c.drawRoundRect(x0, by0, x1, by1, 5 * d, 5 * d, paint); paint.alpha = 255
+                c.save(); c.clipRect(x0, by0, x1, by1)
                 val pk = b.peaks
                 if (pk != null && pk.isNotEmpty()) {
                     paint.color = 0x8c000000.toInt(); paint.strokeWidth = 1.6f * d
                     var px = x0.coerceAtLeast(0f); val stop = x1.coerceAtMost(w)
                     while (px < stop) {
                         var ms = b.peakFrom + ((px - x0) / pxPerMs).toLong(); if (b.loop > 0) ms %= b.loop
-                        val amp = pk[(ms / AudioPeaks.STEP_MS).toInt().coerceIn(0, pk.size - 1)] * (y1 - y0) * 0.46f
-                        c.drawLine(px, mid - amp - 0.5f * d, px, mid + amp + 0.5f * d, paint); px += 2.6f * d
+                        val amp = pk[(ms / AudioPeaks.STEP_MS).toInt().coerceIn(0, pk.size - 1)] * (by1 - by0) * 0.46f
+                        c.drawLine(px, bmid - amp - 0.5f * d, px, bmid + amp + 0.5f * d, paint); px += 2.6f * d
                     }
                     paint.strokeWidth = 0f
                 } else if (x1 - x0 > 40 * d) { textPaint.color = 0xe6000000.toInt(); textPaint.textSize = 9f * d; textPaint.isFakeBoldText = true
-                    c.drawText(b.label, x0.coerceAtLeast(0f) + 6 * d, mid + 3.2f * d, textPaint); textPaint.color = 0x99ffffff.toInt(); textPaint.textSize = 9.5f * d; textPaint.isFakeBoldText = false }
+                    c.drawText(b.label, x0.coerceAtLeast(0f) + 6 * d, bmid + 3.2f * d, textPaint); textPaint.color = 0x99ffffff.toInt(); textPaint.textSize = 9.5f * d; textPaint.isFakeBoldText = false }
                 paint.color = Color.WHITE
                 b.marks.forEach { m -> val mx = x0 + m * pxPerMs; if (mx >= -3 * d && mx <= w + 3 * d) {
-                    c.save(); c.rotate(45f, mx, mid); c.drawRect(mx - 3 * d, mid - 3 * d, mx + 3 * d, mid + 3 * d, paint); c.restore()
+                    c.save(); c.rotate(45f, mx, bmid); c.drawRect(mx - 3 * d, bmid - 3 * d, mx + 3 * d, bmid + 3 * d, paint); c.restore()
                 } }
                 c.restore()
-                if (b.id == selectedBar) { c.drawRoundRect(x0, y0, x1, y1, 5 * d, 5 * d, barStroke)
-                    if (b.movable && x1 - x0 > 44 * d) { paint.color = Color.WHITE; c.drawRoundRect(x0 + 3 * d, y0 + 4 * d, x0 + 5.5f * d, y1 - 4 * d, d, d, paint); c.drawRoundRect(x1 - 5.5f * d, y0 + 4 * d, x1 - 3 * d, y1 - 4 * d, d, d, paint) } }
+                if (b.id == selectedBar) { c.drawRoundRect(x0, by0, x1, by1, 5 * d, 5 * d, barStroke)
+                    if (b.movable && x1 - x0 > 44 * d) { paint.color = Color.WHITE; c.drawRoundRect(x0 + 3 * d, by0 + 4 * d, x0 + 5.5f * d, by1 - 4 * d, d, d, paint); c.drawRoundRect(x1 - 5.5f * d, by0 + 4 * d, x1 - 3 * d, by1 - 4 * d, d, d, paint) } }
             }
         }
+        if (snapAt >= 0 && (mode == BAR || mode == BAR_L || mode == BAR_R)) { val sx = x(snapAt); paint.color = Glass.ACCENT; paint.alpha = 230
+            c.drawRect(sx - 0.8f * d, rulerH, sx + 0.8f * d, maxOf(lanesBottom, height.toFloat()), paint); c.drawCircle(sx, rulerH, 3 * d, paint); paint.alpha = 255 }
+        drawHeader(c)
+        drawReorder(c)
         // Playhead.
-        paint.color = Color.WHITE; c.drawRoundRect(w / 2 - 1 * d, 2 * d, w / 2 + 1 * d, height - 1 * d, d, d, paint)
-        clipPath.reset(); clipPath.moveTo(w / 2 - 5 * d, 0f); clipPath.lineTo(w / 2 + 5 * d, 0f); clipPath.lineTo(w / 2, 7 * d); clipPath.close(); c.drawPath(clipPath, paint)
+        paint.color = Color.WHITE; val mx0 = cx(); c.drawRoundRect(mx0 - 1 * d, 2 * d, mx0 + 1 * d, height - 1 * d, d, d, paint)
+        clipPath.reset(); clipPath.moveTo(mx0 - 5 * d, 0f); clipPath.lineTo(mx0 + 5 * d, 0f); clipPath.lineTo(mx0, 7 * d); clipPath.close(); c.drawPath(clipPath, paint)
         lastDrawnPlayhead = ph
     }
 }
@@ -372,27 +618,42 @@ class StudioTimeline(context: Context) : View(context) {
  */
 class LaneWindow(context: Context) : android.widget.FrameLayout(context) {
     private val slop = android.view.ViewConfiguration.get(context).scaledTouchSlop
+    private val minFling = android.view.ViewConfiguration.get(context).scaledMinimumFlingVelocity
     private var downX = 0f; private var downY = 0f; private var lastY = 0f; private var dragging = false
+    private val scroller = android.widget.OverScroller(context, android.view.animation.DecelerateInterpolator(1.6f))
+    private var vel: android.view.VelocityTracker? = null
     private val child get() = getChildAt(0)
     private fun range() = ((child?.height ?: 0) - height).coerceAtLeast(0)
     init { clipChildren = true }
     override fun onInterceptTouchEvent(e: MotionEvent): Boolean {
         when (e.actionMasked) {
-            MotionEvent.ACTION_DOWN -> { downX = e.x; downY = e.y; lastY = e.y; dragging = false }
-            MotionEvent.ACTION_MOVE -> if (!dragging && range() > 0 && e.pointerCount == 1) {
-                val dx = abs(e.x - downX); val dy = abs(e.y - downY)
-                if (dy > slop * 1.5f && dy > dx * 1.5f) { dragging = true; lastY = e.y; parent?.requestDisallowInterceptTouchEvent(true); return true }
-            }
+            MotionEvent.ACTION_DOWN -> { downX = e.x; downY = e.y; lastY = e.y; dragging = false; scroller.forceFinished(true)
+                vel?.recycle(); vel = android.view.VelocityTracker.obtain().also { it.addMovement(e) } }
+            MotionEvent.ACTION_MOVE -> { vel?.addMovement(e)
+                if (!dragging && range() > 0 && e.pointerCount == 1) {
+                    val dx = abs(e.x - downX); val dy = abs(e.y - downY)
+                    if (dy > slop && dy > dx * 1.2f) { dragging = true; lastY = e.y; parent?.requestDisallowInterceptTouchEvent(true); return true }
+                } }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { vel?.recycle(); vel = null }
         }
         return false
     }
     override fun onTouchEvent(e: MotionEvent): Boolean {
         val c = child ?: return false
         when (e.actionMasked) {
-            MotionEvent.ACTION_MOVE -> if (dragging) { c.translationY = (c.translationY + (e.y - lastY)).coerceIn(-range().toFloat(), 0f); lastY = e.y }
-            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> dragging = false
+            MotionEvent.ACTION_MOVE -> if (dragging) { vel?.addMovement(e); c.translationY = (c.translationY + (e.y - lastY)).coerceIn(-range().toFloat(), 0f); lastY = e.y }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                if (dragging && e.actionMasked == MotionEvent.ACTION_UP) { vel?.addMovement(e); vel?.computeCurrentVelocity(1000); val vy = vel?.yVelocity ?: 0f
+                    // Let go while moving: the lanes keep gliding and slow down by themselves.
+                    if (abs(vy) > minFling) { scroller.fling(0, c.translationY.toInt(), 0, vy.toInt(), 0, 0, -range(), 0); postInvalidateOnAnimation() } }
+                dragging = false; vel?.recycle(); vel = null
+            }
         }
         return dragging
+    }
+    override fun computeScroll() {
+        val c = child ?: return
+        if (scroller.computeScrollOffset()) { c.translationY = scroller.currY.toFloat().coerceIn(-range().toFloat(), 0f); postInvalidateOnAnimation() }
     }
     override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
         super.onLayout(changed, l, t, r, b)

@@ -86,12 +86,16 @@ data class VideoEditSpec(
     /** The same as [VideoPart.join] for the main clip when it is not the first. */
     val mainJoin: Int = -1, val mainJoinMs: Long = 0L,
     /** Length in ms of the main clip's whole file (0 = unknown); an overlapping transition borrows picture from beyond the clip, and needs to know there is some. */
-    val mainSourceMs: Long = 0L)
+    val mainSourceMs: Long = 0L,
+    /** Where the first clip sits in the frame: shares of the frame's width and height (right and down are positive); its size does not change. */
+    val mainOffX: Float = 0f, val mainOffY: Float = 0f)
 
 /** A clip appended after the main one. [from]/[to] in ms of that clip. */
 data class VideoPart(val source: Uri, val from: Long, val to: Long, val speed: Float = 1f, val muted: Boolean = false, val volume: Float = 1f, val curve: FloatArray? = null, val motion: Int = 0,
     /** The change into this clip from the one before: -1 follows [VideoSpec.transition], otherwise 0..6 as there; [joinMs] its length (0 = the usual). */
-    val join: Int = -1, val joinMs: Long = 0L, val sourceMs: Long = 0L)
+    val join: Int = -1, val joinMs: Long = 0L, val sourceMs: Long = 0L, val mirror: Boolean = false,
+    /** Place in the frame, as [VideoEditSpec.mainOffX] and [VideoEditSpec.mainOffY]. */
+    val offX: Float = 0f, val offY: Float = 0f)
 
 /** An emoji on the picture: [x], [y] are 0..1 across the visible (cropped) frame, [big] doubles its size. */
 data class VideoSticker(val text: String, val x: Float, val y: Float, val big: Boolean = false)
@@ -100,7 +104,7 @@ data class VideoSticker(val text: String, val x: Float, val y: Float, val big: B
 object VideoEdit {
     /** Sound louder or quieter for mono and stereo tracks. */
     private fun gain(v: Float): AudioProcessor = ChannelMixingAudioProcessor().apply { for (n in 1..2) putChannelMixingMatrix(ChannelMixingMatrix.create(n, n).scaleBy(v)) }
-    /** Picture height after the turn and the crop, the frame the caption and stickers are measured against. */
+    /** Picture height after the crop (the frame, not turned: videoW and videoH are the clip's own sides), the frame the caption and stickers are measured against. */
     private fun frameSize(s: VideoEditSpec): Pair<Int, Int> {
         if (s.crop <= 0f) return s.videoW to s.videoH
         val now = s.videoW.toFloat() / s.videoH
@@ -192,6 +196,10 @@ object VideoEdit {
     }
 
     /** A slow camera move over a whole clip. [offsetUs] is where this piece starts inside its clip; [totalUs] the clip's length. */
+    /** Moves the picture inside the frame by [x] and [y] (normalised device units: the frame is 2 wide and 2 high); the edges it leaves show black. */
+    private class Shift(private val x: Float, private val y: Float) : MatrixTransformation {
+        override fun getMatrix(presentationTimeUs: Long): android.graphics.Matrix = android.graphics.Matrix().apply { setTranslate(x, y) }
+    }
     private class Drift(private val motion: Int, private val offsetUs: Long, private val totalUs: Long) : MatrixTransformation {
         private var first = C.TIME_UNSET
         override fun getMatrix(presentationTimeUs: Long): android.graphics.Matrix {
@@ -208,11 +216,15 @@ object VideoEdit {
         val multi = s.extras.isNotEmpty()
         val effects = mutableListOf<Effect>()
         if (s.turns % 4 != 0 || s.mirror) effects += ScaleAndRotateTransformation.Builder().setScale(if (s.mirror) -1f else 1f, 1f).setRotationDegrees(360f - (s.turns % 4) * 90f).build()
+        // A quarter turn turns only the picture: the frame keeps the shape the clip came in (or the chosen crop shape) and the
+        // turned picture sits inside it with black bars, so the file does not change size until the frame is changed.
+        val sideways = s.turns % 2 == 1
         // One clip: look and text belong to the clip. Several clips: they belong to the whole video (below), so they
         // run across the joins and every clip is brought to the first clip's frame.
         val table = s.grade ?: s.look?.let { EditorKit.cube(it) }
         if (!multi) table?.let { effects += SingleColorLut.createFromCube(it) }
-        if (s.crop > 0f) effects += Presentation.createForAspectRatio(s.crop, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP)
+        if (sideways) effects += Presentation.createForAspectRatio(if (s.crop > 0f) s.crop else s.videoW.toFloat() / s.videoH, Presentation.LAYOUT_SCALE_TO_FIT)
+        else if (s.crop > 0f) effects += Presentation.createForAspectRatio(s.crop, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP)
         val finishing = s.vignette > 0f || s.grain > 0f || s.sharpen > 0f
         if (!multi && finishing) effects += StudioFx(s.vignette, s.grain, s.sharpen)
         val texts = overlays(s)
@@ -249,12 +261,19 @@ object VideoEdit {
         val cutAt = LongArray(n); run { var acc = 0L; for (j in 0 until n) { cutAt[j] = acc; acc += pieces[j].durationUs } }
         val items = pieces.mapIndexed { i, piece ->
             val own: MutableList<Effect> = if (piece.clip == 0) effects.toMutableList() else mutableListOf()
+            if (piece.clip > 0 && s.extras[piece.clip - 1].mirror) own += ScaleAndRotateTransformation.Builder().setScale(-1f, 1f).build()
             val motion = if (piece.clip == 0) s.mainMotion else s.extras[piece.clip - 1].motion
             if (motion != ClipMotion.NONE) {
                 // Pieces of one clip follow each other; the move runs across all of them, not once per piece.
                 val run = pieces.indices.filter { pieces[it].clip == piece.clip }
                 val offset = run.takeWhile { it < i }.sumOf { pieces[it].durationUs }
                 own += Drift(motion, offset, run.sumOf { pieces[it].durationUs })
+            }
+            // Place in the frame. A later clip is first brought to the frame's shape, so the share means the same as on the first clip.
+            val offX = if (piece.clip == 0) s.mainOffX else s.extras[piece.clip - 1].offX; val offY = if (piece.clip == 0) s.mainOffY else s.extras[piece.clip - 1].offY
+            if (offX != 0f || offY != 0f) {
+                if (piece.clip > 0) { val (fw, fh) = frameSize(s); own += Presentation.createForWidthAndHeight(fw / 2 * 2, fh / 2 * 2, Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP) }
+                own += Shift(offX * 2f, -offY * 2f)
             }
             // Fast speeds (up to thousands ×) would hand the encoder hundreds of frames per second; keep about 30 of them.
             if (piece.speed != 1f) { if (!s.keepAudio) own += SpeedChangeEffect(piece.speed); if (piece.speed > 1f) own += FrameDropEffect.createDefaultFrameDropEffect(30f) }
@@ -299,6 +318,10 @@ object VideoEdit {
                 if (gap > 1000) b.addGap(gap)
                 b.addItem(items[j]); cursor = start + pieces[j].durationUs + (pre[j] + post[j]) * 1000
             }
+            // Both tracks run to the end of the video: when the first track stopped early, the export stopped drawing with it
+            // (the picture froze while the sound went on), because the compositor follows the first track's frames.
+            val whole = cutAt[n - 1] + pieces[n - 1].durationUs + post[n - 1] * 1000
+            if (whole - cursor > 1000) b.addGap(whole - cursor)
             b.build()
         }
         val whole = mutableListOf<Effect>()

@@ -70,7 +70,9 @@ class CenterStrip(context: Context, private val gapDp: Int = 4) : FrameLayout(co
         (track.layoutParams as LayoutParams).let { it.width = max(x, 1); track.layoutParams = it }
         selected = sel.coerceIn(0, max(0, list.size - 1)); live = selected
         markSelected()
-        post { jump() }
+        // A strip that is not laid out yet stays hidden until it has been moved to its place, so the items never show at the left edge for a frame.
+        if (width > 0) { settle?.cancel(); track.animate().cancel(); track.alpha = 1f; jump() }
+        else { track.animate().cancel(); track.alpha = 0f; post { jump(); track.animate().alpha(1f).setDuration(120).start() } }
     }
 
     private fun center(i: Int): Float {
@@ -195,6 +197,9 @@ class GlassSlider(context: Context) : View(context) {
     private var downX = 0f; private var downY = 0f
     private var p = 0f; private var over = 0f; private var stretch = 1f; private var tail = 0f; private var pressing = false; private var dragging = false
     private var lastX = 0f; private var lastT = 0L
+    /** Fine adjustment: the further the finger slides away from the bar (up or down), the slower the thumb follows (1, 1/2, 1/4, 1/10). */
+    private var fine = 1f; private var anchorX = 0f; private var anchorP = 0f
+    private val finePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textAlign = Paint.Align.CENTER; isFakeBoldText = true }
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private var relax: ValueAnimator? = null
     private var trackShader: Shader? = null; private var trackW = 0f; private var trackGrad: IntArray? = null
@@ -207,9 +212,9 @@ class GlassSlider(context: Context) : View(context) {
     override fun onDraw(c: Canvas) {
         val d = context.px(1f); val left = pad(); val right = width - pad(); val w = right - left; val cy = height / 2f
         if (trackShader == null || trackW != w || trackGrad !== grad) { trackShader = LinearGradient(left, 0f, right, 0f, grad, null, Shader.TileMode.CLAMP); trackW = w; trackGrad = grad }
-        paint.shader = trackShader; paint.alpha = 72; c.drawRoundRect(left, cy - 3 * d, right, cy + 3 * d, 3 * d, 3 * d, paint)
+        paint.shader = trackShader; paint.alpha = 72; c.drawRoundRect(left, cy - 4 * d, right, cy + 4 * d, 4 * d, 4 * d, paint)
         val x = (left + p * w + over).coerceIn(left - 6 * d, right + 6 * d)
-        paint.alpha = 255; c.drawRoundRect(left, cy - 3 * d, max(left + 6 * d, x), cy + 3 * d, 3 * d, 3 * d, paint)
+        paint.alpha = 255; c.drawRoundRect(left, cy - 4 * d, max(left + 8 * d, x), cy + 4 * d, 4 * d, 4 * d, paint)
         paint.shader = null; paint.color = 0x66ffffff
         // Dense value lists (1/3-stop ISO, Kelvin) draw every k-th tick so marks stay at least 6 dp apart; every third mark is taller.
         val gap = w / max(1, n() - 1); val every = max(1, ceil(6 * d / max(gap, 0.01f)).toInt())
@@ -223,10 +228,13 @@ class GlassSlider(context: Context) : View(context) {
         val glowR = (if (pressing) 26f else 18f) * d
         paint.shader = RadialGradient(x, cy, glowR, (col and 0x00ffffff) or 0x99000000.toInt(), 0, Shader.TileMode.CLAMP); c.drawCircle(x, cy, glowR, paint); paint.shader = null
         val sc = if (pressing) 1.14f else 1f
-        val tw = 14 * d * min(stretch, 1.35f) * sc; val th = 14 * d / sqrt(stretch) * sc
+        val tw = 16 * d * min(stretch, 1.35f) * sc; val th = 16 * d / sqrt(stretch) * sc
         paint.color = (col and 0x00ffffff) or 0x8c000000.toInt(); val ring = (if (pressing) 6 else 4) * d
         c.drawRoundRect(x - tw - ring, cy - th - ring, x + tw + ring, cy + th + ring, th + ring, th + ring, paint)
         paint.color = Color.WHITE; c.drawRoundRect(x - tw, cy - th, x + tw, cy + th, th, th, paint)
+        if (dragging && fine < 1f) { val label = "ละเอียด ×" + (if (fine == 0.5f) "0.5" else if (fine == 0.25f) "0.25" else "0.1"); finePaint.textSize = 10.5f * d
+            val tx = x.coerceIn(left + 34 * d, right - 34 * d); val ty = 11 * d
+            paint.color = 0xd9000000.toInt(); c.drawRoundRect(tx - 34 * d, ty - 9 * d, tx + 34 * d, ty + 5 * d, 7 * d, 7 * d, paint); finePaint.alpha = 240; c.drawText(label, tx, ty + 2 * d, finePaint) }
     }
 
     override fun onTouchEvent(e: MotionEvent): Boolean {
@@ -237,8 +245,11 @@ class GlassSlider(context: Context) : View(context) {
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> { relax?.cancel(); downX = e.x; downY = e.y; pressing = true; dragging = false; lastX = e.x; lastT = e.eventTime }
             MotionEvent.ACTION_MOVE -> {
-                if (!dragging && abs(e.x - downX) > touchSlop && abs(e.x - downX) > abs(e.y - downY)) { dragging = true; parent?.requestDisallowInterceptTouchEvent(true); onDrag(true) }
-                if (dragging) move(e.x, left, w)
+                if (!dragging && abs(e.x - downX) > touchSlop && abs(e.x - downX) > abs(e.y - downY)) { dragging = true; parent?.requestDisallowInterceptTouchEvent(true); onDrag(true)
+                    fine = 1f; anchorX = e.x; anchorP = ((e.x - left) / w) }
+                if (dragging) { val dy = abs(e.y - height / 2f) / context.px(1f); val f = if (dy > 130) 0.1f else if (dy > 90) 0.25f else if (dy > 50) 0.5f else 1f
+                    if (f != fine) { fine = f; anchorX = e.x; anchorP = p; invalidate() }
+                    move(e.x, left, w) }
             }
             MotionEvent.ACTION_UP -> { if (!dragging && abs(e.x - downX) <= touchSlop) move(e.x, left, w); val was = dragging; dragging = false; pressing = false; if (was) onDrag(false); relaxTo(pos(index)); performClick() }
             MotionEvent.ACTION_CANCEL -> { val was = dragging; dragging = false; pressing = false; if (was) onDrag(false); relaxTo(pos(index)) }
@@ -248,7 +259,7 @@ class GlassSlider(context: Context) : View(context) {
     override fun performClick(): Boolean { super.performClick(); return true }
 
     private fun move(x: Float, left: Float, w: Float) {
-        val rawP = (x - left) / w; val t = rawP.coerceIn(0f, 1f)
+        val rawP = if (dragging) anchorP + (x - anchorX) / w * fine else (x - left) / w; val t = rawP.coerceIn(0f, 1f)
         val excess = (if (rawP < 0) rawP else if (rawP > 1) rawP - 1 else 0f) * w
         over = sign(excess) * context.px(8f) * (1 - exp(-abs(excess) / context.px(60f)))
         val dt = max(1L, (System.nanoTime() / 1_000_000) - lastT); val v = (x - lastX) / context.px(1f); lastX = x; lastT = System.nanoTime() / 1_000_000
@@ -595,8 +606,11 @@ class ZoomCapsule(context: Context) : LinearLayout(context) {
  * readable; [dim] still fires so the caller can let the sheet recede (see [GlassSheet.recede]).
  */
 class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Unit = {}) {
-    class Option(val label: String, val icon: String = "", val note: String = "", val inner: String = "")
+    class Option(val label: String, val icon: String = "", val note: String = "", val inner: String = "", val sub: Boolean = false)
     var over: () -> Boolean = { false }
+    /** Pixels the card is shifted away from its anchor, so a submenu layered over this menu leaves the first one peeking out behind it. */
+    var nudge = 0
+    private var opts: List<Option> = emptyList()
     private var overlay: View? = null; private var card: LayerFrame? = null; private var dimmed = false
     /** Receives a finger that is still down on the anchor (press, slide, release), like an iPhone context menu. */
     private var forward: ((MotionEvent) -> Unit)? = null
@@ -619,6 +633,7 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
     fun show(anchor: View, title: String, options: List<Option>, selected: Int, pick: (Int) -> Unit) {
         dismiss(false)
         if (options.isEmpty() || !anchor.isAttachedToWindow) return
+        opts = options
         val c = host.context; val d = c.resources.displayMetrics.density
         val loc = IntArray(2); val hl = IntArray(2); anchor.getLocationInWindow(loc); host.getLocationInWindow(hl)
         val ax = loc[0] - hl[0]; val ay = loc[1] - hl[1]
@@ -646,7 +661,9 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
                 texts.addView(c.text(o.label, 14f, Glass.TEXT, i == selected))
                 if (o.note.isNotEmpty()) texts.addView(c.text(o.note, 11.5f, Glass.TEXT2))
                 addView(texts, LinearLayout.LayoutParams(0, -2, 1f))
-                if (i == selected) addView(IconView(c, Icons.CHECK, 2.4f).apply { tint = Glass.ACCENT }, c.dp(18), c.dp(18))
+                if (o.sub) addView(FrameLayout(c).apply { background = c.glass(14, 0x26ffffff)
+                    addView(IconView(c, "M9 6l6 6-6 6", 2.4f).apply { tint = Glass.TEXT }, FrameLayout.LayoutParams(c.dp(16), c.dp(16), Gravity.CENTER)) }, c.dp(28), c.dp(28))
+                else if (i == selected) addView(IconView(c, Icons.CHECK, 2.4f).apply { tint = Glass.ACCENT }, c.dp(18), c.dp(18))
                 setOnClickListener { choose(i, pick) }
             }.also { list.addView(it, LinearLayout.LayoutParams(-1, -2).apply { topMargin = c.dp(2) }) }
         }
@@ -660,7 +677,7 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
         val h = min(full, avail); val scrolls = full > avail
         val below = ay + anchor.height + c.dp(8); val above = ay - c.dp(8) - h
         val up = below + h > host.height - padB
-        val y = (if (up) above else below).coerceIn(padT, max(padT, host.height - padB - h))
+        val y = ((if (up) above - nudge else below + nudge)).coerceIn(padT, max(padT, host.height - padB - h))
         modal.hide()
         // Touch and drawing order follow elevation, so the menu layer must sit above sheets (16 dp) or it is hidden and untappable.
         val shade = View(c).apply { setBackgroundColor(if (quiet) 0 else 0x29000000); alpha = 0f; isClickable = true; contentDescription = "ปิดเมนู"; elevation = 20 * d; outlineProvider = null; setOnClickListener { dismiss(true) } }
@@ -701,7 +718,13 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
             // The highlight only appears under a finger; the chosen row already carries its own border.
             hi.alpha = 0f
             list.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> val r = rows[current.coerceIn(0, rows.size - 1)]; if (r.height > 0) { hi.layoutParams = (hi.layoutParams as FrameLayout.LayoutParams).apply { height = r.height.coerceAtLeast(c.dp(52)) }; hi.translationY = (r.top - rows[0].top).toFloat() } }
-            fun handle(action: Int, y: Float) {
+            fun leave() {
+                rows.getOrNull(pressedRow)?.animate()?.scaleX(1f)?.scaleY(1f)?.setDuration(120)?.start(); pressedRow = -1
+                hi.animate().cancel(); hi.animate().alpha(0f).setDuration(160).start()
+            }
+            // A finger that is not over any row (outside the card, or on its title) picks nothing: lifting there only cancels.
+            fun handle(action: Int, y: Float, inside: Boolean = true) {
+                if (!inside) { if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL || action == MotionEvent.ACTION_MOVE || action == MotionEvent.ACTION_DOWN) leave(); return }
                 val i = rowAt(y)
                 when (action) {
                     MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> { if (i != current) { current = i; Glass.tick(menu) }; moveHi(i, true, y) }
@@ -711,7 +734,9 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
             }
             // The rows are clickable children and would swallow the touch; the card intercepts so dragging scrubs the highlight.
             menu.scrub = true
-            menu.setOnTouchListener { _, e -> handle(e.actionMasked, e.y); true }
+            menu.setOnTouchListener { _, e ->
+                val inRows = e.x >= 0 && e.x <= menu.width && e.y >= pad + rows[0].top - c.dp(2) && e.y <= pad + rows.last().bottom + c.dp(2)
+                handle(e.actionMasked, e.y, inRows); true }
             // A finger that opened the menu by holding the anchor keeps going: slide over a row and lift to pick it.
             // The card is still springing open for the first few hundred milliseconds, so its on-screen box is scaled;
             // the finger is mapped through the card's layout position (host + margins) instead, which does not move.
@@ -720,10 +745,10 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
             forward = { e ->
                 host.getLocationOnScreen(hostAt)
                 val lx = e.rawX - hostAt[0] - x; val ly = e.rawY - hostAt[1] - y
-                val inside = lx >= -c.dp(24) && lx <= w + c.dp(24) && ly >= pad + rows[0].top - c.dp(4) && ly <= h + c.dp(12)
+                val inside = lx >= -c.dp(24) && lx <= w + c.dp(24) && ly >= pad + rows[0].top - c.dp(4) && ly <= pad + rows.last().bottom + c.dp(4)
                 when {
                     inside -> handle(if (e.actionMasked == MotionEvent.ACTION_DOWN) MotionEvent.ACTION_MOVE else e.actionMasked, ly)
-                    else -> { rows.getOrNull(pressedRow)?.animate()?.scaleX(1f)?.scaleY(1f)?.setDuration(120)?.start(); pressedRow = -1; hi.animate().alpha(0f).setDuration(160).start() }
+                    else -> leave()
                 }
             }
         }
@@ -738,6 +763,8 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
     }
     private fun choose(i: Int, pick: (Int) -> Unit) {
         val m = card ?: return
+        // A row that opens a submenu leaves this menu where it is; the submenu is layered over it.
+        if (opts.getOrNull(i)?.sub == true) { pick(i); return }
         m.closing = true // one pick per menu, even with a fast double tap
         pick(i); host.postDelayed({ if (card === m) dismiss(true) }, 160)
     }

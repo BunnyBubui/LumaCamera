@@ -213,13 +213,15 @@ class GalleryActivity : ComponentActivity() {
         val kind = albumKind; val albumsTab = section == 1 && kind == null
         favouritesOnly = kind == "fav"
         luma.readIo.execute {
-            val shot = id?.let { luma.shots.get(it) }
+            val shot = runCatching { id?.let { luma.shots.get(it) } }.getOrNull()
             val granted = mediaGranted()
             // Everything the app may read, or only Lumora's own pictures before access is given (and in the Lumora album).
-            val useDevice = kind != "lumora" && granted
-            val items = if (useDevice) deviceItems() else lumaItems()
-            val lumora = if (!albumsTab) emptyList() else if (useDevice) lumaItems() else items
-            val favourites = if (albumsTab && granted) favouriteCount() else 0
+            // A read that fails must not leave the page blank (the picker once showed nothing at all): it falls back to a shorter list.
+            val deviceList = if (kind != "lumora" && granted) runCatching { deviceItems() }.getOrNull() else null
+            val useDevice = deviceList != null
+            val items: List<Item> = deviceList ?: runCatching { lumaItems() }.getOrDefault(emptyList())
+            val lumora: List<Item> = if (!albumsTab) emptyList() else if (useDevice) runCatching { lumaItems() }.getOrDefault(emptyList()) else items
+            val favourites = if (albumsTab && granted) runCatching { favouriteCount() }.getOrDefault(0) else 0
             runOnUiThread {
                 if (version == readVersion && !isDestroyed) {
                     device = useDevice; lastItems = items
@@ -268,6 +270,12 @@ class GalleryActivity : ComponentActivity() {
     /** Set when another screen opens the gallery to choose media: "video", "image" or "media". */
     private val pickKind: String? by lazy { intent.getStringExtra(EXTRA_PICK) }
     private fun pickAllows(item: Item) = when (pickKind) { "video" -> item.video; "image" -> !item.video; else -> true }
+    /** Files from outside the app's own library (Files, Drive, downloads), for every screen that asks the gallery to choose media. */
+    private val importOutside = registerForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenMultipleDocuments()) { list ->
+        if (list.isNullOrEmpty()) return@registerForActivityResult
+        list.forEach { u -> runCatching { contentResolver.takePersistableUriPermission(u, Intent.FLAG_GRANT_READ_URI_PERMISSION) } }
+        setResult(RESULT_OK, Intent().putParcelableArrayListExtra(RESULT_URIS, ArrayList(list)).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)); finish()
+    }
     private fun returnPicked() {
         val uris = ArrayList(pickedItems().map { it.shot?.ai ?: it.uri })
         if (uris.isEmpty()) { notice("แตะรายการที่ต้องการก่อน"); return }
@@ -301,6 +309,7 @@ class GalleryActivity : ComponentActivity() {
                 // Choosing for the editor: one accent "add" button and a close button.
                 addView(text("เพิ่ม", 14.5f, Glass.ON_ACCENT, true).apply { gravity = Gravity.CENTER; background = glass(20, Glass.ACCENT); isClickable = true; glassTouch()
                     contentDescription = "เพิ่มรายการที่เลือก"; setOnClickListener { Glass.tick(this); returnPicked() } }, LinearLayout.LayoutParams(dp(84), dp(44)).apply { rightMargin = dp(4) })
+                act("M3 7h6l2 2h10v10H3z", "นำเข้าจากที่อื่น") { importOutside.launch(when (pickKind) { "video" -> arrayOf("video/*"); "image" -> arrayOf("image/*"); else -> arrayOf("image/*", "video/*") }) }
                 act(Icons.CLOSE, "ยกเลิก") { endSelection() }
             } else {
             act(Icons.SHARE, "แชร์") { shareSelected() }
@@ -1473,6 +1482,8 @@ class GalleryActivity : ComponentActivity() {
             toggle("เล่นวิดีโออัตโนมัติ", Icons.VIDEO, "video_autoplay", false, "เริ่มเล่นทันทีที่เปิดหรือปัดมาที่วิดีโอ ปิดไว้จะเล่นเมื่อแตะปุ่มเล่น ปัดดูได้ลื่นกว่า")
             choose("แสงสะท้อนรอบวิดีโอ", Icons.VIDEO, Ambient.KEY_VIDEO, Ambient.LABELS, Ambient.LABELS.indices.toList(), Ambient.video(this@GalleryActivity), notes = listOf("ไม่มีแสงรอบวิดีโอ", "นุ่มมาก เบาเครื่องและแบตเตอรี่", "นุ่ม สมดุล", "คมขึ้น ตามภาพที่เล่นถี่ขึ้น", "คมและละเอียดที่สุด อัปเดตถี่ที่สุด กินแบตเตอรี่มากสุด"))
             choose("เสียงเมื่อเริ่มเล่น", Icons.SOUND, "video_sound_i", listOf("เปิดเสียงทุกครั้ง", "ปิดเสียงทุกครั้ง"), listOf(1, 0), 1, notes = listOf("ได้ยินเสียงทันที", "แตะปุ่มลำโพงเพื่อเปิดเสียง"))
+            section("ตัดต่อวิดีโอ")
+            action("ปุ่มลัดตัดต่อ", EditorKit.SCISSORS, "เลือกปุ่มลัดบนวงล้อในตัวตัดต่อ ได้สูงสุด 8 ปุ่มต่อแบบ") { RingPrefs.open(this@GalleryActivity) }
             section("การลบ")
             toggle("ถามก่อนลบภาพของ Lumora", TRASH, "gallery_ask_delete", true, "ภาพจากแอปอื่น ระบบจะถามเองเสมอ")
             section("AI")
