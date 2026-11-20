@@ -3227,7 +3227,10 @@ class VideoEditorActivity : ComponentActivity() {
      * Slip, drawn as the whole file with the part the clip shows lit: drag the lit part along the file to show an earlier or later part
      * without changing the clip's length or its place on the timeline. The preview follows the finger and the picture jumps to the new start on release.
      */
-    private fun slipBar(e: Extra): View = object : View(this) {
+    private fun slipBarOf(e: Extra): View = slipBar(e.duration, { e.from }, { e.to }) { f, done -> val len = e.to - e.from; e.from = f; e.to = f + len; if (done) { showClipOnBar(); jumpTo(playIndex, e.from); showTime() } }
+    /** The same bar for the first clip, which has no [Extra] of its own: its range is the editor's own start and end. */
+    private fun slipBarMain(): View = slipBar(duration, { start }, { end }) { f, done -> val len = end - start; if (done) setRange(f, f + len) else { start = f; end = f + len } }
+    private fun slipBar(duration: Long, from: () -> Long, to: () -> Long, move: (Long, Boolean) -> Unit): View = object : View(this) {
         val track = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = 0x26ffffff }
         val win = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = Glass.ACCENT }
         val txt = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = Glass.ON_ACCENT; textSize = dp(12).toFloat(); typeface = android.graphics.Typeface.DEFAULT_BOLD; textAlign = android.graphics.Paint.Align.CENTER }
@@ -3238,21 +3241,21 @@ class VideoEditorActivity : ComponentActivity() {
         override fun onDraw(c: android.graphics.Canvas) {
             val w = span(); val h = height.toFloat(); val bar0 = dp(16).toFloat()
             r.set(dp(2).toFloat(), bar0, dp(2) + w, h - dp(4)); c.drawRoundRect(r, dp(10).toFloat(), dp(10).toFloat(), track)
-            val d = e.duration.coerceAtLeast(1L)
-            val l = dp(2) + w * e.from / d; val rr = dp(2) + w * e.to / d
+            val d = duration.coerceAtLeast(1L)
+            val l = dp(2) + w * from() / d; val rr = dp(2) + w * to() / d
             win.alpha = if (down) 255 else 215
             r.set(l, bar0 - (if (down) dp(3) else 0), maxOf(rr, l + dp(24)), h - dp(4) + (if (down) dp(3) else 0)); c.drawRoundRect(r, dp(10).toFloat(), dp(10).toFloat(), win)
-            c.drawText("เนื้อหา ${clock(e.from)} – ${clock(e.to)}", r.centerX().coerceIn(dp(70).toFloat(), width - dp(70).toFloat()), r.centerY() + dp(4), txt)
-            c.drawText("0:00", dp(4).toFloat(), bar0 - dp(4), small); small.textAlign = android.graphics.Paint.Align.RIGHT; c.drawText(clock(e.duration), width - dp(4).toFloat(), bar0 - dp(4), small); small.textAlign = android.graphics.Paint.Align.LEFT
+            c.drawText("เนื้อหา ${clock(from())} – ${clock(to())}", r.centerX().coerceIn(dp(70).toFloat(), width - dp(70).toFloat()), r.centerY() + dp(4), txt)
+            c.drawText("0:00", dp(4).toFloat(), bar0 - dp(4), small); small.textAlign = android.graphics.Paint.Align.RIGHT; c.drawText(clock(duration), width - dp(4).toFloat(), bar0 - dp(4), small); small.textAlign = android.graphics.Paint.Align.LEFT
         }
         override fun onTouchEvent(ev: android.view.MotionEvent): Boolean {
             when (ev.actionMasked) {
-                android.view.MotionEvent.ACTION_DOWN -> { parent.requestDisallowInterceptTouchEvent(true); x0 = ev.x; from0 = e.from; down = true; Glass.tick(this); invalidate() }
-                android.view.MotionEvent.ACTION_MOVE -> { val len = e.to - e.from
-                    val from = (from0 + ((ev.x - x0) / span() * e.duration).toLong()).coerceIn(0L, (e.duration - len).coerceAtLeast(0L))
-                    if (from != e.from) { e.from = from; e.to = from + len; invalidate() } }
+                android.view.MotionEvent.ACTION_DOWN -> { parent.requestDisallowInterceptTouchEvent(true); x0 = ev.x; from0 = from(); down = true; Glass.tick(this); invalidate() }
+                android.view.MotionEvent.ACTION_MOVE -> { val len = to() - from()
+                    val f = (from0 + ((ev.x - x0) / span() * duration).toLong()).coerceIn(0L, (duration - len).coerceAtLeast(0L))
+                    if (f != from()) { move(f, false); invalidate() } }
                 android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> { down = false; invalidate()
-                    if (e.from != from0) { showClipOnBar(); jumpTo(playIndex, e.from); showTime() } }
+                    if (from() != from0) move(from(), true) }
             }
             return true
         }
@@ -3346,7 +3349,7 @@ class VideoEditorActivity : ComponentActivity() {
             EditorKit.action(this, "M4 12h6 M14 12h6 M10 8v8 M14 8v8", "แยกเสียง") { detachSound(); showTool(0, false) },
             EditorKit.action(this, Icons.RESET, "ความยาวเดิม") { if (e != null) { e.from = 0; e.to = e.duration; showClipOnBar() } else { setRange(0, duration); cutFrom = -1; cutTo = -1 }; showTime(); showTool(0, false) })
         list += EditorKit.action(this, "M5 7h14 M9 7V4h6v3 M7 7l1 13h8l1-13", "ลบ") { deleteClip() }
-        if (e != null) col.addView(slipBar(e), LinearLayout.LayoutParams(-1, dp(56)).apply { setMargins(dp(14), dp(2), dp(14), dp(6)) })
+        col.addView(if (e != null) slipBarOf(e) else slipBarMain(), LinearLayout.LayoutParams(-1, dp(56)).apply { setMargins(dp(14), dp(2), dp(14), dp(6)) })
         col.addView(EditorKit.actionRow(this, list), -1, -2)
     }
 
@@ -3445,7 +3448,7 @@ class VideoEditorActivity : ComponentActivity() {
             val w = if (tools.width > 0) tools.width else resources.displayMetrics.widthPixels - dp(32)
             col.measure(View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY), View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
             val fit = (col.measuredHeight + dp(14)).coerceAtLeast(dp(84))
-            if (fit < want || i == 2) { toolsFull = fit
+            if (fit < want || i == 2 || i == 0) { toolsFull = fit
                 if (collapsed || Glass.reduced(this) || toolCard.visibility != View.VISIBLE) { tools.layoutParams.height = fit; tools.requestLayout() }
                 else android.animation.ValueAnimator.ofInt(tools.layoutParams.height, fit).apply { duration = 260; interpolator = Glass.EASE; addUpdateListener { tools.layoutParams.height = it.animatedValue as Int; tools.requestLayout() } }.start() }
         }
@@ -4172,7 +4175,7 @@ class VideoEditorActivity : ComponentActivity() {
         val copyIcon = "M8 8h11v11H8z M5 16V5h11"
         fun go(k: Int) { playIndex = k.coerceIn(0, extras.size); showClipOnBar(); playClip(playIndex, false); showTime(); showTool(10, false) }
         if (chosen in extras.indices) { val e = extras[chosen]
-            col.addView(slipBar(e), LinearLayout.LayoutParams(-1, dp(56)).apply { setMargins(dp(14), dp(2), dp(14), dp(6)) })
+            col.addView(slipBarOf(e), LinearLayout.LayoutParams(-1, dp(56)).apply { setMargins(dp(14), dp(2), dp(14), dp(6)) })
             col.addView(EditorKit.actionRow(this, listOf(
                 EditorKit.action(this, EditorKit.SPLIT, "แบ่งแยก") { splitAtPlayhead() },
                 EditorKit.action(this, copyIcon, "ทำสำเนา") { extras.add(chosen + 1, e.copy()); if (chosen < mainPos()) mainAt = mainPos() + 1; go(chosen + 2) },
