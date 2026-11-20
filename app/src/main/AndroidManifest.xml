@@ -36,6 +36,7 @@
         <activity android:name=".VideoActivity" android:exported="false"/>
         <activity android:name=".SpecialVideoActivity" android:exported="false"/>
         <activity android:name=".DocumentActivity" android:exported="false"/>
+        <activity android:name=".SeparateActivity" android:exported="false"/>
         <activity android:name=".RawLabActivity" android:exported="false"/>
         <activity android:name=".ClipEditorActivity" android:exported="false"/>
         <activity android:name=".PhotoEditorActivity" android:exported="false" android:windowSoftInputMode="adjustResize" android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden"/>

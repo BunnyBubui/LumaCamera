@@ -21,11 +21,15 @@ import java.nio.ByteOrder
 /** Sound of part of a file as 16 kHz mono 16-bit samples, the format speech recognition reads. */
 object StudioPcm {
     const val RATE = 16000
-    fun extract(c: Context, uri: Uri, fromMs: Long, toMs: Long): ShortArray {
+    fun extract(c: Context, uri: Uri, fromMs: Long, toMs: Long): ShortArray =
+        extractFloat(c, uri, fromMs, toMs, RATE).let { f -> ShortArray(f.size) { (f[it].coerceIn(-1f, 1f) * 32767).toInt().toShort() } }
+    /** The same part of a file as mono floats at [target] Hz, for models that need a rate other than 16 kHz. */
+    fun extractFloat(c: Context, uri: Uri, fromMs: Long, toMs: Long, target: Int): FloatArray {
+        val RATE = target
         val ex = MediaExtractor(); var codec: MediaCodec? = null
         try {
             ex.setDataSource(c, uri, null)
-            val track = (0 until ex.trackCount).firstOrNull { ex.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true } ?: return ShortArray(0)
+            val track = (0 until ex.trackCount).firstOrNull { ex.getTrackFormat(it).getString(MediaFormat.KEY_MIME)?.startsWith("audio/") == true } ?: return FloatArray(0)
             ex.selectTrack(track); val format = ex.getTrackFormat(track)
             ex.seekTo(fromMs * 1000, MediaExtractor.SEEK_TO_PREVIOUS_SYNC)
             codec = MediaCodec.createDecoderByType(format.getString(MediaFormat.KEY_MIME)!!).apply { configure(format, null, null, 0); start() }
@@ -55,9 +59,10 @@ object StudioPcm {
                 }
             }
             // Straight-line resampling to 16 kHz is enough for speech.
-            val out = ShortArray((n.toLong() * RATE / rate).toInt())
+            if (n == 0) return FloatArray(0)
+            val out = FloatArray((n.toLong() * RATE / rate).toInt())
             for (i in out.indices) { val x = i.toDouble() * rate / RATE; val a = x.toInt().coerceAtMost(n - 1); val b = (a + 1).coerceAtMost(n - 1); val f = (x - a).toFloat()
-                out[i] = ((mono[a] * (1 - f) + mono[b] * f).coerceIn(-1f, 1f) * 32767).toInt().toShort() }
+                out[i] = (mono[a] * (1 - f) + mono[b] * f).coerceIn(-1f, 1f) }
             return out
         } finally { runCatching { codec?.stop() }; runCatching { codec?.release() }; runCatching { ex.release() } }
     }
