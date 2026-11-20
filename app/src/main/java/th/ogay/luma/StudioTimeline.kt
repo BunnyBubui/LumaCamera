@@ -83,7 +83,8 @@ class StudioTimeline(context: Context) : View(context) {
     fun neededHeight(): Int = (maxOf(lanesBottom, lanesTop()) + 4 * d).toInt()
     /** Height the lane rows start at, in px. */
     fun lanesStart(): Int = lanesTop().toInt()
-    private val expW get() = 138f * d
+    /** The open column: its old width plus a quarter of the screen, so names and buttons have room. */
+    private val expW get() = 138f * d + width * 0.25f
     /** The strip at the left edge that opens the closed column: from under the ruler down to the last lane. */
     private fun tabTop() = rulerH + 2 * d
     private fun tabBottom() = maxOf(height.toFloat() - 2 * d, tabTop() + 64 * d)
@@ -201,15 +202,12 @@ class StudioTimeline(context: Context) : View(context) {
         if (hw <= 0f) {
             // Closed: a tall tab along the left edge with an arrow, saying "swipe right (or tap) to open the track list".
             val t0 = tabTop(); val t1 = tabBottom()
-            paint.color = 0x38ffffff; c.drawRoundRect(-12 * d, t0, 26 * d, t1, 10 * d, 10 * d, paint)
             iconStroke.color = 0xe6ffffff.toInt(); iconStroke.strokeWidth = 2f * d; val m = (t0 + t1) / 2f; val ax = 14 * d
             c.drawLine(ax - 2.5f * d, m - 6 * d, ax + 2.5f * d, m, iconStroke); c.drawLine(ax + 2.5f * d, m, ax - 2.5f * d, m + 6 * d, iconStroke); iconStroke.color = 0xff101014.toInt()
             return
         }
         // Column background and a soft shadow on its right edge.
-        c.drawRect(0f, 0f, hw, height.toFloat(), headBg)
-        if (shadeFor != d) { shadeFor = d; headShade.shader = android.graphics.LinearGradient(0f, 0f, 10 * d, 0f, 0x66000000, 0x00000000, android.graphics.Shader.TileMode.CLAMP) }
-        c.save(); c.translate(hw, 0f); c.drawRect(0f, rulerH, 10 * d, height.toFloat(), headShade); c.restore()
+        // No background plate any more: the names sit straight on the page, and a faint line under each row leads the eye across to its lane.
         c.save(); c.clipRect(0f, 0f, hw, height.toFloat())
         val shift = hw - expW   // while opening, the rows slide in from the left with the column edge
         c.translate(shift, 0f)
@@ -226,6 +224,7 @@ class StudioTimeline(context: Context) : View(context) {
             // No plate behind a plain track; only a switched-off or locked one gets an orange tint, because that tells its state.
             if (g.off || g.locked) { paint.color = 0x29ff9f45; c.drawRoundRect(left, my - hh, right, my + hh, rad, rad, paint) }
             val a = ((s - 0.5f) / 0.5f).coerceIn(0f, 1f); if (a <= 0f) return@forEachIndexed
+            guide.color = withA(0x24ffffff, a); guide.strokeWidth = 1f * d; c.drawLine(left, my + hh + 1.5f * d, right + 22 * d, my + hh + 1.5f * d, guide)
             paint.color = withA(g.color, a * (if (g.off) 0.45f else 1f)); c.drawRoundRect(left + 4 * d, my - hh + 5 * d, left + 7 * d, my + hh - 5 * d, 1.5f * d, 1.5f * d, paint)
             val dim = g.off
             drawIcon(c, g.icon, left + 20 * d, my, 15 * d, withA(if (dim) 0x80ffffff.toInt() else Color.WHITE, a))
@@ -253,9 +252,10 @@ class StudioTimeline(context: Context) : View(context) {
             c.drawLine(cxp + 2.5f * d, m - 6 * d, cxp - 2.5f * d, m, iconStroke); c.drawLine(cxp - 2.5f * d, m, cxp + 2.5f * d, m + 6 * d, iconStroke); iconStroke.color = 0xff101014.toInt() }
         paint.alpha = 255
     }
+    private val guide = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     private val tabBox = RectF()
     /** The small tab on the right edge of the open column, in this view's coordinates. */
-    private fun tabRect(): RectF { val hw = headW(); tabBox.set(hw - 4 * d, tabTop(), hw + 11 * d, tabBottom()); return tabBox }
+    private fun tabRect(): RectF { val hw = headW(); tabBox.set(hw + 6 * d, tabTop(), hw + 26 * d, tabBottom()); return tabBox }
     var selected = 0
     /** One entry per clip: null for the first, "" for a plain cut, otherwise the name of the change into that clip. */
     var seams: List<String?> = emptyList(); set(v) { field = v; invalidate() }
@@ -365,6 +365,11 @@ class StudioTimeline(context: Context) : View(context) {
     /** Whether the row [li] belongs to a group that is muted or hidden. */
     private fun rowOff(li: Int): Boolean { var n = 0; groups.forEach { g -> if (g.key == 0) return@forEach; if (li < n + g.rows) return g.off; n += g.rows }; return false }
     private var mode = IDLE
+    /** How strongly the bar in hand is lifted (0..1), and how far the finger has moved it up or down. */
+    private var grab = 0f; private var grabDy = 0f; private var tDownY = 0f; private var grabAnim: android.animation.ValueAnimator? = null
+    private fun grabTo(t: Float) { grabAnim?.cancel(); if (Glass.reduced(context)) { grab = t; invalidate(); return }
+        grabAnim = android.animation.ValueAnimator.ofFloat(grab, t).apply { duration = if (t > grab) 200 else 320; interpolator = if (t > grab) Glass.SPRING else Glass.EASE
+            addUpdateListener { grab = it.animatedValue as Float; if (grab <= 0.001f) grabDy = 0f; invalidate() }; start() } }
     private var phF = 0.0
     private var downX = 0f; private var lastX = 0f; private var moved = false
     private var trimFrom = 0L; private var trimTo = 0L; private var trimLen = 0L; private var trimPh = 0L
@@ -416,7 +421,7 @@ class StudioTimeline(context: Context) : View(context) {
     })
 
     override fun onTouchEvent(e: MotionEvent): Boolean {
-        if (e.actionMasked == MotionEvent.ACTION_DOWN) { inHead = groups.isNotEmpty() && ((e.x < headW() && e.y > rulerH) || (headFrac > 0.5f && e.x < headW() + 12 * d && tabRect().contains(e.x, e.y)) || (headFrac < 0.01f && e.x < stripW && e.y > rulerH + 2 * d && e.y < tabBottom())) }
+        if (e.actionMasked == MotionEvent.ACTION_DOWN) { inHead = groups.isNotEmpty() && ((e.x < headW() && e.y > rulerH) || (headFrac > 0.5f && e.x < headW() + 28 * d && tabRect().contains(e.x, e.y)) || (headFrac < 0.01f && e.x < stripW && e.y > rulerH + 2 * d && e.y < tabBottom())) }
         if (inHead) { headTouch(e); if (e.actionMasked == MotionEvent.ACTION_UP || e.actionMasked == MotionEvent.ACTION_CANCEL) inHead = false; return true }
         scale.onTouchEvent(e)
         if (mode != ZOOM) gestures.onTouchEvent(e)
@@ -424,14 +429,14 @@ class StudioTimeline(context: Context) : View(context) {
             MotionEvent.ACTION_DOWN -> {
                 // On the lane rows a vertical drag scrolls the lanes (the parent scroller); everything else keeps the touch.
                 parent?.requestDisallowInterceptTouchEvent(e.y < lanesTop())
-                downX = e.x; lastX = e.x; moved = false; mode = SCRUB; lastSnap = -1; phF = ph.toDouble()
+                downX = e.x; tDownY = e.y; lastX = e.x; moved = false; mode = SCRUB; lastSnap = -1; phF = ph.toDouble()
                 scroller.forceFinished(true); flinging = false
                 velocity?.recycle(); velocity = android.view.VelocityTracker.obtain()
                 // The picked bar can be dragged along its lane, or stretched from either end.
                 barAt(e.x, e.y)?.takeIf { it.id == selectedBar && it.movable }?.let { b ->
                     val x0 = x(b.at); val x1 = x(b.at + b.len); val edge = 16 * d; val wide = x1 - x0 > 44 * d
                     mode = if (wide && e.x < x0 + edge) BAR_L else if (wide && e.x > x1 - edge) BAR_R else BAR
-                    barAt = b.at; barLen = b.len; parent?.requestDisallowInterceptTouchEvent(true)
+                    barAt = b.at; barLen = b.len; parent?.requestDisallowInterceptTouchEvent(true); grabTo(1f)
                 }
                 val c = clips.getOrNull(selected)
                 if (c != null && inClipRow(e.y)) {
@@ -442,6 +447,7 @@ class StudioTimeline(context: Context) : View(context) {
             }
             MotionEvent.ACTION_MOVE -> {
                 if (abs(e.x - downX) > 6 * d) { moved = true; parent?.requestDisallowInterceptTouchEvent(true) }
+                if (mode == BAR || mode == BAR_L || mode == BAR_R) grabDy = ((e.y - tDownY) * 0.35f).coerceIn(-9 * d, 9 * d)
                 velocity?.addMovement(e)
                 val drag = ((e.x - downX) / pxPerMs).toLong()
                 when (mode) {
@@ -466,6 +472,7 @@ class StudioTimeline(context: Context) : View(context) {
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 val was = mode; mode = IDLE; snapAt = -1
+                if (was == BAR || was == BAR_L || was == BAR_R) grabTo(0f)
                 when (was) {
                     SCRUB -> if (moved) {
                         velocity?.computeCurrentVelocity(1000); val vx = velocity?.xVelocity ?: 0f
@@ -567,28 +574,31 @@ class StudioTimeline(context: Context) : View(context) {
             val y0 = rowY.getOrElse(li) { lanesTop() + li * laneH }; val y1 = y0 + laneH - 4 * d; val mid = (y0 + y1) / 2
             bars.forEach { b ->
                 val x0 = x(b.at); val x1 = x(b.at + b.len).coerceAtLeast(x0 + 6 * d); if (x1 < 0 || x0 > w) return@forEach
+                // A picked bar that is held lifts a little, grows taller and follows the finger up and down a few dp, then settles back.
+                val lift = if (b.id == selectedBar) grab else 0f; val by0 = y0 - 3 * d * lift + grabDy * lift; val by1 = y1 + 3 * d * lift + grabDy * lift; val bmid = (by0 + by1) / 2
+                if (lift > 0.01f) { paint.color = Color.BLACK; paint.alpha = (110 * lift).toInt().coerceIn(0, 255); c.drawRoundRect(x0 - 2 * d * lift, by0 + 2 * d * lift, x1 + 2 * d * lift, by1 + 5 * d * lift, 7 * d, 7 * d, paint); paint.alpha = 255 }
                 paint.color = b.color; paint.alpha = if (rowOff(li)) 70 else if (selectedBar < -1 || selectedBar == b.id) 235 else 150
-                c.drawRoundRect(x0, y0, x1, y1, 5 * d, 5 * d, paint); paint.alpha = 255
-                c.save(); c.clipRect(x0, y0, x1, y1)
+                c.drawRoundRect(x0, by0, x1, by1, 5 * d, 5 * d, paint); paint.alpha = 255
+                c.save(); c.clipRect(x0, by0, x1, by1)
                 val pk = b.peaks
                 if (pk != null && pk.isNotEmpty()) {
                     paint.color = 0x8c000000.toInt(); paint.strokeWidth = 1.6f * d
                     var px = x0.coerceAtLeast(0f); val stop = x1.coerceAtMost(w)
                     while (px < stop) {
                         var ms = b.peakFrom + ((px - x0) / pxPerMs).toLong(); if (b.loop > 0) ms %= b.loop
-                        val amp = pk[(ms / AudioPeaks.STEP_MS).toInt().coerceIn(0, pk.size - 1)] * (y1 - y0) * 0.46f
-                        c.drawLine(px, mid - amp - 0.5f * d, px, mid + amp + 0.5f * d, paint); px += 2.6f * d
+                        val amp = pk[(ms / AudioPeaks.STEP_MS).toInt().coerceIn(0, pk.size - 1)] * (by1 - by0) * 0.46f
+                        c.drawLine(px, bmid - amp - 0.5f * d, px, bmid + amp + 0.5f * d, paint); px += 2.6f * d
                     }
                     paint.strokeWidth = 0f
                 } else if (x1 - x0 > 40 * d) { textPaint.color = 0xe6000000.toInt(); textPaint.textSize = 9f * d; textPaint.isFakeBoldText = true
-                    c.drawText(b.label, x0.coerceAtLeast(0f) + 6 * d, mid + 3.2f * d, textPaint); textPaint.color = 0x99ffffff.toInt(); textPaint.textSize = 9.5f * d; textPaint.isFakeBoldText = false }
+                    c.drawText(b.label, x0.coerceAtLeast(0f) + 6 * d, bmid + 3.2f * d, textPaint); textPaint.color = 0x99ffffff.toInt(); textPaint.textSize = 9.5f * d; textPaint.isFakeBoldText = false }
                 paint.color = Color.WHITE
                 b.marks.forEach { m -> val mx = x0 + m * pxPerMs; if (mx >= -3 * d && mx <= w + 3 * d) {
-                    c.save(); c.rotate(45f, mx, mid); c.drawRect(mx - 3 * d, mid - 3 * d, mx + 3 * d, mid + 3 * d, paint); c.restore()
+                    c.save(); c.rotate(45f, mx, bmid); c.drawRect(mx - 3 * d, bmid - 3 * d, mx + 3 * d, bmid + 3 * d, paint); c.restore()
                 } }
                 c.restore()
-                if (b.id == selectedBar) { c.drawRoundRect(x0, y0, x1, y1, 5 * d, 5 * d, barStroke)
-                    if (b.movable && x1 - x0 > 44 * d) { paint.color = Color.WHITE; c.drawRoundRect(x0 + 3 * d, y0 + 4 * d, x0 + 5.5f * d, y1 - 4 * d, d, d, paint); c.drawRoundRect(x1 - 5.5f * d, y0 + 4 * d, x1 - 3 * d, y1 - 4 * d, d, d, paint) } }
+                if (b.id == selectedBar) { c.drawRoundRect(x0, by0, x1, by1, 5 * d, 5 * d, barStroke)
+                    if (b.movable && x1 - x0 > 44 * d) { paint.color = Color.WHITE; c.drawRoundRect(x0 + 3 * d, by0 + 4 * d, x0 + 5.5f * d, by1 - 4 * d, d, d, paint); c.drawRoundRect(x1 - 5.5f * d, by0 + 4 * d, x1 - 3 * d, by1 - 4 * d, d, d, paint) } }
             }
         }
         if (snapAt >= 0 && (mode == BAR || mode == BAR_L || mode == BAR_R)) { val sx = x(snapAt); paint.color = Glass.ACCENT; paint.alpha = 230

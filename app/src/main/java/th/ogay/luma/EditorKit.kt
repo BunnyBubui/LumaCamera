@@ -53,6 +53,18 @@ object EditorKit {
         tab.isSelected = on; ViewCompat.setStateDescription(tab, if (on) "เลือกอยู่" else null)
     }
 
+    /**
+     * A slider with its name and value on a line of their own above it, so the bar can run the whole width of the panel and be easy to hit.
+     * [grad] colours it; [changed] gets the step. The caller keeps nothing: the value text follows the bar.
+     */
+    fun labeledSlider(c: Context, label: String, values: List<String>, at: Int, grad: IntArray = intArrayOf(0xff8e8e93.toInt(), Glass.ACCENT), changed: (Int) -> Unit): LinearLayout = LinearLayout(c).apply {
+        orientation = LinearLayout.VERTICAL; setPadding(c.dp(16), c.dp(2), c.dp(16), 0)
+        val shown = c.text(values.getOrElse(at) { "" }, 13.5f, Glass.ACCENT, true).apply { gravity = Gravity.END }
+        addView(LinearLayout(c).apply { gravity = Gravity.CENTER_VERTICAL
+            addView(c.text(label, 13f, Glass.TEXT2, true).apply { maxLines = 1 }, LinearLayout.LayoutParams(0, -2, 1f)); addView(shown, LinearLayout.LayoutParams(-2, -2)) }, -1, -2)
+        addView(GlassSlider(c).apply { this.values = values; index = at.coerceIn(0, values.lastIndex); this.grad = grad; contentDescription = label
+            onChange = { i -> shown.text = values.getOrElse(i) { "" }; changed(i) } }, LinearLayout.LayoutParams(-1, c.dp(48)).apply { setMargins(-c.dp(12), 0, -c.dp(12), 0) })
+    }
     /** A glass chip with an optional icon; [on] fills it with the accent. */
     fun chip(c: Context, label: String, icon: String = "", on: Boolean = false, click: () -> Unit): LinearLayout = LinearLayout(c).apply {
         gravity = Gravity.CENTER; isClickable = true; contentDescription = label; minimumHeight = c.dp(48); setPadding(c.dp(14), 0, c.dp(14), 0)

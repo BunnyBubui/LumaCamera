@@ -197,6 +197,9 @@ class GlassSlider(context: Context) : View(context) {
     private var downX = 0f; private var downY = 0f
     private var p = 0f; private var over = 0f; private var stretch = 1f; private var tail = 0f; private var pressing = false; private var dragging = false
     private var lastX = 0f; private var lastT = 0L
+    /** Fine adjustment: the further the finger slides away from the bar (up or down), the slower the thumb follows (1, 1/2, 1/4, 1/10). */
+    private var fine = 1f; private var anchorX = 0f; private var anchorP = 0f
+    private val finePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; textAlign = Paint.Align.CENTER; isFakeBoldText = true }
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private var relax: ValueAnimator? = null
     private var trackShader: Shader? = null; private var trackW = 0f; private var trackGrad: IntArray? = null
@@ -209,9 +212,9 @@ class GlassSlider(context: Context) : View(context) {
     override fun onDraw(c: Canvas) {
         val d = context.px(1f); val left = pad(); val right = width - pad(); val w = right - left; val cy = height / 2f
         if (trackShader == null || trackW != w || trackGrad !== grad) { trackShader = LinearGradient(left, 0f, right, 0f, grad, null, Shader.TileMode.CLAMP); trackW = w; trackGrad = grad }
-        paint.shader = trackShader; paint.alpha = 72; c.drawRoundRect(left, cy - 3 * d, right, cy + 3 * d, 3 * d, 3 * d, paint)
+        paint.shader = trackShader; paint.alpha = 72; c.drawRoundRect(left, cy - 4 * d, right, cy + 4 * d, 4 * d, 4 * d, paint)
         val x = (left + p * w + over).coerceIn(left - 6 * d, right + 6 * d)
-        paint.alpha = 255; c.drawRoundRect(left, cy - 3 * d, max(left + 6 * d, x), cy + 3 * d, 3 * d, 3 * d, paint)
+        paint.alpha = 255; c.drawRoundRect(left, cy - 4 * d, max(left + 8 * d, x), cy + 4 * d, 4 * d, 4 * d, paint)
         paint.shader = null; paint.color = 0x66ffffff
         // Dense value lists (1/3-stop ISO, Kelvin) draw every k-th tick so marks stay at least 6 dp apart; every third mark is taller.
         val gap = w / max(1, n() - 1); val every = max(1, ceil(6 * d / max(gap, 0.01f)).toInt())
@@ -225,10 +228,13 @@ class GlassSlider(context: Context) : View(context) {
         val glowR = (if (pressing) 26f else 18f) * d
         paint.shader = RadialGradient(x, cy, glowR, (col and 0x00ffffff) or 0x99000000.toInt(), 0, Shader.TileMode.CLAMP); c.drawCircle(x, cy, glowR, paint); paint.shader = null
         val sc = if (pressing) 1.14f else 1f
-        val tw = 14 * d * min(stretch, 1.35f) * sc; val th = 14 * d / sqrt(stretch) * sc
+        val tw = 16 * d * min(stretch, 1.35f) * sc; val th = 16 * d / sqrt(stretch) * sc
         paint.color = (col and 0x00ffffff) or 0x8c000000.toInt(); val ring = (if (pressing) 6 else 4) * d
         c.drawRoundRect(x - tw - ring, cy - th - ring, x + tw + ring, cy + th + ring, th + ring, th + ring, paint)
         paint.color = Color.WHITE; c.drawRoundRect(x - tw, cy - th, x + tw, cy + th, th, th, paint)
+        if (dragging && fine < 1f) { val label = "ละเอียด ×" + (if (fine == 0.5f) "0.5" else if (fine == 0.25f) "0.25" else "0.1"); finePaint.textSize = 10.5f * d
+            val tx = x.coerceIn(left + 34 * d, right - 34 * d); val ty = 11 * d
+            paint.color = 0xd9000000.toInt(); c.drawRoundRect(tx - 34 * d, ty - 9 * d, tx + 34 * d, ty + 5 * d, 7 * d, 7 * d, paint); finePaint.alpha = 240; c.drawText(label, tx, ty + 2 * d, finePaint) }
     }
 
     override fun onTouchEvent(e: MotionEvent): Boolean {
@@ -239,8 +245,11 @@ class GlassSlider(context: Context) : View(context) {
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN -> { relax?.cancel(); downX = e.x; downY = e.y; pressing = true; dragging = false; lastX = e.x; lastT = e.eventTime }
             MotionEvent.ACTION_MOVE -> {
-                if (!dragging && abs(e.x - downX) > touchSlop && abs(e.x - downX) > abs(e.y - downY)) { dragging = true; parent?.requestDisallowInterceptTouchEvent(true); onDrag(true) }
-                if (dragging) move(e.x, left, w)
+                if (!dragging && abs(e.x - downX) > touchSlop && abs(e.x - downX) > abs(e.y - downY)) { dragging = true; parent?.requestDisallowInterceptTouchEvent(true); onDrag(true)
+                    fine = 1f; anchorX = e.x; anchorP = ((e.x - left) / w) }
+                if (dragging) { val dy = abs(e.y - height / 2f) / context.px(1f); val f = if (dy > 130) 0.1f else if (dy > 90) 0.25f else if (dy > 50) 0.5f else 1f
+                    if (f != fine) { fine = f; anchorX = e.x; anchorP = p; invalidate() }
+                    move(e.x, left, w) }
             }
             MotionEvent.ACTION_UP -> { if (!dragging && abs(e.x - downX) <= touchSlop) move(e.x, left, w); val was = dragging; dragging = false; pressing = false; if (was) onDrag(false); relaxTo(pos(index)); performClick() }
             MotionEvent.ACTION_CANCEL -> { val was = dragging; dragging = false; pressing = false; if (was) onDrag(false); relaxTo(pos(index)) }
@@ -250,7 +259,7 @@ class GlassSlider(context: Context) : View(context) {
     override fun performClick(): Boolean { super.performClick(); return true }
 
     private fun move(x: Float, left: Float, w: Float) {
-        val rawP = (x - left) / w; val t = rawP.coerceIn(0f, 1f)
+        val rawP = if (dragging) anchorP + (x - anchorX) / w * fine else (x - left) / w; val t = rawP.coerceIn(0f, 1f)
         val excess = (if (rawP < 0) rawP else if (rawP > 1) rawP - 1 else 0f) * w
         over = sign(excess) * context.px(8f) * (1 - exp(-abs(excess) / context.px(60f)))
         val dt = max(1L, (System.nanoTime() / 1_000_000) - lastT); val v = (x - lastX) / context.px(1f); lastX = x; lastT = System.nanoTime() / 1_000_000
