@@ -92,7 +92,7 @@ class VideoEditorActivity : ComponentActivity() {
         private const val AI_TOOL = 17   // not a panel: the first tab opens the automatic edit page
         private const val COLOR_TOOL = 14
         /** Internal menu numbers in the order the tool bar shows them. */
-        private val TOOL_IDS = listOf(AI_TOOL, 0, 9, 13, 2, 3, 8, 14, 5, 4, 15, 12, 11, 16)
+        private val TOOL_IDS = listOf(AI_TOOL, 0, 9, 13, 2, 3, 8, 14, 5, 4, 15, 12, 16)
         private val EASES = listOf("นุ่ม", "คงที่", "ค่อย ๆ เร่ง", "ค่อย ๆ หยุด", "หยุดนิ่ง")
         private const val GREEN_KEY = 0xff00b140.toInt()
         private const val BLUE_KEY = 0xff0047bb.toInt()
@@ -881,7 +881,7 @@ class VideoEditorActivity : ComponentActivity() {
         root.addView(tools, LinearLayout.LayoutParams(-1, dp(124)))
         toolBar = EditorKit.ToolBar(this, listOf(Icons.AI to "ตัดต่อ AI", EditorKit.SCISSORS to "ตัด", Icons.SOUND to "เสียง", LAYERS to "เลเยอร์", EditorKit.SPEED to "ความเร็ว", EditorKit.CROP to "ครอป", EditorKit.ROTATE to "หมุน",
             EditorKit.ADJUST to "ปรับแต่งภาพ", Icons.FILM to "ฟิลเตอร์", EditorKit.TEXT to "ข้อความ", "M4 6h16v10H8l-4 4z M8 10h8 M8 13h5" to "คำบรรยาย",
-            STICKER to "สติกเกอร์", JOIN to "ทรานซิชัน", "M12 4a3 3 0 0 0-3 3v5a3 3 0 0 0 6 0V7a3 3 0 0 0-3-3z M6 11a6 6 0 0 0 12 0 M12 17v3" to "อัดเสียง"), accents = setOf(0)) { if (TOOL_IDS[it] == AI_TOOL) { foldTools(); autoEditSheet(); return@ToolBar }
+            STICKER to "สติกเกอร์", "M12 4a3 3 0 0 0-3 3v5a3 3 0 0 0 6 0V7a3 3 0 0 0-3-3z M6 11a6 6 0 0 0 12 0 M12 17v3" to "อัดเสียง"), accents = setOf(0)) { if (TOOL_IDS[it] == AI_TOOL) { foldTools(); autoEditSheet(); return@ToolBar }
             val folded = collapsed; val before = tool; if (landscape()) setCollapsed(false); showTool(TOOL_IDS[it]); if (!landscape()) { if (folded) showCard() else if (before == tool) hideCard() } }
         root.addView(toolBar, LinearLayout.LayoutParams(-1, -2).apply { setMargins(dp(4), 0, dp(4), dp(8)) })
         toolBar.onSwipeY = { d -> if (!landscape()) { Glass.tick(toolBar); if (d < 0 && collapsed) showCard() else if (d > 0 && !collapsed) hideCard() } }
@@ -4276,6 +4276,9 @@ class VideoEditorActivity : ComponentActivity() {
             // Length: 0.05 s steps from 0.1 s to 3 s, with the fine-scrub of every slider.
             val steps = (100..3000 step 50).toList()
             col.addView(EditorKit.labeledSlider(this, "ความยาว", steps.map { String.format(Locale.US, "%.2f วิ", it / 1000f) }, steps.indices.minByOrNull { abs(steps[it] - ms) } ?: 0) { n -> ms = steps[n].toLong(); apply() }.apply { setPadding(0, dp(10), 0, 0) }, -1, -2)
+            // One tap puts this change, its place and its length on every cut between clips.
+            col.addView(EditorKit.chip(this, "ใช้กับทุกรอยต่อ", "M4 6h7v12H4z M13 6h7v12h-7z M11 12h2") {
+                order().drop(1).forEach { kk -> setJoin(kk, kind, VideoEdit.joinPack(ms, at)) }; refreshTimeline(); notice("ใช้ ${TRANSITIONS[kind]} กับทุกรอยต่อแล้ว") }, LinearLayout.LayoutParams(-1, dp(44)).apply { topMargin = dp(10) })
             col.addView(GlassDialog.actions(this, "เสร็จ" to { sh.close() }), LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) })
         }
     }
