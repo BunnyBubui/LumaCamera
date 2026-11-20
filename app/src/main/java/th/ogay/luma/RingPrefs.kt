@@ -45,12 +45,19 @@ object RingPrefs {
         val ids = saved ?: CATALOG[cat].take(5).map { it.id }
         return CATALOG[cat].map { it.id }.filter { it in ids }.take(MAX)
     }
+    /** The master switch: when off the ring never appears and the picked clip or bar only shows its tool card. */
+    fun enabled(p: SharedPreferences) = p.getBoolean("ring_on", true)
     private fun save(p: SharedPreferences, cat: Int, ids: Collection<String>) { p.edit().putString(key(cat), CATALOG[cat].map { it.id }.filter { it in ids }.joinToString(",")).apply() }
 
     /** The settings page: one group of switches for each kind, with a count of how many of the [MAX] places are used. */
     fun open(a: Activity, done: () -> Unit = {}) {
         val prefs = a.getSharedPreferences("camera", 0)
         SettingsPage(a, "ปุ่มลัดตัดต่อ") { done() }.apply {
+            section("เมนูด่วน")
+            val master = GlassSwitch(a); master.set(enabled(prefs), false); master.contentDescription = "เปิดเมนูด่วนวงกลม"
+            master.onToggle = { on -> prefs.edit().putBoolean("ring_on", on).apply() }
+            row("เปิดเมนูด่วนวงกลม", "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6", "", master) { master.performClick() }
+            master.layoutParams = LinearLayout.LayoutParams(a.dp(51), a.dp(31))
             for (cat in CATALOG.indices) {
                 fun title() = "${NAMES[cat]}  ใช้ ${chosen(prefs, cat).size} จาก $MAX ปุ่ม"
                 val head = section(title())

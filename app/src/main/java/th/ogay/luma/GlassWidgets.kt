@@ -606,8 +606,11 @@ class ZoomCapsule(context: Context) : LinearLayout(context) {
  * readable; [dim] still fires so the caller can let the sheet recede (see [GlassSheet.recede]).
  */
 class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Unit = {}) {
-    class Option(val label: String, val icon: String = "", val note: String = "", val inner: String = "")
+    class Option(val label: String, val icon: String = "", val note: String = "", val inner: String = "", val sub: Boolean = false)
     var over: () -> Boolean = { false }
+    /** Pixels the card is shifted away from its anchor, so a submenu layered over this menu leaves the first one peeking out behind it. */
+    var nudge = 0
+    private var opts: List<Option> = emptyList()
     private var overlay: View? = null; private var card: LayerFrame? = null; private var dimmed = false
     /** Receives a finger that is still down on the anchor (press, slide, release), like an iPhone context menu. */
     private var forward: ((MotionEvent) -> Unit)? = null
@@ -630,6 +633,7 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
     fun show(anchor: View, title: String, options: List<Option>, selected: Int, pick: (Int) -> Unit) {
         dismiss(false)
         if (options.isEmpty() || !anchor.isAttachedToWindow) return
+        opts = options
         val c = host.context; val d = c.resources.displayMetrics.density
         val loc = IntArray(2); val hl = IntArray(2); anchor.getLocationInWindow(loc); host.getLocationInWindow(hl)
         val ax = loc[0] - hl[0]; val ay = loc[1] - hl[1]
@@ -657,7 +661,9 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
                 texts.addView(c.text(o.label, 14f, Glass.TEXT, i == selected))
                 if (o.note.isNotEmpty()) texts.addView(c.text(o.note, 11.5f, Glass.TEXT2))
                 addView(texts, LinearLayout.LayoutParams(0, -2, 1f))
-                if (i == selected) addView(IconView(c, Icons.CHECK, 2.4f).apply { tint = Glass.ACCENT }, c.dp(18), c.dp(18))
+                if (o.sub) addView(FrameLayout(c).apply { background = c.glass(14, 0x26ffffff)
+                    addView(IconView(c, "M9 6l6 6-6 6", 2.4f).apply { tint = Glass.TEXT }, FrameLayout.LayoutParams(c.dp(16), c.dp(16), Gravity.CENTER)) }, c.dp(28), c.dp(28))
+                else if (i == selected) addView(IconView(c, Icons.CHECK, 2.4f).apply { tint = Glass.ACCENT }, c.dp(18), c.dp(18))
                 setOnClickListener { choose(i, pick) }
             }.also { list.addView(it, LinearLayout.LayoutParams(-1, -2).apply { topMargin = c.dp(2) }) }
         }
@@ -671,7 +677,7 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
         val h = min(full, avail); val scrolls = full > avail
         val below = ay + anchor.height + c.dp(8); val above = ay - c.dp(8) - h
         val up = below + h > host.height - padB
-        val y = (if (up) above else below).coerceIn(padT, max(padT, host.height - padB - h))
+        val y = ((if (up) above - nudge else below + nudge)).coerceIn(padT, max(padT, host.height - padB - h))
         modal.hide()
         // Touch and drawing order follow elevation, so the menu layer must sit above sheets (16 dp) or it is hidden and untappable.
         val shade = View(c).apply { setBackgroundColor(if (quiet) 0 else 0x29000000); alpha = 0f; isClickable = true; contentDescription = "ปิดเมนู"; elevation = 20 * d; outlineProvider = null; setOnClickListener { dismiss(true) } }
@@ -757,6 +763,8 @@ class GlassMenu(private val host: FrameLayout, private val dim: (Boolean) -> Uni
     }
     private fun choose(i: Int, pick: (Int) -> Unit) {
         val m = card ?: return
+        // A row that opens a submenu leaves this menu where it is; the submenu is layered over it.
+        if (opts.getOrNull(i)?.sub == true) { pick(i); return }
         m.closing = true // one pick per menu, even with a fast double tap
         pick(i); host.postDelayed({ if (card === m) dismiss(true) }, 160)
     }
