@@ -2903,6 +2903,32 @@ class VideoEditorActivity : ComponentActivity() {
         setMuted(k, true); layerPick = layers.size - 1; rebuildLayers(); refreshTimeline()
         notice("แยกเสียงเป็นแถบสีม่วงแล้ว ลากแถบเพื่อให้เสียงมาก่อนหรือต่อเลยภาพ")
     }
+    @Volatile private var denoising = false
+    /** Cleans the speech of the clip on screen with the model chosen in "แยกเสียง" and puts the result on the timeline as a sound bar, the clip's own sound muted. */
+    private fun denoiseClip() {
+        val k = playIndex; val e = extras.getOrNull(k - 1)
+        if (denoising) { notice("กำลังลดเสียงรบกวนอยู่ รอให้เสร็จก่อน"); return }
+        if (isMuted(k)) { notice("คลิปนี้ปิดเสียงอยู่ เปิดเสียงก่อน"); return }
+        if ((e?.speed ?: speed) != 1f || (e?.curve ?: mainCurve) != null) { notice("ลดเสียงรบกวนได้เฉพาะคลิปความเร็วปกติ"); return }
+        if (e == null && cutValid()) { notice("คลิปนี้ตัดช่วงกลางออกแล้ว จึงลดเสียงรบกวนไม่ได้"); return }
+        val m = DenoiseModels.selected(this)
+        if (!ModelStore.installed(this, m)) { notice("ต้องดาวน์โหลด ${m.name} ก่อน ไปที่หน้าหลัก แยกเสียง แล้วกดดาวน์โหลดโมเดล"); return }
+        val src = e?.uri ?: source; val from = e?.from ?: start; val len = e?.len ?: mainLen(); val vol = if (e == null) volume else 1f
+        var at = 0L; for (o in order()) { if (o == k) break; at += lenOf(o) }
+        denoising = true; notice("กำลังลดเสียงรบกวน ${clock(len)} ใช้เวลาสักครู่ ค้างหน้านี้ไว้")
+        Thread({
+            val r = runCatching { Separation.denoise(this, src, m, File(cacheDir, "separate/${System.currentTimeMillis()}"), java.util.concurrent.atomic.AtomicBoolean(false), from, from + len) {} }
+            val saved = r.getOrNull()?.let { res -> runCatching { File(filesDir, "denoised").apply { mkdirs() }.let { d -> res.clean.copyTo(File(d, "clean_${System.currentTimeMillis()}.wav"), true) } }.getOrNull() }
+            runOnUiThread {
+                denoising = false
+                if (isDestroyed) return@runOnUiThread
+                if (saved == null) { notice("ลดเสียงรบกวนไม่สำเร็จ: ${r.exceptionOrNull()?.message ?: "บันทึกไฟล์ไม่ได้"}"); return@runOnUiThread }
+                layers += VideoLayer(VideoLayer.SOUND, MediaLedger.privateUri(this, saved), at, len, 0L, volume = vol)
+                setMuted(k, true); layerPick = layers.size - 1; rebuildLayers(); refreshTimeline()
+                notice("ลดเสียงรบกวนแล้ว เป็นแถบเสียงใหม่ เสียงเดิมของคลิปถูกปิดไว้")
+            }
+        }, "denoise-clip").start()
+    }
     /** The music goes down to 30 % while a sound layer plays, in the preview the same way as in the export. */
     private fun duckGain(): Float = if (!duck) 1f else StudioAudio.duck(outNow(), layers.filter { it.audible && it.volume > 0f && !it.hidden && !it.music }.map { it.at to it.end })
 
@@ -3822,8 +3848,9 @@ class VideoEditorActivity : ComponentActivity() {
             GlassMenu.Option("เสียงพูดชัด", Icons.MIC, if (voice) "เปิดอยู่" else ""),
             GlassMenu.Option("ลดเพลงตอนมีเสียงพูด", EditorKit.MUSIC, if (duck) "เปิดอยู่" else ""),
             GlassMenu.Option("รีเซ็ตอีคิวให้เรียบ", Icons.RESET),
+            GlassMenu.Option("ลดเสียงรบกวนด้วย AI", Icons.MIC, "ทำเป็นแถบเสียงใหม่ ปิดเสียงเดิมของคลิป"),
             *(if (layers.any { it.music }) arrayOf(GlassMenu.Option("มาร์กจังหวะเพลง", "M9 18V6l10-2v12")) else emptyArray())), -1) { n ->
-            when (n) { 0 -> lowCut = !lowCut; 1 -> voice = !voice; 2 -> duck = !duck; 3 -> eq.fill(0f); else -> { markBeats(); return@show } }; applySound(); showTool(9, false) } }, LinearLayout.LayoutParams(-2, dp(40)).apply { setMargins(dp(3), 0, dp(3), 0) })
+            when (n) { 0 -> lowCut = !lowCut; 1 -> voice = !voice; 2 -> duck = !duck; 3 -> eq.fill(0f); 4 -> { denoiseClip(); return@show }; else -> { markBeats(); return@show } }; applySound(); showTool(9, false) } }, LinearLayout.LayoutParams(-2, dp(40)).apply { setMargins(dp(3), 0, dp(3), 0) })
         box.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false; addView(dropRow) }, LinearLayout.LayoutParams(-2, -2).apply { gravity = Gravity.CENTER_HORIZONTAL })
     }
 

@@ -77,9 +77,9 @@ object Separation {
      * Runs the chosen model over the whole sound of [uri]. [progress] gets 0..1. Throws when [cancel] is set or the model fails.
      * Windows of 30 s overlap by half a second and are joined with a short cross-fade, so there is no click at the joins.
      */
-    fun denoise(c: Context, uri: Uri, m: ModelSpec, outDir: File, cancel: AtomicBoolean, progress: (Float) -> Unit): DenoiseResult {
+    fun denoise(c: Context, uri: Uri, m: ModelSpec, outDir: File, cancel: AtomicBoolean, fromMs: Long = 0L, toMs: Long = -1L, progress: (Float) -> Unit): DenoiseResult {
         val t0 = System.currentTimeMillis()
-        val total = durationMs(c, uri); require(total > 0) { "ไม่พบเสียงในไฟล์นี้" }
+        val total = if (toMs > 0) toMs else durationMs(c, uri); require(total > fromMs) { "ไม่พบเสียงในไฟล์นี้" }
         outDir.mkdirs()
         val denoiser = build(c, m)
         try {
@@ -88,7 +88,7 @@ object Separation {
             val outC = WavOut(clean, rate); val outR = WavOut(removed, rate)
             val ov = (rate * OVERLAP_MS / 1000).toInt()
             var tailC: FloatArray? = null; var tailR: FloatArray? = null
-            var at = 0L
+            var at = fromMs
             while (at < total) {
                 if (cancel.get()) error("cancelled")
                 val last = at + WINDOW_MS >= total
@@ -108,7 +108,7 @@ object Separation {
                 outC.write(cl, 0, keep); outR.write(rm, 0, keep)
                 tailC = if (last) null else cl.copyOfRange(keep, n); tailR = if (last) null else rm.copyOfRange(keep, n)
                 at += WINDOW_MS
-                progress((at.toFloat() / total).coerceIn(0f, 1f))
+                progress(((at - fromMs).toFloat() / (total - fromMs)).coerceIn(0f, 1f))
             }
             outC.close(); outR.close()
             return DenoiseResult(clean, removed, outC.samples.toFloat() / rate, System.currentTimeMillis() - t0, rate, m.name)
