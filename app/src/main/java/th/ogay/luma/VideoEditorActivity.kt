@@ -3438,7 +3438,7 @@ class VideoEditorActivity : ComponentActivity() {
             (h.layoutParams as? LinearLayout.LayoutParams)?.let { lp -> lp.leftMargin = -dp(8); lp.rightMargin = -dp(8) }
             h.clipToPadding = false; h.setPadding(h.paddingLeft + dp(8), h.paddingTop, h.paddingRight + dp(8), h.paddingBottom) }
         fun fade(v: View) { if (v is android.widget.ScrollView) { v.isVerticalFadingEdgeEnabled = true; v.setFadingEdgeLength(dp(22)); v.overScrollMode = View.OVER_SCROLL_NEVER }
-            if (v is ViewGroup) for (k in 0 until v.childCount) fade(v.getChildAt(k)) }
+            if (v is android.view.ViewGroup) for (k in 0 until v.childCount) fade(v.getChildAt(k)) }
         fade(col)
     }
     /** Speed as one slider, like the photo adjustments: 0.1× (slow) through 1× to 500× (fast). */
